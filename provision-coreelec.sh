@@ -12,18 +12,11 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 SCRIPT_VERSION="1.0.0"
-EXPECTED_RELEASE="21.3"
 TARGET=""
-SSH_PORT="22"
 IDENTITY_FILE="${HOME}/.ssh/coreelec_admin_ed25519"
-KODI_PORT="8080"
-KODI_USER="homeassistant"
-REPORT_DIR="${PWD}/coreelec-provision-reports"
-APPLY_KODI="1"
-HARDEN_SSH="1"
-FORCE_UNSUPPORTED="0"
-ASSUME_YES="0"
 ADDONS=()
+CHECK_CONFIG="0"
+CHECK_ARTIFACTS="0"
 
 TASK_TEMP_DIR=""
 CURL_CONFIG_FILE=""
@@ -34,11 +27,17 @@ usage() {
   cat <<'USAGE'
 Usage:
   provision-coreelec.sh --target HOST [options]
+  provision-coreelec.sh --check-config [--config PATH]
 
 Required:
   --target HOST             CoreELEC IPv4 address or DNS/mDNS hostname
+                             (not required with --check-config/--check-artifacts)
 
 Options:
+  --config PATH             Strict KEY=value settings file (default:
+                             config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf)
+  --check-config             Validate configuration and secrets, then exit
+  --check-artifacts           Validate configuration and artifact records, then exit
   --identity PATH           Administrator key (default: ~/.ssh/coreelec_admin_ed25519)
   --ssh-port PORT           SSH port (default: 22)
   --kodi-port PORT          Kodi HTTP/JSON-RPC port (default: 8080)
@@ -106,39 +105,42 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
-validate_host() {
-  case "$1" in
-    ""|-*|*[!A-Za-z0-9._-]*)
-      die "HOST must be an IPv4 address or hostname containing only letters, digits, dot, underscore, and hyphen"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/coreelec-config.sh
+source "${SCRIPT_DIR}/lib/coreelec-config.sh"
+
+# Precedence: built-in safe defaults, then the selected configuration file,
+# then explicit CLI options, then secret environment variables (checked by
+# coreelec_config_validate). --config is parsed here in a lightweight,
+# non-consuming pre-scan so the file loads before the full CLI pass below
+# applies any explicit overrides. --help/--version are honored immediately in
+# this same pre-scan so they never require a readable configuration file.
+coreelec_config_defaults
+config_file_override=""
+config_scan_index=0
+config_scan_args=("$@")
+while (( config_scan_index < ${#config_scan_args[@]} )); do
+  case "${config_scan_args[${config_scan_index}]}" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --version)
+      printf '%s\n' "${SCRIPT_VERSION}"
+      exit 0
+      ;;
+    --config)
+      (( config_scan_index + 1 < ${#config_scan_args[@]} )) || die "--config requires a value"
+      config_file_override="${config_scan_args[$((config_scan_index + 1))]}"
+      config_scan_index=$((config_scan_index + 2))
+      ;;
+    *)
+      config_scan_index=$((config_scan_index + 1))
       ;;
   esac
-}
-
-validate_identifier() {
-  local label="$1"
-  local value="$2"
-  case "${value}" in
-    ""|-*|*[!A-Za-z0-9._-]*)
-      die "${label} contains unsupported characters: ${value}"
-      ;;
-  esac
-}
-
-validate_port() {
-  local label="$1"
-  local value="$2"
-  local numeric_value
-  case "${value}" in
-    ""|*[!0-9]*) die "${label} must be a decimal port number" ;;
-  esac
-  if (( ${#value} > 5 )); then
-    die "${label} must be between 1 and 65535"
-  fi
-  numeric_value=$((10#${value}))
-  if (( numeric_value < 1 || numeric_value > 65535 )); then
-    die "${label} must be between 1 and 65535"
-  fi
-}
+done
+[[ -z "${config_file_override}" ]] || CONFIG_FILE="${config_file_override}"
+coreelec_config_load "${CONFIG_FILE}"
 
 while (( $# > 0 )); do
   case "$1" in
@@ -147,6 +149,18 @@ while (( $# > 0 )); do
       TARGET="$2"
       shift 2
       ;;
+    --config)
+      (( $# >= 2 )) || die "--config requires a value"
+      shift 2
+      ;;
+    --check-config)
+      CHECK_CONFIG="1"
+      shift
+      ;;
+    --check-artifacts)
+      CHECK_ARTIFACTS="1"
+      shift
+      ;;
     --identity)
       (( $# >= 2 )) || die "--identity requires a value"
       IDENTITY_FILE="$2"
@@ -154,52 +168,52 @@ while (( $# > 0 )); do
       ;;
     --ssh-port)
       (( $# >= 2 )) || die "--ssh-port requires a value"
-      SSH_PORT="$2"
+      coreelec_config_apply_cli "SSH_PORT" "$2"
       shift 2
       ;;
     --kodi-port)
       (( $# >= 2 )) || die "--kodi-port requires a value"
-      KODI_PORT="$2"
+      coreelec_config_apply_cli "KODI_PORT" "$2"
       shift 2
       ;;
     --kodi-user)
       (( $# >= 2 )) || die "--kodi-user requires a value"
-      KODI_USER="$2"
+      coreelec_config_apply_cli "KODI_USER" "$2"
       shift 2
       ;;
     --addon)
       (( $# >= 2 )) || die "--addon requires a value"
-      ADDONS+=("$2")
+      coreelec_config_add_cli_addon "$2"
       shift 2
       ;;
     --with-youtube)
-      ADDONS+=("plugin.video.youtube")
+      coreelec_config_add_cli_addon "plugin.video.youtube"
       shift
       ;;
     --report-dir)
       (( $# >= 2 )) || die "--report-dir requires a value"
-      REPORT_DIR="$2"
+      coreelec_config_apply_cli "REPORT_DIR" "$2"
       shift 2
       ;;
     --expected-release)
       (( $# >= 2 )) || die "--expected-release requires a value"
-      EXPECTED_RELEASE="$2"
+      coreelec_config_apply_cli "EXPECTED_RELEASE" "$2"
       shift 2
       ;;
     --no-kodi)
-      APPLY_KODI="0"
+      coreelec_config_apply_cli "APPLY_KODI" "0"
       shift
       ;;
     --no-harden)
-      HARDEN_SSH="0"
+      coreelec_config_apply_cli "HARDEN_SSH" "0"
       shift
       ;;
     --force-unsupported)
-      FORCE_UNSUPPORTED="1"
+      coreelec_config_apply_cli "FORCE_UNSUPPORTED" "1"
       shift
       ;;
     --yes)
-      ASSUME_YES="1"
+      coreelec_config_apply_cli "ASSUME_YES" "1"
       shift
       ;;
     --version)
@@ -220,6 +234,15 @@ while (( $# > 0 )); do
   esac
 done
 
+if [[ "${CHECK_CONFIG}" == "1" || "${CHECK_ARTIFACTS}" == "1" ]]; then
+  coreelec_config_validate
+  info "Configuration OK: ${CONFIG_FILE}"
+  if [[ "${CHECK_ARTIFACTS}" == "1" ]]; then
+    info "Artifact download and validation are not implemented in this version."
+  fi
+  exit 0
+fi
+
 [[ -n "${TARGET}" ]] || {
   usage >&2
   exit 2
@@ -236,6 +259,8 @@ validate_identifier "Expected release" "${EXPECTED_RELEASE}"
 for addon_id in "${ADDONS[@]}"; do
   validate_identifier "Add-on ID" "${addon_id}"
 done
+
+coreelec_config_validate
 
 require_command ssh
 require_command ssh-keygen
