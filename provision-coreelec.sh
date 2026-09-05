@@ -59,6 +59,11 @@ Internal:
                              using a base64 KEY=value payload file, then exit.
                              Used by tests/test-coreelec-settings.sh; it never
                              contacts a device.
+  --emit-remote-script NAME [ROOT]
+                            Print the remote 'backup' or 'payload' shell
+                             program for ROOT (default /storage), then exit.
+                             Used by tests/test-coreelec-settings.sh; it never
+                             contacts a device.
 
 Example:
   ./provision-coreelec.sh --target 172.16.99.50 --with-youtube
@@ -163,10 +168,43 @@ YOUTUBE_CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
 
 WRITTEN_PATHS = []
 ADDON_DOCUMENTS = {}
+MANAGED_DIRECTORIES = set()
+TEMPORARY_SUFFIX = ".provision-new"
 
 
 def fail(message):
     raise SystemExit("settings transformer: " + message)
+
+
+def register_managed_directory(path):
+    """Records a directory so orphaned temp files can be swept from it even
+    when a run fails before that directory is written."""
+    if path:
+        MANAGED_DIRECTORIES.add(path)
+
+
+def _discard_temporary(path, quiet=False):
+    """Unlinks a temp path. A symlink is removed, never followed."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        if not quiet:
+            raise
+
+
+def sweep_orphan_temporaries():
+    """Removes `*.provision-new` files an interrupted run may have left in a
+    managed directory. They can hold secrets, so none may outlive the run."""
+    for directory in sorted(MANAGED_DIRECTORIES):
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        for name in names:
+            if name.endswith(TEMPORARY_SUFFIX):
+                _discard_temporary(os.path.join(directory, name), quiet=True)
 
 
 def read_payload(path):
@@ -190,17 +228,73 @@ def read_payload(path):
     return values
 
 
+def validate_payload(values):
+    """`HAVE_X=1` with a missing or empty `X` is a contradiction: the caller
+    believes the secret is configured while the payload carries nothing.
+    Failing here, before any write, keeps an empty managed value from being
+    stored as if it were a real credential. Only the key name is reported."""
+    for key in sorted(values):
+        if not key.startswith("HAVE_") or values[key] != "1":
+            continue
+        name = key[len("HAVE_"):]
+        if not values.get(name, ""):
+            fail("%s is flagged present but carries no value" % name)
+
+
+def _ensure_directory(path, mode=0o700):
+    """Creates every missing component at `mode`.
+
+    os.makedirs() applies its mode to the leaf only and leaves intermediate
+    directories at the ambient umask, which would expose add-on data holding
+    API keys and tokens. Directories that already exist are left alone."""
+    if not path or os.path.isdir(path):
+        return
+    parent = os.path.dirname(path)
+    if parent and parent != path:
+        _ensure_directory(parent, mode)
+    try:
+        os.mkdir(path, mode)
+    except FileExistsError:
+        return
+    os.chmod(path, mode)
+
+
+def _open_exclusive(path, mode):
+    """Creates `path` at exactly `mode` before a single byte is written.
+
+    O_EXCL refuses a file that already exists and O_NOFOLLOW refuses a
+    symlink, so secret bytes can never land in a stale or planted temp file
+    whose mode, hard links, or target this process does not control. fchmod
+    then defeats the ambient umask, which would otherwise mask the mode."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, mode)
+    try:
+        os.fchmod(descriptor, mode)
+    except OSError:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
 def _atomic_write(path, data, mode):
     directory = os.path.dirname(path)
     if directory:
-        os.makedirs(directory, exist_ok=True)
-    temporary = path + ".provision-new"
-    with open(temporary, "wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.chmod(temporary, mode)
-    os.replace(temporary, path)
+        _ensure_directory(directory)
+        register_managed_directory(directory)
+    temporary = path + TEMPORARY_SUFFIX
+    _discard_temporary(temporary)
+    descriptor = _open_exclusive(temporary, mode)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        # A failed write must not leave secret bytes behind under a name
+        # nothing will ever clean up.
+        _discard_temporary(temporary, quiet=True)
+        raise
     WRITTEN_PATHS.append(path)
 
 
@@ -237,6 +331,11 @@ def _setting_nodes(root, setting_id):
 
 
 def _set_xml_setting(root, setting_id, value, flat):
+    # One rule for every managed setting, Kodi or add-on: an empty value is
+    # never stored. Writing one would replace a good existing value with
+    # nothing, and Kodi reads an empty node as unset anyway.
+    if value == "":
+        return None
     nodes = _setting_nodes(root, setting_id)
     if nodes:
         node = nodes[0][1]
@@ -268,6 +367,8 @@ def set_addon_setting(path, setting_id, value, version=2):
     as weather.ha) are loaded with. Documents are committed together by
     commit_addon_settings() so each file is written exactly once.
     """
+    if value == "":
+        return None
     document = ADDON_DOCUMENTS.get(path)
     if document is None:
         if os.path.exists(path):
@@ -307,6 +408,7 @@ def main(argv):
     storage_root, payload_path = argv[1], argv[2]
 
     payload = read_payload(payload_path)
+    validate_payload(payload)
 
     def config(key, default=""):
         return payload.get(key, default)
@@ -319,9 +421,14 @@ def main(argv):
 
     userdata = os.path.join(storage_root, ".kodi", "userdata")
     addon_data = os.path.join(userdata, "addon_data")
+    register_managed_directory(userdata)
+    register_managed_directory(addon_data)
+    register_managed_directory(os.path.join(storage_root, ".cache"))
 
     def addon_file(addon_id, name):
-        return os.path.join(addon_data, addon_id, name)
+        directory = os.path.join(addon_data, addon_id)
+        register_managed_directory(directory)
+        return os.path.join(directory, name)
 
     youtube_configured = (have("YOUTUBE_API_KEY")
                           and have("YOUTUBE_CLIENT_ID")
@@ -362,10 +469,7 @@ def main(argv):
     guisettings_path = os.path.join(userdata, "guisettings.xml")
     guisettings_tree, guisettings_root = load_kodi_settings(guisettings_path)
     for setting_id in sorted(kodi_values):
-        value = kodi_values[setting_id]
-        if value == "":
-            continue
-        set_kodi_setting(guisettings_root, setting_id, value)
+        set_kodi_setting(guisettings_root, setting_id, kodi_values[setting_id])
     write_xml_atomic(guisettings_path, guisettings_tree)
 
     # --- YouTube ------------------------------------------------------------
@@ -449,9 +553,8 @@ def main(argv):
                           config("HOME_ASSISTANT_URL"), version=1)
         set_addon_setting(weather_settings, "ha_weather_forecast_entity_id",
                           config("HOME_ASSISTANT_WEATHER_ENTITY"), version=1)
-        if config("HOME_ASSISTANT_SUN_ENTITY"):
-            set_addon_setting(weather_settings, "ha_sun_entity_id",
-                              config("HOME_ASSISTANT_SUN_ENTITY"), version=1)
+        set_addon_setting(weather_settings, "ha_sun_entity_id",
+                          config("HOME_ASSISTANT_SUN_ENTITY"), version=1)
 
     commit_addon_settings()
 
@@ -466,7 +569,12 @@ def main(argv):
         sys.stdout.write("settings applied: %s\n" % path)
 
 
-main(sys.argv)
+try:
+    main(sys.argv)
+finally:
+    # Sweeps temp files an interrupted earlier run may have orphaned, on both
+    # the success and the failure path.
+    sweep_orphan_temporaries()
 PYTHON_TRANSFORMER_SOURCE
 }
 
@@ -478,6 +586,95 @@ coreelec_settings_transform_fixture() {
   require_command python3
   mkdir -p "${root}"
   coreelec_settings_transformer_source | python3 - "${root}" "${payload}"
+}
+
+# Remote script emitters. Each prints `sh` program text whose storage root is a
+# parameter, so tests can execute the exact program the device receives against
+# a scratch directory. Neither emitter reads configuration or contacts a host.
+coreelec_remote_backup_script() {
+  local root="${1:-/storage}"
+  # umask 077 covers every directory and file the snapshot creates: a copy of
+  # guisettings.xml or api_keys.json carries credentials, so the snapshot must
+  # not be readable by anyone but root.
+  cat <<REMOTE_BACKUP_HEADER
+set -eu
+umask 077
+storage_root="${root}"
+REMOTE_BACKUP_HEADER
+  cat <<'REMOTE_BACKUP'
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup="${storage_root}/backup/coreelec-provision/${stamp}"
+mkdir -p "${backup}"
+chmod 700 "${backup}"
+
+copy_one() {
+  source_path="$1"
+  if [ -f "${source_path}" ]; then
+    relative_path="${source_path#${storage_root}/}"
+    destination_dir="${backup}/$(dirname "${relative_path}")"
+    mkdir -p "${destination_dir}"
+    cp -p "${source_path}" "${backup}/${relative_path}"
+  fi
+}
+
+copy_one "${storage_root}/.ssh/authorized_keys"
+copy_one "${storage_root}/.cache/services/sshd.conf"
+copy_one "${storage_root}/.cache/hostname"
+copy_one "${storage_root}/.kodi/userdata/guisettings.xml"
+copy_one "${storage_root}/.kodi/userdata/advancedsettings.xml"
+copy_one "${storage_root}/.kodi/userdata/sources.xml"
+copy_one "${storage_root}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
+copy_one "${storage_root}/.cache/timezone"
+copy_one "${storage_root}/.kodi/userdata/addon_data/plugin.video.youtube/settings.xml"
+copy_one "${storage_root}/.kodi/userdata/addon_data/plugin.video.youtube/api_keys.json"
+copy_one "${storage_root}/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml"
+copy_one "${storage_root}/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml"
+copy_one "${storage_root}/.kodi/userdata/addon_data/script.plexmod/settings.xml"
+copy_one "${storage_root}/.kodi/userdata/addon_data/weather.ha/settings.xml"
+
+{
+  printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'hostname=%s\n' "$(hostname)"
+  printf 'release='
+  tr '\n' ' ' < /etc/release 2>/dev/null || true
+  printf '\n'
+} > "${backup}/MANIFEST.txt"
+
+printf '%s\n' "${backup}"
+REMOTE_BACKUP
+}
+
+coreelec_remote_payload_script() {
+  local root="${1:-/storage}"
+  cat <<REMOTE_PAYLOAD_HEADER
+set -eu
+umask 077
+payload_dir="${root}/.cache/coreelec-provision"
+REMOTE_PAYLOAD_HEADER
+  cat <<'REMOTE_PAYLOAD'
+payload_file="${payload_dir}/settings-payload.conf"
+temporary="${payload_file}.provision-new"
+mkdir -p "${payload_dir}"
+chmod 700 "${payload_dir}"
+# The temp name is removed first so the secrets land in a file this script
+# creates under umask 077, never in a stale or planted file whose mode, hard
+# links, or symlink target it does not control. The rename is atomic, so the
+# payload is never observable half-written.
+rm -f "${temporary}"
+cat > "${temporary}"
+chmod 600 "${temporary}"
+mv "${temporary}" "${payload_file}"
+REMOTE_PAYLOAD
+}
+
+# Internal test entry point: prints one remote script instead of running it.
+coreelec_emit_remote_script() {
+  local name="$1" root="${2:-/storage}"
+  case "${name}" in
+    backup) coreelec_remote_backup_script "${root}" ;;
+    payload) coreelec_remote_payload_script "${root}" ;;
+    *) die "--emit-remote-script expects backup or payload, not: ${name}" ;;
+  esac
 }
 
 # Precedence: built-in safe defaults, then the selected configuration file,
@@ -506,6 +703,18 @@ while (( config_scan_index < ${#config_scan_args[@]} )); do
       coreelec_settings_transform_fixture \
         "${config_scan_args[$((config_scan_index + 1))]}" \
         "${config_scan_args[$((config_scan_index + 2))]}"
+      exit 0
+      ;;
+    --emit-remote-script)
+      (( config_scan_index + 1 < ${#config_scan_args[@]} )) \
+        || die "--emit-remote-script requires NAME"
+      emit_script_root="/storage"
+      if (( config_scan_index + 2 < ${#config_scan_args[@]} )); then
+        emit_script_root="${config_scan_args[$((config_scan_index + 2))]}"
+      fi
+      coreelec_emit_remote_script \
+        "${config_scan_args[$((config_scan_index + 1))]}" \
+        "${emit_script_root}"
       exit 0
       ;;
     --config)
@@ -731,6 +940,7 @@ install_public_key_if_needed() {
     chmod 700 /storage/.ssh
     candidate=/storage/.ssh/authorized_keys.provision-candidate
     authorized=/storage/.ssh/authorized_keys
+    rm -f "${candidate}"
     cat > "${candidate}"
     test -s "${candidate}"
     key_blob="$(awk '\''{ print $2; exit }'\'' "${candidate}")"
@@ -804,47 +1014,7 @@ validate_remote() {
 
 create_remote_backup() {
   info "Creating a selective pre-provisioning backup on the CoreELEC STORAGE partition" >&2
-  ssh_keyed 'sh -s' <<'REMOTE_BACKUP'
-set -eu
-stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-backup="/storage/backup/coreelec-provision/${stamp}"
-mkdir -p "${backup}"
-
-copy_one() {
-  source_path="$1"
-  if [ -f "${source_path}" ]; then
-    relative_path="${source_path#/storage/}"
-    destination_dir="${backup}/$(dirname "${relative_path}")"
-    mkdir -p "${destination_dir}"
-    cp -p "${source_path}" "${backup}/${relative_path}"
-  fi
-}
-
-copy_one /storage/.ssh/authorized_keys
-copy_one /storage/.cache/services/sshd.conf
-copy_one /storage/.cache/hostname
-copy_one /storage/.kodi/userdata/guisettings.xml
-copy_one /storage/.kodi/userdata/advancedsettings.xml
-copy_one /storage/.kodi/userdata/sources.xml
-copy_one /storage/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml
-copy_one /storage/.cache/timezone
-copy_one /storage/.kodi/userdata/addon_data/plugin.video.youtube/settings.xml
-copy_one /storage/.kodi/userdata/addon_data/plugin.video.youtube/api_keys.json
-copy_one /storage/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
-copy_one /storage/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
-copy_one /storage/.kodi/userdata/addon_data/script.plexmod/settings.xml
-copy_one /storage/.kodi/userdata/addon_data/weather.ha/settings.xml
-
-{
-  printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf 'hostname=%s\n' "$(hostname)"
-  printf 'release=' 
-  tr '\n' ' ' < /etc/release 2>/dev/null || true
-  printf '\n'
-} > "${backup}/MANIFEST.txt"
-
-printf '%s\n' "${backup}"
-REMOTE_BACKUP
+  coreelec_remote_backup_script | ssh_keyed 'sh -s'
 }
 
 harden_remote_ssh() {
@@ -859,6 +1029,9 @@ set -eu
 umask 077
 mkdir -p /storage/.cache/services
 temporary="/storage/.cache/services/sshd.conf.provision-new"
+# Removed first so the file is created fresh under umask 077 rather than
+# inheriting the mode, hard links, or symlink target of a leftover one.
+rm -f "${temporary}"
 cat > "${temporary}" <<'SSHD_CONFIG'
 SSH_ARGS="-o 'PasswordAuthentication no'"
 SSHD_DISABLE_PW_AUTH="true"
@@ -955,15 +1128,14 @@ coreelec_settings_payload() {
 
 upload_kodi_settings_payload() {
   # The payload is streamed over the existing SSH channel into a mode-0600
-  # file, and the remote trap removes it even if the transformer fails.
-  coreelec_settings_payload | ssh_keyed 'sh -c '\''
-    set -eu
-    umask 077
-    mkdir -p /storage/.cache/coreelec-provision
-    chmod 700 /storage/.cache/coreelec-provision
-    cat > /storage/.cache/coreelec-provision/settings-payload.conf
-    chmod 600 /storage/.cache/coreelec-provision/settings-payload.conf
-  '\'''
+  # file, and the remote trap removes it even if the transformer fails. The
+  # script text is embedded in a single-quoted remote `sh -c` argument, so it
+  # must never contain a single quote of its own.
+  local script
+  script="$(coreelec_remote_payload_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote payload script must not contain a single quote"
+  coreelec_settings_payload | ssh_keyed "sh -c '${script}'"
 }
 
 coreelec_remote_settings_script() {
@@ -972,7 +1144,7 @@ set -eu
 payload_file=/storage/.cache/coreelec-provision/settings-payload.conf
 
 cleanup_remote_payload() {
-  rm -f "${payload_file}"
+  rm -f "${payload_file}" "${payload_file}.provision-new"
   systemctl start kodi.service >/dev/null 2>&1 || true
 }
 trap cleanup_remote_payload EXIT HUP INT TERM
@@ -991,7 +1163,7 @@ PYTHON_KODI_SETTINGS
 
 systemctl restart tz-data.service >/dev/null 2>&1 || true
 systemctl start kodi.service
-rm -f "${payload_file}"
+rm -f "${payload_file}" "${payload_file}.provision-new"
 trap - EXIT HUP INT TERM
 REMOTE_SETTINGS_EPILOGUE
 }

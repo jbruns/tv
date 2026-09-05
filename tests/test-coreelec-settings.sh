@@ -205,6 +205,23 @@ tree_digest() {
   ) | shasum -a 256
 }
 
+# Permission bits as an octal string. BSD and GNU `stat` take different
+# flags, so the mode is read through python3, which both platforms have.
+file_mode() {
+  python3 -c 'import os, sys; sys.stdout.write("%o" % (os.stat(sys.argv[1]).st_mode & 0o7777))' "$1"
+}
+
+# Every leftover `*.provision-new` file under a root. These are the files that
+# briefly hold secrets during an atomic write, so a surviving one is a leak.
+orphan_temp_files() {
+  find "$1" -name '*.provision-new' | LC_ALL=C sort
+}
+
+files_containing() {
+  local root="$1" needle="$2"
+  grep -rl -- "${needle}" "${root}" 2>/dev/null | LC_ALL=C sort || true
+}
+
 seed_guisettings() {
   local root="$1"
   mkdir -p "${root}/.kodi/userdata"
@@ -514,6 +531,173 @@ test_transformer_output_never_reveals_secrets() {
   done
 }
 
+# --- Write safety -----------------------------------------------------------
+
+test_atomic_writes_never_reuse_a_preexisting_temp_file() {
+  local dir root payload temporary witness
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  seed_guisettings "${root}"
+
+  # A stale or planted temp file must never be opened and filled with secrets:
+  # its mode (and any hard link to its inode) is outside the transformer's
+  # control. The hard link makes the reuse observable after the rename.
+  temporary="$(guisettings_path "${root}").provision-new"
+  witness="${dir}/witness.bin"
+  printf 'planted\n' > "${temporary}"
+  chmod 666 "${temporary}"
+  ln "${temporary}" "${witness}"
+
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "planted" "$(cat "${witness}")" "a pre-existing temp inode must not receive written bytes"
+  assert_eq "666" "$(file_mode "${witness}")" "the planted inode keeps its own mode"
+  assert_eq "600" "$(file_mode "$(guisettings_path "${root}")")" "guisettings.xml ends up private"
+  assert_eq "" "$(orphan_temp_files "${root}")" "no temp file is left behind"
+}
+
+test_atomic_writes_do_not_follow_a_symlinked_temp_path() {
+  local dir root payload temporary outside
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  seed_guisettings "${root}"
+
+  outside="${dir}/outside.bin"
+  temporary="$(guisettings_path "${root}").provision-new"
+  printf 'untouched\n' > "${outside}"
+  ln -s "${outside}" "${temporary}"
+
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "untouched" "$(cat "${outside}")" "a symlinked temp path must not redirect the write"
+  if [[ -L "$(guisettings_path "${root}")" ]]; then
+    printf 'guisettings.xml must be a regular file, not a symlink\n' >&2
+    return 1
+  fi
+  assert_eq "600" "$(file_mode "$(guisettings_path "${root}")")" "guisettings.xml ends up private"
+}
+
+test_written_modes_ignore_a_permissive_umask() {
+  local dir root payload youtube_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+
+  # The mode must come from the transformer, never from whatever umask the
+  # calling shell happened to have.
+  (umask 000; run_transform "${root}" "${payload}" >/dev/null)
+
+  youtube_dir="$(addon_data_path "${root}" plugin.video.youtube)"
+  assert_eq "600" "$(file_mode "$(guisettings_path "${root}")")" "guisettings.xml"
+  assert_eq "600" "$(file_mode "${youtube_dir}/api_keys.json")" "api_keys.json"
+  assert_eq "600" "$(file_mode "$(addon_data_path "${root}" weather.ha)/settings.xml")" "weather.ha settings"
+  assert_eq "644" "$(file_mode "${root}/.cache/timezone")" "the timezone cache stays readable on purpose"
+  assert_eq "700" "$(file_mode "${youtube_dir}")" "add-on data directories are private"
+  assert_eq "700" "$(file_mode "${root}/.kodi/userdata/addon_data")" "intermediate directories are private"
+  assert_eq "700" "$(file_mode "${root}/.cache")" "the cache directory is private"
+}
+
+test_a_failed_write_leaves_no_secret_temp_file() {
+  local dir root payload output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+
+  # A directory where api_keys.json belongs makes the final rename fail after
+  # the secret bytes have already been written to the temp file.
+  mkdir -p "$(addon_data_path "${root}" plugin.video.youtube)/api_keys.json"
+
+  set +e
+  output="$(run_transform "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "an unwritable target must fail loudly"
+  assert_eq "" "$(orphan_temp_files "${root}")" "a failed write must not orphan a secret temp file"
+  assert_eq "" "$(files_containing "${root}" "youtube-api-key-secret")" "no file under the root retains the secret"
+  assert_not_contains "${output}" "youtube-api-key-secret" "the failure output must not leak a secret"
+}
+
+test_present_but_empty_secret_is_rejected() {
+  local dir root payload output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  append_payload_entry "${payload}" "NEXTPVR_HOST" "nextpvr.example.lan"
+  append_payload_entry "${payload}" "HAVE_NEXTPVR_PIN" "1"
+  append_payload_entry "${payload}" "NEXTPVR_PIN" ""
+
+  set +e
+  output="$(run_transform "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "a present-but-empty secret is a contradiction, not a value"
+  assert_contains "${output}" "NEXTPVR_PIN" "the error names the offending key"
+  if [[ -e "$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml" ]]; then
+    printf 'an empty PIN must never be written\n' >&2
+    return 1
+  fi
+}
+
+test_remote_payload_upload_replaces_a_permissive_file() {
+  local dir root script target witness
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  mkdir -p "${root}/.cache/coreelec-provision"
+  chmod 777 "${root}/.cache/coreelec-provision"
+
+  target="${root}/.cache/coreelec-provision/settings-payload.conf"
+  witness="${dir}/witness.bin"
+  printf 'stale-payload\n' > "${target}"
+  chmod 666 "${target}"
+  ln "${target}" "${witness}"
+
+  script="$(bash "${PROVISIONER}" --emit-remote-script payload "${root}")"
+  (umask 000; printf 'KEY=dmFsdWU=\n' | sh -c "${script}")
+
+  assert_eq "KEY=dmFsdWU=" "$(cat "${target}")" "the payload is delivered"
+  assert_eq "600" "$(file_mode "${target}")" "the payload file is private"
+  assert_eq "700" "$(file_mode "${root}/.cache/coreelec-provision")" "the payload directory is private"
+  assert_eq "stale-payload" "$(cat "${witness}")" "a pre-existing payload inode never receives the new secrets"
+  assert_eq "" "$(orphan_temp_files "${root}")" "no payload temp file survives"
+}
+
+test_remote_backup_directory_is_private() {
+  local dir root script backup
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  mkdir -p "${root}/.kodi/userdata"
+  printf '<settings version="2"><setting id="services.webserverpassword">s3cret</setting></settings>\n' \
+    > "$(guisettings_path "${root}")"
+  chmod 644 "$(guisettings_path "${root}")"
+
+  script="$(bash "${PROVISIONER}" --emit-remote-script backup "${root}")"
+  backup="$(umask 022; printf '%s\n' "${script}" | sh -s)"
+
+  assert_eq "700" "$(file_mode "${backup}")" "the backup snapshot directory is private"
+  assert_eq "700" "$(file_mode "${root}/backup/coreelec-provision")" "the backup parent directory is private"
+  assert_eq "600" "$(file_mode "${backup}/MANIFEST.txt")" "the manifest is private"
+  if [[ ! -f "${backup}/.kodi/userdata/guisettings.xml" ]]; then
+    printf 'the backup must still copy guisettings.xml\n' >&2
+    return 1
+  fi
+}
+
 run_all_tests \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
@@ -528,4 +712,11 @@ run_all_tests \
   test_pm4k_local_mode_json_is_valid \
   test_absent_optional_secrets_do_not_create_secret_settings \
   test_payload_values_survive_hostile_characters \
-  test_transformer_output_never_reveals_secrets
+  test_transformer_output_never_reveals_secrets \
+  test_atomic_writes_never_reuse_a_preexisting_temp_file \
+  test_atomic_writes_do_not_follow_a_symlinked_temp_path \
+  test_written_modes_ignore_a_permissive_umask \
+  test_a_failed_write_leaves_no_secret_temp_file \
+  test_present_but_empty_secret_is_rejected \
+  test_remote_payload_upload_replaces_a_permissive_file \
+  test_remote_backup_directory_is_private
