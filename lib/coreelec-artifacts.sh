@@ -59,10 +59,11 @@ coreelec_artifact_parse() {
   esac
   # Kodi add-on versions follow the Debian-ish grammar used by
   # CAddonVersion: digits, letters, and the separators . _ - + ~ (for
-  # example "1.16.0+matrix.1" or "0.8.30~omega"). Shell metacharacters are
-  # still refused.
+  # example "1.16.0+matrix.1" or "0.8.30~omega"). A leading "-" or "~" is
+  # refused because it is never a real published version and "~" sorts below
+  # every other version, and shell metacharacters are still refused.
   case "${ARTIFACT_VERSION}" in
-    ""|-*|*[!A-Za-z0-9._+~-]*)
+    ""|-*|~*|*[!A-Za-z0-9._+~-]*)
       die "Artifact version contains unsupported characters: ${ARTIFACT_VERSION}"
       ;;
   esac

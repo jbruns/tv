@@ -68,11 +68,14 @@ make_scratch_dir() {
 # Runs one named test function in a subshell (via command substitution) so
 # test state, `set -e` failures, and stray `exit` calls never affect the
 # runner or other tests. Captures combined stdout/stderr for failure reports.
+# `set -e` is re-enabled inside that subshell so a failing assertion aborts the
+# test immediately; without it only the final assertion in a test body would
+# decide the result.
 run_test() {
   local test_name="$1" output rc
   TESTS_TOTAL=$((TESTS_TOTAL + 1))
   set +e
-  output="$("${test_name}" 2>&1)"
+  output="$(set -e; "${test_name}" 2>&1)"
   rc=$?
   set -e
   if (( rc == 0 )); then

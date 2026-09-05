@@ -210,12 +210,22 @@ test_missing_optional_secrets_are_allowed() {
 
 PRODUCTION_CONFIG="${SCRIPT_DIR}/../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf"
 
-# The complete locked artifact set: the selected add-ons, the three
-# repository add-ons, and every transitive dependency that Kodi 21 does not
-# already bundle. Kodi's own bundled add-ons (script.module.pil,
-# script.module.pycryptodome, resource.language.en_gb, ...) are deliberately
-# absent; see system/addon-manifest.xml in xbmc/xbmc @ Omega.
-expected_artifact_ids() {
+# Head of pannal/plex-for-kodi's develop_kodi21 branch whose addon.xml declares
+# script.plexmod 1.14.1-beta1. The branch ref moves; this commit does not.
+PLEXMOD_COMMIT="2707bbe72a7ea829b69bdd7ebb753c700552b4d0"
+
+# A change detector, not a proof. This list is a transcription of the
+# artifact IDs reviewed and recorded in provision.conf; comparing it against
+# the same file cannot by itself establish that the dependency closure is
+# complete. Closure completeness is established out of band by resolving each
+# pinned add-on's <requires><import> entries against its publisher's index
+# (recorded in provision.conf and the task report); this test only fails loudly
+# when the locked set drifts from the set that was reviewed.
+#
+# Kodi's own bundled add-ons (script.module.pil, script.module.pycryptodome,
+# resource.language.en_gb, ...) are deliberately absent; see
+# system/addon-manifest.xml in xbmc/xbmc @ Omega.
+reviewed_artifact_ids() {
   cat <<'IDS'
 inputstream.adaptive
 inputstream.ffmpegdirect
@@ -233,18 +243,24 @@ resource.language.en_us
 script.module.addon.signals
 script.module.certifi
 script.module.chardet
+script.module.dateutil
 script.module.idna
 script.module.infotagger
 script.module.inputstreamhelper
+script.module.iso8601
 script.module.jurialmunkey
+script.module.kodi-six
 script.module.pysocks
 script.module.qrcode
 script.module.requests
 script.module.six
 script.module.urllib3
+script.module.yaml
+script.plexmod
 script.skinvariables
 script.texturemaker
 skin.arctic.fuse.3
+weather.ha
 IDS
 }
 
@@ -273,6 +289,9 @@ test_production_config_sets_pacific_english_us_baseline() {
   assert_eq "USA (12h)" "${LOCALE_COUNTRY}" "LOCALE_COUNTRY"
   assert_eq "English QWERTY" "${KEYBOARD_LAYOUT}" "KEYBOARD_LAYOUT"
   assert_eq "notify" "${ADDON_UPDATE_MODE}" "ADDON_UPDATE_MODE"
+  # The Kodi web account is the one Home Assistant authenticates as; renaming
+  # it would break the documented Home Assistant integration.
+  assert_eq "homeassistant" "${KODI_USER}" "KODI_USER"
 }
 
 test_production_config_carries_no_secret_values() {
@@ -290,13 +309,17 @@ test_production_config_carries_no_secret_values() {
   assert_success "${rc}" "production config validates with no secrets present"
 }
 
+# Every primary add-on named in the task brief must be locked; none may be
+# silently dropped or substituted.
 test_production_config_locks_primary_addon_versions() {
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
   assert_artifact_version "plugin.service.emby-next-gen" "12.4.23"
+  assert_artifact_version "script.plexmod" "1.14.1-beta1"
   assert_artifact_version "plugin.video.youtube" "7.4.4"
   assert_artifact_version "skin.arctic.fuse.3" "3.2.16"
   assert_artifact_version "plugin.video.themoviedb.helper" "6.17.1"
+  assert_artifact_version "weather.ha" "0.0.6.6"
   assert_artifact_version "resource.language.en_us" "11.0.82"
   # CoreELEC republishes upstream pvr.nextpvr 21.3.2-Omega for Amlogic-ne
   # aarch64 with its own packaging revision appended (PKG_REV=1), so the
@@ -305,13 +328,37 @@ test_production_config_locks_primary_addon_versions() {
   assert_artifact_version "pvr.nextpvr" "21.3.2.1"
 }
 
-test_production_config_locks_the_complete_dependency_closure() {
+test_production_config_matches_the_reviewed_artifact_id_set() {
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
   local expected actual
-  expected="$(expected_artifact_ids | LC_ALL=C sort)"
+  expected="$(reviewed_artifact_ids | LC_ALL=C sort)"
   actual="$(artifact_id_versions | cut -f1 | LC_ALL=C sort)"
   assert_eq "${expected}" "${actual}" "locked artifact ID set"
+}
+
+# The two add-ons that are not published as versioned repository ZIPs are
+# pinned to immutable upstream archives, so the config must record which
+# revision each one came from rather than pointing at a moving ref.
+test_production_config_records_immutable_upstream_sources() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  local body record plexmod_url weather_url
+  body="$(cat "${PRODUCTION_CONFIG}")"
+  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+    case "${record}" in
+      script.plexmod\|*) plexmod_url="$(cut -d'|' -f3 <<< "${record}")" ;;
+      weather.ha\|*) weather_url="$(cut -d'|' -f3 <<< "${record}")" ;;
+    esac
+  done
+  assert_contains "${plexmod_url:-}" \
+    "https://codeload.github.com/pannal/plex-for-kodi/zip/${PLEXMOD_COMMIT}" \
+    "script.plexmod is pinned to an immutable commit archive"
+  assert_contains "${weather_url:-}" \
+    "https://codeload.github.com/Eugeniusz-Gienek/kodi_weather_ha/zip/refs/tags/0.0.6.6" \
+    "weather.ha is pinned to its upstream tag archive"
+  assert_contains "${body}" "${PLEXMOD_COMMIT}" "the pinned plexmod commit SHA is recorded"
+  assert_contains "${body}" "develop_kodi21" "the plexmod source branch is recorded"
 }
 
 test_production_config_records_each_artifact_exactly_once() {
@@ -320,7 +367,25 @@ test_production_config_records_each_artifact_exactly_once() {
   local duplicates
   duplicates="$(artifact_id_versions | cut -f1 | LC_ALL=C sort | uniq -d)"
   assert_eq "" "${duplicates}" "no artifact ID appears twice"
-  assert_eq "28" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
+  assert_eq "34" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
+}
+
+# An artifact URL must be immutably addressed so the pinned bytes cannot be
+# replaced under the checksum: either the URL embeds the pinned version, or it
+# is addressed by a full 40-character commit SHA.
+artifact_url_is_immutably_addressed() {
+  local url="$1" version="$2" tail
+  case "${url}" in
+    *"${version}"*) return 0 ;;
+  esac
+  tail="${url##*/}"
+  if (( ${#tail} == 40 )); then
+    case "${tail}" in
+      *[!0-9a-f]*) ;;
+      *) return 0 ;;
+    esac
+  fi
+  return 1
 }
 
 test_production_config_artifact_records_are_well_formed() {
@@ -331,13 +396,10 @@ test_production_config_artifact_records_are_well_formed() {
   local record
   for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
     coreelec_artifact_parse "${record}" || return 1
-    case "${ARTIFACT_URL}" in
-      https://*"${ARTIFACT_VERSION}"*) ;;
-      *)
-        printf 'artifact URL is not version-pinned: %s\n' "${ARTIFACT_URL}" >&2
-        return 1
-        ;;
-    esac
+    if ! artifact_url_is_immutably_addressed "${ARTIFACT_URL}" "${ARTIFACT_VERSION}"; then
+      printf 'artifact URL is not immutably addressed: %s\n' "${ARTIFACT_URL}" >&2
+      return 1
+    fi
     if [[ "${ARTIFACT_SHA256}" != "$(tr 'A-Z' 'a-z' <<< "${ARTIFACT_SHA256}")" ]]; then
       printf 'artifact checksum is not lowercase: %s\n' "${ARTIFACT_ID}" >&2
       return 1
@@ -345,22 +407,17 @@ test_production_config_artifact_records_are_well_formed() {
   done
 }
 
-# script.plexmod 1.14.1-beta1 and weather.ha 0.0.6.6 exist only as unreleased
-# upstream source; neither is published as a versioned, checksummable add-on
-# ZIP. They stay out of the locked set until a canonical artifact exists, and
-# the file must say so rather than silently substituting another version.
-test_production_config_documents_unresolvable_pins() {
-  local body
+# Every requested pin now resolves to a real, checksummable artifact, so no
+# "BLOCKED" carve-out may survive in the shipped config.
+test_production_config_has_no_blocked_pins() {
+  local body ids
   body="$(cat "${PRODUCTION_CONFIG}")"
-  assert_contains "${body}" "BLOCKED" "blocked pins are called out"
-  assert_contains "${body}" "script.plexmod" "PM4K blocker is recorded"
-  assert_contains "${body}" "weather.ha" "Home Assistant Weather blocker is recorded"
+  assert_not_contains "${body}" "BLOCKED" "no pin is left unresolved"
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
-  local ids
   ids="$(artifact_id_versions | cut -f1)"
-  assert_not_contains "${ids}" "script.plexmod" "PM4K is not silently substituted"
-  assert_not_contains "${ids}" "weather.ha" "weather.ha is not silently substituted"
+  assert_contains "${ids}" "script.plexmod" "PM4K is locked, not absent"
+  assert_contains "${ids}" "weather.ha" "Home Assistant Weather is locked, not absent"
 }
 
 run_all_tests \
@@ -380,7 +437,8 @@ run_all_tests \
   test_production_config_sets_pacific_english_us_baseline \
   test_production_config_carries_no_secret_values \
   test_production_config_locks_primary_addon_versions \
-  test_production_config_locks_the_complete_dependency_closure \
+  test_production_config_matches_the_reviewed_artifact_id_set \
+  test_production_config_records_immutable_upstream_sources \
   test_production_config_records_each_artifact_exactly_once \
   test_production_config_artifact_records_are_well_formed \
-  test_production_config_documents_unresolvable_pins
+  test_production_config_has_no_blocked_pins

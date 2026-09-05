@@ -146,6 +146,20 @@ test_artifact_record_still_rejects_shell_metacharacters_in_version() {
   assert_contains "${output}" "version" "error names the version field"
 }
 
+# A leading "~" sorts below every other Kodi version, so a record starting with
+# it is a downgrade trap rather than a real published version. It is rejected
+# for the same reason a leading "-" is.
+test_artifact_record_rejects_version_starting_with_tilde() {
+  local rc output sha256
+  sha256="$(printf 'a%.0s' {1..64})"
+  set +e
+  output="$(coreelec_artifact_parse "plugin.video.fixture|~1.2.3|https://example.test/a.zip|${sha256}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "version starting with ~ must be rejected"
+  assert_contains "${output}" "version" "error names the version field"
+}
+
 # --- Download-and-validate pipeline tests -----------------------------------
 
 test_matching_checksum_id_and_version_pass() {
@@ -345,6 +359,7 @@ run_all_tests \
   test_artifact_record_rejects_invalid_sha256 \
   test_artifact_record_accepts_kodi_version_punctuation \
   test_artifact_record_still_rejects_shell_metacharacters_in_version \
+  test_artifact_record_rejects_version_starting_with_tilde \
   test_matching_checksum_id_and_version_pass \
   test_checksum_mismatch_fails \
   test_addon_id_mismatch_fails \
