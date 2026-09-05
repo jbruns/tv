@@ -91,6 +91,9 @@ cleanup() {
   if [[ -n "${TASK_TEMP_DIR}" && -f "${TASK_TEMP_DIR}/kodi-response.json" ]]; then
     rm -f -- "${TASK_TEMP_DIR}/kodi-response.json"
   fi
+  if [[ -n "${TASK_TEMP_DIR}" && -d "${TASK_TEMP_DIR}/artifacts" ]]; then
+    rm -rf -- "${TASK_TEMP_DIR}/artifacts"
+  fi
   if [[ -n "${TASK_TEMP_DIR}" && -d "${TASK_TEMP_DIR}" ]]; then
     rmdir "${TASK_TEMP_DIR}" 2>/dev/null || true
   fi
@@ -108,6 +111,8 @@ require_command() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/coreelec-config.sh
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
+# shellcheck source=lib/coreelec-artifacts.sh
+source "${SCRIPT_DIR}/lib/coreelec-artifacts.sh"
 
 # Precedence: built-in safe defaults, then the selected configuration file,
 # then explicit CLI options, then secret environment variables (checked by
@@ -238,7 +243,14 @@ if [[ "${CHECK_CONFIG}" == "1" || "${CHECK_ARTIFACTS}" == "1" ]]; then
   coreelec_config_validate
   info "Configuration OK: ${CONFIG_FILE}"
   if [[ "${CHECK_ARTIFACTS}" == "1" ]]; then
-    info "Artifact download and validation are not implemented in this version."
+    require_command curl
+    require_command shasum
+    require_command unzip
+    require_command xmllint
+    TASK_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/coreelec-provision.XXXXXX")"
+    chmod 700 "${TASK_TEMP_DIR}"
+    coreelec_artifacts_download_and_validate "${TASK_TEMP_DIR}/artifacts"
+    info "Artifacts OK: ${#ADDON_ARTIFACTS[@]} artifact(s) downloaded, checksum-verified, and inspected"
   fi
   exit 0
 fi
