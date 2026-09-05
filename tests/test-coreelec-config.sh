@@ -206,6 +206,163 @@ test_missing_optional_secrets_are_allowed() {
   assert_success "${rc}" "missing optional secrets must be allowed"
 }
 
+# --- Production configuration ----------------------------------------------
+
+PRODUCTION_CONFIG="${SCRIPT_DIR}/../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf"
+
+# The complete locked artifact set: the selected add-ons, the three
+# repository add-ons, and every transitive dependency that Kodi 21 does not
+# already bundle. Kodi's own bundled add-ons (script.module.pil,
+# script.module.pycryptodome, resource.language.en_gb, ...) are deliberately
+# absent; see system/addon-manifest.xml in xbmc/xbmc @ Omega.
+expected_artifact_ids() {
+  cat <<'IDS'
+inputstream.adaptive
+inputstream.ffmpegdirect
+plugin.service.emby-next-gen
+plugin.video.themoviedb.helper
+plugin.video.youtube
+pvr.nextpvr
+repository.beta.emby.kodi
+repository.dontpanic
+repository.jurialmunkey
+resource.font.robotocjksc
+resource.images.studios.coloured
+resource.images.weathericons.white
+resource.language.en_us
+script.module.addon.signals
+script.module.certifi
+script.module.chardet
+script.module.idna
+script.module.infotagger
+script.module.inputstreamhelper
+script.module.jurialmunkey
+script.module.pysocks
+script.module.qrcode
+script.module.requests
+script.module.six
+script.module.urllib3
+script.skinvariables
+script.texturemaker
+skin.arctic.fuse.3
+IDS
+}
+
+# Prints "id<TAB>version" for every ADDON_ARTIFACT record currently loaded.
+artifact_id_versions() {
+  local record
+  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+    printf '%s\t%s\n' "${record%%|*}" "$(cut -d'|' -f2 <<< "${record}")"
+  done
+}
+
+assert_artifact_version() {
+  local id="$1" version="$2" pairs
+  pairs="$(artifact_id_versions)"
+  assert_contains "${pairs}" "$(printf '%s\t%s' "${id}" "${version}")" \
+    "${id} is locked at ${version}"
+}
+
+test_production_config_sets_pacific_english_us_baseline() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  assert_eq "21.3" "${EXPECTED_RELEASE}" "EXPECTED_RELEASE"
+  assert_eq "United States" "${TIMEZONE_COUNTRY}" "TIMEZONE_COUNTRY"
+  assert_eq "America/Los_Angeles" "${TIMEZONE}" "TIMEZONE"
+  assert_eq "resource.language.en_us" "${LOCALE_LANGUAGE}" "LOCALE_LANGUAGE"
+  assert_eq "USA (12h)" "${LOCALE_COUNTRY}" "LOCALE_COUNTRY"
+  assert_eq "English QWERTY" "${KEYBOARD_LAYOUT}" "KEYBOARD_LAYOUT"
+  assert_eq "notify" "${ADDON_UPDATE_MODE}" "ADDON_UPDATE_MODE"
+}
+
+test_production_config_carries_no_secret_values() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  local rc
+  set +e
+  (
+    unset OMDB_API_KEY MDBLIST_API_KEY YOUTUBE_API_KEY YOUTUBE_CLIENT_ID \
+      YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN 2>/dev/null
+    coreelec_config_validate
+  )
+  rc=$?
+  set -e
+  assert_success "${rc}" "production config validates with no secrets present"
+}
+
+test_production_config_locks_primary_addon_versions() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  assert_artifact_version "plugin.service.emby-next-gen" "12.4.23"
+  assert_artifact_version "plugin.video.youtube" "7.4.4"
+  assert_artifact_version "skin.arctic.fuse.3" "3.2.16"
+  assert_artifact_version "plugin.video.themoviedb.helper" "6.17.1"
+  assert_artifact_version "resource.language.en_us" "11.0.82"
+  # CoreELEC republishes upstream pvr.nextpvr 21.3.2-Omega for Amlogic-ne
+  # aarch64 with its own packaging revision appended (PKG_REV=1), so the
+  # addon.xml on this platform declares 21.3.2.1. The Kodi Omega mirror
+  # publishes no Linux/aarch64 build at all.
+  assert_artifact_version "pvr.nextpvr" "21.3.2.1"
+}
+
+test_production_config_locks_the_complete_dependency_closure() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  local expected actual
+  expected="$(expected_artifact_ids | LC_ALL=C sort)"
+  actual="$(artifact_id_versions | cut -f1 | LC_ALL=C sort)"
+  assert_eq "${expected}" "${actual}" "locked artifact ID set"
+}
+
+test_production_config_records_each_artifact_exactly_once() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  local duplicates
+  duplicates="$(artifact_id_versions | cut -f1 | LC_ALL=C sort | uniq -d)"
+  assert_eq "" "${duplicates}" "no artifact ID appears twice"
+  assert_eq "28" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
+}
+
+test_production_config_artifact_records_are_well_formed() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  # shellcheck source=lib/coreelec-artifacts.sh
+  source "${SCRIPT_DIR}/../lib/coreelec-artifacts.sh"
+  local record
+  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+    coreelec_artifact_parse "${record}" || return 1
+    case "${ARTIFACT_URL}" in
+      https://*"${ARTIFACT_VERSION}"*) ;;
+      *)
+        printf 'artifact URL is not version-pinned: %s\n' "${ARTIFACT_URL}" >&2
+        return 1
+        ;;
+    esac
+    if [[ "${ARTIFACT_SHA256}" != "$(tr 'A-Z' 'a-z' <<< "${ARTIFACT_SHA256}")" ]]; then
+      printf 'artifact checksum is not lowercase: %s\n' "${ARTIFACT_ID}" >&2
+      return 1
+    fi
+  done
+}
+
+# script.plexmod 1.14.1-beta1 and weather.ha 0.0.6.6 exist only as unreleased
+# upstream source; neither is published as a versioned, checksummable add-on
+# ZIP. They stay out of the locked set until a canonical artifact exists, and
+# the file must say so rather than silently substituting another version.
+test_production_config_documents_unresolvable_pins() {
+  local body
+  body="$(cat "${PRODUCTION_CONFIG}")"
+  assert_contains "${body}" "BLOCKED" "blocked pins are called out"
+  assert_contains "${body}" "script.plexmod" "PM4K blocker is recorded"
+  assert_contains "${body}" "weather.ha" "Home Assistant Weather blocker is recorded"
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  local ids
+  ids="$(artifact_id_versions | cut -f1)"
+  assert_not_contains "${ids}" "script.plexmod" "PM4K is not silently substituted"
+  assert_not_contains "${ids}" "weather.ha" "weather.ha is not silently substituted"
+}
+
 run_all_tests \
   test_defaults_are_pacific_english_us \
   test_comments_blank_lines_and_values_are_parsed \
@@ -219,4 +376,11 @@ run_all_tests \
   test_target_is_not_loaded_from_shared_config \
   test_partial_youtube_credentials_are_rejected \
   test_service_secret_without_endpoint_is_rejected \
-  test_missing_optional_secrets_are_allowed
+  test_missing_optional_secrets_are_allowed \
+  test_production_config_sets_pacific_english_us_baseline \
+  test_production_config_carries_no_secret_values \
+  test_production_config_locks_primary_addon_versions \
+  test_production_config_locks_the_complete_dependency_closure \
+  test_production_config_records_each_artifact_exactly_once \
+  test_production_config_artifact_records_are_well_formed \
+  test_production_config_documents_unresolvable_pins

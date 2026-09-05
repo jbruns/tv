@@ -119,6 +119,33 @@ test_artifact_record_rejects_invalid_sha256() {
   assert_contains "${output}" "SHA-256" "error mentions SHA-256"
 }
 
+# Real Kodi add-on versions carry build/pre-release punctuation: the official
+# repository publishes script.module.six 1.16.0+matrix.1 and jurialmunkey
+# publishes skin.arctic.horizon.2 0.8.30~omega. Both must round-trip.
+test_artifact_record_accepts_kodi_version_punctuation() {
+  local sha256
+  sha256="$(printf 'a%.0s' {1..64})"
+  coreelec_artifact_parse \
+    "script.module.six|1.16.0+matrix.1|https://example.test/six.zip|${sha256}" \
+    || return 1
+  assert_eq "1.16.0+matrix.1" "${ARTIFACT_VERSION}" "build metadata version preserved"
+  coreelec_artifact_parse \
+    "skin.arctic.horizon.2|0.8.30~omega|https://example.test/ah2.zip|${sha256}" \
+    || return 1
+  assert_eq "0.8.30~omega" "${ARTIFACT_VERSION}" "pre-release version preserved"
+}
+
+test_artifact_record_still_rejects_shell_metacharacters_in_version() {
+  local rc output sha256
+  sha256="$(printf 'a%.0s' {1..64})"
+  set +e
+  output="$(coreelec_artifact_parse "plugin.video.fixture|1.2.3\$(id)|https://example.test/a.zip|${sha256}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "version containing shell syntax must be rejected"
+  assert_contains "${output}" "version" "error names the version field"
+}
+
 # --- Download-and-validate pipeline tests -----------------------------------
 
 test_matching_checksum_id_and_version_pass() {
@@ -316,6 +343,8 @@ run_all_tests \
   test_artifact_record_requires_four_fields \
   test_artifact_record_rejects_non_https_url \
   test_artifact_record_rejects_invalid_sha256 \
+  test_artifact_record_accepts_kodi_version_punctuation \
+  test_artifact_record_still_rejects_shell_metacharacters_in_version \
   test_matching_checksum_id_and_version_pass \
   test_checksum_mismatch_fails \
   test_addon_id_mismatch_fails \
