@@ -53,6 +53,13 @@ Options:
   --version                 Print script version
   -h, --help                Show this help
 
+Internal:
+  --transform-fixture ROOT PAYLOAD
+                            Apply the Kodi/add-on settings transformer to ROOT
+                             using a base64 KEY=value payload file, then exit.
+                             Used by tests/test-coreelec-settings.sh; it never
+                             contacts a device.
+
 Example:
   ./provision-coreelec.sh --target 172.16.99.50 --with-youtube
 
@@ -114,6 +121,365 @@ source "${SCRIPT_DIR}/lib/coreelec-config.sh"
 # shellcheck source=lib/coreelec-artifacts.sh
 source "${SCRIPT_DIR}/lib/coreelec-artifacts.sh"
 
+# --- Kodi and add-on settings transformer -----------------------------------
+#
+# The transformer below is a single Python program used unchanged in two
+# places: piped to python3 on the CoreELEC device while Kodi is stopped, and
+# run locally against a scratch directory by the internal
+# `--transform-fixture ROOT PAYLOAD` test mode. Keeping one copy is what makes
+# the offline tests evidence about the remote behavior.
+#
+# It reads a mode-0600 payload of `KEY=base64(value)` lines. Base64 keeps
+# whitespace, newlines, quotes, and JSON out of the line grammar entirely, and
+# decoding happens only inside the Python process. Each optional secret also
+# carries its own `HAVE_<KEY>` presence flag, so an absent secret is never
+# inferred from an empty string.
+#
+# These definitions must precede the configuration pre-scan below, because the
+# pre-scan dispatches `--transform-fixture` before any configuration file is
+# read.
+
+coreelec_settings_transformer_source() {
+  cat <<'PYTHON_TRANSFORMER_SOURCE'
+"""Idempotent CoreELEC/Kodi settings transformer.
+
+Usage: python3 - STORAGE_ROOT PAYLOAD_PATH
+
+Every managed value is written through a temporary file and an atomic rename.
+Unmanaged settings are preserved, duplicate managed settings are collapsed,
+managed entries are applied in a deterministic order, and a second run over an
+unchanged payload produces byte-identical files.
+"""
+
+import base64
+import json
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+SKIN_ID = "skin.arctic.fuse.3"
+WEATHER_ADDON_ID = "weather.ha"
+YOUTUBE_CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
+
+WRITTEN_PATHS = []
+ADDON_DOCUMENTS = {}
+
+
+def fail(message):
+    raise SystemExit("settings transformer: " + message)
+
+
+def read_payload(path):
+    """Parses `KEY=base64(value)` lines. Never echoes a decoded value."""
+    values = {}
+    with open(path, "r", encoding="utf-8") as handle:
+        for number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip("\n")
+            if not line:
+                continue
+            key, separator, encoded = line.partition("=")
+            if not separator or not key:
+                fail("payload line %d is not KEY=value" % number)
+            try:
+                decoded = base64.b64decode(encoded.encode("ascii"),
+                                           validate=True)
+                values[key] = decoded.decode("utf-8")
+            except Exception:
+                fail("payload line %d (%s) is not valid base64 UTF-8"
+                     % (number, key))
+    return values
+
+
+def _atomic_write(path, data, mode):
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    temporary = path + ".provision-new"
+    with open(temporary, "wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+    WRITTEN_PATHS.append(path)
+
+
+def write_text_atomic(path, value, mode=0o600):
+    _atomic_write(path, value.encode("utf-8"), mode)
+
+
+def write_json_atomic(path, value):
+    """Matches the add-on convention of sorted, four-space JSON."""
+    body = json.dumps(value, ensure_ascii=False, indent=4, sort_keys=True)
+    write_text_atomic(path, body + "\n", 0o600)
+
+
+def write_xml_atomic(path, tree, mode=0o600):
+    if hasattr(ET, "indent"):
+        ET.indent(tree, space="    ")
+    body = ET.tostring(tree.getroot(), encoding="UTF-8", xml_declaration=True)
+    if not body.endswith(b"\n"):
+        body += b"\n"
+    _atomic_write(path, body, mode)
+
+
+def _setting_nodes(root, setting_id):
+    """Every matching node with its parent, including the legacy
+    `<category>` nesting that old-format settings files may still carry."""
+    found = []
+    parents = [root]
+    parents.extend(root.findall("category"))
+    for parent in parents:
+        for node in parent.findall("setting"):
+            if node.get("id") == setting_id:
+                found.append((parent, node))
+    return found
+
+
+def _set_xml_setting(root, setting_id, value, flat):
+    nodes = _setting_nodes(root, setting_id)
+    if nodes:
+        node = nodes[0][1]
+        for duplicate_parent, duplicate in nodes[1:]:
+            duplicate_parent.remove(duplicate)
+    else:
+        node = ET.SubElement(root, "setting", {"id": setting_id})
+    node.attrib.pop("default", None)
+    if flat:
+        node.text = None
+        node.set("value", value)
+    else:
+        node.attrib.pop("value", None)
+        node.text = value
+    return node
+
+
+def set_kodi_setting(root, setting_id, value):
+    """Sets one Kodi guisettings value on an already-loaded document root."""
+    return _set_xml_setting(root, setting_id, value, flat=False)
+
+
+def set_addon_setting(path, setting_id, value, version=2):
+    """Sets one add-on setting in the document for `path`.
+
+    version=2 uses Kodi's current `<setting id="x">value</setting>` form.
+    version=1 uses the old flat `<setting id="x" value="y" />` form, which is
+    what add-ons whose settings definition carries no version attribute (such
+    as weather.ha) are loaded with. Documents are committed together by
+    commit_addon_settings() so each file is written exactly once.
+    """
+    document = ADDON_DOCUMENTS.get(path)
+    if document is None:
+        if os.path.exists(path):
+            tree = ET.parse(path)
+            root = tree.getroot()
+            if root.tag != "settings":
+                fail("unexpected root element in %s" % path)
+        else:
+            attributes = {} if version == 1 else {"version": "2"}
+            root = ET.Element("settings", attributes)
+            tree = ET.ElementTree(root)
+        document = (tree, root)
+        ADDON_DOCUMENTS[path] = document
+    return _set_xml_setting(document[1], setting_id, value,
+                            flat=(version == 1))
+
+
+def commit_addon_settings():
+    for path in sorted(ADDON_DOCUMENTS):
+        write_xml_atomic(path, ADDON_DOCUMENTS[path][0])
+
+
+def load_kodi_settings(path):
+    if os.path.exists(path):
+        tree = ET.parse(path)
+        root = tree.getroot()
+        if root.tag != "settings":
+            fail("unexpected root element in %s" % path)
+        return tree, root
+    root = ET.Element("settings", {"version": "2"})
+    return ET.ElementTree(root), root
+
+
+def main(argv):
+    if len(argv) != 3:
+        fail("usage: STORAGE_ROOT PAYLOAD_PATH")
+    storage_root, payload_path = argv[1], argv[2]
+
+    payload = read_payload(payload_path)
+
+    def config(key, default=""):
+        return payload.get(key, default)
+
+    def have(key):
+        return payload.get("HAVE_" + key, "0") == "1"
+
+    def secret(key):
+        return config(key) if have(key) else ""
+
+    userdata = os.path.join(storage_root, ".kodi", "userdata")
+    addon_data = os.path.join(userdata, "addon_data")
+
+    def addon_file(addon_id, name):
+        return os.path.join(addon_data, addon_id, name)
+
+    youtube_configured = (have("YOUTUBE_API_KEY")
+                          and have("YOUTUBE_CLIENT_ID")
+                          and have("YOUTUBE_CLIENT_SECRET"))
+    weather_configured = bool(config("HOME_ASSISTANT_URL")
+                              and config("HOME_ASSISTANT_WEATHER_ENTITY")
+                              and have("HOME_ASSISTANT_TOKEN"))
+    nextpvr_configured = bool(config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
+    plex_configured = bool(config("PLEX_SERVER_HOST") and have("PLEX_TOKEN"))
+
+    # --- Kodi guisettings ---------------------------------------------------
+    kodi_values = {
+        "general.addonupdates":
+            "0" if config("ADDON_UPDATE_MODE") == "auto" else "1",
+        "locale.country": config("LOCALE_COUNTRY"),
+        "locale.keyboardlayouts": config("KEYBOARD_LAYOUT"),
+        "locale.language": config("LOCALE_LANGUAGE"),
+        "locale.timezone": config("TIMEZONE"),
+        "locale.timezonecountry": config("TIMEZONE_COUNTRY"),
+        "lookandfeel.skin": SKIN_ID,
+        "videoplayer.adjustrefreshrate": "2",
+        "videoplayer.usedisplayasclock": "false",
+    }
+    if have("KODI_WEB_PASSWORD"):
+        kodi_values.update({
+            "services.esallinterfaces": "false",
+            "services.esenabled": "true",
+            "services.webserver": "true",
+            "services.webserverauthentication": "true",
+            "services.webserverpassword": secret("KODI_WEB_PASSWORD"),
+            "services.webserverport": config("KODI_WEB_PORT"),
+            "services.webserverssl": "false",
+            "services.webserverusername": config("KODI_WEB_USER"),
+        })
+    if weather_configured:
+        kodi_values["weather.addon"] = WEATHER_ADDON_ID
+
+    guisettings_path = os.path.join(userdata, "guisettings.xml")
+    guisettings_tree, guisettings_root = load_kodi_settings(guisettings_path)
+    for setting_id in sorted(kodi_values):
+        value = kodi_values[setting_id]
+        if value == "":
+            continue
+        set_kodi_setting(guisettings_root, setting_id, value)
+    write_xml_atomic(guisettings_path, guisettings_tree)
+
+    # --- YouTube ------------------------------------------------------------
+    youtube_settings = addon_file("plugin.video.youtube", "settings.xml")
+    set_addon_setting(youtube_settings, "kodion.setup_wizard", "false")
+    set_addon_setting(youtube_settings, "youtube.language", "en-US")
+    set_addon_setting(youtube_settings, "youtube.region", "US")
+    if youtube_configured:
+        # The add-on strips whitespace and the Google domain suffix itself;
+        # storing the already-stripped values keeps it from rewriting the file.
+        api_key = "".join(secret("YOUTUBE_API_KEY").split())
+        client_id = "".join(secret("YOUTUBE_CLIENT_ID").split())
+        client_id = client_id.replace(YOUTUBE_CLIENT_ID_SUFFIX, "")
+        client_secret = "".join(secret("YOUTUBE_CLIENT_SECRET").split())
+        write_json_atomic(
+            addon_file("plugin.video.youtube", "api_keys.json"),
+            {
+                "keys": {
+                    "developer": {},
+                    "user": {
+                        "api_key": api_key,
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                    },
+                },
+            },
+        )
+
+    # --- TMDb Helper --------------------------------------------------------
+    # OMDb and MDbList keys belong to TMDb Helper only, never to the skin.
+    tmdb_settings = addon_file("plugin.video.themoviedb.helper", "settings.xml")
+    if have("MDBLIST_API_KEY"):
+        set_addon_setting(tmdb_settings, "mdblist_apikey",
+                          secret("MDBLIST_API_KEY"))
+    if have("OMDB_API_KEY"):
+        set_addon_setting(tmdb_settings, "omdb_apikey", secret("OMDB_API_KEY"))
+
+    # --- NextPVR ------------------------------------------------------------
+    # Kodi 21 has no pvrmanager.enabled setting: the PVR manager starts from an
+    # enabled client instance, so instance-settings-1.xml carries the enable.
+    if nextpvr_configured:
+        instance = addon_file("pvr.nextpvr", "instance-settings-1.xml")
+        set_addon_setting(instance, "host", config("NEXTPVR_HOST"))
+        set_addon_setting(instance, "hostprotocol",
+                          config("NEXTPVR_PROTOCOL") or "http")
+        set_addon_setting(instance, "kodi_addon_instance_enabled", "true")
+        set_addon_setting(instance, "kodi_addon_instance_name",
+                          config("NEXTPVR_INSTANCE_NAME") or "NextPVR")
+        set_addon_setting(instance, "pin", secret("NEXTPVR_PIN"))
+        set_addon_setting(instance, "port", config("NEXTPVR_PORT") or "8866")
+
+    # --- PM4K local mode ----------------------------------------------------
+    if plex_configured:
+        plex_settings = addon_file("script.plexmod", "settings.xml")
+        try:
+            port = int(config("PLEX_SERVER_PORT") or "32400")
+        except ValueError:
+            fail("PLEX_SERVER_PORT is not numeric")
+        server = {
+            "connection": config("PLEX_SERVER_HOST"),
+            "port": port,
+            "token": secret("PLEX_TOKEN"),
+            "name": config("PLEX_SERVER_NAME") or None,
+        }
+        set_addon_setting(plex_settings, "allow_insecure", "always")
+        set_addon_setting(plex_settings, "local_mode", "true")
+        set_addon_setting(plex_settings, "local_servers_json",
+                          json.dumps([server], sort_keys=True))
+        profiles = [entry for entry in config("PLEX_PROFILE_IDS").split(",")
+                    if entry]
+        if profiles:
+            set_addon_setting(plex_settings, "local_profiles_json",
+                              json.dumps(profiles))
+
+    # --- Home Assistant Weather --------------------------------------------
+    if weather_configured:
+        weather_settings = addon_file(WEATHER_ADDON_ID, "settings.xml")
+        set_addon_setting(weather_settings, "ha_key",
+                          secret("HOME_ASSISTANT_TOKEN"), version=1)
+        set_addon_setting(weather_settings, "ha_server",
+                          config("HOME_ASSISTANT_URL"), version=1)
+        set_addon_setting(weather_settings, "ha_weather_forecast_entity_id",
+                          config("HOME_ASSISTANT_WEATHER_ENTITY"), version=1)
+        if config("HOME_ASSISTANT_SUN_ENTITY"):
+            set_addon_setting(weather_settings, "ha_sun_entity_id",
+                              config("HOME_ASSISTANT_SUN_ENTITY"), version=1)
+
+    commit_addon_settings()
+
+    # --- CoreELEC timezone cache -------------------------------------------
+    # Kodi's CoreELEC patch writes this file when the timezone changes through
+    # the UI; offline edits must write it explicitly. It holds no secret.
+    if config("TIMEZONE"):
+        write_text_atomic(os.path.join(storage_root, ".cache", "timezone"),
+                          "TIMEZONE=%s\n" % config("TIMEZONE"), mode=0o644)
+
+    for path in WRITTEN_PATHS:
+        sys.stdout.write("settings applied: %s\n" % path)
+
+
+main(sys.argv)
+PYTHON_TRANSFORMER_SOURCE
+}
+
+# Internal test entry point: applies the transformer to a scratch root.
+coreelec_settings_transform_fixture() {
+  local root="$1" payload="$2"
+  [[ -n "${root}" ]] || die "--transform-fixture requires a root directory"
+  [[ -r "${payload}" ]] || die "--transform-fixture payload is not readable: ${payload}"
+  require_command python3
+  mkdir -p "${root}"
+  coreelec_settings_transformer_source | python3 - "${root}" "${payload}"
+}
+
 # Precedence: built-in safe defaults, then the selected configuration file,
 # then explicit CLI options, then secret environment variables (checked by
 # coreelec_config_validate). --config is parsed here in a lightweight,
@@ -132,6 +498,14 @@ while (( config_scan_index < ${#config_scan_args[@]} )); do
       ;;
     --version)
       printf '%s\n' "${SCRIPT_VERSION}"
+      exit 0
+      ;;
+    --transform-fixture)
+      (( config_scan_index + 2 < ${#config_scan_args[@]} )) \
+        || die "--transform-fixture requires ROOT and PAYLOAD"
+      coreelec_settings_transform_fixture \
+        "${config_scan_args[$((config_scan_index + 1))]}" \
+        "${config_scan_args[$((config_scan_index + 2))]}"
       exit 0
       ;;
     --config)
@@ -453,6 +827,13 @@ copy_one /storage/.kodi/userdata/guisettings.xml
 copy_one /storage/.kodi/userdata/advancedsettings.xml
 copy_one /storage/.kodi/userdata/sources.xml
 copy_one /storage/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml
+copy_one /storage/.cache/timezone
+copy_one /storage/.kodi/userdata/addon_data/plugin.video.youtube/settings.xml
+copy_one /storage/.kodi/userdata/addon_data/plugin.video.youtube/api_keys.json
+copy_one /storage/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
+copy_one /storage/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
+copy_one /storage/.kodi/userdata/addon_data/script.plexmod/settings.xml
+copy_one /storage/.kodi/userdata/addon_data/weather.ha/settings.xml
 
 {
   printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -521,101 +902,113 @@ prepare_kodi_password() {
   info "Generated the Kodi/Home Assistant password and stored it in macOS Keychain"
 }
 
-upload_kodi_config_payload() {
-  {
-    printf 'KODI_WEB_USER=%s\n' "${KODI_USER}"
-    printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
-    printf 'KODI_WEB_PORT=%s\n' "${KODI_PORT}"
-  } | ssh_keyed 'sh -c '\''
+coreelec_settings_payload_entry() {
+  # Values are encoded by a shell builtin piped into openssl, so no secret is
+  # ever visible in a process argument list or in the shell's history.
+  local key="$1" value="$2"
+  printf '%s=%s\n' "${key}" "$(printf '%s' "${value}" | openssl base64 -A)"
+}
+
+coreelec_settings_payload_secret() {
+  # Presence is recorded separately so the transformer never has to infer
+  # "absent" from an empty decoded string.
+  local key="$1" value="$2" present="0"
+  [[ -n "${value}" ]] && present="1"
+  coreelec_settings_payload_entry "HAVE_${key}" "${present}"
+  if [[ "${present}" == "1" ]]; then
+    coreelec_settings_payload_entry "${key}" "${value}"
+  fi
+  return 0
+}
+
+coreelec_settings_payload() {
+  coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
+  coreelec_settings_payload_entry TIMEZONE_COUNTRY "${TIMEZONE_COUNTRY}"
+  coreelec_settings_payload_entry LOCALE_LANGUAGE "${LOCALE_LANGUAGE}"
+  coreelec_settings_payload_entry LOCALE_COUNTRY "${LOCALE_COUNTRY}"
+  coreelec_settings_payload_entry KEYBOARD_LAYOUT "${KEYBOARD_LAYOUT}"
+  coreelec_settings_payload_entry ADDON_UPDATE_MODE "${ADDON_UPDATE_MODE}"
+  coreelec_settings_payload_entry KODI_WEB_USER "${KODI_USER}"
+  coreelec_settings_payload_entry KODI_WEB_PORT "${KODI_PORT}"
+  coreelec_settings_payload_entry HOME_ASSISTANT_URL "${HOME_ASSISTANT_URL}"
+  coreelec_settings_payload_entry HOME_ASSISTANT_WEATHER_ENTITY "${HOME_ASSISTANT_WEATHER_ENTITY}"
+  coreelec_settings_payload_entry HOME_ASSISTANT_SUN_ENTITY "${HOME_ASSISTANT_SUN_ENTITY}"
+  coreelec_settings_payload_entry NEXTPVR_HOST "${NEXTPVR_HOST}"
+  coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
+  coreelec_settings_payload_entry NEXTPVR_PROTOCOL "${NEXTPVR_PROTOCOL}"
+  coreelec_settings_payload_entry NEXTPVR_INSTANCE_NAME "${NEXTPVR_INSTANCE_NAME}"
+  coreelec_settings_payload_entry PLEX_SERVER_HOST "${PLEX_SERVER_HOST}"
+  coreelec_settings_payload_entry PLEX_SERVER_PORT "${PLEX_SERVER_PORT}"
+  coreelec_settings_payload_entry PLEX_SERVER_NAME "${PLEX_SERVER_NAME}"
+  coreelec_settings_payload_entry PLEX_PROFILE_IDS "${PLEX_PROFILE_IDS}"
+
+  coreelec_settings_payload_secret KODI_WEB_PASSWORD "${KODI_WEB_PASSWORD}"
+  coreelec_settings_payload_secret OMDB_API_KEY "${OMDB_API_KEY:-}"
+  coreelec_settings_payload_secret MDBLIST_API_KEY "${MDBLIST_API_KEY:-}"
+  coreelec_settings_payload_secret YOUTUBE_API_KEY "${YOUTUBE_API_KEY:-}"
+  coreelec_settings_payload_secret YOUTUBE_CLIENT_ID "${YOUTUBE_CLIENT_ID:-}"
+  coreelec_settings_payload_secret YOUTUBE_CLIENT_SECRET "${YOUTUBE_CLIENT_SECRET:-}"
+  coreelec_settings_payload_secret HOME_ASSISTANT_TOKEN "${HOME_ASSISTANT_TOKEN:-}"
+  coreelec_settings_payload_secret NEXTPVR_PIN "${NEXTPVR_PIN:-}"
+  coreelec_settings_payload_secret PLEX_TOKEN "${PLEX_TOKEN:-}"
+}
+
+upload_kodi_settings_payload() {
+  # The payload is streamed over the existing SSH channel into a mode-0600
+  # file, and the remote trap removes it even if the transformer fails.
+  coreelec_settings_payload | ssh_keyed 'sh -c '\''
     set -eu
     umask 077
     mkdir -p /storage/.cache/coreelec-provision
-    cat > /storage/.cache/coreelec-provision/kodi-web.conf
-    chmod 600 /storage/.cache/coreelec-provision/kodi-web.conf
+    chmod 700 /storage/.cache/coreelec-provision
+    cat > /storage/.cache/coreelec-provision/settings-payload.conf
+    chmod 600 /storage/.cache/coreelec-provision/settings-payload.conf
   '\'''
+}
+
+coreelec_remote_settings_script() {
+  cat <<'REMOTE_SETTINGS_PROLOGUE'
+set -eu
+payload_file=/storage/.cache/coreelec-provision/settings-payload.conf
+
+cleanup_remote_payload() {
+  rm -f "${payload_file}"
+  systemctl start kodi.service >/dev/null 2>&1 || true
+}
+trap cleanup_remote_payload EXIT HUP INT TERM
+
+# Kodi rewrites guisettings.xml from memory when it exits, so it has to be
+# stopped before the files are edited or the changes would be discarded.
+systemctl stop kodi.service >/dev/null 2>&1 || true
+
+python3 - /storage "${payload_file}" <<'PYTHON_KODI_SETTINGS'
+REMOTE_SETTINGS_PROLOGUE
+
+  coreelec_settings_transformer_source
+
+  cat <<'REMOTE_SETTINGS_EPILOGUE'
+PYTHON_KODI_SETTINGS
+
+systemctl restart tz-data.service >/dev/null 2>&1 || true
+systemctl start kodi.service
+rm -f "${payload_file}"
+trap - EXIT HUP INT TERM
+REMOTE_SETTINGS_EPILOGUE
 }
 
 apply_kodi_baseline() {
   info "Applying the reversible Kodi and Home Assistant baseline"
-  upload_kodi_config_payload
+  upload_kodi_settings_payload
 
-  ssh_keyed 'sh -s' <<'REMOTE_KODI_CONFIG'
-set -eu
-config_file=/storage/.cache/coreelec-provision/kodi-web.conf
+  # Only the names of the configured integrations are logged; a value that
+  # came from a secret environment variable is never printed.
+  [[ -n "${YOUTUBE_API_KEY:-}" ]] && info "YouTube API credentials will be configured"
+  [[ -n "${OMDB_API_KEY:-}" || -n "${MDBLIST_API_KEY:-}" ]] && info "TMDb Helper metadata keys will be configured"
+  [[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && info "Home Assistant weather will be configured"
+  [[ -n "${NEXTPVR_PIN:-}" ]] && info "NextPVR client instance will be configured"
+  [[ -n "${PLEX_TOKEN:-}" ]] && info "PM4K local mode will be configured"
 
-cleanup_remote_config() {
-  rm -f "${config_file}"
-  systemctl start kodi.service >/dev/null 2>&1 || true
-}
-trap cleanup_remote_config EXIT HUP INT TERM
-
-systemctl stop kodi.service >/dev/null 2>&1 || true
-
-python3 - <<'PYTHON_KODI_SETTINGS'
-import os
-import xml.etree.ElementTree as ET
-
-config_path = "/storage/.cache/coreelec-provision/kodi-web.conf"
-settings_path = "/storage/.kodi/userdata/guisettings.xml"
-
-config = {}
-with open(config_path, "r", encoding="utf-8") as handle:
-    for raw_line in handle:
-        key, value = raw_line.rstrip("\n").split("=", 1)
-        config[key] = value
-
-if os.path.exists(settings_path):
-    tree = ET.parse(settings_path)
-    root = tree.getroot()
-else:
-    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-    root = ET.Element("settings", {"version": "2"})
-    tree = ET.ElementTree(root)
-
-values = (
-    ("services.webserver", "true"),
-    ("services.webserverport", config["KODI_WEB_PORT"]),
-    ("services.webserverauthentication", "true"),
-    ("services.webserverusername", config["KODI_WEB_USER"]),
-    ("services.webserverpassword", config["KODI_WEB_PASSWORD"]),
-    ("services.webserverssl", "false"),
-    ("services.esenabled", "true"),
-    ("services.esallinterfaces", "false"),
-    ("videoplayer.adjustrefreshrate", "2"),
-    ("videoplayer.usedisplayasclock", "false"),
-    ("general.addonupdates", "1"),
-)
-
-def set_setting(setting_id, value):
-    matches = [
-        node for node in root.findall("setting")
-        if node.get("id") == setting_id
-    ]
-    if matches:
-        node = matches[0]
-        for duplicate in matches[1:]:
-            root.remove(duplicate)
-    else:
-        node = ET.SubElement(root, "setting", {"id": setting_id})
-    node.attrib.pop("default", None)
-    node.text = value
-
-for identifier, configured_value in values:
-    set_setting(identifier, configured_value)
-
-if hasattr(ET, "indent"):
-    ET.indent(tree, space="    ")
-
-temporary_path = settings_path + ".provision-new"
-tree.write(temporary_path, encoding="UTF-8", xml_declaration=True)
-os.chmod(temporary_path, 0o600)
-os.replace(temporary_path, settings_path)
-PYTHON_KODI_SETTINGS
-
-systemctl start kodi.service
-rm -f "${config_file}"
-trap - EXIT HUP INT TERM
-REMOTE_KODI_CONFIG
+  coreelec_remote_settings_script | ssh_keyed 'sh -s'
 
   wait_for_kodi_jsonrpc
 }

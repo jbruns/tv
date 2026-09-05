@@ -1,0 +1,531 @@
+#!/bin/bash
+
+# Tests for the idempotent Kodi and add-on settings transformer.
+#
+# The transformer normally runs on the CoreELEC device against /storage. It is
+# exercised here through provision-coreelec.sh's internal
+# `--transform-fixture ROOT PAYLOAD` mode, which runs the exact same Python
+# program against a scratch directory. Assertions compare parsed XML/JSON
+# values rather than formatting, except where byte-for-byte stability is the
+# property under test.
+
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tests/test-helper.sh
+source "${SCRIPT_DIR}/test-helper.sh"
+
+PROVISIONER="${SCRIPT_DIR}/../provision-coreelec.sh"
+
+# --- Fixture helpers -------------------------------------------------------
+
+run_transform() {
+  local root="$1" payload="$2"
+  bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}"
+}
+
+# Appends one KEY=VALUE payload entry, base64-encoding the value exactly the
+# way provision-coreelec.sh does before transport.
+append_payload_entry() {
+  local file="$1" key="$2" value="$3"
+  printf '%s=%s\n' "${key}" "$(printf '%s' "${value}" | openssl base64 -A)" >> "${file}"
+}
+
+# Reads KEY=VALUE lines from stdin and writes an encoded payload file.
+write_payload() {
+  local file="$1" line key value
+  : > "${file}"
+  chmod 600 "${file}"
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    append_payload_entry "${file}" "${key}" "${value}"
+  done
+}
+
+# The non-secret regional baseline every run receives from the config file.
+write_base_payload() {
+  write_payload "$1" <<'ENTRIES'
+TIMEZONE=America/Los_Angeles
+TIMEZONE_COUNTRY=United States
+LOCALE_LANGUAGE=resource.language.en_us
+LOCALE_COUNTRY=USA (12h)
+KEYBOARD_LAYOUT=English QWERTY
+ADDON_UPDATE_MODE=notify
+ENTRIES
+}
+
+# Every managed value present, so each optional branch of the transformer runs.
+write_full_payload() {
+  write_payload "$1" <<'ENTRIES'
+TIMEZONE=America/Los_Angeles
+TIMEZONE_COUNTRY=United States
+LOCALE_LANGUAGE=resource.language.en_us
+LOCALE_COUNTRY=USA (12h)
+KEYBOARD_LAYOUT=English QWERTY
+ADDON_UPDATE_MODE=notify
+KODI_WEB_USER=homeassistant
+KODI_WEB_PORT=8080
+KODI_WEB_PASSWORD=kodi-web-password-secret
+HAVE_KODI_WEB_PASSWORD=1
+OMDB_API_KEY=omdb-api-key-secret
+HAVE_OMDB_API_KEY=1
+MDBLIST_API_KEY=mdblist-api-key-secret
+HAVE_MDBLIST_API_KEY=1
+YOUTUBE_API_KEY=youtube-api-key-secret
+HAVE_YOUTUBE_API_KEY=1
+YOUTUBE_CLIENT_ID=youtube-client-id-secret.apps.googleusercontent.com
+HAVE_YOUTUBE_CLIENT_ID=1
+YOUTUBE_CLIENT_SECRET=youtube-client-secret-secret
+HAVE_YOUTUBE_CLIENT_SECRET=1
+HOME_ASSISTANT_URL=https://homeassistant.example.lan:8123
+HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
+HOME_ASSISTANT_SUN_ENTITY=sun.sun
+HOME_ASSISTANT_TOKEN=home-assistant-token-secret
+HAVE_HOME_ASSISTANT_TOKEN=1
+NEXTPVR_HOST=nextpvr.example.lan
+NEXTPVR_PORT=8866
+NEXTPVR_PROTOCOL=http
+NEXTPVR_INSTANCE_NAME=Living Room NextPVR
+NEXTPVR_PIN=nextpvr-pin-secret
+HAVE_NEXTPVR_PIN=1
+PLEX_SERVER_HOST=plex.example.lan
+PLEX_SERVER_PORT=32400
+PLEX_SERVER_NAME=Basement Plex
+PLEX_PROFILE_IDS=11,22
+PLEX_TOKEN=plex-token-secret
+HAVE_PLEX_TOKEN=1
+ENTRIES
+}
+
+guisettings_path() {
+  printf '%s/.kodi/userdata/guisettings.xml' "$1"
+}
+
+addon_data_path() {
+  printf '%s/.kodi/userdata/addon_data/%s' "$1" "$2"
+}
+
+# Prints one setting's effective value, supporting both the current
+# `<setting id="x">value</setting>` form and the legacy `value="y"` attribute.
+xml_setting() {
+  python3 - "$1" "$2" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id = sys.argv[1], sys.argv[2]
+root = ET.parse(path).getroot()
+for node in root.iter("setting"):
+    if node.get("id") == setting_id:
+        attribute = node.get("value")
+        sys.stdout.write(attribute if attribute is not None else (node.text or ""))
+        break
+else:
+    sys.stderr.write("setting not found: %s in %s\n" % (setting_id, path))
+    raise SystemExit(3)
+PYEOF
+}
+
+xml_setting_count() {
+  python3 - "$1" "$2" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id = sys.argv[1], sys.argv[2]
+root = ET.parse(path).getroot()
+sys.stdout.write(str(sum(1 for node in root.iter("setting")
+                         if node.get("id") == setting_id)))
+PYEOF
+}
+
+xml_root_attribute() {
+  python3 - "$1" "$2" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, attribute = sys.argv[1], sys.argv[2]
+root = ET.parse(path).getroot()
+sys.stdout.write(root.get(attribute) or "")
+PYEOF
+}
+
+# True when the setting node stores its value in a `value` attribute, which is
+# what Kodi's old (unversioned) add-on settings format uses.
+xml_setting_uses_value_attribute() {
+  python3 - "$1" "$2" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id = sys.argv[1], sys.argv[2]
+root = ET.parse(path).getroot()
+for node in root.iter("setting"):
+    if node.get("id") == setting_id:
+        uses_attribute = (node.get("value") is not None
+                          and not (node.text or "").strip())
+        sys.stdout.write("yes" if uses_attribute else "no")
+        break
+else:
+    sys.stdout.write("missing")
+PYEOF
+}
+
+# Walks a JSON document by successive dictionary keys and prints the leaf,
+# canonicalized when it is not a plain string.
+json_path() {
+  local file="$1"
+  shift
+  python3 - "${file}" "$@" <<'PYEOF'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+for key in sys.argv[2:]:
+    data = data[key]
+sys.stdout.write(data if isinstance(data, str)
+                 else json.dumps(data, sort_keys=True))
+PYEOF
+}
+
+canonical_json() {
+  python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.load(sys.stdin), sort_keys=True))'
+}
+
+# A digest over every file path and its content, used to prove that a second
+# run rewrites nothing.
+tree_digest() {
+  local root="$1" file
+  (
+    cd "${root}"
+    find . -type f | LC_ALL=C sort | while IFS= read -r file; do
+      shasum -a 256 "${file}"
+    done
+  ) | shasum -a 256
+}
+
+seed_guisettings() {
+  local root="$1"
+  mkdir -p "${root}/.kodi/userdata"
+  cat > "$(guisettings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings version="2">
+    <setting id="audiooutput.channels">2</setting>
+    <setting id="locale.timezone">Europe/Berlin</setting>
+    <setting id="locale.timezone">Europe/Paris</setting>
+    <setting id="weather.addon">weather.gismeteo</setting>
+    <setting id="lookandfeel.skin" default="true">skin.estuary</setting>
+</settings>
+XML
+}
+
+# --- Regional baseline ------------------------------------------------------
+
+test_regional_settings_are_created() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "resource.language.en_us" "$(xml_setting "${settings}" locale.language)" "locale.language"
+  assert_eq "USA (12h)" "$(xml_setting "${settings}" locale.country)" "locale.country"
+  assert_eq "English QWERTY" "$(xml_setting "${settings}" locale.keyboardlayouts)" "locale.keyboardlayouts"
+  assert_eq "United States" "$(xml_setting "${settings}" locale.timezonecountry)" "locale.timezonecountry"
+  assert_eq "America/Los_Angeles" "$(xml_setting "${settings}" locale.timezone)" "locale.timezone"
+  assert_eq "skin.arctic.fuse.3" "$(xml_setting "${settings}" lookandfeel.skin)" "skin is Arctic Fuse 3"
+  assert_eq "1" "$(xml_setting "${settings}" general.addonupdates)" "add-on updates notify only"
+  assert_eq "TIMEZONE=America/Los_Angeles" "$(cat "${root}/.cache/timezone")" "timezone cache"
+}
+
+test_duplicate_settings_are_collapsed() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_guisettings "${root}"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "1" "$(xml_setting_count "${settings}" locale.timezone)" "one locale.timezone node remains"
+  assert_eq "America/Los_Angeles" "$(xml_setting "${settings}" locale.timezone)" "surviving node carries the new value"
+  assert_eq "1" "$(xml_setting_count "${settings}" lookandfeel.skin)" "one lookandfeel.skin node remains"
+}
+
+test_existing_unmanaged_settings_are_preserved() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_guisettings "${root}"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "2" "$(xml_setting "${settings}" audiooutput.channels)" "unmanaged setting is untouched"
+  assert_eq "1" "$(xml_setting_count "${settings}" audiooutput.channels)" "unmanaged setting is not duplicated"
+}
+
+test_second_run_is_byte_identical() {
+  local dir root payload first second
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_guisettings "${root}"
+  write_full_payload "${payload}"
+
+  run_transform "${root}" "${payload}" >/dev/null
+  first="$(tree_digest "${root}")"
+  run_transform "${root}" "${payload}" >/dev/null
+  second="$(tree_digest "${root}")"
+  assert_eq "${first}" "${second}" "a second run rewrites nothing"
+}
+
+# --- Add-on specific behavior -----------------------------------------------
+
+test_tmdb_helper_keys_go_to_tmdb_helper_only() {
+  local dir root payload helper matches
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  helper="$(addon_data_path "${root}" plugin.video.themoviedb.helper)/settings.xml"
+  assert_eq "omdb-api-key-secret" "$(xml_setting "${helper}" omdb_apikey)" "OMDb key in TMDb Helper"
+  assert_eq "mdblist-api-key-secret" "$(xml_setting "${helper}" mdblist_apikey)" "MDbList key in TMDb Helper"
+
+  matches="$(grep -rl 'omdb-api-key-secret' "${root}" | LC_ALL=C sort | tr '\n' ' ')"
+  assert_eq "${helper} " "${matches}" "the OMDb key exists in exactly one file"
+  matches="$(grep -rl 'mdblist-api-key-secret' "${root}" | LC_ALL=C sort | tr '\n' ' ')"
+  assert_eq "${helper} " "${matches}" "the MDbList key exists in exactly one file"
+}
+
+test_youtube_credentials_require_all_three_values() {
+  local dir root payload youtube_dir rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  append_payload_entry "${payload}" "YOUTUBE_API_KEY" "youtube-api-key-secret"
+  append_payload_entry "${payload}" "HAVE_YOUTUBE_API_KEY" "1"
+  append_payload_entry "${payload}" "HAVE_YOUTUBE_CLIENT_ID" "0"
+  append_payload_entry "${payload}" "HAVE_YOUTUBE_CLIENT_SECRET" "0"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  youtube_dir="$(addon_data_path "${root}" plugin.video.youtube)"
+  [[ ! -e "${youtube_dir}/api_keys.json" ]] || {
+    printf 'api_keys.json must not be written for partial credentials\n' >&2
+    return 1
+  }
+  assert_eq "en-US" "$(xml_setting "${youtube_dir}/settings.xml" youtube.language)" "language still provisioned"
+  set +e
+  grep -rq 'youtube-api-key-secret' "${root}"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a partial API key is never written anywhere"
+}
+
+test_youtube_api_keys_json_has_expected_shape() {
+  local dir root payload keys
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  keys="$(addon_data_path "${root}" plugin.video.youtube)/api_keys.json"
+  assert_eq "youtube-api-key-secret" "$(json_path "${keys}" keys user api_key)" "api_key"
+  assert_eq "youtube-client-id-secret" "$(json_path "${keys}" keys user client_id)" "client_id without the Google domain suffix"
+  assert_eq "youtube-client-secret-secret" "$(json_path "${keys}" keys user client_secret)" "client_secret"
+  assert_eq "{}" "$(json_path "${keys}" keys developer)" "developer key set stays empty"
+  assert_eq '{"developer": {}, "user": {"api_key": "youtube-api-key-secret", "client_id": "youtube-client-id-secret", "client_secret": "youtube-client-secret-secret"}}' \
+    "$(json_path "${keys}" keys)" "complete key set shape"
+
+  local settings
+  settings="$(addon_data_path "${root}" plugin.video.youtube)/settings.xml"
+  assert_eq "US" "$(xml_setting "${settings}" youtube.region)" "region"
+  assert_eq "false" "$(xml_setting "${settings}" kodion.setup_wizard)" "setup wizard suppressed"
+  assert_eq "2" "$(xml_root_attribute "${settings}" version)" "standard add-on settings use version 2"
+}
+
+test_nextpvr_uses_instance_settings_format() {
+  local dir root payload instance
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  instance="$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml"
+  [[ -f "${instance}" ]] || {
+    printf 'instance-settings-1.xml was not written\n' >&2
+    return 1
+  }
+  [[ ! -e "$(addon_data_path "${root}" pvr.nextpvr)/settings.xml" ]] || {
+    printf 'NextPVR must not use the non-instance settings file\n' >&2
+    return 1
+  }
+  assert_eq "Living Room NextPVR" "$(xml_setting "${instance}" kodi_addon_instance_name)" "instance name"
+  assert_eq "true" "$(xml_setting "${instance}" kodi_addon_instance_enabled)" "instance enabled"
+  assert_eq "nextpvr.example.lan" "$(xml_setting "${instance}" host)" "host"
+  assert_eq "8866" "$(xml_setting "${instance}" port)" "port"
+  assert_eq "http" "$(xml_setting "${instance}" hostprotocol)" "protocol"
+  assert_eq "nextpvr-pin-secret" "$(xml_setting "${instance}" pin)" "pin"
+  assert_eq "2" "$(xml_root_attribute "${instance}" version)" "instance settings use version 2"
+}
+
+test_home_assistant_weather_uses_flat_settings_format() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(addon_data_path "${root}" weather.ha)/settings.xml"
+  assert_eq "" "$(xml_root_attribute "${settings}" version)" "flat format carries no version attribute"
+  assert_eq "yes" "$(xml_setting_uses_value_attribute "${settings}" ha_server)" "flat format stores values in attributes"
+  assert_eq "https://homeassistant.example.lan:8123" "$(xml_setting "${settings}" ha_server)" "server URL"
+  assert_eq "home-assistant-token-secret" "$(xml_setting "${settings}" ha_key)" "token"
+  assert_eq "weather.forecast_home" "$(xml_setting "${settings}" ha_weather_forecast_entity_id)" "forecast entity"
+  assert_eq "sun.sun" "$(xml_setting "${settings}" ha_sun_entity_id)" "sun entity"
+}
+
+test_weather_provider_changes_only_when_configured() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+
+  root="${dir}/unconfigured"
+  payload="${dir}/base.conf"
+  seed_guisettings "${root}"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  settings="$(guisettings_path "${root}")"
+  assert_eq "weather.gismeteo" "$(xml_setting "${settings}" weather.addon)" "existing provider is left alone"
+
+  root="${dir}/configured"
+  payload="${dir}/full.conf"
+  seed_guisettings "${root}"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  settings="$(guisettings_path "${root}")"
+  assert_eq "weather.ha" "$(xml_setting "${settings}" weather.addon)" "provider switches once fully configured"
+}
+
+test_pm4k_local_mode_json_is_valid() {
+  local dir root payload settings servers profiles
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(addon_data_path "${root}" script.plexmod)/settings.xml"
+  servers="$(xml_setting "${settings}" local_servers_json | canonical_json)"
+  assert_eq '[{"connection": "plex.example.lan", "name": "Basement Plex", "port": 32400, "token": "plex-token-secret"}]' \
+    "${servers}" "local server entry"
+  profiles="$(xml_setting "${settings}" local_profiles_json | canonical_json)"
+  assert_eq '["11", "22"]' "${profiles}" "selected profile ids"
+  assert_eq "true" "$(xml_setting "${settings}" local_mode)" "local mode enabled"
+  assert_eq "always" "$(xml_setting "${settings}" allow_insecure)" "insecure LAN connections allowed"
+}
+
+test_absent_optional_secrets_do_not_create_secret_settings() {
+  local dir root payload path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  for path in \
+    "$(addon_data_path "${root}" plugin.video.themoviedb.helper)/settings.xml" \
+    "$(addon_data_path "${root}" script.plexmod)/settings.xml" \
+    "$(addon_data_path "${root}" weather.ha)/settings.xml" \
+    "$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml" \
+    "$(addon_data_path "${root}" plugin.video.youtube)/api_keys.json"; do
+    [[ ! -e "${path}" ]] || {
+      printf 'unexpected file created without its secret: %s\n' "${path}" >&2
+      return 1
+    }
+  done
+
+  assert_eq "0" "$(xml_setting_count "$(guisettings_path "${root}")" services.webserverpassword)" \
+    "no web server password without a password"
+}
+
+# --- Transport safety -------------------------------------------------------
+
+test_payload_values_survive_hostile_characters() {
+  local dir root payload hostile actual
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  hostile='a b = c	{"json": "value"}
+second line'
+  write_base_payload "${payload}"
+  append_payload_entry "${payload}" "KODI_WEB_USER" "homeassistant"
+  append_payload_entry "${payload}" "KODI_WEB_PORT" "8080"
+  append_payload_entry "${payload}" "KODI_WEB_PASSWORD" "${hostile}"
+  append_payload_entry "${payload}" "HAVE_KODI_WEB_PASSWORD" "1"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  actual="$(xml_setting "$(guisettings_path "${root}")" services.webserverpassword)"
+  assert_eq "${hostile}" "${actual}" "base64 transport preserves the exact value"
+}
+
+test_transformer_output_never_reveals_secrets() {
+  local dir root payload output secret
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  output="$(run_transform "${root}" "${payload}" 2>&1)"
+
+  for secret in \
+    "kodi-web-password-secret" \
+    "omdb-api-key-secret" \
+    "mdblist-api-key-secret" \
+    "youtube-api-key-secret" \
+    "youtube-client-secret-secret" \
+    "home-assistant-token-secret" \
+    "nextpvr-pin-secret" \
+    "plex-token-secret"; do
+    assert_not_contains "${output}" "${secret}" "transformer output leaks a secret"
+  done
+}
+
+run_all_tests \
+  test_regional_settings_are_created \
+  test_duplicate_settings_are_collapsed \
+  test_existing_unmanaged_settings_are_preserved \
+  test_second_run_is_byte_identical \
+  test_tmdb_helper_keys_go_to_tmdb_helper_only \
+  test_youtube_credentials_require_all_three_values \
+  test_youtube_api_keys_json_has_expected_shape \
+  test_nextpvr_uses_instance_settings_format \
+  test_home_assistant_weather_uses_flat_settings_format \
+  test_weather_provider_changes_only_when_configured \
+  test_pm4k_local_mode_json_is_valid \
+  test_absent_optional_secrets_do_not_create_secret_settings \
+  test_payload_values_survive_hostile_characters \
+  test_transformer_output_never_reveals_secrets
