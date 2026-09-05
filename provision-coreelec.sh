@@ -17,11 +17,15 @@ IDENTITY_FILE="${HOME}/.ssh/coreelec_admin_ed25519"
 ADDONS=()
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
+PRINT_ADDON_SELECTION=""
+DEPLOY_ACTION=""
 
 TASK_TEMP_DIR=""
 CURL_CONFIG_FILE=""
 KODI_WEB_PASSWORD=""
 KEY_ALREADY_ACCEPTED="0"
+ARTIFACT_STAGE_DIR=""
+REMOTE_TRANSACTION=""
 
 usage() {
   cat <<'USAGE'
@@ -42,13 +46,19 @@ Options:
   --ssh-port PORT           SSH port (default: 22)
   --kodi-port PORT          Kodi HTTP/JSON-RPC port (default: 8080)
   --kodi-user USER          Kodi account for Home Assistant (default: homeassistant)
-  --addon ID                Install an add-on from an enabled repository; repeatable
+  --addon ID                Deploy only this pinned add-on from the locked
+                             manifest; repeatable. An ID that is not locked in
+                             the configuration is rejected.
   --with-youtube            Equivalent to --addon plugin.video.youtube
   --report-dir PATH         Local report directory
   --expected-release VER    Required CoreELEC release substring (default: 21.3)
   --no-kodi                 Skip Kodi and Home Assistant baseline configuration
   --no-harden               Leave SSH password authentication enabled
   --force-unsupported       Continue after release/platform checks fail
+  --finalize-deployment     Commit the pending remote deployment transaction
+                             (releases its rollback material) and exit
+  --rollback-deployment     Undo the pending remote deployment transaction and
+                             exit
   --yes                     Do not ask for final confirmation
   --version                 Print script version
   -h, --help                Show this help
@@ -60,10 +70,16 @@ Internal:
                              Used by tests/test-coreelec-settings.sh; it never
                              contacts a device.
   --emit-remote-script NAME [ROOT]
-                            Print the remote 'backup' or 'payload' shell
-                             program for ROOT (default /storage), then exit.
-                             Used by tests/test-coreelec-settings.sh; it never
-                             contacts a device.
+                          Print the remote 'backup', 'payload', 'stage',
+                           'deploy', 'rollback', or 'finalize' shell program
+                           for ROOT (default /storage), then exit. Used by
+                           the test suites; it never contacts a device.
+  --render-remote-deploy-script [ROOT]
+                          Print the remote deployment transaction program
+                           for ROOT (default /storage), then exit.
+  --print-addon-selection MANIFEST
+                          Print the manifest lines this run would deploy,
+                           honoring --addon, then exit.
 
 Example:
   ./provision-coreelec.sh --target 172.16.99.50 --with-youtube
@@ -588,9 +604,31 @@ coreelec_settings_transform_fixture() {
   coreelec_settings_transformer_source | python3 - "${root}" "${payload}"
 }
 
+# Every settings path the transformer may write, relative to the storage root.
+# Emitted as an `sh` function so the backup snapshot and the deployment
+# transaction copy exactly the same set and can never drift apart.
+coreelec_managed_settings_paths_block() {
+  cat <<'MANAGED_SETTINGS_FUNCTION'
+managed_settings_paths() {
+  cat <<'MANAGED_SETTINGS_PATHS'
+.kodi/userdata/guisettings.xml
+.cache/timezone
+.kodi/userdata/addon_data/plugin.video.youtube/settings.xml
+.kodi/userdata/addon_data/plugin.video.youtube/api_keys.json
+.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
+.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
+.kodi/userdata/addon_data/script.plexmod/settings.xml
+.kodi/userdata/addon_data/weather.ha/settings.xml
+MANAGED_SETTINGS_PATHS
+}
+MANAGED_SETTINGS_FUNCTION
+}
+
 # Remote script emitters. Each prints `sh` program text whose storage root is a
 # parameter, so tests can execute the exact program the device receives against
-# a scratch directory. Neither emitter reads configuration or contacts a host.
+# a scratch directory. No emitter reads configuration or contacts a host, and
+# none of them interpolates an add-on ID, artifact name, or transaction path:
+# those are always read at runtime from files the device itself revalidates.
 coreelec_remote_backup_script() {
   local root="${1:-/storage}"
   # umask 077 covers every directory and file the snapshot creates: a copy of
@@ -601,6 +639,7 @@ set -eu
 umask 077
 storage_root="${root}"
 REMOTE_BACKUP_HEADER
+  coreelec_managed_settings_paths_block
   cat <<'REMOTE_BACKUP'
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="${storage_root}/backup/coreelec-provision/${stamp}"
@@ -614,23 +653,24 @@ copy_one() {
     destination_dir="${backup}/$(dirname "${relative_path}")"
     mkdir -p "${destination_dir}"
     cp -p "${source_path}" "${backup}/${relative_path}"
+    # A snapshot of guisettings.xml or api_keys.json holds credentials even
+    # when the original was left world-readable, so the copy's mode is
+    # normalized here instead of inherited from the source.
+    chmod 600 "${backup}/${relative_path}"
   fi
 }
 
 copy_one "${storage_root}/.ssh/authorized_keys"
 copy_one "${storage_root}/.cache/services/sshd.conf"
 copy_one "${storage_root}/.cache/hostname"
-copy_one "${storage_root}/.kodi/userdata/guisettings.xml"
 copy_one "${storage_root}/.kodi/userdata/advancedsettings.xml"
 copy_one "${storage_root}/.kodi/userdata/sources.xml"
 copy_one "${storage_root}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
-copy_one "${storage_root}/.cache/timezone"
-copy_one "${storage_root}/.kodi/userdata/addon_data/plugin.video.youtube/settings.xml"
-copy_one "${storage_root}/.kodi/userdata/addon_data/plugin.video.youtube/api_keys.json"
-copy_one "${storage_root}/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml"
-copy_one "${storage_root}/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml"
-copy_one "${storage_root}/.kodi/userdata/addon_data/script.plexmod/settings.xml"
-copy_one "${storage_root}/.kodi/userdata/addon_data/weather.ha/settings.xml"
+
+managed_settings_paths | while IFS= read -r managed_relative; do
+  [ -n "${managed_relative}" ] || continue
+  copy_one "${storage_root}/${managed_relative}"
+done
 
 {
   printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -667,13 +707,496 @@ mv "${temporary}" "${payload_file}"
 REMOTE_PAYLOAD
 }
 
+# Receives the artifact bundle as a tar stream on stdin. It travels inside a
+# single-quoted remote `sh -c` argument (stdin is the tar stream, so the
+# program cannot be piped in), which is why it must never contain a single
+# quote of its own.
+coreelec_remote_stage_script() {
+  local root="${1:-/storage}"
+  cat <<REMOTE_STAGE_HEADER
+set -eu
+umask 077
+provision_cache="${root}/.cache/coreelec-provision"
+REMOTE_STAGE_HEADER
+  cat <<'REMOTE_STAGE'
+stage_dir="${provision_cache}/stage"
+mkdir -p "${provision_cache}"
+chmod 700 "${provision_cache}"
+# A previous run may have left a partial or superseded bundle; the new upload
+# must never be mixed with it.
+rm -rf "${stage_dir}"
+mkdir -p "${stage_dir}"
+chmod 700 "${stage_dir}"
+tar -C "${stage_dir}" -xf -
+REMOTE_STAGE
+}
+
+# Shared prologue for the deploy, rollback, and finalize programs: the fixed
+# paths derived from one storage root plus the helpers all three need.
+coreelec_remote_transaction_prologue() {
+  local root="${1:-/storage}"
+  cat <<REMOTE_TRANSACTION_HEADER
+set -eu
+umask 077
+storage_root="${root}"
+REMOTE_TRANSACTION_HEADER
+  coreelec_managed_settings_paths_block
+  cat <<'REMOTE_TRANSACTION_COMMON'
+provision_cache="${storage_root}/.cache/coreelec-provision"
+stage_dir="${provision_cache}/stage"
+expanded_dir="${stage_dir}/expanded"
+plan_file="${provision_cache}/deploy-plan.tsv"
+payload_file="${provision_cache}/settings-payload.conf"
+pointer_file="${provision_cache}/current-transaction"
+addons_dir="${storage_root}/.kodi/addons"
+backup_root="${storage_root}/backup/coreelec-provision"
+tab="$(printf '\t')"
+transaction=""
+
+fail() {
+  printf 'remote transaction: %s\n' "$1" >&2
+  exit 1
+}
+
+# An add-on ID is the only manifest field this program ever interpolates into
+# a path, so it is rechecked here even though the local provisioner and the
+# staging validator both checked it first.
+valid_addon_id() {
+  case "$1" in
+    ""|-*|.*) return 1 ;;
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
+copy_into_backup() {
+  source_path="$1"
+  if [ -f "${source_path}" ]; then
+    relative_path="${source_path#${storage_root}/}"
+    destination="${transaction}/files/${relative_path}"
+    mkdir -p "${transaction}/files/$(dirname "${relative_path}")"
+    cp -p "${source_path}" "${destination}"
+    # The copy can hold a web-server password or an API token even when the
+    # original was left world-readable, so its mode is normalized rather than
+    # inherited. Directories stay 0700 through umask 077.
+    chmod 600 "${destination}"
+    printf 'file %s files/%s\n' "${source_path}" "${relative_path}" \
+      >> "${transaction}/MANIFEST.txt"
+  fi
+}
+
+# Sets `transaction` from the pointer a deployment left behind. Returns 1 when
+# nothing is pending; refuses outright when the pointer names something that
+# is not a timestamped directory under the backup root.
+resolve_pending_transaction() {
+  [ -f "${pointer_file}" ] || return 1
+  transaction="$(cat "${pointer_file}")"
+  case "${transaction}" in
+    "${backup_root}"/*) ;;
+    *) fail "the pending transaction pointer does not name a backup directory" ;;
+  esac
+  pending_name="${transaction#${backup_root}/}"
+  case "${pending_name}" in
+    ""|*[!A-Za-z0-9-]*)
+      fail "the pending transaction name is not a timestamp: ${pending_name}"
+      ;;
+  esac
+  [ -d "${transaction}" ] || return 1
+  return 0
+}
+
+# Undoes everything the transaction recorded: newly deployed add-ons are
+# removed, displaced add-ons are moved back, and every settings file the
+# transformer wrote is restored from the dated backup or deleted when it did
+# not exist before. Kodi is stopped first because it rewrites guisettings.xml
+# from memory when it exits.
+rollback_transaction() {
+  rollback_failed=0
+  rollback_marker="${transaction}/.rollback-failed"
+  rm -f "${rollback_marker}"
+  systemctl stop kodi.service >/dev/null 2>&1 || true
+
+  if [ -f "${transaction}/DEPLOYED.txt" ]; then
+    while IFS= read -r deployed_id; do
+      [ -n "${deployed_id}" ] || continue
+      if valid_addon_id "${deployed_id}"; then
+        rm -rf "${addons_dir}/${deployed_id}" || rollback_failed=1
+      else
+        rollback_failed=1
+      fi
+    done < "${transaction}/DEPLOYED.txt"
+  fi
+
+  if [ -d "${transaction}/rollback/addons" ]; then
+    for displaced in "${transaction}/rollback/addons/"*; do
+      [ -e "${displaced}" ] || continue
+      displaced_id="${displaced##*/}"
+      if valid_addon_id "${displaced_id}"; then
+        rm -rf "${addons_dir}/${displaced_id}"
+        mv "${displaced}" "${addons_dir}/${displaced_id}" || rollback_failed=1
+      else
+        rollback_failed=1
+      fi
+    done
+  fi
+
+  # Every managed settings file is restored from the backup taken before the
+  # transformer ran, not from the list of what it reported applying: a
+  # transformer that fails part way through has already rewritten some files
+  # but has not reported any of them yet.
+  if [ -d "${transaction}/files" ]; then
+    find "${transaction}/files" -type f -print | while IFS= read -r backup_copy; do
+      backup_relative="${backup_copy#${transaction}/files/}"
+      restore_path="${storage_root}/${backup_relative}"
+      mkdir -p "$(dirname "${restore_path}")" 2>/dev/null || :
+      cp -p "${backup_copy}" "${restore_path}" || : > "${rollback_marker}"
+    done
+  fi
+
+  # Anything the transformer created that had no previous version is removed;
+  # the paths it replaced were already restored above.
+  if [ -f "${transaction}/APPLIED.txt" ]; then
+    while IFS= read -r applied_path; do
+      [ -n "${applied_path}" ] || continue
+      case "${applied_path}" in
+        "${storage_root}"/*) ;;
+        *)
+          rollback_failed=1
+          continue
+          ;;
+      esac
+      applied_relative="${applied_path#${storage_root}/}"
+      if [ ! -f "${transaction}/files/${applied_relative}" ]; then
+        rm -f "${applied_path}" || rollback_failed=1
+      fi
+    done < "${transaction}/APPLIED.txt"
+  fi
+
+  if [ -f "${rollback_marker}" ]; then
+    rollback_failed=1
+    rm -f "${rollback_marker}"
+  fi
+
+  systemctl restart tz-data.service >/dev/null 2>&1 || true
+  systemctl start kodi.service >/dev/null 2>&1 || true
+
+  if [ "${rollback_failed}" -ne 0 ]; then
+    printf 'ROLLBACK INCOMPLETE. Retained transaction: %s\n' "${transaction}" >&2
+    printf 'ROLLBACK INCOMPLETE. Retained staging: %s\n' "${stage_dir}" >&2
+    printf 'incomplete-rollback\n' > "${transaction}/STATE" 2>/dev/null || true
+    return 1
+  fi
+
+  printf 'rolled-back\n' > "${transaction}/STATE"
+  rm -f "${pointer_file}"
+  return 0
+}
+REMOTE_TRANSACTION_COMMON
+}
+
+coreelec_remote_deploy_script() {
+  local root="${1:-/storage}"
+  coreelec_remote_transaction_prologue "${root}"
+  cat <<'REMOTE_DEPLOY_PROLOGUE'
+transaction_state="staging"
+
+finish_transaction() {
+  exit_status=$?
+  trap - EXIT HUP INT TERM
+  # The payload holds every secret this run transports, so it never outlives
+  # the transaction on any exit path.
+  rm -f "${payload_file}" "${payload_file}.provision-new"
+  if [ "${transaction_state}" = "deployed" ]; then
+    exit "${exit_status}"
+  fi
+  if [ -n "${transaction}" ]; then
+    printf 'deployment failed while %s; rolling back\n' "${transaction_state}" >&2
+    if rollback_transaction; then
+      printf 'the device was restored to its pre-deployment state\n' >&2
+    fi
+  fi
+  if [ "${exit_status}" -eq 0 ]; then
+    exit 1
+  fi
+  exit "${exit_status}"
+}
+trap finish_transaction EXIT HUP INT TERM
+
+[ -d "${stage_dir}" ] || fail "no uploaded artifact bundle was found: ${stage_dir}"
+[ -f "${stage_dir}/deploy.tsv" ] || fail "the uploaded bundle has no deploy.tsv manifest"
+[ -f "${payload_file}" ] || fail "no settings payload was uploaded: ${payload_file}"
+
+if [ -f "${pointer_file}" ]; then
+  if resolve_pending_transaction; then
+    pending="${transaction}"
+    transaction=""
+    fail "a deployment transaction is already pending (${pending}); commit it with --finalize-deployment or undo it with --rollback-deployment"
+  fi
+  rm -f "${pointer_file}"
+  transaction=""
+fi
+
+# --- Phase 1: validate and expand the bundle while Kodi keeps running -------
+# Nothing outside the provisioning cache is touched here, so a bad bundle
+# never interrupts playback and never needs a rollback.
+rm -rf "${expanded_dir}"
+mkdir -p "${expanded_dir}"
+rm -f "${plan_file}"
+
+python3 - "${stage_dir}" > "${plan_file}" <<'PYTHON_DEPLOY_PLAN'
+import os
+import re
+import sys
+import zipfile
+import xml.etree.ElementTree as ET
+
+STAGE = sys.argv[1]
+MANIFEST = os.path.join(STAGE, "deploy.tsv")
+ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+~-]*$")
+ARCHIVE_PATTERN = re.compile(r"^[0-9]+\.zip$")
+DIRECTORY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+~-]*$")
+
+
+def reject(message):
+    raise SystemExit("deployment manifest rejected: " + message)
+
+
+def top_level_directory(archive, addon_id):
+    """The single root directory of a ZIP, refusing every entry name that
+    could escape the directory it is extracted into."""
+    tops = set()
+    for name in archive.namelist():
+        if not name:
+            reject("%s contains an empty entry name" % addon_id)
+        if name.startswith("/") or "\\" in name:
+            reject("%s contains an unsafe entry: %s" % (addon_id, name))
+        segments = name.split("/")
+        for position, segment in enumerate(segments):
+            if segment in (".", ".."):
+                reject("%s contains a traversal entry: %s" % (addon_id, name))
+            if segment == "" and position != len(segments) - 1:
+                reject("%s contains an empty path segment: %s"
+                       % (addon_id, name))
+        tops.add(segments[0])
+    if len(tops) != 1:
+        reject("%s must have exactly one top-level directory, found %d"
+               % (addon_id, len(tops)))
+    top = tops.pop()
+    if not DIRECTORY_PATTERN.match(top):
+        reject("%s has an unsupported top-level directory: %s"
+               % (addon_id, top))
+    return top
+
+
+plan = []
+seen = set()
+with open(MANIFEST, "r", encoding="utf-8") as handle:
+    for number, raw_line in enumerate(handle, start=1):
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        fields = line.split("\t")
+        if len(fields) != 4:
+            reject("line %d does not have four tab-separated fields" % number)
+        index, addon_id, version, archive_name = fields
+        if not index.isdigit():
+            reject("line %d has a non-numeric index: %s" % (number, index))
+        if not ID_PATTERN.match(addon_id):
+            reject("line %d has an unsupported add-on ID: %s"
+                   % (number, addon_id))
+        if not VERSION_PATTERN.match(version):
+            reject("line %d has an unsupported version for %s: %s"
+                   % (number, addon_id, version))
+        if not ARCHIVE_PATTERN.match(archive_name):
+            reject("line %d has an unsupported archive name for %s: %s"
+                   % (number, addon_id, archive_name))
+        if addon_id in seen:
+            reject("line %d repeats add-on ID %s" % (number, addon_id))
+        seen.add(addon_id)
+
+        archive_path = os.path.join(STAGE, archive_name)
+        if not os.path.isfile(archive_path):
+            reject("%s is missing its uploaded archive %s"
+                   % (addon_id, archive_name))
+        try:
+            archive = zipfile.ZipFile(archive_path)
+        except Exception:
+            reject("%s did not upload as a readable ZIP archive" % addon_id)
+        with archive:
+            top = top_level_directory(archive, addon_id)
+            try:
+                document = archive.read(top + "/addon.xml")
+            except KeyError:
+                reject("%s has no %s/addon.xml" % (addon_id, top))
+            try:
+                declared = ET.fromstring(document)
+            except ET.ParseError:
+                reject("%s has an unparseable addon.xml" % addon_id)
+        # The ZIP root directory is not the add-on ID for several pinned
+        # artifacts, so identity comes from addon.xml and never from the
+        # directory name.
+        if declared.get("id") != addon_id:
+            reject("%s declares add-on ID %s in addon.xml"
+                   % (addon_id, declared.get("id")))
+        if declared.get("version") != version:
+            reject("%s declares version %s in addon.xml"
+                   % (addon_id, declared.get("version")))
+        plan.append((archive_name, addon_id, top))
+
+if not plan:
+    reject("no add-on was selected for deployment")
+
+for archive_name, addon_id, top in plan:
+    sys.stdout.write("%s\t%s\t%s\n" % (archive_name, addon_id, top))
+PYTHON_DEPLOY_PLAN
+
+[ -s "${plan_file}" ] || fail "the uploaded bundle selected no add-ons"
+
+while IFS="${tab}" read -r plan_archive plan_id plan_top; do
+  valid_addon_id "${plan_id}" || fail "unsupported add-on ID in plan: ${plan_id}"
+  mkdir -p "${expanded_dir}/${plan_id}"
+  # Add-on payloads are public content, so they keep the 0755/0644 modes Kodi
+  # expects instead of inheriting the transaction's private umask.
+  ( umask 022; unzip -o -q -d "${expanded_dir}/${plan_id}" "${stage_dir}/${plan_archive}" ) \
+    || fail "could not expand ${plan_archive} for ${plan_id}"
+  [ -f "${expanded_dir}/${plan_id}/${plan_top}/addon.xml" ] \
+    || fail "the expanded ${plan_id} has no ${plan_top}/addon.xml"
+done < "${plan_file}"
+
+# --- Phase 2: mutate the device inside a recoverable transaction ------------
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+transaction="${backup_root}/${stamp}"
+collision=1
+while [ -e "${transaction}" ]; do
+  collision=$((collision + 1))
+  transaction="${backup_root}/${stamp}-${collision}"
+done
+mkdir -p "${transaction}/files" "${transaction}/rollback/addons"
+chmod 700 "${storage_root}/backup" "${backup_root}" "${transaction}"
+: > "${transaction}/DEPLOYED.txt"
+: > "${transaction}/APPLIED.txt"
+{
+  printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'hostname=%s\n' "$(hostname)"
+  printf 'storage_root=%s\n' "${storage_root}"
+  printf 'transaction=%s\n' "${transaction}"
+} > "${transaction}/MANIFEST.txt"
+chmod 600 "${transaction}/MANIFEST.txt" "${transaction}/DEPLOYED.txt" "${transaction}/APPLIED.txt"
+printf 'staged\n' > "${transaction}/STATE"
+# Written before anything moves so an interrupted session still leaves the
+# operator, and Task 6's verification, a handle on the material to undo it.
+printf '%s\n' "${transaction}" > "${pointer_file}"
+
+transaction_state="stopping Kodi"
+# Kodi rewrites guisettings.xml from memory when it exits and rescans add-ons
+# on start, so it is stopped exactly once, around the whole transaction.
+systemctl stop kodi.service >/dev/null 2>&1 || true
+
+transaction_state="backing up replaced paths"
+managed_settings_paths | while IFS= read -r managed_relative; do
+  [ -n "${managed_relative}" ] || continue
+  copy_into_backup "${storage_root}/${managed_relative}"
+done
+
+transaction_state="replacing add-ons"
+mkdir -p "${addons_dir}"
+while IFS="${tab}" read -r plan_archive plan_id plan_top; do
+  valid_addon_id "${plan_id}" || fail "unsupported add-on ID in plan: ${plan_id}"
+  destination="${addons_dir}/${plan_id}"
+  if [ -e "${destination}" ]; then
+    # Moving the previous directory into the dated transaction is its backup:
+    # it is complete, instant, and cannot half-copy a large skin.
+    mv "${destination}" "${transaction}/rollback/addons/${plan_id}"
+    printf 'addon %s replaced rollback/addons/%s\n' "${plan_id}" "${plan_id}" \
+      >> "${transaction}/MANIFEST.txt"
+  else
+    printf 'addon %s created -\n' "${plan_id}" >> "${transaction}/MANIFEST.txt"
+  fi
+  mv "${expanded_dir}/${plan_id}/${plan_top}" "${destination}"
+  printf '%s\n' "${plan_id}" >> "${transaction}/DEPLOYED.txt"
+done < "${plan_file}"
+
+# --- Phase 3: settings, which may reference the add-ons just deployed -------
+transaction_state="applying settings"
+python3 - "${storage_root}" "${payload_file}" > "${transaction}/applied.raw" <<'PYTHON_KODI_SETTINGS'
+REMOTE_DEPLOY_PROLOGUE
+
+  coreelec_settings_transformer_source
+
+  cat <<'REMOTE_DEPLOY_EPILOGUE'
+PYTHON_KODI_SETTINGS
+
+# Only paths are recorded, never values: the list is what rollback restores.
+sed -n 's/^settings applied: //p' "${transaction}/applied.raw" \
+  > "${transaction}/APPLIED.txt"
+rm -f "${transaction}/applied.raw"
+chmod 600 "${transaction}/APPLIED.txt"
+while IFS= read -r applied_path; do
+  [ -n "${applied_path}" ] || continue
+  printf 'settings applied: %s\n' "${applied_path}" >&2
+done < "${transaction}/APPLIED.txt"
+
+transaction_state="restarting services"
+systemctl restart tz-data.service >/dev/null 2>&1 || true
+systemctl start kodi.service || fail "Kodi did not start after deployment"
+
+# The emergency restart is disarmed here, but the rollback material stays on
+# the device until verification finalizes or undoes this transaction.
+transaction_state="deployed"
+trap - EXIT HUP INT TERM
+printf 'deployed\n' > "${transaction}/STATE"
+rm -f "${payload_file}" "${payload_file}.provision-new" "${plan_file}"
+rm -rf "${expanded_dir}"
+printf '%s\n' "${transaction}"
+REMOTE_DEPLOY_EPILOGUE
+}
+
+coreelec_remote_rollback_script() {
+  local root="${1:-/storage}"
+  coreelec_remote_transaction_prologue "${root}"
+  cat <<'REMOTE_ROLLBACK'
+resolve_pending_transaction || fail "no pending deployment transaction was found"
+if rollback_transaction; then
+  rm -rf "${stage_dir}" "${expanded_dir}"
+  rm -f "${plan_file}" "${payload_file}" "${payload_file}.provision-new"
+  printf '%s\n' "${transaction}"
+  exit 0
+fi
+exit 1
+REMOTE_ROLLBACK
+}
+
+coreelec_remote_finalize_script() {
+  local root="${1:-/storage}"
+  coreelec_remote_transaction_prologue "${root}"
+  cat <<'REMOTE_FINALIZE'
+resolve_pending_transaction || fail "no pending deployment transaction was found"
+# The dated backup and its manifest are kept as the record of what changed;
+# only the material that exists to undo the change is released.
+rm -rf "${transaction}/rollback"
+rm -rf "${stage_dir}" "${expanded_dir}"
+rm -f "${plan_file}" "${payload_file}" "${payload_file}.provision-new"
+printf 'finalized_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${transaction}/MANIFEST.txt"
+printf 'committed\n' > "${transaction}/STATE"
+rm -f "${pointer_file}"
+printf '%s\n' "${transaction}"
+REMOTE_FINALIZE
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}"
   case "${name}" in
     backup) coreelec_remote_backup_script "${root}" ;;
     payload) coreelec_remote_payload_script "${root}" ;;
-    *) die "--emit-remote-script expects backup or payload, not: ${name}" ;;
+    stage) coreelec_remote_stage_script "${root}" ;;
+    deploy) coreelec_remote_deploy_script "${root}" ;;
+    rollback) coreelec_remote_rollback_script "${root}" ;;
+    finalize) coreelec_remote_finalize_script "${root}" ;;
+    *)
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, or finalize, not: ${name}"
+      ;;
   esac
 }
 
@@ -715,6 +1238,14 @@ while (( config_scan_index < ${#config_scan_args[@]} )); do
       coreelec_emit_remote_script \
         "${config_scan_args[$((config_scan_index + 1))]}" \
         "${emit_script_root}"
+      exit 0
+      ;;
+    --render-remote-deploy-script)
+      emit_script_root="/storage"
+      if (( config_scan_index + 1 < ${#config_scan_args[@]} )); then
+        emit_script_root="${config_scan_args[$((config_scan_index + 1))]}"
+      fi
+      coreelec_remote_deploy_script "${emit_script_root}"
       exit 0
       ;;
     --config)
@@ -774,6 +1305,19 @@ while (( $# > 0 )); do
       coreelec_config_add_cli_addon "$2"
       shift 2
       ;;
+    --print-addon-selection)
+      (( $# >= 2 )) || die "--print-addon-selection requires a manifest path"
+      PRINT_ADDON_SELECTION="$2"
+      shift 2
+      ;;
+    --finalize-deployment)
+      DEPLOY_ACTION="finalize"
+      shift
+      ;;
+    --rollback-deployment)
+      DEPLOY_ACTION="rollback"
+      shift
+      ;;
     --with-youtube)
       coreelec_config_add_cli_addon "plugin.video.youtube"
       shift
@@ -821,6 +1365,60 @@ while (( $# > 0 )); do
       ;;
   esac
 done
+
+# Prints the manifest lines Task 2 validated that this run should deploy. With
+# no --addon the whole locked manifest is selected; with one or more, the
+# selection is narrowed to those IDs and an ID that is not locked is refused
+# rather than silently ignored, because --addon selects from the lock, it does
+# not add to it.
+coreelec_addon_selection() {
+  local manifest="$1"
+  local index id version filename requested selected_ids known_ids
+  local selected=0 total=0
+
+  [[ -r "${manifest}" ]] || die "Artifact manifest is not readable: ${manifest}"
+
+  selected_ids=$'\n'
+  if (( ${#ADDONS[@]} > 0 )); then
+    known_ids=$'\n'
+    while IFS=$'\t' read -r index id version filename; do
+      [[ -n "${id}" ]] || continue
+      known_ids="${known_ids}${id}"$'\n'
+    done < "${manifest}"
+    for requested in "${ADDONS[@]}"; do
+      case "${known_ids}" in
+        *$'\n'"${requested}"$'\n'*) ;;
+        *)
+          die "--addon ${requested} is not in the locked artifact manifest; add an ADDON_ARTIFACT record for it first"
+          ;;
+      esac
+      selected_ids="${selected_ids}${requested}"$'\n'
+    done
+  fi
+
+  while IFS=$'\t' read -r index id version filename; do
+    [[ -n "${id}" ]] || continue
+    total=$((total + 1))
+    if (( ${#ADDONS[@]} > 0 )); then
+      case "${selected_ids}" in
+        *$'\n'"${id}"$'\n'*) ;;
+        *) continue ;;
+      esac
+    fi
+    printf '%s\t%s\t%s\t%s\n' "${index}" "${id}" "${version}" "${filename}"
+    selected=$((selected + 1))
+  done < "${manifest}"
+
+  (( selected > 0 )) || die "No pinned add-on artifacts were selected for deployment"
+  if (( selected < total )); then
+    warn "Only ${selected} of ${total} locked add-ons were selected; dependencies of the selection are not resolved automatically"
+  fi
+}
+
+if [[ -n "${PRINT_ADDON_SELECTION}" ]]; then
+  coreelec_addon_selection "${PRINT_ADDON_SELECTION}"
+  exit 0
+fi
 
 if [[ "${CHECK_CONFIG}" == "1" || "${CHECK_ARTIFACTS}" == "1" ]]; then
   coreelec_config_validate
@@ -1138,39 +1736,80 @@ upload_kodi_settings_payload() {
   coreelec_settings_payload | ssh_keyed "sh -c '${script}'"
 }
 
-coreelec_remote_settings_script() {
-  cat <<'REMOTE_SETTINGS_PROLOGUE'
-set -eu
-payload_file=/storage/.cache/coreelec-provision/settings-payload.conf
+# Streams the validated artifacts to the device over the SSH connection that
+# is already authenticated, so no second transport (scp/rsync) and no second
+# credential are involved. The staging program cannot be piped in because
+# stdin carries the tar stream, so it travels as a single-quoted `sh -c`
+# argument that must not contain a single quote.
+upload_artifact_bundle() {
+  local validated_dir="$1"
+  local script index id version filename
+  local -a bundle_files=()
 
-cleanup_remote_payload() {
-  rm -f "${payload_file}" "${payload_file}.provision-new"
-  systemctl start kodi.service >/dev/null 2>&1 || true
+  [[ -d "${validated_dir}" ]] || die "Validated artifact directory is missing: ${validated_dir}"
+  coreelec_addon_selection "${validated_dir}/manifest.tsv" > "${validated_dir}/deploy.tsv"
+
+  bundle_files=("deploy.tsv")
+  while IFS=$'\t' read -r index id version filename; do
+    [[ -n "${filename}" ]] || continue
+    [[ -f "${validated_dir}/${filename}" ]] \
+      || die "Validated artifact file is missing: ${validated_dir}/${filename}"
+    bundle_files+=("${filename}")
+  done < "${validated_dir}/deploy.tsv"
+
+  script="$(coreelec_remote_stage_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote staging script must not contain a single quote"
+
+  info "Uploading $(( ${#bundle_files[@]} - 1 )) pinned add-on artifact(s) to the device"
+  # COPYFILE_DISABLE stops macOS tar from adding AppleDouble (._*) members for
+  # the quarantine attribute curl puts on every download, and ustar keeps the
+  # stream free of the pax headers BSD tar would otherwise emit for BusyBox
+  # tar to interpret on the device.
+  COPYFILE_DISABLE=1 tar -C "${validated_dir}" --format ustar -cf - "${bundle_files[@]}" \
+    | ssh_keyed "sh -c '${script}'"
 }
-trap cleanup_remote_payload EXIT HUP INT TERM
 
-# Kodi rewrites guisettings.xml from memory when it exits, so it has to be
-# stopped before the files are edited or the changes would be discarded.
-systemctl stop kodi.service >/dev/null 2>&1 || true
+# Runs the whole device-side change as one transaction: expand and verify the
+# bundle, stop Kodi once, replace add-ons, apply settings, restart services.
+# The rollback material deliberately survives a success so verification can
+# still undo it; Task 6 finalizes or rolls back afterwards.
+deploy_artifacts_and_settings() {
+  local transaction="" status=0
 
-python3 - /storage "${payload_file}" <<'PYTHON_KODI_SETTINGS'
-REMOTE_SETTINGS_PROLOGUE
+  info "Deploying add-ons and Kodi settings in one recoverable remote transaction"
+  set +e
+  transaction="$(coreelec_remote_deploy_script | ssh_keyed 'sh -s')"
+  status=$?
+  set -e
 
-  coreelec_settings_transformer_source
+  if (( status != 0 )); then
+    die "Remote deployment failed. The device rolled itself back unless a ROLLBACK INCOMPLETE line above names retained paths."
+  fi
+  [[ -n "${transaction}" ]] \
+    || die "The remote deployment did not report a transaction directory"
 
-  cat <<'REMOTE_SETTINGS_EPILOGUE'
-PYTHON_KODI_SETTINGS
-
-systemctl restart tz-data.service >/dev/null 2>&1 || true
-systemctl start kodi.service
-rm -f "${payload_file}" "${payload_file}.provision-new"
-trap - EXIT HUP INT TERM
-REMOTE_SETTINGS_EPILOGUE
+  REMOTE_TRANSACTION="${transaction}"
+  info "Deployment transaction pending verification: ${transaction}"
 }
+
+# Commits the pending transaction: the dated backup and its manifest stay, the
+# material that exists only to undo the change is released.
+finalize_remote_deployment() {
+  info "Finalizing the pending remote deployment transaction" >&2
+  coreelec_remote_finalize_script | ssh_keyed 'sh -s'
+}
+
+# Restores the pre-deployment state and leaves the dated backup in place as
+# the record of what was touched.
+rollback_remote_deployment() {
+  info "Rolling back the pending remote deployment transaction" >&2
+  coreelec_remote_rollback_script | ssh_keyed 'sh -s'
+}
+
 
 apply_kodi_baseline() {
   info "Applying the reversible Kodi and Home Assistant baseline"
-  upload_kodi_settings_payload
 
   # Only the names of the configured integrations are logged; a value that
   # came from a secret environment variable is never printed.
@@ -1180,7 +1819,12 @@ apply_kodi_baseline() {
   [[ -n "${NEXTPVR_PIN:-}" ]] && info "NextPVR client instance will be configured"
   [[ -n "${PLEX_TOKEN:-}" ]] && info "PM4K local mode will be configured"
 
-  coreelec_remote_settings_script | ssh_keyed 'sh -s'
+  upload_kodi_settings_payload
+  upload_artifact_bundle "${ARTIFACT_STAGE_DIR}"
+  # One transaction: add-ons land before the transformer runs, so activating
+  # the pinned skin and weather provider cannot be rejected for referring to
+  # an add-on that is not installed yet.
+  deploy_artifacts_and_settings
 
   wait_for_kodi_jsonrpc
 }
@@ -1217,37 +1861,11 @@ wait_for_kodi_jsonrpc() {
   warn "Kodi settings were applied, but JSON-RPC was not reachable from this Mac. Check pfSense and TCP ${KODI_PORT}."
 }
 
-install_requested_addons() {
-  (( ${#ADDONS[@]} > 0 )) || return 0
-
-  info "Refreshing enabled Kodi repositories"
-  ssh_keyed 'kodi-send --action="UpdateLocalAddons" >/dev/null 2>&1; kodi-send --action="UpdateAddonRepos" >/dev/null 2>&1'
-  sleep 8
-
-  local addon_id
-  local attempt
-  for addon_id in "${ADDONS[@]}"; do
-    info "Requesting Kodi add-on installation: ${addon_id}"
-    ssh_keyed "kodi-send --action='InstallAddon(${addon_id})' >/dev/null 2>&1"
-    attempt="1"
-    while (( attempt <= 30 )); do
-      if ssh_keyed "[ -f '/storage/.kodi/addons/${addon_id}/addon.xml' ] || [ -f '/usr/share/kodi/addons/${addon_id}/addon.xml' ]"; then
-        info "Kodi add-on is present: ${addon_id}"
-        break
-      fi
-      sleep 3
-      attempt=$((attempt + 1))
-    done
-    if (( attempt > 30 )); then
-      warn "Kodi did not install ${addon_id}. Its repository may not be enabled, or the repository may be unreachable."
-    fi
-  done
-}
-
 write_audit_report() {
   local report_stamp
   local target_slug
   local report_file
+  local deployed_index deployed_id deployed_version deployed_file
   report_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   target_slug="$(printf '%s' "${TARGET}" | tr -c 'A-Za-z0-9._-' '_')"
   mkdir -p "${REPORT_DIR}"
@@ -1273,7 +1891,18 @@ write_audit_report() {
       printf '%s ' "${ADDONS[@]}"
       printf '\n'
     else
-      printf 'requested_addons=none\n'
+      printf 'requested_addons=all-locked-artifacts\n'
+    fi
+    if [[ -n "${REMOTE_TRANSACTION}" ]]; then
+      printf 'deployment_transaction=%s\n' "${REMOTE_TRANSACTION}"
+      printf 'deployment_state=pending-verification\n'
+    fi
+    if [[ -n "${ARTIFACT_STAGE_DIR}" && -f "${ARTIFACT_STAGE_DIR}/deploy.tsv" ]]; then
+      printf 'deployed_addons\n'
+      while IFS=$'\t' read -r deployed_index deployed_id deployed_version deployed_file; do
+        [[ -n "${deployed_id}" ]] || continue
+        printf '%s=%s\n' "${deployed_id}" "${deployed_version}"
+      done < "${ARTIFACT_STAGE_DIR}/deploy.tsv"
     fi
     printf '\nRemote inventory\n'
 
@@ -1336,13 +1965,29 @@ REMOTE_INVENTORY
   printf '%s\n' "${report_file}"
 }
 
+if [[ -n "${DEPLOY_ACTION}" ]]; then
+  create_or_load_admin_key
+  case "${DEPLOY_ACTION}" in
+    finalize)
+      FINALIZED_TRANSACTION="$(finalize_remote_deployment)"
+      info "Deployment finalized: ${FINALIZED_TRANSACTION}"
+      ;;
+    rollback)
+      ROLLED_BACK_TRANSACTION="$(rollback_remote_deployment)"
+      info "Deployment rolled back: ${ROLLED_BACK_TRANSACTION}"
+      ;;
+  esac
+  exit 0
+fi
+
 if [[ "${ASSUME_YES}" != "1" ]]; then
   printf 'Target:             %s\n' "${TARGET}"
   printf 'Expected release:   %s / Amlogic-ng\n' "${EXPECTED_RELEASE}"
   printf 'Administrator key:  %s\n' "${IDENTITY_FILE}"
   printf 'Harden SSH:         %s\n' "${HARDEN_SSH}"
   printf 'Apply Kodi baseline:%s\n' "${APPLY_KODI}"
-  printf 'Requested add-ons:  %s\n' "${#ADDONS[@]}"
+  printf 'Locked add-ons:     %s\n' "${#ADDON_ARTIFACTS[@]}"
+  printf 'Selected add-ons:   %s\n' "$( (( ${#ADDONS[@]} > 0 )) && printf '%s' "${#ADDONS[@]}" || printf 'all')"
   printf 'Continue? [y/N] '
   read -r confirmation
   case "${confirmation}" in
@@ -1367,6 +2012,19 @@ fi
 printf '%s\n' "${REMOTE_IDENTITY}"
 validate_remote "${REMOTE_IDENTITY}"
 
+# Every artifact is downloaded, checksum-verified, and inspected before the
+# first mutating SSH call, so a bad or unreachable artifact cancels the run
+# while the device is still untouched.
+if [[ "${APPLY_KODI}" == "1" ]]; then
+  require_command shasum
+  require_command unzip
+  require_command xmllint
+  require_command tar
+  ARTIFACT_STAGE_DIR="${TASK_TEMP_DIR}/artifacts"
+  info "Validating pinned add-on artifacts before changing anything on the device"
+  coreelec_artifacts_download_and_validate "${ARTIFACT_STAGE_DIR}"
+fi
+
 install_public_key_if_needed
 
 REMOTE_BACKUP_PATH="$(create_remote_backup)"
@@ -1379,9 +2037,8 @@ if [[ "${APPLY_KODI}" == "1" ]]; then
   KEYCHAIN_SERVICE="$(keychain_service_name)"
   prepare_kodi_password "${KEYCHAIN_SERVICE}"
   apply_kodi_baseline
-  install_requested_addons
 elif (( ${#ADDONS[@]} > 0 )); then
-  warn "Add-on requests were ignored because --no-kodi was selected"
+  warn "Add-on selection was ignored because --no-kodi was selected"
 fi
 
 REPORT_FILE="$(write_audit_report)"
@@ -1394,5 +2051,12 @@ if [[ "${APPLY_KODI}" == "1" ]]; then
   printf 'Kodi username: %s\n' "${KODI_USER}"
   printf 'Retrieve the Kodi password from Keychain with:\n'
   printf '  security find-generic-password -a %q -s %q -w\n' "${KODI_USER}" "${KEYCHAIN_SERVICE}"
+fi
+if [[ -n "${REMOTE_TRANSACTION}" ]]; then
+  printf '\nThe deployment transaction is still undoable:\n'
+  printf '  %s\n' "${REMOTE_TRANSACTION}"
+  printf 'Verify the device, then commit or undo it:\n'
+  printf '  %q --target %q --finalize-deployment\n' "$0" "${TARGET}"
+  printf '  %q --target %q --rollback-deployment\n' "$0" "${TARGET}"
 fi
 printf 'Use the wired MAC in the audit report for the pfSense DHCP reservation.\n'
