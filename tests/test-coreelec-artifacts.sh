@@ -378,6 +378,78 @@ render_remote_script() {
   fi
 }
 
+# The rendered rollback program is the transaction prologue followed by a
+# six-line body, so everything above its first statement is the exact shared
+# prologue text the device receives for deploy, rollback, and finalize. Cutting
+# it here lets the device-side validators be exercised directly.
+extract_transaction_prologue() {
+  local root="$1"
+  # awk must consume the whole stream: exiting early would break the render
+  # pipeline under `set -o pipefail`.
+  render_remote_script rollback "${root}" \
+    | awk '/^resolve_pending_transaction/ { reached = 1 } !reached { print }'
+}
+
+# macOS ships Bash 3.2 as /bin/bash, and the provisioner must run there. Tests
+# that care about 3.2 semantics (an empty array expanded under `set -u`) use
+# this shell explicitly rather than whichever bash happens to be first on PATH.
+legacy_bash() {
+  if [[ -x /bin/bash ]]; then
+    printf '/bin/bash\n'
+  else
+    printf 'bash\n'
+  fi
+}
+
+# Loads one function definition out of provision-coreelec.sh into the current
+# shell so an ordering guarantee inside the main flow can be exercised against
+# stubs, without running the provisioner end to end or contacting a device.
+# Every provisioner function ends with a `}` in the first column.
+load_provisioner_function() {
+  local name="$1" body
+  body="$(awk -v start="${name}() {" '
+    $0 == start { capturing = 1 }
+    capturing { print }
+    capturing && $0 == "}" { exit }
+  ' "${PROVISIONER}")"
+  if [[ -z "${body}" ]]; then
+    printf 'no %s() definition was found in the provisioner\n' "${name}" >&2
+    return 1
+  fi
+  eval "${body}"
+}
+
+# Replaces every command the provisioner could reach the device (or the
+# Keychain) with a logging stub that always fails, so a test can assert that a
+# run refused before it touched anything remote. Prints the stub directory.
+install_network_stubs() {
+  local dir="$1" bin_dir="$1/network-bin" name
+  mkdir -p "${bin_dir}"
+  for name in ssh scp rsync ssh-keygen ssh-add security curl; do
+    cat > "${bin_dir}/${name}" <<STUB
+#!/bin/bash
+printf '${name} %s\n' "\$*" >> "${dir}/network-calls.log"
+exit 1
+STUB
+    chmod +x "${bin_dir}/${name}"
+  done
+  : > "${dir}/network-calls.log"
+  printf '%s\n' "${bin_dir}"
+}
+
+# Runs provision-coreelec.sh under Bash 3.2 with the network stubs ahead of
+# everything on PATH, the repository configuration, and scratch paths for the
+# administrator key and the report directory.
+run_provisioner_offline() {
+  local dir="$1" bin_dir="$2"
+  shift 2
+  printf 'n\n' | PATH="${bin_dir}:${PATH}" "$(legacy_bash)" "${PROVISIONER}" \
+    --config "${SCRIPT_DIR}/../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf" \
+    --identity "${dir}/scratch_admin_key" \
+    --report-dir "${dir}/reports" \
+    "$@"
+}
+
 # Builds the storage root the transaction operates on: a Kodi tree, the
 # provisioning cache, and the base64 payload the settings transformer reads.
 make_fake_storage() {
@@ -1135,6 +1207,401 @@ test_provisioner_never_installs_addons_through_kodi() {
   assert_not_contains "${source}" "install_requested_addons" "the modal installer function is gone"
 }
 
+# --- Transaction pointer confinement ----------------------------------------
+
+# The pointer file is device state: a truncated write, a manual edit, or a
+# planted file can name anything. It is what the EXIT trap rolls back, so a
+# pointer that is not confined to the backup root must be refused before it is
+# ever adopted, not after.
+test_a_malformed_transaction_pointer_never_arms_rollback() {
+  local dir root bin_dir rc output pointer outside
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  mkdir -p "${root}/.kodi/addons/plugin.video.fixture"
+  printf 'live marker\n' > "${root}/.kodi/addons/plugin.video.fixture/marker.txt"
+
+  # A complete, plausible transaction directory outside the backup root: if
+  # the pointer were adopted before validation, the rollback would delete the
+  # live add-on and move this planted copy into its place.
+  outside="${dir}/outside-the-backup-root"
+  mkdir -p "${outside}/rollback/addons/plugin.video.fixture" "${outside}/files"
+  printf 'planted marker\n' \
+    > "${outside}/rollback/addons/plugin.video.fixture/marker.txt"
+  printf 'plugin.video.fixture\n' > "${outside}/DEPLOYED.txt"
+  pointer="${root}/.cache/coreelec-provision/current-transaction"
+  printf '%s\n' "${outside}" > "${pointer}"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a malformed transaction pointer must refuse the deployment"
+  assert_contains "${output}" "pointer" "the refusal names the pointer"
+  assert_eq "" "$(remote_calls)" "no service is touched for a malformed pointer"
+  assert_eq "${outside}" "$(cat "${pointer}")" \
+    "the malformed pointer is retained for the operator, never silently removed"
+  assert_eq "planted marker" \
+    "$(cat "${outside}/rollback/addons/plugin.video.fixture/marker.txt")" \
+    "nothing outside the backup root is moved"
+  assert_eq "live marker" \
+    "$(cat "${root}/.kodi/addons/plugin.video.fixture/marker.txt")" \
+    "no add-on is removed or restored"
+  if [[ -e "${outside}/STATE" ]]; then
+    printf 'nothing may be written into an unvalidated transaction directory\n' >&2
+    return 1
+  fi
+  if [[ -e "${root}/.kodi/addons/script.module.fixture" ]]; then
+    printf 'nothing may be deployed behind a malformed pointer\n' >&2
+    return 1
+  fi
+}
+
+# A pointer that is well formed but names a directory that no longer exists is
+# stale, not pending. Clearing it is correct, but doing so silently hides the
+# fact that a previous run's rollback material is gone.
+test_a_stale_transaction_pointer_is_reported_when_it_is_cleared() {
+  local dir root bin_dir rc output pointer
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  pointer="${root}/.cache/coreelec-provision/current-transaction"
+  printf '%s\n' "${root}/backup/coreelec-provision/20200101T000000Z" > "${pointer}"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a stale pointer must not block a new deployment: ${output}"
+  assert_contains "${output}" "stale" "the discarded stale pointer is reported"
+  assert_contains "${output}" "20200101T000000Z" "the report names the missing transaction"
+}
+
+# --- Rollback completeness ---------------------------------------------------
+
+# STATE and the pointer are how the operator and Task 6 learn what happened. A
+# rollback that restores the files but cannot record its own outcome is an
+# incomplete rollback: it must keep the pointer and fail loudly.
+test_a_rollback_that_cannot_record_its_state_reports_failure() {
+  local dir root bin_dir transaction rc output pointer
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+
+  mkdir -p "${root}/.kodi/addons/plugin.video.fixture"
+  printf 'previous marker\n' > "${root}/.kodi/addons/plugin.video.fixture/marker.txt"
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  set +e
+  transaction="$(run_remote_script deploy "${root}" "${bin_dir}" 2>/dev/null)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the deployment must succeed"
+
+  # A directory where STATE belongs fails the write for any user, including
+  # root, which a mode change would not.
+  rm -f "${transaction}/STATE"
+  mkdir "${transaction}/STATE"
+
+  : > "${REMOTE_CALL_LOG}"
+  set +e
+  output="$(run_remote_script rollback "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a rollback that cannot record its outcome must not report success"
+  assert_contains "${output}" "ROLLBACK INCOMPLETE" "the incomplete rollback is announced"
+  assert_contains "${output}" "${transaction}" "the retained transaction path is printed"
+
+  pointer="${root}/.cache/coreelec-provision/current-transaction"
+  if [[ ! -f "${pointer}" ]]; then
+    printf 'an incomplete rollback must keep the pending-transaction pointer\n' >&2
+    return 1
+  fi
+  assert_eq "${transaction}" "$(cat "${pointer}")" "the pointer still names the transaction"
+  assert_eq "previous marker" \
+    "$(cat "${root}/.kodi/addons/plugin.video.fixture/marker.txt")" \
+    "the restore itself still happened"
+}
+
+# --- Remote plan-field validation -------------------------------------------
+
+# The plan's archive name and top-level directory are interpolated into device
+# paths exactly like the add-on ID, so all three are revalidated by the shell
+# that uses them, not only by the Python validator that produced them.
+test_the_remote_transaction_revalidates_every_plan_field() {
+  local dir root program output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  program="${dir}/plan-validators.sh"
+
+  {
+    extract_transaction_prologue "${root}"
+    cat <<'CHECKS'
+check() {
+  if "$1" "$2"; then
+    printf '%s accepts %s\n' "$1" "$2"
+  else
+    printf '%s rejects %s\n' "$1" "$2"
+  fi
+}
+check valid_addon_id plugin.video.fixture
+check valid_addon_id ../../../etc/evil
+check valid_archive_name 1.zip
+check valid_archive_name ../../outside.zip
+check valid_archive_name evil.zip
+check valid_directory_name weather.ha-0.0.6.6
+check valid_directory_name ../escape
+check valid_directory_name /absolute
+CHECKS
+  } > "${program}"
+
+  set +e
+  output="$(sh "${program}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the rendered validators must run under POSIX sh: ${output}"
+  assert_contains "${output}" "valid_addon_id accepts plugin.video.fixture" "a real ID is accepted"
+  assert_contains "${output}" "valid_addon_id rejects ../../../etc/evil" "a traversal ID is refused"
+  assert_contains "${output}" "valid_archive_name accepts 1.zip" "an indexed archive is accepted"
+  assert_contains "${output}" "valid_archive_name rejects ../../outside.zip" "a traversal archive is refused"
+  assert_contains "${output}" "valid_archive_name rejects evil.zip" "only indexed archive names are accepted"
+  assert_contains "${output}" "valid_directory_name accepts weather.ha-0.0.6.6" "a real ZIP root is accepted"
+  assert_contains "${output}" "valid_directory_name rejects ../escape" "a traversal ZIP root is refused"
+  assert_contains "${output}" "valid_directory_name rejects /absolute" "an absolute ZIP root is refused"
+}
+
+# /storage/backup is CoreELEC's own backup location. The transaction makes its
+# own subtree private and leaves the shared parent's mode alone.
+test_the_transaction_never_changes_the_shared_backup_directory() {
+  local dir root bin_dir transaction rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  mkdir -p "${root}/backup"
+  chmod 755 "${root}/backup"
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  set +e
+  transaction="$(run_remote_script deploy "${root}" "${bin_dir}" 2>/dev/null)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the deployment must succeed"
+  assert_eq "755" "$(file_mode "${root}/backup")" \
+    "the shared backup directory keeps the mode the device gave it"
+  assert_eq "700" "$(file_mode "${transaction}")" "the transaction itself is private"
+}
+
+test_the_render_flag_is_an_alias_of_the_deploy_emitter() {
+  local dir root rendered emitted
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  rendered="$(bash "${PROVISIONER}" --render-remote-deploy-script "${root}")"
+  emitted="$(bash "${PROVISIONER}" --emit-remote-script deploy "${root}")"
+  assert_eq "${emitted}" "${rendered}" "both internal modes must render the same program"
+}
+
+# --- Local ordering and preflight -------------------------------------------
+
+# The payload is the only thing that carries secrets to the device. It is
+# uploaded last, immediately before the transaction that consumes and removes
+# it, so no earlier failure can strand it.
+test_the_artifact_bundle_is_staged_before_the_secret_payload() {
+  local dir log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  log="${dir}/baseline-calls.log"
+  : > "${log}"
+
+  load_provisioner_function apply_kodi_baseline || return 1
+  info() { :; }
+  upload_artifact_bundle() { printf 'bundle %s\n' "$1" >> "${log}"; }
+  upload_kodi_settings_payload() { printf 'payload\n' >> "${log}"; }
+  deploy_artifacts_and_settings() { printf 'deploy\n' >> "${log}"; }
+  wait_for_kodi_jsonrpc() { printf 'verify\n' >> "${log}"; }
+  ARTIFACT_STAGE_DIR="${dir}/artifacts"
+
+  apply_kodi_baseline
+
+  assert_eq "bundle ${dir}/artifacts
+payload
+deploy
+verify" "$(cat "${log}")" \
+    "the bundle is staged first and the payload is uploaded immediately before the transaction"
+}
+
+test_a_failed_bundle_upload_never_uploads_the_secret_payload() {
+  local dir log rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  log="${dir}/baseline-calls.log"
+  : > "${log}"
+
+  load_provisioner_function apply_kodi_baseline || return 1
+  info() { :; }
+  upload_artifact_bundle() { printf 'bundle\n' >> "${log}"; return 1; }
+  upload_kodi_settings_payload() { printf 'payload\n' >> "${log}"; }
+  deploy_artifacts_and_settings() { printf 'deploy\n' >> "${log}"; }
+  wait_for_kodi_jsonrpc() { printf 'verify\n' >> "${log}"; }
+  ARTIFACT_STAGE_DIR="${dir}/artifacts"
+
+  set +e
+  ( set -e; apply_kodi_baseline ) >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a failed staging step must fail the baseline"
+  assert_eq "bundle" "$(cat "${log}")" \
+    "a failure before the transaction leaves no secret payload on the device"
+}
+
+# A transport failure can drop the connection before the transaction (and its
+# trap) ever runs, which is the one window where the payload could survive on
+# the device.
+test_a_failed_deployment_discards_the_remote_secret_payload() {
+  local dir log rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  log="${dir}/deploy-calls.log"
+  : > "${log}"
+
+  load_provisioner_function deploy_artifacts_and_settings || return 1
+  info() { :; }
+  die() { printf 'die\n' >> "${log}"; exit 1; }
+  coreelec_remote_deploy_script() { printf 'true\n'; }
+  ssh_keyed() { cat >/dev/null; return 9; }
+  discard_remote_settings_payload() { printf 'discard\n' >> "${log}"; }
+
+  set +e
+  ( set -e; deploy_artifacts_and_settings ) >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a failed deployment must fail the run"
+  assert_eq "discard
+die" "$(cat "${log}")" "the secret payload is discarded before the run gives up"
+}
+
+# An --addon that is not in the lock is a local mistake. It must cancel the run
+# before the administrator key is installed, the backup is taken, and SSH is
+# hardened, not after all three have already changed the device.
+test_an_unlocked_addon_is_refused_before_any_remote_call() {
+  local dir bin_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+
+  set +e
+  output="$(run_provisioner_offline "${dir}" "${bin_dir}" \
+    --target 192.0.2.1 --addon plugin.video.unknown --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an --addon outside the lock must cancel the run"
+  assert_contains "${output}" "plugin.video.unknown" "the error names the unknown add-on"
+  assert_eq "" "$(cat "${dir}/network-calls.log")" \
+    "no key install, backup, or hardening runs before the selection is validated"
+  if [[ -e "${dir}/scratch_admin_key" ]]; then
+    printf 'no administrator key may be created for a refused selection\n' >&2
+    return 1
+  fi
+}
+
+# macOS ships Bash 3.2, where "${array[@]}" on an empty array is an unbound
+# variable under `set -u`. The default run selects every locked add-on and
+# therefore leaves ADDONS empty, so this is the ordinary path, not an edge case.
+test_a_default_run_survives_the_empty_addon_array_under_bash_3_2() {
+  local dir bin_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+
+  set +e
+  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 2>&1)"
+  rc=$?
+  set -e
+  assert_not_contains "${output}" "unbound variable" \
+    "an empty add-on selection must not abort under Bash 3.2"
+  assert_contains "${output}" "Continue?" "the default run reaches the confirmation prompt"
+  assert_failure "${rc}" "declining the confirmation cancels the run"
+  assert_eq "" "$(cat "${dir}/network-calls.log")" "a cancelled run never contacts the device"
+}
+
+# --- Audit report ------------------------------------------------------------
+
+# Task 6 reads this report. Every line the provisioner writes itself is
+# key=value, and the pending transaction and its state are named explicitly.
+test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
+  local dir report body line
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+
+  load_provisioner_function write_audit_report || return 1
+  timestamp() { printf '2026-01-01T00:00:00Z\n'; }
+  ssh_keyed() { cat >/dev/null; printf 'hostname=fixture\n'; }
+  SCRIPT_VERSION="9.9.9"
+  TARGET="192.0.2.1"
+  SSH_PORT="22"
+  IDENTITY_FILE="${dir}/scratch_admin_key"
+  HARDEN_SSH="1"
+  APPLY_KODI="1"
+  KODI_PORT="8080"
+  KODI_USER="homeassistant"
+  REPORT_DIR="${dir}/reports"
+  REMOTE_TRANSACTION="/storage/backup/coreelec-provision/20260101T000000Z"
+  ARTIFACT_STAGE_DIR="${dir}/artifacts"
+  ADDONS=()
+  mkdir -p "${ARTIFACT_STAGE_DIR}"
+  printf '1\tplugin.video.youtube\t7.4.4\t1.zip\n' > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+
+  report="$(write_audit_report)"
+  [[ -f "${report}" ]] || { printf 'no report file was written\n' >&2; return 1; }
+
+  body="$(awk '/^remote_inventory=/ { exit } { print }' "${report}")"
+  [[ -n "${body}" ]] || { printf 'the report has no local section\n' >&2; return 1; }
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    case "${line}" in
+      *=*)
+        case "${line%%=*}" in
+          ""|*[!A-Za-z0-9_.]*)
+            printf 'report key is not a plain identifier: %s\n' "${line}" >&2
+            return 1
+            ;;
+        esac
+        ;;
+      *)
+        printf 'report line is not key=value: %s\n' "${line}" >&2
+        return 1
+        ;;
+    esac
+  done <<< "${body}"
+
+  assert_contains "${body}" \
+    "deployment_transaction=/storage/backup/coreelec-provision/20260101T000000Z" \
+    "Task 6 can find the pending transaction"
+  assert_contains "${body}" "deployment_state=pending-verification" \
+    "the report records the deployment state"
+  assert_contains "${body}" "requested_addons=all-locked-artifacts" \
+    "a default run records that the whole lock was selected"
+  assert_contains "${body}" "deployed_addon.plugin.video.youtube=7.4.4" \
+    "each deployed add-on is one key=value line"
+}
+
 run_all_tests \
   test_artifact_record_requires_four_fields \
   test_artifact_record_rejects_non_https_url \
@@ -1168,4 +1635,16 @@ run_all_tests \
   test_addon_selection_filters_to_requested_ids \
   test_addon_selection_rejects_an_unlocked_id \
   test_deploy_script_embeds_the_fixture_transformer_verbatim \
-  test_provisioner_never_installs_addons_through_kodi
+  test_provisioner_never_installs_addons_through_kodi \
+  test_a_malformed_transaction_pointer_never_arms_rollback \
+  test_a_stale_transaction_pointer_is_reported_when_it_is_cleared \
+  test_a_rollback_that_cannot_record_its_state_reports_failure \
+  test_the_remote_transaction_revalidates_every_plan_field \
+  test_the_transaction_never_changes_the_shared_backup_directory \
+  test_the_render_flag_is_an_alias_of_the_deploy_emitter \
+  test_the_artifact_bundle_is_staged_before_the_secret_payload \
+  test_a_failed_bundle_upload_never_uploads_the_secret_payload \
+  test_a_failed_deployment_discards_the_remote_secret_payload \
+  test_an_unlocked_addon_is_refused_before_any_remote_call \
+  test_a_default_run_survives_the_empty_addon_array_under_bash_3_2 \
+  test_the_audit_report_is_key_value_and_names_the_pending_transaction

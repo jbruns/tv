@@ -136,7 +136,10 @@ coreelec_artifacts_download_and_validate() {
   mkdir -p "${destination}"
   : > "${manifest}"
 
-  for record in "${ADDON_ARTIFACTS[@]}"; do
+  # `${array[@]+...}` because macOS Bash 3.2 treats "${empty[@]}" as unbound
+  # under `set -u`; the caller may legitimately have configured no artifacts.
+  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+
     index=$((index + 1))
     coreelec_artifact_parse "${record}"
 

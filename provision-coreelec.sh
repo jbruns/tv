@@ -75,8 +75,9 @@ Internal:
                            for ROOT (default /storage), then exit. Used by
                            the test suites; it never contacts a device.
   --render-remote-deploy-script [ROOT]
-                          Print the remote deployment transaction program
-                           for ROOT (default /storage), then exit.
+                          Alias of --emit-remote-script deploy: print the
+                           remote deployment transaction program for ROOT
+                           (default /storage), then exit.
   --print-addon-selection MANIFEST
                           Print the manifest lines this run would deploy,
                            honoring --addon, then exit.
@@ -758,14 +759,43 @@ fail() {
   exit 1
 }
 
-# An add-on ID is the only manifest field this program ever interpolates into
-# a path, so it is rechecked here even though the local provisioner and the
-# staging validator both checked it first.
+# An add-on ID is not the only manifest field this program interpolates into a
+# path: the archive name and the ZIP's top-level directory are too. All three
+# are rechecked here, symmetrically, even though the local provisioner and the
+# staging validator both checked them first.
 valid_addon_id() {
   case "$1" in
     ""|-*|.*) return 1 ;;
     *[!A-Za-z0-9._-]*) return 1 ;;
   esac
+  return 0
+}
+
+# Uploaded archives are named by their stable 1-based manifest index.
+valid_archive_name() {
+  case "$1" in
+    *.zip) ;;
+    *) return 1 ;;
+  esac
+  case "${1%.zip}" in
+    ""|*[!0-9]*) return 1 ;;
+  esac
+  return 0
+}
+
+valid_directory_name() {
+  case "$1" in
+    ""|-*|.*) return 1 ;;
+    *[!A-Za-z0-9._+~-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# Refuses a plan line whose fields are not exactly what the validator promised.
+valid_plan_line() {
+  valid_archive_name "$1" || return 1
+  valid_addon_id "$2" || return 1
+  valid_directory_name "$3" || return 1
   return 0
 }
 
@@ -788,20 +818,29 @@ copy_into_backup() {
 # Sets `transaction` from the pointer a deployment left behind. Returns 1 when
 # nothing is pending; refuses outright when the pointer names something that
 # is not a timestamped directory under the backup root.
+#
+# The pointer is device state that a truncated write, a manual edit, or a
+# planted file can corrupt, and `transaction` is exactly what the EXIT trap
+# rolls back: removing add-ons, moving directories back, restoring files, and
+# clearing the pointer. So the candidate is held in a separate variable and
+# only promoted to `transaction` once it is proven to be confined to the
+# backup root. A malformed pointer arms nothing and is left in place for the
+# operator to look at.
 resolve_pending_transaction() {
   [ -f "${pointer_file}" ] || return 1
-  transaction="$(cat "${pointer_file}")"
-  case "${transaction}" in
+  pending_candidate="$(cat "${pointer_file}")"
+  case "${pending_candidate}" in
     "${backup_root}"/*) ;;
-    *) fail "the pending transaction pointer does not name a backup directory" ;;
+    *) fail "the pending transaction pointer does not name a backup directory: ${pending_candidate}" ;;
   esac
-  pending_name="${transaction#${backup_root}/}"
+  pending_name="${pending_candidate#${backup_root}/}"
   case "${pending_name}" in
     ""|*[!A-Za-z0-9-]*)
-      fail "the pending transaction name is not a timestamp: ${pending_name}"
+      fail "the pending transaction pointer does not name a timestamp: ${pending_name}"
       ;;
   esac
-  [ -d "${transaction}" ] || return 1
+  [ -d "${pending_candidate}" ] || return 1
+  transaction="${pending_candidate}"
   return 0
 }
 
@@ -880,15 +919,28 @@ rollback_transaction() {
   systemctl restart tz-data.service >/dev/null 2>&1 || true
   systemctl start kodi.service >/dev/null 2>&1 || true
 
+  # STATE and the pointer are how the operator, a later run, and Task 6 learn
+  # what happened here. A rollback whose outcome cannot be recorded is not a
+  # completed rollback, so a failed write is a rollback failure and the
+  # pointer stays behind rather than being cleared on an unrecorded state.
+  if [ "${rollback_failed}" -eq 0 ]; then
+    printf 'rolled-back\n' > "${transaction}/STATE" 2>/dev/null || rollback_failed=1
+  fi
+  if [ "${rollback_failed}" -eq 0 ]; then
+    rm -f "${pointer_file}" 2>/dev/null || rollback_failed=1
+    if [ -e "${pointer_file}" ]; then
+      rollback_failed=1
+    fi
+  fi
+
   if [ "${rollback_failed}" -ne 0 ]; then
     printf 'ROLLBACK INCOMPLETE. Retained transaction: %s\n' "${transaction}" >&2
     printf 'ROLLBACK INCOMPLETE. Retained staging: %s\n' "${stage_dir}" >&2
+    printf 'ROLLBACK INCOMPLETE. Retained pointer: %s\n' "${pointer_file}" >&2
     printf 'incomplete-rollback\n' > "${transaction}/STATE" 2>/dev/null || true
     return 1
   fi
 
-  printf 'rolled-back\n' > "${transaction}/STATE"
-  rm -f "${pointer_file}"
   return 0
 }
 REMOTE_TRANSACTION_COMMON
@@ -930,8 +982,14 @@ if [ -f "${pointer_file}" ]; then
   if resolve_pending_transaction; then
     pending="${transaction}"
     transaction=""
-    fail "a deployment transaction is already pending (${pending}); commit it with --finalize-deployment or undo it with --rollback-deployment"
+    fail "a deployment transaction from an earlier run is still pending and this run changed nothing: ${pending}. Verify the device, then commit that transaction with --finalize-deployment or undo it with --rollback-deployment before deploying again"
   fi
+  # Only a well-formed pointer whose directory is gone reaches here: a
+  # malformed one already refused the run. Clearing it is correct, but it
+  # means an earlier run's rollback material no longer exists, so it is
+  # reported rather than dropped in silence.
+  printf 'discarding a stale transaction pointer: %s no longer exists\n' \
+    "$(cat "${pointer_file}")" >&2
   rm -f "${pointer_file}"
   transaction=""
 fi
@@ -1054,7 +1112,8 @@ PYTHON_DEPLOY_PLAN
 [ -s "${plan_file}" ] || fail "the uploaded bundle selected no add-ons"
 
 while IFS="${tab}" read -r plan_archive plan_id plan_top; do
-  valid_addon_id "${plan_id}" || fail "unsupported add-on ID in plan: ${plan_id}"
+  valid_plan_line "${plan_archive}" "${plan_id}" "${plan_top}" \
+    || fail "unsupported deployment plan line: ${plan_archive} ${plan_id} ${plan_top}"
   mkdir -p "${expanded_dir}/${plan_id}"
   # Add-on payloads are public content, so they keep the 0755/0644 modes Kodi
   # expects instead of inheriting the transaction's private umask.
@@ -1073,7 +1132,11 @@ while [ -e "${transaction}" ]; do
   transaction="${backup_root}/${stamp}-${collision}"
 done
 mkdir -p "${transaction}/files" "${transaction}/rollback/addons"
-chmod 700 "${storage_root}/backup" "${backup_root}" "${transaction}"
+# Only this run's own subtree is tightened. /storage/backup is CoreELEC's own
+# backup location, shared with the device's other tooling, so its mode is left
+# exactly as the device set it; umask 077 already makes anything created here
+# private.
+chmod 700 "${backup_root}" "${transaction}"
 : > "${transaction}/DEPLOYED.txt"
 : > "${transaction}/APPLIED.txt"
 {
@@ -1102,7 +1165,8 @@ done
 transaction_state="replacing add-ons"
 mkdir -p "${addons_dir}"
 while IFS="${tab}" read -r plan_archive plan_id plan_top; do
-  valid_addon_id "${plan_id}" || fail "unsupported add-on ID in plan: ${plan_id}"
+  valid_plan_line "${plan_archive}" "${plan_id}" "${plan_top}" \
+    || fail "unsupported deployment plan line: ${plan_archive} ${plan_id} ${plan_top}"
   destination="${addons_dir}/${plan_id}"
   if [ -e "${destination}" ]; then
     # Moving the previous directory into the dated transaction is its backup:
@@ -1139,7 +1203,9 @@ done < "${transaction}/APPLIED.txt"
 
 transaction_state="restarting services"
 systemctl restart tz-data.service >/dev/null 2>&1 || true
-systemctl start kodi.service || fail "Kodi did not start after deployment"
+# stdout is the transaction path and nothing else, because the Mac captures it
+# through a command substitution; systemctl diagnostics stay on stderr.
+systemctl start kodi.service >/dev/null || fail "Kodi did not start after deployment"
 
 # The emergency restart is disarmed here, but the rollback material stays on
 # the device until verification finalizes or undoes this transaction.
@@ -1241,11 +1307,14 @@ while (( config_scan_index < ${#config_scan_args[@]} )); do
       exit 0
       ;;
     --render-remote-deploy-script)
+      # A named alias for `--emit-remote-script deploy`, kept because the test
+      # suite and the task brief both refer to it. It dispatches through the
+      # same emitter so the two modes cannot drift apart.
       emit_script_root="/storage"
       if (( config_scan_index + 1 < ${#config_scan_args[@]} )); then
         emit_script_root="${config_scan_args[$((config_scan_index + 1))]}"
       fi
-      coreelec_remote_deploy_script "${emit_script_root}"
+      coreelec_emit_remote_script deploy "${emit_script_root}"
       exit 0
       ;;
     --config)
@@ -1366,6 +1435,13 @@ while (( $# > 0 )); do
   esac
 done
 
+# macOS ships Bash 3.2, where expanding "${array[@]}" of an *empty* array
+# under `set -u` is an unbound-variable error rather than an empty list. Every
+# optional array in this script is therefore iterated through the `${a[@]+...}`
+# form, which is defined for an empty array in every Bash version and still
+# keeps elements that contain spaces intact. ADDONS is empty on the ordinary
+# run (no --addon means "the whole lock"), so this is the common path.
+
 # Prints the manifest lines Task 2 validated that this run should deploy. With
 # no --addon the whole locked manifest is selected; with one or more, the
 # selection is narrowed to those IDs and an ID that is not locked is refused
@@ -1385,7 +1461,7 @@ coreelec_addon_selection() {
       [[ -n "${id}" ]] || continue
       known_ids="${known_ids}${id}"$'\n'
     done < "${manifest}"
-    for requested in "${ADDONS[@]}"; do
+    for requested in ${ADDONS[@]+"${ADDONS[@]}"}; do
       case "${known_ids}" in
         *$'\n'"${requested}"$'\n'*) ;;
         *)
@@ -1413,6 +1489,32 @@ coreelec_addon_selection() {
   if (( selected < total )); then
     warn "Only ${selected} of ${total} locked add-ons were selected; dependencies of the selection are not resolved automatically"
   fi
+}
+
+# Refuses an --addon that is not in the locked configuration. This is a purely
+# local decision -- the IDs come from ADDON_ARTIFACT records, not from the
+# device -- so it runs in the preflight, before the administrator key is
+# installed, the backup is taken, or SSH is hardened. Catching it later would
+# abort a run that had already changed the device three times.
+coreelec_validate_addon_selection() {
+  local requested record known_ids
+  (( ${#ADDONS[@]} > 0 )) || return 0
+
+  known_ids=$'\n'
+  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+    coreelec_artifact_parse "${record}"
+    known_ids="${known_ids}${ARTIFACT_ID}"$'\n'
+  done
+
+  for requested in ${ADDONS[@]+"${ADDONS[@]}"}; do
+    validate_identifier "Add-on ID" "${requested}"
+    case "${known_ids}" in
+      *$'\n'"${requested}"$'\n'*) ;;
+      *)
+        die "--addon ${requested} is not in the locked artifact manifest; add an ADDON_ARTIFACT record for it first"
+        ;;
+    esac
+  done
 }
 
 if [[ -n "${PRINT_ADDON_SELECTION}" ]]; then
@@ -1449,11 +1551,11 @@ validate_port "Kodi port" "${KODI_PORT}"
 validate_identifier "Kodi username" "${KODI_USER}"
 validate_identifier "Expected release" "${EXPECTED_RELEASE}"
 
-for addon_id in "${ADDONS[@]}"; do
-  validate_identifier "Add-on ID" "${addon_id}"
-done
-
 coreelec_config_validate
+
+# The add-on selection is resolved and refused here, before the first remote
+# call of any kind.
+coreelec_validate_addon_selection
 
 require_command ssh
 require_command ssh-keygen
@@ -1747,7 +1849,11 @@ upload_artifact_bundle() {
   local -a bundle_files=()
 
   [[ -d "${validated_dir}" ]] || die "Validated artifact directory is missing: ${validated_dir}"
-  coreelec_addon_selection "${validated_dir}/manifest.tsv" > "${validated_dir}/deploy.tsv"
+  # The selection is resolved in the preflight, before anything on the device
+  # is touched; reaching here without it is a programming error, not an
+  # operator mistake.
+  [[ -s "${validated_dir}/deploy.tsv" ]] \
+    || die "Internal error: the add-on selection was not resolved before the bundle upload"
 
   bundle_files=("deploy.tsv")
   while IFS=$'\t' read -r index id version filename; do
@@ -1770,6 +1876,19 @@ upload_artifact_bundle() {
     | ssh_keyed "sh -c '${script}'"
 }
 
+# Best effort cleanup for the one window the remote trap cannot cover: if the
+# transaction never started (a dropped connection, an SSH failure), the
+# uploaded secrets would otherwise sit in the provisioning cache until the
+# next run overwrote them.
+discard_remote_settings_payload() {
+  local payload_dir="/storage/.cache/coreelec-provision"
+  ssh_keyed 'sh -c '\''
+    set -eu
+    rm -f "$1/settings-payload.conf" "$1/settings-payload.conf.provision-new"
+  '\'' sh' "${payload_dir}" >/dev/null 2>&1 \
+    || warn "Could not confirm removal of the uploaded settings payload in ${payload_dir}"
+}
+
 # Runs the whole device-side change as one transaction: expand and verify the
 # bundle, stop Kodi once, replace add-ons, apply settings, restart services.
 # The rollback material deliberately survives a success so verification can
@@ -1784,10 +1903,19 @@ deploy_artifacts_and_settings() {
   set -e
 
   if (( status != 0 )); then
+    discard_remote_settings_payload
     die "Remote deployment failed. The device rolled itself back unless a ROLLBACK INCOMPLETE line above names retained paths."
   fi
+  # The remote program prints exactly one line, the transaction path; anything
+  # else means the channel carried output this Mac must not treat as a path.
   [[ -n "${transaction}" ]] \
     || die "The remote deployment did not report a transaction directory"
+  [[ "${transaction}" != *$'\n'* ]] \
+    || die "The remote deployment printed more than the transaction directory"
+  case "${transaction}" in
+    /*) ;;
+    *) die "The remote deployment reported a transaction directory that is not an absolute path" ;;
+  esac
 
   REMOTE_TRANSACTION="${transaction}"
   info "Deployment transaction pending verification: ${transaction}"
@@ -1819,8 +1947,12 @@ apply_kodi_baseline() {
   [[ -n "${NEXTPVR_PIN:-}" ]] && info "NextPVR client instance will be configured"
   [[ -n "${PLEX_TOKEN:-}" ]] && info "PM4K local mode will be configured"
 
-  upload_kodi_settings_payload
+  # The bundle is staged first and the secret payload last, immediately before
+  # the deploy that consumes it. Staging is the step most likely to fail (it
+  # moves tens of megabytes and verifies checksums on the device), and a
+  # failure there must not leave credentials sitting in the remote cache.
   upload_artifact_bundle "${ARTIFACT_STAGE_DIR}"
+  upload_kodi_settings_payload
   # One transaction: add-ons land before the transformer runs, so activating
   # the pinned skin and weather provider cannot be rejected for referring to
   # an add-on that is not installed yet.
@@ -1873,7 +2005,7 @@ write_audit_report() {
   report_file="${REPORT_DIR}/${target_slug}-${report_stamp}.txt"
 
   {
-    printf 'CoreELEC provisioning report\n'
+    printf 'report_format=coreelec-provisioning-report-1\n'
     printf 'script_version=%s\n' "${SCRIPT_VERSION}"
     printf 'created_utc=%s\n' "$(timestamp)"
     printf 'target=%s\n' "${TARGET}"
@@ -1886,10 +2018,10 @@ write_audit_report() {
       printf 'kodi_username=%s\n' "${KODI_USER}"
       printf 'kodi_password=stored-in-macos-keychain\n'
     fi
+    # Every local line is key=value so Task 6 (and any operator running grep)
+    # can read the report without parsing prose.
     if (( ${#ADDONS[@]} > 0 )); then
-      printf 'requested_addons='
-      printf '%s ' "${ADDONS[@]}"
-      printf '\n'
+      printf 'requested_addons=%s\n' "$(printf '%s,' ${ADDONS[@]+"${ADDONS[@]}"} | sed 's/,$//')"
     else
       printf 'requested_addons=all-locked-artifacts\n'
     fi
@@ -1898,13 +2030,12 @@ write_audit_report() {
       printf 'deployment_state=pending-verification\n'
     fi
     if [[ -n "${ARTIFACT_STAGE_DIR}" && -f "${ARTIFACT_STAGE_DIR}/deploy.tsv" ]]; then
-      printf 'deployed_addons\n'
       while IFS=$'\t' read -r deployed_index deployed_id deployed_version deployed_file; do
         [[ -n "${deployed_id}" ]] || continue
-        printf '%s=%s\n' "${deployed_id}" "${deployed_version}"
+        printf 'deployed_addon.%s=%s\n' "${deployed_id}" "${deployed_version}"
       done < "${ARTIFACT_STAGE_DIR}/deploy.tsv"
     fi
-    printf '\nRemote inventory\n'
+    printf 'remote_inventory=begin\n'
 
     ssh_keyed 'sh -s' <<'REMOTE_INVENTORY'
 printf 'hostname=%s\n' "$(hostname)"
@@ -2023,6 +2154,9 @@ if [[ "${APPLY_KODI}" == "1" ]]; then
   ARTIFACT_STAGE_DIR="${TASK_TEMP_DIR}/artifacts"
   info "Validating pinned add-on artifacts before changing anything on the device"
   coreelec_artifacts_download_and_validate "${ARTIFACT_STAGE_DIR}"
+  # Resolving the selection here keeps every "which add-ons" decision -- and
+  # every way it can be refused -- on the untouched-device side of the run.
+  coreelec_addon_selection "${ARTIFACT_STAGE_DIR}/manifest.tsv" > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
 fi
 
 install_public_key_if_needed
