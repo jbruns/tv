@@ -164,15 +164,25 @@ If using the UR-01 over Bluetooth:
 2. Hold Volume Up and Volume Down together until the remote enters pairing mode.
 3. Select the displayed UR-01 and pair it.
 
+## Provision the shared CoreELEC baseline
+
+With wired networking and SSH enabled, and **before** the room-specific Dolby Vision/audio choices below, run the shared provisioner from a Mac:
+
+```bash
+./provision-coreelec.sh --target <hostname-or-IP>
+```
+
+This installs the pinned add-on set (Emby for Kodi Next Gen, PM4K, official Kodi YouTube, Arctic Fuse 3, NextPVR, Home Assistant Weather, TMDb Helper, and their dependencies), sets the skin active, applies the Pacific/English-US regional baseline, and writes a redacted audit report. It also applies `Adjust display refresh rate: On start/stop` and `Sync playback to display: Off` below — the only baseline table row it does not set is Dolby Vision mode, which stays room-specific. See the [shared runbook's provisioning step](../../runbook.md#3-provision-the-shared-coreelec-baseline) for validation-only commands, the interactive password/passphrase prompts, backup/rollback locations, manual Emby/YouTube authorization, and restoration after a failed run, and [`config/README.md`](../../../config/README.md) for every configuration key and secret.
+
 ## Baseline Kodi/CoreELEC settings
 
-Before testing media, change the settings level to `Expert` and apply:
+Before testing media, change the settings level to `Expert` and confirm:
 
 | Setting | Value |
 |---|---|
-| Adjust display refresh rate | **On start/stop** |
-| Sync playback to display | **Off** |
-| Dolby Vision mode | Use the room's display-specific choice when Dolby Vision is supported. |
+| Adjust display refresh rate | **On start/stop** (applied by the provisioning step above) |
+| Sync playback to display | **Off** (applied by the provisioning step above) |
+| Dolby Vision mode | Use the room's display-specific choice when Dolby Vision is supported. Not set by provisioning. |
 
 For a 2160p display, add all available 2160p modes reported by that display to Kodi's resolution whitelist. This prevents Kodi's legacy handling from forcing 25 fps and 30 fps material to 50/60 fps. Do not add modes the display does not report.
 
@@ -222,7 +232,7 @@ Installing to eMMC alters the internal partition layout. The external-media pilo
 
 ## Stop point
 
-After validation and a backup, continue with the [shared service and interface sequence](../../runbook.md#6-add-services-and-the-interface).
+After validation and a backup, continue with the [remaining room-specific service work](../../runbook.md#7-remaining-room-specific-service-work) — the shared add-ons were already installed and configured by the [provisioning step](#provision-the-shared-coreelec-baseline) above.
 
 ## Sources
 

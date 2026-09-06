@@ -4,9 +4,13 @@
 #
 # The first-boot wizard must already have completed, with wired networking and
 # SSH enabled. This script then installs a dedicated administrator key, verifies
-# key authentication before disabling password authentication, applies a small
-# reversible Kodi/Home Assistant baseline, optionally installs add-ons already
-# available from enabled Kodi repositories, and writes a non-secret audit report.
+# key authentication before disabling password authentication, deploys a pinned,
+# checksum-verified set of Kodi add-ons and a reversible Kodi/regional/Home
+# Assistant baseline as one remote transaction, verifies the result over the
+# device's own localhost JSON-RPC, automatically finalizes or rolls back, and
+# writes a redacted, non-secret audit report. See config/README.md for every
+# configuration key, the strict KEY=value grammar, and the secret environment
+# variables; see docs/runbook.md for the full operator workflow.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -109,16 +113,29 @@ Internal:
                           Run the verify -> finalize/rollback decision with
                            the remote calls recorded in LOG, then exit.
 
-Example:
-  ./provision-coreelec.sh --target 172.16.99.50 --with-youtube
+Examples:
+  ./provision-coreelec.sh --check-config
+  ./provision-coreelec.sh --check-artifacts
+  ./provision-coreelec.sh --target coreelec-theater
+  ./provision-coreelec.sh --config /path/to/device.conf --target 172.16.99.50
 
 The device must first be booted through the CoreELEC wizard with Ethernet and
 SSH enabled and a unique root password. The first run may prompt for that root
 password and for the passphrase of the dedicated administrator key.
 
-This script deliberately does not configure audio codecs, the display mode
-whitelist, Emby/Plex account tokens, or third-party repositories. Those depend
-on live HDMI capabilities or provider-specific authorization.
+Configuration precedence is: built-in defaults, then the selected --config
+file, then explicit CLI options, then secret environment variables (read only
+for the fields that require them: OMDB_API_KEY, MDBLIST_API_KEY,
+YOUTUBE_API_KEY, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET,
+HOME_ASSISTANT_TOKEN, NEXTPVR_PIN, and PLEX_TOKEN). None of these may appear
+in the config file, and TARGET is never a config-file key. See
+config/README.md for every supported key, the repeated ADDON_ARTIFACT
+grammar, and the full secret list.
+
+This script deliberately does not configure audio codecs or the display mode
+whitelist (room-specific, live HDMI-dependent), and it cannot perform Emby
+server sign-in or YouTube's interactive Google device authorization -- those
+add-ons are always left for the operator to finish by hand.
 USAGE
 }
 
