@@ -48,6 +48,7 @@ Both exit 0 without `--target`. `--check-artifacts` downloads all 34 pinned add-
 ```
 
 - **Interactive prompts on first use:** SSH will prompt for the device's temporary CoreELEC root password while installing the administrator key; if no key exists yet at `~/.ssh/coreelec_admin_ed25519`, `ssh-keygen` also prompts for a new passphrase (macOS Keychain can retain it so later runs don't re-prompt).
+- **If the run stops at *"Could not complete the read-only platform check"***, the device never answered its first, read-only SSH call and nothing on it was changed. Confirm the device is powered on and booted into CoreELEC, that its wired address still matches the hostname or IP passed to `--target`, and that **Settings → CoreELEC → Services → Enable SSH** is on; then re-run the same command.
 - The run stages and installs the pinned add-ons and settings as one remote transaction, verifies the result over the device's own localhost JSON-RPC (never over the LAN from the Mac), and then automatically finalizes or rolls back depending on what it observes — nothing is left half-applied.
 
 ### Backup and rollback locations on the device
