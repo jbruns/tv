@@ -185,8 +185,10 @@ to `/storage/.cache/timezone` and restart `tz-data.service`.
 Verification covers:
 
 - the timezone cache value;
-- `/etc/localtime` resolving to the requested zoneinfo file;
-- local `date` output carrying the expected offset/abbreviation;
+- `/etc/localtime` holding the requested zone, either as a symlink into the
+  zoneinfo tree or as a plain copy byte-equal to that zone's file;
+- local `date` output carrying the expected UTC offset, which is advisory
+  because BusyBox may not expand `%Z%z` at all;
 - Kodi JSON-RPC values for timezone, language, country, and keyboard layout;
   and
 - presence and enabled state of `resource.language.en_us`.

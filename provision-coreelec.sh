@@ -1315,8 +1315,10 @@ compared on the device and reported as booleans.
 """
 
 import base64
+import errno
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -1332,7 +1334,24 @@ SETTING_IDS = [
     "weather.addon",
 ]
 
+# `date +%Z%z` output: a zone abbreviation followed by a UTC offset. Anything
+# else -- an unexpanded format string, an error line, an empty answer -- is not
+# zone marks and is never treated as evidence about the device's clock.
+ZONE_MARKS_PATTERN = re.compile(r"^([A-Za-z0-9_+-]{1,10}?)([+-][0-9]{4})$")
+
+# CoreELEC images do not agree on where the tz database lives.
+ZONEINFO_ROOTS = [
+    "usr/share/zoneinfo",
+    "usr/share/zoneinfo/posix",
+    "share/zoneinfo",
+    "etc/zoneinfo",
+]
+
 OBSERVATIONS = []
+
+
+class CurlUnavailable(Exception):
+    """The device has no curl, so Kodi cannot be asked anything at all."""
 
 
 def fail(message):
@@ -1403,7 +1422,11 @@ def call_jsonrpc(curl_config, url, batch):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
-    except OSError:
+    except OSError as error:
+        # A missing curl is a different fact from an unresponsive Kodi, and
+        # retrying it would only turn an immediate answer into a long wait.
+        if getattr(error, "errno", None) == errno.ENOENT:
+            raise CurlUnavailable("curl is not available on this device")
         return None
     body = json.dumps(batch).encode("utf-8")
     output = process.communicate(body)[0]
@@ -1413,6 +1436,20 @@ def call_jsonrpc(curl_config, url, batch):
         return json.loads(output.decode("utf-8"))
     except ValueError:
         return None
+
+
+def require_curl():
+    """Checked before the credential file is written, so a device that cannot
+    be probed fails at once with the reason rather than after a minute of
+    retries against a tool that does not exist."""
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        candidate = os.path.join(directory, "curl")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return
+    fail("curl is not available on this device, so Kodi cannot be queried "
+         "over localhost JSON-RPC")
 
 
 def index_responses(payload):
@@ -1533,6 +1570,56 @@ def localtime_target(system_root):
     return ""
 
 
+def localtime_kind(system_root):
+    path = os.path.join(system_root, "etc", "localtime")
+    if os.path.islink(path):
+        return "symlink"
+    if os.path.isfile(path):
+        return "file"
+    return "missing"
+
+
+def read_file_bytes(path):
+    handle = open(path, "rb")
+    try:
+        return handle.read()
+    finally:
+        handle.close()
+
+
+def localtime_zoneinfo_match(system_root, timezone):
+    """Whether /etc/localtime holds the requested zone's own bytes.
+
+    CoreELEC images store /etc/localtime either as a symlink into the zoneinfo
+    tree or as a plain copy of the zone file. A copy resolves to
+    /etc/localtime, so it can never be judged by its path; comparing its
+    content with the requested zone's file is what makes that layout
+    verifiable. `unavailable` means the question could not be answered here --
+    it is never evidence of a match."""
+    if not timezone:
+        return "unavailable"
+    path = os.path.join(system_root, "etc", "localtime")
+    try:
+        if not os.path.isfile(path):
+            return "unavailable"
+        current = read_file_bytes(path)
+    except (OSError, IOError):
+        return "unavailable"
+    compared = False
+    for root in ZONEINFO_ROOTS:
+        reference = os.path.join(system_root, root, timezone)
+        if not os.path.isfile(reference):
+            continue
+        try:
+            candidate = read_file_bytes(reference)
+        except (OSError, IOError):
+            continue
+        compared = True
+        if candidate == current:
+            return 1
+    return 0 if compared else "unavailable"
+
+
 def expected_zone_marks(timezone):
     """The abbreviation and UTC offset the requested zone has right now,
     computed from the device's own tz database."""
@@ -1572,6 +1659,51 @@ def observed_zone_marks():
     return output.decode("utf-8", "replace").strip()
 
 
+def parse_zone_marks(text):
+    if not text:
+        return None
+    match = ZONE_MARKS_PATTERN.match(text)
+    if match is None:
+        return None
+    return (match.group(1), match.group(2))
+
+
+def sanitize_marks(text):
+    """Keeps an unexpected answer readable in the report without letting it
+    break the `key=value` grammar the Mac parses."""
+    if not text:
+        return ""
+    kept = [character for character in text
+            if character in
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+            "0123456789+-_.:/% "]
+    return "".join(kept)[:24].strip()
+
+
+def zone_marks_verdict(timezone):
+    """(verdict, expected, observed) for the device's own local time.
+
+    The verdict compares UTC offsets rather than abbreviations, because
+    BusyBox and Python do not always name the same zone identically and a
+    naming difference is not evidence that a clock is wrong. Anything that is
+    not a well-formed pair of zone marks -- a format BusyBox left unexpanded,
+    an empty answer, a `date` that failed or is absent -- is `unavailable`:
+    a probe capability question, never a mismatch."""
+    try:
+        expected_text = expected_zone_marks(timezone)
+    except Exception:
+        expected_text = ""
+    observed_text = observed_zone_marks()
+    expected = parse_zone_marks(expected_text)
+    observed = parse_zone_marks(observed_text)
+    if expected is None or observed is None:
+        return ("unavailable", sanitize_marks(expected_text),
+                sanitize_marks(observed_text))
+    if expected[1] == observed[1]:
+        return (1, expected_text, observed_text)
+    return (0, expected_text, observed_text)
+
+
 def main(argv):
     if len(argv) not in (4, 5):
         fail("usage: STORAGE_ROOT REQUEST_PATH CURL_CONFIG_PATH [SYSTEM_ROOT]")
@@ -1596,18 +1728,23 @@ def main(argv):
         attempts = 30
     attempts = max(1, attempts)
 
+    require_curl()
     write_curl_config(curl_config, config("KODI_WEB_USER"),
                       config("KODI_WEB_PASSWORD"), 15)
     try:
         entries = {}
-        for attempt in range(attempts):
-            entries = index_responses(
-                call_jsonrpc(curl_config, url, query_batch(addon_ids)))
-            if jsonrpc_version(entries):
-                break
-            entries = {}
-            if attempt + 1 < attempts:
-                time.sleep(2)
+        try:
+            for attempt in range(attempts):
+                entries = index_responses(
+                    call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+                if jsonrpc_version(entries):
+                    break
+                entries = {}
+                if attempt + 1 < attempts:
+                    time.sleep(2)
+        except CurlUnavailable as error:
+            fail("%s, so Kodi cannot be queried over localhost JSON-RPC"
+                 % (error,))
         if not entries:
             fail("Kodi did not answer authenticated JSON-RPC on %s" % url)
 
@@ -1644,15 +1781,16 @@ def main(argv):
     timezone = config("TIMEZONE")
     observe("timezone_cache", timezone_cache_value(storage_root))
     observe("localtime_path", localtime_target(system_root))
+    observe("localtime_kind", localtime_kind(system_root))
+    observe("localtime_zoneinfo_match",
+            localtime_zoneinfo_match(system_root, timezone))
     if timezone:
-        observed = observed_zone_marks()
-        if observed is None:
-            observe("date_matches_timezone", "unavailable")
-        else:
-            observe("date_matches_timezone",
-                    1 if observed == expected_zone_marks(timezone) else 0)
+        verdict, expected_marks, observed_marks = zone_marks_verdict(timezone)
     else:
-        observe("date_matches_timezone", "unavailable")
+        verdict, expected_marks, observed_marks = ("unavailable", "", "")
+    observe("date_offset_expected", expected_marks)
+    observe("date_offset_observed", observed_marks)
+    observe("date_matches_timezone", verdict)
 
     for addon_id in addon_ids:
         installed, version, enabled = addon_state(entries.get("addon:" + addon_id))
@@ -2184,15 +2322,31 @@ classify_addon_status() {
 
 # Compares the device's observations with what this run requested. Prints the
 # report lines for the comparison and returns nonzero on any mismatch, which
-# is what makes a verification failure fatal rather than advisory.
+# is what makes a verification failure fatal rather than advisory. It returns
+# rather than exits even when its own inputs are unusable, because the caller
+# is the code that rolls the deployment back.
 verify_remote_baseline() {
   local observations="$1" manifest="$2"
   local failures=0
   local index addon_id version filename observed_version installed enabled attempted
-  local addon_failed value
+  local addon_failed value content match expected_marks observed_marks
 
-  [[ -r "${observations}" ]] || die "Verification observations are not readable: ${observations}"
-  [[ -r "${manifest}" ]] || die "Deployment manifest is not readable: ${manifest}"
+  if [[ ! -r "${observations}" ]]; then
+    warn "Verification observations are not readable: ${observations}"
+    printf 'verification_source=device-localhost-jsonrpc\n'
+    printf 'verification_error=the verification observations are not readable\n'
+    printf 'verification_failures=1\n'
+    printf 'verification_result=fail\n'
+    return 1
+  fi
+  if [[ ! -r "${manifest}" ]]; then
+    warn "Deployment manifest is not readable: ${manifest}"
+    printf 'verification_source=device-localhost-jsonrpc\n'
+    printf 'verification_error=the deployment manifest is not readable\n'
+    printf 'verification_failures=1\n'
+    printf 'verification_result=fail\n'
+    return 1
+  fi
 
   printf 'verification_source=device-localhost-jsonrpc\n'
 
@@ -2224,34 +2378,57 @@ verify_remote_baseline() {
     "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
     || failures=$((failures + 1))
 
-  # CoreELEC images differ in where the zoneinfo tree lives, so the requested
-  # zone is matched against the tail of the resolved path rather than against
-  # one hard-coded prefix.
+  # CoreELEC images differ both in where the zoneinfo tree lives and in how
+  # /etc/localtime is stored. A symlink is matched against the tail of its
+  # target, because the tree's prefix is not fixed. A plain copy of the zone
+  # file resolves to /etc/localtime and has no zone in its path at all, so it
+  # is judged by the byte comparison the device performed against its own
+  # copy of the requested zone. Anything else is still a mismatch: unproven is
+  # not proven.
   value="$(coreelec_observation_value localtime_path "${observations}" || true)"
+  content="$(coreelec_observation_value localtime_zoneinfo_match "${observations}" || true)"
   printf 'regional.localtime.expected=%s\n' "${TIMEZONE}"
   printf 'regional.localtime.observed=%s\n' "${value}"
+  printf 'regional.localtime.kind=%s\n' \
+    "$(coreelec_observation_value localtime_kind "${observations}" || true)"
   case "${value}" in
-    */"${TIMEZONE}"|"${TIMEZONE}")
-      printf 'regional.localtime.status=ok\n'
-      ;;
+    */"${TIMEZONE}"|"${TIMEZONE}") match="symlink" ;;
     *)
-      printf 'regional.localtime.status=mismatch\n'
-      failures=$((failures + 1))
+      if [[ "${content}" == "1" ]]; then
+        match="zoneinfo-copy"
+      else
+        match="none"
+      fi
       ;;
   esac
+  printf 'regional.localtime.match=%s\n' "${match}"
+  if [[ "${match}" == "none" ]]; then
+    printf 'regional.localtime.status=mismatch\n'
+    failures=$((failures + 1))
+  else
+    printf 'regional.localtime.status=ok\n'
+  fi
 
+  # What the device's own `date` reported, as the same expected/observed pair
+  # as every other regional value. The verdict is the device's, and only a
+  # well-formed comparison can veto: the timezone cache, /etc/localtime, and
+  # Kodi's own timezone setting are the applied state this run wrote and are
+  # checked strictly above, while `date +%Z%z` is a BusyBox capability
+  # question. An unexpanded format or any other unexpected answer is recorded
+  # as unavailable and never rolls back a correctly configured device.
   value="$(coreelec_observation_value date_matches_timezone "${observations}" || true)"
-  printf 'regional.date_offset.observed=%s\n' "${value}"
+  expected_marks="$(coreelec_observation_value date_offset_expected "${observations}" || true)"
+  observed_marks="$(coreelec_observation_value date_offset_observed "${observations}" || true)"
+  printf 'regional.date_offset.expected=%s\n' "${expected_marks:-unavailable}"
+  printf 'regional.date_offset.observed=%s\n' "${observed_marks:-unavailable}"
   case "${value}" in
     1) printf 'regional.date_offset.status=ok\n' ;;
-    unavailable)
-      # The device could not report its local time at all. That is a probe
-      # capability, not applied state, so it is recorded rather than fatal.
-      printf 'regional.date_offset.status=unavailable\n'
-      ;;
-    *)
+    0)
       printf 'regional.date_offset.status=mismatch\n'
       failures=$((failures + 1))
+      ;;
+    *)
+      printf 'regional.date_offset.status=unavailable\n'
       ;;
   esac
 
@@ -2748,6 +2925,9 @@ require_command security
 require_command grep
 require_command sed
 require_command tr
+# Every run ends by writing the audit report, whose configuration fingerprint
+# is a shasum call -- including the --no-kodi run that deploys no add-ons.
+require_command shasum
 
 SSH_COMMON=(
   -p "${SSH_PORT}"
@@ -3366,7 +3546,6 @@ validate_remote "${REMOTE_IDENTITY}"
 # first mutating SSH call, so a bad or unreachable artifact cancels the run
 # while the device is still untouched.
 if [[ "${APPLY_KODI}" == "1" ]]; then
-  require_command shasum
   require_command unzip
   require_command xmllint
   require_command tar

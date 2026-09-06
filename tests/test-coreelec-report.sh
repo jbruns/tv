@@ -90,6 +90,10 @@ setting.lookandfeel.skin=skin.arctic.fuse.3
 setting.weather.addon=weather.ha
 timezone_cache=America/Los_Angeles
 localtime_path=/usr/share/zoneinfo/America/Los_Angeles
+localtime_kind=symlink
+localtime_zoneinfo_match=1
+date_offset_expected=PDT-0700
+date_offset_observed=PDT-0700
 date_matches_timezone=1
 addon.skin.arctic.fuse.3.installed=1
 addon.skin.arctic.fuse.3.version=3.2.16
@@ -374,6 +378,8 @@ test_timezone_cache_and_zoneinfo_are_verified() {
 
   write_pass_observations "${observations}"
   set_observation "${observations}" "localtime_path" "/usr/share/zoneinfo/UTC"
+  # Neither the path nor the file's content is the requested zone.
+  set_observation "${observations}" "localtime_zoneinfo_match" "0"
   set +e
   output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
   rc=$?
@@ -389,6 +395,192 @@ test_timezone_cache_and_zoneinfo_are_verified() {
   set -e
   assert_failure "${rc}" "local time not matching the zone must fail" || return 1
   assert_contains "${output}" "regional.date_offset.status=mismatch" "offset mismatch reported" || return 1
+}
+
+# CoreELEC images ship /etc/localtime either as a symlink into the zoneinfo
+# tree or as a plain copy of the zone file. A copy resolves to /etc/localtime
+# and can never match the requested zone by path, so the device also reports
+# whether the file's bytes are the requested zone's.
+test_regular_file_localtime_is_verified_by_content() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "localtime_path" "/etc/localtime"
+  set_observation "${observations}" "localtime_kind" "file"
+  set_observation "${observations}" "localtime_zoneinfo_match" "1"
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a zone file copied to /etc/localtime must verify" || return 1
+  assert_contains "${output}" "regional.localtime.observed=/etc/localtime" \
+    "the observed layout is reported as it is" || return 1
+  assert_contains "${output}" "regional.localtime.match=zoneinfo-copy" \
+    "the accepted evidence is named" || return 1
+  assert_contains "${output}" "regional.localtime.status=ok" \
+    "a byte-equal copy is accepted" || return 1
+
+  # A copy of some other zone is still a real mismatch.
+  set_observation "${observations}" "localtime_zoneinfo_match" "0"
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a copy of another zone must fail" || return 1
+  assert_contains "${output}" "regional.localtime.match=none" "no evidence is claimed" || return 1
+  assert_contains "${output}" "regional.localtime.status=mismatch" "the mismatch is reported" || return 1
+
+  # Unproven is not proven: a device that cannot answer the content question
+  # while its path does not match the zone stays a failure.
+  set_observation "${observations}" "localtime_zoneinfo_match" "unavailable"
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "unproven localtime content must fail" || return 1
+  assert_contains "${output}" "regional.localtime.status=mismatch" "the mismatch is reported" || return 1
+
+  # A symlink into the zoneinfo tree is still accepted on its own.
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "localtime_zoneinfo_match" "0"
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a symlink to the requested zone must verify" || return 1
+  assert_contains "${output}" "regional.localtime.match=symlink" "the symlink evidence is named" || return 1
+}
+
+# `date +%Z%z` is a BusyBox capability question, not applied state. Anything
+# other than a well-formed comparison is advisory, so an unexpanded or
+# unexpected answer can never roll back a device whose timezone cache,
+# zoneinfo, and Kodi settings all verified.
+test_unexpected_device_date_output_is_advisory_not_fatal() {
+  local dir config manifest observations output rc value
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+
+  for value in "%Z%z" "" "unavailable" "PDT-0700"; do
+    write_pass_observations "${observations}"
+    set_observation "${observations}" "date_matches_timezone" "${value}"
+    set +e
+    output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+    rc=$?
+    set -e
+    assert_success "${rc}" "an unexpected date answer (${value}) must not fail the run" || return 1
+    assert_contains "${output}" "regional.date_offset.status=unavailable" \
+      "an unexpected date answer (${value}) is recorded as unavailable" || return 1
+    assert_not_contains "${output}" "regional.date_offset.status=mismatch" \
+      "an unexpected date answer (${value}) is never a mismatch" || return 1
+  done
+}
+
+# The date-offset comparison is reported as the same expected/observed/status
+# triple as every other regional value, so the report says what was wanted and
+# what the device actually printed.
+test_date_offset_reports_expected_and_observed_marks() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "date_offset_expected" "PST-0800"
+  set_observation "${observations}" "date_offset_observed" "PST-0800"
+
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "matching marks verify" || return 1
+  assert_contains "${output}" "regional.date_offset.expected=PST-0800" \
+    "the expected zone marks are reported" || return 1
+  assert_contains "${output}" "regional.date_offset.observed=PST-0800" \
+    "the observed zone marks are reported" || return 1
+  assert_contains "${output}" "regional.date_offset.status=ok" "the status is reported" || return 1
+
+  # A device that could not answer still gets an explicit triple.
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "date_offset_expected" ""
+  set_observation "${observations}" "date_offset_observed" ""
+  set_observation "${observations}" "date_matches_timezone" "unavailable"
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "an unavailable date answer must not fail the run" || return 1
+  assert_contains "${output}" "regional.date_offset.expected=unavailable" \
+    "the missing expectation is explicit" || return 1
+  assert_contains "${output}" "regional.date_offset.observed=unavailable" \
+    "the missing observation is explicit" || return 1
+}
+
+# The comparator is reachable with material it cannot read; it must report a
+# failure and return, because its caller is the code that rolls the deployment
+# back. Exiting the process here would leave the transaction pending.
+test_unreadable_verification_material_fails_without_exiting() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(run_verify "${config}" "${dir}/absent-observations.conf" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "missing observations must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "the failure is a verification verdict" || return 1
+  assert_contains "${output}" "verification_error=" "the reason is recorded" || return 1
+
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${dir}/absent-manifest.tsv" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing manifest must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "the failure is a verification verdict" || return 1
+}
+
+# The same condition, through the real decision path: an unreadable manifest
+# must roll the deployment back rather than abort the process and leave it
+# half-committed.
+test_unreadable_manifest_rolls_back_the_deployment() {
+  local dir config observations log output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  observations="${dir}/observations.conf"
+  log="${dir}/remote-calls.log"
+  write_base_config "${config}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(run_conclude "${config}" "${observations}" "${dir}/absent-manifest.tsv" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreadable manifest must not be treated as success" || return 1
+  assert_contains "${output}" "verification_result=fail" "verification failed" || return 1
+  assert_contains "${output}" "deployment_state=rolled-back" "the deployment was rolled back" || return 1
+  assert_contains "$(cat "${log}")" "rollback" "the rollback actually ran" || return 1
 }
 
 test_english_us_values_are_verified() {
@@ -756,6 +948,35 @@ test_local_jsonrpc_unreachability_is_environmental_only() {
     "the authoritative source is named" || return 1
 }
 
+# Every run writes the audit report, and its configuration fingerprint is a
+# `shasum` call, so a Mac without it must be refused before the device is
+# touched -- including the run that applies no Kodi baseline at all.
+test_report_fingerprint_tool_is_required_even_without_kodi() {
+  local dir config bin_dir tool resolved output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  write_base_config "${config}"
+  bin_dir="${dir}/bin"
+  mkdir -p "${bin_dir}"
+  for tool in bash sh ssh ssh-keygen ssh-add openssl curl security grep sed tr awk \
+    date uname mktemp dirname basename cat chmod mkdir rm cp mv ln sleep head tail \
+    sort wc id stat python3 xmllint unzip tar; do
+    resolved="$(command -v "${tool}" 2>/dev/null || true)"
+    if [[ -n "${resolved}" && -x "${resolved}" ]]; then
+      ln -sf "${resolved}" "${bin_dir}/${tool}"
+    fi
+  done
+
+  set +e
+  output="$(PATH="${bin_dir}" /bin/bash "${PROVISIONER}" --config "${config}" \
+    --target 192.0.2.1 --no-kodi --report-dir "${dir}/reports" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a run that cannot fingerprint its configuration must be refused" || return 1
+  assert_contains "${output}" "shasum" "the missing tool is named" || return 1
+}
+
 # --- Verification outcome: finalize, rollback, fatality ---------------------
 
 test_verification_success_finalizes_and_commits() {
@@ -959,13 +1180,57 @@ PYEOF
 }
 
 # Runs the remote probe exactly as the device would: the emitted Python
-# program, a private storage root, and a stubbed curl.
+# program, a private storage root, and a stubbed curl. The ambient timezone is
+# deliberately *not* the requested zone, so nothing the probe concludes about
+# the device's local time can be satisfied by the environment these tests
+# happen to run in; what the device "prints" is decided by a `date` stub.
 run_remote_probe() {
   local dir="$1" bin_dir="$2" root="$3" request="$4"
+  run_remote_probe_with_path "${dir}" "${bin_dir}:${PATH}" "${root}" "${request}"
+}
+
+# The same probe run with the search path stated exactly, so a test can prove
+# what happens when a tool the probe needs is absent from the device.
+run_remote_probe_with_path() {
+  local dir="$1" path_value="$2" root="$3" request="$4"
   local probe="${dir}/verify-probe.py"
   bash "${PROVISIONER}" --emit-remote-script verify-probe > "${probe}"
-  JSONRPC_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" TZ="America/Los_Angeles" \
+  JSONRPC_STUB_DIR="${dir}/stub" PATH="${path_value}" TZ="${PROBE_AMBIENT_TZ:-UTC}" \
     python3 "${probe}" "${root}" "${request}" "${dir}/curl.conf" "${dir}/system/"
+}
+
+# What a correct device would print for one zone, read from this machine's own
+# tz database through the real `date` rather than from the probe's own logic.
+zone_marks() {
+  TZ="$1" /bin/date +%Z%z
+}
+
+# Stubs `date` so a test decides exactly what the device reports, including
+# answers BusyBox can give that are not zone marks at all.
+install_date_stub() {
+  local bin_dir="$1" output="$2" status="${3:-0}"
+  printf '%s\n' "${output}" > "${bin_dir}/date-output"
+  printf '%s\n' "${status}" > "${bin_dir}/date-status"
+  cat > "${bin_dir}/date" <<'STUB'
+#!/bin/bash
+stub_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cat "${stub_dir}/date-output"
+exit "$(cat "${stub_dir}/date-status")"
+STUB
+  chmod +x "${bin_dir}/date"
+}
+
+# A search path holding only what the test harness itself needs to start the
+# probe, so `curl` is genuinely missing the way it would be on a device whose
+# image does not ship it. The interpreter is linked from its real path rather
+# than from a wrapper that would need a shell of its own.
+install_probe_path_without_curl() {
+  local dir="$1" bin_dir="$1/nocurl-bin" resolved
+  mkdir -p "${bin_dir}"
+  resolved="$(python3 -c 'import sys; sys.stdout.write(sys.executable)')"
+  ln -sf "${resolved}" "${bin_dir}/python3"
+  ln -sf "$(command -v date)" "${bin_dir}/date"
+  printf '%s\n' "${bin_dir}"
 }
 
 # Writes the probe request in the same base64 KEY=value grammar the settings
@@ -982,14 +1247,23 @@ write_probe_request() {
   done
 }
 
+# `layout` selects how /etc/localtime is stored, because CoreELEC images use
+# both a symlink into the zoneinfo tree and a plain copy of the zone file.
 make_probe_fixture_root() {
-  local dir="$1" root="$1/storage"
+  local dir="$1" layout="${2:-symlink}" root="$1/storage"
+  local zoneinfo="${dir}/system/usr/share/zoneinfo/America/Los_Angeles"
   mkdir -p "${root}/.cache" "${root}/.kodi/userdata/addon_data/weather.ha"
   mkdir -p "${dir}/system/etc" "${dir}/system/usr/share/zoneinfo/America"
   mkdir -p "${dir}/stub"
   printf 'TIMEZONE=America/Los_Angeles\n' > "${root}/.cache/timezone"
-  : > "${dir}/system/usr/share/zoneinfo/America/Los_Angeles"
-  ln -sf "/usr/share/zoneinfo/America/Los_Angeles" "${dir}/system/etc/localtime"
+  printf 'TZif2-fixture-America-Los_Angeles\n' > "${zoneinfo}"
+  rm -f "${dir}/system/etc/localtime"
+  case "${layout}" in
+    symlink) ln -sf "/usr/share/zoneinfo/America/Los_Angeles" "${dir}/system/etc/localtime" ;;
+    copy) cp "${zoneinfo}" "${dir}/system/etc/localtime" ;;
+    foreign-copy) printf 'TZif2-fixture-UTC\n' > "${dir}/system/etc/localtime" ;;
+    *) printf 'unknown localtime layout: %s\n' "${layout}" >&2; return 1 ;;
+  esac
   cat > "${root}/.kodi/userdata/addon_data/weather.ha/settings.xml" <<'XML'
 <settings>
     <setting id="ha_key" value="home-assistant-token-secret" />
@@ -1039,6 +1313,7 @@ HOME_ASSISTANT_SUN_ENTITY=sun.sun
 HAVE_HOME_ASSISTANT_TOKEN=1
 ENTRIES
   write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
 
   output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
   assert_contains "${output}" "jsonrpc_version=" "the JSON-RPC version is reported" || return 1
@@ -1052,11 +1327,132 @@ ENTRIES
   assert_contains "${output}" "timezone_cache=America/Los_Angeles" "timezone cache reported" || return 1
   assert_contains "${output}" "localtime_path=/usr/share/zoneinfo/America/Los_Angeles" \
     "zoneinfo target reported" || return 1
+  assert_contains "${output}" "localtime_kind=symlink" "the localtime layout is reported" || return 1
   assert_contains "${output}" "date_matches_timezone=1" "device local time reported" || return 1
   assert_contains "${output}" "addon_settings.weather.ha.configured=1" \
     "configured add-on files are checked on the device" || return 1
   assert_not_contains "${output}" "kodi-web-password-secret" "no Kodi password leaves the device" || return 1
   assert_not_contains "${output}" "home-assistant-token-secret" "no add-on token leaves the device" || return 1
+}
+
+# The probe is what makes a copied /etc/localtime verifiable at all, so it
+# answers the content question the Mac cannot ask.
+test_remote_verify_probe_compares_a_copied_localtime_by_content() {
+  local dir root bin_dir request output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}" copy)"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "localtime_kind=file" "a plain file layout is reported as such" || return 1
+  assert_contains "${output}" "localtime_zoneinfo_match=1" \
+    "a byte-equal copy of the requested zone is recognized" || return 1
+
+  # The same layout holding a different zone's bytes is not a match.
+  make_probe_fixture_root "${dir}" foreign-copy >/dev/null
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "localtime_zoneinfo_match=0" \
+    "a copy of another zone is not claimed to match" || return 1
+}
+
+# The device's local time is observed, not assumed: the ambient timezone is
+# wrong on purpose and `date` is stubbed, so each answer is genuinely tested.
+test_remote_verify_probe_judges_device_date_against_the_requested_zone() {
+  local dir root bin_dir request output expected
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+
+  # Right zone, wrong ambient TZ: the expectation must come from the request.
+  expected="$(zone_marks America/Los_Angeles)"
+  install_date_stub "${bin_dir}" "${expected}"
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "date_matches_timezone=1" "a correct device clock is recognized" || return 1
+  assert_contains "${output}" "date_offset_expected=${expected}" \
+    "the expectation is computed for the requested zone" || return 1
+  assert_contains "${output}" "date_offset_observed=${expected}" \
+    "the device's own answer is reported" || return 1
+
+  # A device genuinely running in another zone is a real mismatch.
+  install_date_stub "${bin_dir}" "$(zone_marks Australia/Sydney)"
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "date_matches_timezone=0" "a wrong device clock is reported" || return 1
+
+  # BusyBox that does not expand the format exits 0 with unusable output.
+  install_date_stub "${bin_dir}" '%Z%z'
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "date_matches_timezone=unavailable" \
+    "an unexpanded format is a capability gap, not a mismatch" || return 1
+  assert_not_contains "${output}" "date_matches_timezone=0" \
+    "an unexpanded format is never reported as a wrong clock" || return 1
+
+  # Neither is an empty answer or a nonzero exit.
+  install_date_stub "${bin_dir}" "" 1
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "date_matches_timezone=unavailable" \
+    "a failing date is a capability gap" || return 1
+}
+
+# A device without curl cannot be probed at all. Saying so at once is both
+# accurate and fast; retrying a tool that does not exist is neither.
+test_remote_verify_probe_fails_immediately_when_curl_is_missing() {
+  local dir root bin_dir path_value request output rc start elapsed
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  path_value="$(install_probe_path_without_curl "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=30
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+
+  start="${SECONDS}"
+  set +e
+  output="$(run_remote_probe_with_path "${dir}" "${path_value}" "${root}" "${request}" 2>&1)"
+  rc=$?
+  set -e
+  elapsed=$(( SECONDS - start ))
+  assert_failure "${rc}" "a device without curl cannot be verified" || return 1
+  assert_contains "${output}" "curl" "the error names the missing tool" || return 1
+  assert_not_contains "${output}" "did not answer" \
+    "a missing tool is not relabelled as an unresponsive Kodi" || return 1
+  if (( elapsed > 15 )); then
+    printf 'the probe retried a tool that does not exist for %ss\n' "${elapsed}" >&2
+    return 1
+  fi
+  if [[ -e "${dir}/curl.conf" ]]; then
+    printf 'the curl config outlived the probe\n' >&2
+    return 1
+  fi
 }
 
 test_remote_verify_probe_enables_a_disabled_addon_over_jsonrpc() {
@@ -1154,6 +1550,11 @@ run_all_tests \
   test_active_skin_is_verified \
   test_weather_provider_is_verified_only_when_configured \
   test_timezone_cache_and_zoneinfo_are_verified \
+  test_regular_file_localtime_is_verified_by_content \
+  test_unexpected_device_date_output_is_advisory_not_fatal \
+  test_date_offset_reports_expected_and_observed_marks \
+  test_unreadable_verification_material_fails_without_exiting \
+  test_unreadable_manifest_rolls_back_the_deployment \
   test_english_us_values_are_verified \
   test_selected_subset_verifies_only_the_selected_addons \
   test_emby_and_youtube_are_classified_manual \
@@ -1167,6 +1568,7 @@ run_all_tests \
   test_report_keeps_subset_dependency_warning_explicit \
   test_report_is_strict_key_value \
   test_local_jsonrpc_unreachability_is_environmental_only \
+  test_report_fingerprint_tool_is_required_even_without_kodi \
   test_verification_success_finalizes_and_commits \
   test_verification_mismatch_is_fatal \
   test_incomplete_rollback_is_fatal_with_recovery_path \
@@ -1174,6 +1576,9 @@ run_all_tests \
   test_failed_finalize_is_fatal \
   test_remote_verify_script_passes_shell_syntax_check \
   test_remote_verify_probe_reports_state_without_secrets \
+  test_remote_verify_probe_compares_a_copied_localtime_by_content \
+  test_remote_verify_probe_judges_device_date_against_the_requested_zone \
+  test_remote_verify_probe_fails_immediately_when_curl_is_missing \
   test_remote_verify_probe_enables_a_disabled_addon_over_jsonrpc \
   test_remote_verify_probe_reports_a_missing_addon \
   test_remote_verify_probe_uses_a_private_curl_config_and_removes_it
