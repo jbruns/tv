@@ -58,7 +58,14 @@ count=0
 [[ -f "${count_file}" ]] && count="$(cat "${count_file}")"
 count=$((count + 1))
 printf '%s\n' "${count}" > "${count_file}"
-printf '%s\n' "$*" > "${stub_dir}/argv-${count}.log"
+printf '%s\n' "$#" > "${stub_dir}/argc-${count}.log"
+: > "${stub_dir}/argv-${count}.log"
+index=1
+for argument in "$@"; do
+  printf '%s' "${argument}" > "${stub_dir}/argument-${count}-${index}.log"
+  printf 'argv[%s]=<%s>\n' "${index}" "${argument}" >> "${stub_dir}/argv-${count}.log"
+  index=$((index + 1))
+done
 cat > "${stub_dir}/stdin-${count}.log"
 response="${stub_dir}/response-${count}.json"
 [[ -f "${response}" ]] || response="${stub_dir}/response-default.json"
@@ -102,6 +109,77 @@ ssh_call_count() {
   else
     printf '0\n'
   fi
+}
+
+ssh_argc() {
+  cat "$1/stub/argc-$2.log"
+}
+
+ssh_argv_element() {
+  cat "$1/stub/argument-$2-$3.log"
+}
+
+ssh_remote_target_index() {
+  local dir="$1" call="$2" target="$3" argc index argument
+  argc="$(ssh_argc "${dir}" "${call}")"
+  for ((index = 1; index <= argc; index++)); do
+    argument="$(ssh_argv_element "${dir}" "${call}" "${index}")"
+    case "${argument}" in
+      "${target}"|"root@${target}")
+        printf '%s\n' "${index}"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+assert_single_remote_script_argument() {
+  local dir="$1" call="$2" target="$3" argc target_index remote_count remote_script
+  argc="$(ssh_argc "${dir}" "${call}")"
+  target_index="$(ssh_remote_target_index "${dir}" "${call}" "${target}")" || {
+    printf 'assert_single_remote_script_argument: target argument not found (call=%s target=%s)\n' \
+      "${call}" "${target}" >&2
+    return 1
+  }
+  remote_count=$((argc - target_index))
+  assert_eq "1" "${remote_count}" \
+    "OpenSSH must receive exactly one remote command argument after the target" || return 1
+  remote_script="$(ssh_argv_element "${dir}" "${call}" "$((target_index + 1))")"
+  case "${remote_script}" in
+    sh|-c)
+      printf 'assert_single_remote_script_argument: split remote sh -c transport detected (call=%s)\n' \
+        "${call}" >&2
+      return 1
+      ;;
+  esac
+  assert_contains "${remote_script}" $'set -eu\n' \
+    "the single remote argument must contain the complete strict-mode script"
+}
+
+assert_hardened_ssh_options() {
+  local dir="$1" call="$2" identity_file="$3" target="$4" argc index
+  local expected=(
+    -p 22
+    -o ConnectTimeout=12
+    -o ServerAliveInterval=15
+    -o ServerAliveCountMax=3
+    -o StrictHostKeyChecking=accept-new
+    -i "${identity_file}"
+    -o IdentitiesOnly=yes
+    -o PreferredAuthentications=publickey
+    -o PasswordAuthentication=no
+    -o KbdInteractiveAuthentication=no
+    -o BatchMode=yes
+    "root@${target}"
+  )
+  argc="$(ssh_argc "${dir}" "${call}")"
+  assert_eq "24" "${argc}" \
+    "hardened SSH options, root target, and one remote script form 24 argv elements" || return 1
+  for ((index = 1; index <= ${#expected[@]}; index++)); do
+    assert_eq "${expected[index-1]}" "$(ssh_argv_element "${dir}" "${call}" "${index}")" \
+      "SSH argv element ${index} must match the provisioner transport" || return 1
+  done
 }
 
 python3_call_count() {
@@ -153,6 +231,7 @@ path, missing = sys.argv[1], sys.argv[2]
 methods = [
     "JSONRPC.Introspect",
     "Addons.ExecuteAddon",
+    "Addons.GetAddonDetails",
     "GUI.ActivateWindow",
     "GUI.GetProperties",
     "Input.ExecuteAction",
@@ -262,6 +341,123 @@ test_help_lists_supported_addons_and_interaction_levels() {
   assert_contains "${output}" "plugin.service.emby-next-gen guided (--interactive)" "Emby interaction level" || return 1
 }
 
+assert_dry_run_makes_no_ssh_calls() (
+  local interactive="$1" dir config bin_dir output rc report report_body addon_id
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' EXIT
+  config="${dir}/postdeploy.conf"
+  write_config "${config}" \
+    weather.ha pvr.nextpvr script.plexmod plugin.video.youtube plugin.service.emby-next-gen
+  cat >> "${config}" <<'CONFIG'
+HOME_ASSISTANT_URL=https://ha.example.test
+HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
+CONFIG
+  bin_dir="$(install_ssh_stub "${dir}")"
+  printf '%s\n' \
+    '{"transport":"ok","http_status":401,"body":"{}","content_type":"application/json"}' \
+    > "${dir}/stub/response-default.json"
+  set +e
+  if [[ "${interactive}" == "1" ]]; then
+    output="$(
+      COREELEC_SSH_STUB_DIR="${dir}/stub" \
+      KODI_WEB_PASSWORD="dry-run-kodi-secret" \
+      HOME_ASSISTANT_TOKEN="dry-run-home-assistant-secret" \
+      COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0" \
+      PATH="${bin_dir}:${PATH}" \
+      bash "${CLI_SCRIPT}" \
+        --config "${config}" \
+        --report-dir "${dir}/reports" \
+        --target coreelec-theater \
+        --dry-run \
+        --interactive 2>&1
+    )"
+  else
+    output="$(
+      COREELEC_SSH_STUB_DIR="${dir}/stub" \
+      KODI_WEB_PASSWORD="dry-run-kodi-secret" \
+      HOME_ASSISTANT_TOKEN="dry-run-home-assistant-secret" \
+      COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0" \
+      PATH="${bin_dir}:${PATH}" \
+      bash "${CLI_SCRIPT}" \
+        --config "${config}" \
+        --report-dir "${dir}/reports" \
+        --target coreelec-theater \
+        --dry-run 2>&1
+    )"
+  fi
+  rc=$?
+  set -e
+
+  assert_success "${rc}" "dry-run should complete without a device" || return 1
+  assert_eq "0" "$(ssh_call_count "${dir}")" \
+    "dry-run must make zero SSH/device calls, including interactive mode" || return 1
+  assert_eq "0" "$(find "${dir}/stub" -type f -name 'stdin-*.log' | wc -l | tr -d ' ')" \
+    "dry-run must not open a transport capable of transmitting secrets" || return 1
+  report="$(find_single_report "${dir}/reports")"
+  report_body="$(cat "${report}")"
+  for addon_id in weather.ha pvr.nextpvr script.plexmod plugin.video.youtube plugin.service.emby-next-gen; do
+    assert_contains "${report_body}" "addon.${addon_id}.status=dry-run" \
+      "dry-run emits one static status for ${addon_id}" || return 1
+  done
+  assert_not_contains "${output}${report_body}" "dry-run-kodi-secret" \
+    "dry-run output and report must not contain the Kodi secret" || return 1
+  assert_not_contains "${output}${report_body}" "dry-run-home-assistant-secret" \
+    "dry-run output and report must not contain the Home Assistant secret"
+)
+
+test_dry_run_makes_zero_ssh_calls() {
+  assert_dry_run_makes_no_ssh_calls "0"
+}
+
+test_interactive_dry_run_makes_zero_ssh_calls() {
+  assert_dry_run_makes_no_ssh_calls "1"
+}
+
+test_report_creation_uses_private_umask_before_chmod() {
+  local dir config bin_dir output rc report modes
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/postdeploy.conf"
+  write_config "${config}" plugin.video.youtube
+  bin_dir="${dir}/stub-bin"
+  mkdir -p "${bin_dir}"
+  cat > "${bin_dir}/chmod" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+  /bin/chmod +x "${bin_dir}/chmod"
+
+  set +e
+  output="$(
+    umask 022
+    PATH="${bin_dir}:${PATH}" \
+      bash "${CLI_SCRIPT}" \
+        --config "${config}" \
+        --report-dir "${dir}/reports" \
+        --target coreelec-theater \
+        --addon plugin.video.youtube \
+        --dry-run 2>&1
+  )"
+  rc=$?
+  set -e
+
+  assert_success "${rc}" "report creation should succeed when chmod is defense in depth only" || return 1
+  report="$(find_single_report "${dir}/reports")"
+  modes="$(python3 - "${dir}/reports" "${report}" <<'PYEOF'
+import os
+import stat
+import sys
+
+print("%03o %03o" % (
+    stat.S_IMODE(os.stat(sys.argv[1]).st_mode),
+    stat.S_IMODE(os.stat(sys.argv[2]).st_mode),
+))
+PYEOF
+)"
+  assert_eq "700 600" "${modes}" \
+    "umask 077 must protect the report directory and file before chmod runs"
+}
+
 test_default_run_never_starts_account_authorization() {
   local dir config bin_dir output rc report body
   dir="$(make_scratch_dir)"
@@ -339,6 +535,108 @@ test_introspection_rejects_a_missing_required_method() {
 
   assert_failure "${rc}" "interactive runs must fail closed when a required method is missing" || return 1
   assert_contains "${output}" "Input.SendText" "missing method is named in the failure" || return 1
+}
+
+test_introspection_requires_addons_getaddondetails() {
+  local dir config bin_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/postdeploy.conf"
+  write_config "${config}" plugin.video.youtube
+  bin_dir="$(install_ssh_stub "${dir}")"
+  write_introspection_response "${dir}/stub/response-default.json" "Addons.GetAddonDetails"
+
+  set +e
+  output="$(
+    COREELEC_SSH_STUB_DIR="${dir}/stub" \
+    KODI_WEB_PASSWORD="kodi-web-password-secret" \
+    PATH="${bin_dir}:${PATH}" \
+    bash "${CLI_SCRIPT}" \
+      --config "${config}" \
+      --interactive \
+      --target coreelec-theater \
+      --addon plugin.video.youtube 2>&1
+  )"
+  rc=$?
+  set -e
+
+  assert_failure "${rc}" \
+    "interactive runs must fail at capability discovery without Addons.GetAddonDetails" || return 1
+  assert_contains "${output}" "Addons.GetAddonDetails" \
+    "the missing add-on details capability is named"
+}
+
+test_every_remote_script_is_one_ssh_argument() {
+  local dir bin_dir call
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  printf '%s\n' '{}' > "${dir}/stub/response-default.json"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  KODI_PORT="8080"
+  KODI_USER="homeassistant"
+  KODI_WEB_PASSWORD="kodi-web-password-secret"
+  EMBY_SERVER_URL="https://emby.example.test"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    kodi_rpc "JSONRPC.Introspect" '{"getdescriptions":false,"getmetadata":false}' >/dev/null
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_postdeploy_read_addon_data_file "script.plexmod" "settings.xml" >/dev/null
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_postdeploy_emby_state >/dev/null
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_postdeploy_http_request "GET" "https://service.example.test/status" '{}' >/dev/null
+
+  assert_eq "4" "$(ssh_call_count "${dir}")" "all four SSH transport paths were exercised" || return 1
+  for call in 1 2 3 4; do
+    assert_single_remote_script_argument "${dir}" "${call}" "coreelec-theater" || return 1
+  done
+}
+
+test_ssh_transport_matches_provisioner_hardening() {
+  local dir bin_dir identity_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  printf '%s\n' '{}' > "${dir}/stub/response-default.json"
+  identity_file="${dir}/coreelec admin key"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  KODI_PORT="8080"
+  KODI_USER="homeassistant"
+  KODI_WEB_PASSWORD="kodi-web-password-secret"
+  IDENTITY_FILE="${identity_file}"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    kodi_rpc "JSONRPC.Introspect" '{"getdescriptions":false,"getmetadata":false}' >/dev/null
+
+  assert_hardened_ssh_options "${dir}" "1" "${identity_file}" "coreelec-theater" || return 1
+  assert_single_remote_script_argument "${dir}" "1" "coreelec-theater"
+}
+
+test_addon_data_reader_keeps_path_values_out_of_remote_command() {
+  local dir bin_dir addon_id relative_path remote_script stdin_body
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  addon_id='script.plexmod; printf ADDON_INJECTION'
+  relative_path='settings.xml; printf PATH_INJECTION'
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  IDENTITY_FILE="${dir}/admin-key"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_postdeploy_read_addon_data_file "${addon_id}" "${relative_path}" >/dev/null
+
+  remote_script="$(ssh_argv_element "${dir}" "1" "$(ssh_argc "${dir}" "1")")"
+  stdin_body="$(cat "${dir}/stub/stdin-1.log")"
+  assert_not_contains "${remote_script}" "${addon_id}" \
+    "add-on ID must not be interpolated into the remote shell program" || return 1
+  assert_not_contains "${remote_script}" "${relative_path}" \
+    "relative path must not be interpolated into the remote shell program" || return 1
+  assert_eq "${addon_id}"$'\n'"${relative_path}" "${stdin_body}" \
+    "add-on path values are passed as quoted stdin data"
 }
 
 test_gui_guard_accepts_expected_window_and_control() {
@@ -1079,9 +1377,16 @@ EOF
 
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
+  test_dry_run_makes_zero_ssh_calls \
+  test_interactive_dry_run_makes_zero_ssh_calls \
+  test_report_creation_uses_private_umask_before_chmod \
   test_default_run_never_starts_account_authorization \
   test_requested_addon_must_be_in_the_pinned_manifest \
   test_introspection_rejects_a_missing_required_method \
+  test_introspection_requires_addons_getaddondetails \
+  test_every_remote_script_is_one_ssh_argument \
+  test_ssh_transport_matches_provisioner_hardening \
+  test_addon_data_reader_keeps_path_values_out_of_remote_command \
   test_gui_guard_accepts_expected_window_and_control \
   test_gui_guard_rejects_an_unexpected_window_without_sending_input \
   test_rpc_request_ids_never_contain_secret_values \

@@ -243,6 +243,25 @@ test_emby_url_requires_https_unless_local_http_is_explicitly_allowed() {
   assert_contains "${output}" "RFC1918 or loopback" "public HTTP rejection explains the host restriction"
 }
 
+test_private_ipv4_validation_does_not_expand_pathnames() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  touch "${dir}/17"
+
+  set +e
+  output="$(
+    cd "${dir}"
+    coreelec_config_ipv4_is_private_or_loopback '10.?7.0.1' 2>&1
+  )"
+  rc=$?
+  set -e
+
+  assert_failure "${rc}" \
+    "an invalid wildcard octet must not become a valid private address by matching a pathname" || return 1
+  assert_eq "" "${output}" "invalid wildcard IPv4 input is rejected without shell expansion output"
+}
+
 test_emby_password_requires_server_and_username() {
   local rc output
 
@@ -550,6 +569,7 @@ run_all_tests \
   test_service_secret_without_endpoint_is_rejected \
   test_missing_optional_secrets_are_allowed \
   test_emby_url_requires_https_unless_local_http_is_explicitly_allowed \
+  test_private_ipv4_validation_does_not_expand_pathnames \
   test_emby_password_requires_server_and_username \
   test_emby_password_is_rejected_in_config \
   test_production_config_sets_pacific_english_us_baseline \

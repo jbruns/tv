@@ -137,6 +137,27 @@ kodi_rpc_request_id() {
   esac
 }
 
+coreelec_postdeploy_ssh_batch() {
+  local identity_file="${IDENTITY_FILE:-${HOME}/.ssh/coreelec_admin_ed25519}"
+  [[ "$#" -eq 1 ]] || die "coreelec_postdeploy_ssh_batch requires one remote script argument"
+  [[ -n "${TARGET:-}" ]] || die "TARGET is required before calling coreelec_postdeploy_ssh_batch"
+  [[ -n "${SSH_PORT:-}" ]] || die "SSH_PORT is required before calling coreelec_postdeploy_ssh_batch"
+  ssh \
+    -p "${SSH_PORT}" \
+    -o ConnectTimeout=12 \
+    -o ServerAliveInterval=15 \
+    -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=accept-new \
+    -i "${identity_file}" \
+    -o IdentitiesOnly=yes \
+    -o PreferredAuthentications=publickey \
+    -o PasswordAuthentication=no \
+    -o KbdInteractiveAuthentication=no \
+    -o BatchMode=yes \
+    "root@${TARGET}" \
+    "$1"
+}
+
 kodi_rpc() {
   local method="$1" params_json="$2"
   local request_id request_json remote_command
@@ -191,13 +212,14 @@ show-error
 fail
 max-time = 10
 CONFIG
+# Files are born private under umask 077; chmod is defense in depth.
 chmod 600 "\${cfg}" "\${body}"
 curl --config "\${cfg}"
 EOF
 )"
 
   printf '%s\n%s\n%s\n' "${KODI_USER}" "${KODI_WEB_PASSWORD}" "${request_json}" \
-    | ssh -p "${SSH_PORT}" "${TARGET}" sh -c "${remote_command}"
+    | coreelec_postdeploy_ssh_batch "${remote_command}"
 }
 
 kodi_capabilities() {
@@ -210,11 +232,14 @@ import sys
 required = [
     "JSONRPC.Introspect",
     "Addons.ExecuteAddon",
+    "Addons.GetAddonDetails",
     "GUI.ActivateWindow",
     "GUI.GetProperties",
     "Input.ExecuteAction",
     "Input.SendText",
 ]
+# PVR.GetChannelGroups is intentionally advisory in check_nextpvr, so it is
+# not a global capability requirement.
 try:
     payload = json.load(sys.stdin)
 except Exception as exc:
@@ -363,15 +388,18 @@ coreelec_postdeploy_read_addon_data_file() {
   local addon_id="$1" relative_path="$2" remote_command
   [[ -n "${TARGET:-}" ]] || die "TARGET is required before calling coreelec_postdeploy_read_addon_data_file"
   [[ -n "${SSH_PORT:-}" ]] || die "SSH_PORT is required before calling coreelec_postdeploy_read_addon_data_file"
-  remote_command="$(cat <<EOF
+  remote_command="$(cat <<'EOF'
 set -eu
-path="\${HOME}/.kodi/userdata/addon_data/${addon_id}/${relative_path}"
-if [ -f "\${path}" ]; then
-  cat "\${path}"
+IFS= read -r addon_id || exit 1
+IFS= read -r relative_path || exit 1
+path="${HOME}/.kodi/userdata/addon_data/${addon_id}/${relative_path}"
+if [ -f "${path}" ]; then
+  cat "${path}"
 fi
 EOF
 )"
-  ssh -p "${SSH_PORT}" "${TARGET}" sh -c "${remote_command}"
+  printf '%s\n%s\n' "${addon_id}" "${relative_path}" \
+    | coreelec_postdeploy_ssh_batch "${remote_command}"
 }
 
 coreelec_postdeploy_pm4k_account_token_present() {
@@ -491,6 +519,8 @@ coreelec_postdeploy_gui_control_matches() {
 
 coreelec_postdeploy_guided_select() {
   local response
+  # Input.ExecuteAction(select) is the select operation covered by the live
+  # capability gate, unlike the separate Input.Select method.
   response="$(kodi_rpc "Input.ExecuteAction" '{"action":"select"}')" || return 1
   coreelec_postdeploy_kodi_call_ok "${response}"
 }
@@ -728,7 +758,7 @@ PYEOF
 EOF
 )"
   printf '%s\n' "${EMBY_SERVER_URL}" \
-    | ssh -p "${SSH_PORT}" "${TARGET}" sh -c "${remote_command}"
+    | coreelec_postdeploy_ssh_batch "${remote_command}"
 }
 
 coreelec_postdeploy_emby_fail() {
@@ -1004,7 +1034,7 @@ PYEOF
 EOF
 )"
 
-  printf '%s\n' "${request_json}" | ssh -p "${SSH_PORT}" "${TARGET}" sh -c "${remote_command}"
+  printf '%s\n' "${request_json}" | coreelec_postdeploy_ssh_batch "${remote_command}"
 }
 
 coreelec_postdeploy_http_field() {
@@ -1340,6 +1370,8 @@ check_nextpvr() {
   fi
   coreelec_postdeploy_observe "service.pvr.nextpvr.session_login" "ok"
 
+  # Advisory only: the authenticated backend session determines the workflow
+  # status even when this Kodi-side observation is unavailable.
   kodi_response="$(kodi_rpc "PVR.GetChannelGroups" '{"channeltype":"tv"}')" || {
     coreelec_postdeploy_observe "service.pvr.nextpvr.kodi_channel_groups" "transport-failed"
     printf 'configured\n'

@@ -182,21 +182,27 @@ Then run the separate post-deployment checks:
   --addon plugin.service.emby-next-gen
 ```
 
-The first command is the transactional, unattended baseline deployment. The
-second command is a separate read-only helper for post-deployment checks, with
-optional guided PM4K/YouTube/Emby authorization. Provisioning itself still
-cannot sign Emby in. This installs the pinned add-on set (Emby for Kodi Next
-Gen, PM4K, official Kodi YouTube, Arctic Fuse 3, NextPVR, Home Assistant
-Weather, TMDb Helper, and their dependencies), sets the skin active, applies
-the Pacific/English-US regional baseline, and writes a redacted audit report.
-It also applies `Adjust display refresh rate: On start/stop` and `Sync
-playback to display: Off` below — the only baseline table row it does not set
-is Dolby Vision mode, which stays room-specific. See the [shared runbook's
-provisioning step](../../runbook.md#3-provision-the-shared-coreelec-baseline)
-for validation-only commands, the interactive password/passphrase prompts,
-backup/rollback locations, post-deployment statuses, guided authorization, and
-restoration after a failed run, and [`config/README.md`](../../../config/README.md)
-for every configuration key and secret.
+The first command is the transactional, unattended baseline deployment. It
+installs the pinned add-on set (Emby for Kodi Next Gen, PM4K, official Kodi
+YouTube, Arctic Fuse 3, NextPVR, Home Assistant Weather, TMDb Helper, and their
+dependencies), sets the skin active, applies the Pacific/English-US regional
+baseline, and writes a redacted audit report. The second command runs the
+separate non-interactive post-deployment service checks without rewriting
+add-on settings. The third command opts into guarded PM4K, YouTube, and Emby
+authorization for only the listed add-ons; provisioning itself still cannot
+sign Emby in. Neither post-deployment command extends or rolls back the valid
+baseline transaction.
+
+The baseline also applies `Adjust display refresh rate: On start/stop` and
+`Sync playback to display: Off` below — the only baseline table row it does
+not set is Dolby Vision mode, which stays room-specific. See the [shared
+runbook's provisioning
+step](../../runbook.md#3-provision-the-shared-coreelec-baseline) for
+validation-only commands, the interactive password/passphrase prompts,
+backup/rollback locations, post-deployment statuses, guided authorization,
+and restoration after a failed run, and
+[`config/README.md`](../../../config/README.md) for every configuration key and
+secret.
 
 ## Baseline Kodi/CoreELEC settings
 

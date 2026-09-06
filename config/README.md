@@ -66,6 +66,9 @@ Run shared provisioning first, then the separate post-deployment checks:
   flows. It may pause while you finish browser/device-code approval elsewhere,
   but a timeout or `manual-required` result still leaves the provisioned
   baseline intact.
+- `--dry-run`, even with `--interactive`, validates locally and writes the
+  static status `dry-run` for every selected add-on. It makes zero SSH/device
+  calls and transmits no secrets.
 - Provisioning itself still cannot sign Emby in. `EMBY_PASSWORD` appears in
   the shared config/help surface because the post-deployment helper uses the
   same configuration library, not because the provisioner consumes it.

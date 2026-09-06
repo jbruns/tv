@@ -48,7 +48,8 @@ Options:
   --interactive             Allow guided GUI workflows for add-ons that cannot
                              finish non-interactively
   --dry-run                 Validate configuration and render the report
-                             without contacting the device
+                             without contacting the device; every selected
+                             add-on receives the static status dry-run
   --report-dir PATH         Local report directory
   --version                 Print script version
   -h, --help                Show this help
@@ -62,6 +63,8 @@ Supported post-deployment add-ons:
 
 The default run performs non-interactive checks only. Use --interactive
 before any PM4K account, YouTube, or Emby GUI workflow.
+Dry-run makes zero SSH/device calls and transmits no secrets, including when
+combined with --interactive.
 USAGE
 }
 
@@ -221,7 +224,9 @@ EOF
 
 write_report() {
   local file="$1" capability_state="$2" addon_id status
+  umask 077
   mkdir -p "${REPORT_DIR}"
+  # The private umask protects creation; explicit modes remain defense in depth.
   chmod 700 "${REPORT_DIR}"
   {
     printf 'report_format=coreelec-addon-configuration-report-1\n'
@@ -237,7 +242,11 @@ write_report() {
       [[ -n "${addon_id}" ]] || continue
       printf 'addon.%s.interaction_level=%s\n' "${addon_id}" \
         "$(coreelec_postdeploy_addon_interaction_level "${addon_id}")"
-      status="$(run_addon_workflow "${addon_id}")"
+      if [[ "${DRY_RUN}" == "1" ]]; then
+        status="dry-run"
+      else
+        status="$(run_addon_workflow "${addon_id}")"
+      fi
       printf 'addon.%s.status=%s\n' "${addon_id}" "${status}"
     done <<EOF
 $(coreelec_postdeploy_selected_addons)

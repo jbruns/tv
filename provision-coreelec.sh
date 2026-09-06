@@ -131,6 +131,8 @@ HOME_ASSISTANT_TOKEN, NEXTPVR_PIN, PLEX_TOKEN, and EMBY_PASSWORD). None may appe
 in the config file, and TARGET is never a config-file key. See
 config/README.md for every supported key, the repeated ADDON_ARTIFACT
 grammar, and the full secret list.
+EMBY_PASSWORD is consumed only by configure-coreelec-addons.sh --interactive;
+this transactional provisioner validates and redacts it but never uses it.
 
 This script deliberately does not configure audio codecs or the display mode
 whitelist (room-specific, live HDMI-dependent), and it cannot perform Emby

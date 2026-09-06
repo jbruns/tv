@@ -53,6 +53,9 @@ Run the shared baseline first, then the separate post-deployment checks:
   finish a browser/device-code step elsewhere, but a timeout or
   `manual-required` result still leaves the already provisioned baseline in
   place.
+- `--dry-run`, including together with `--interactive`, validates locally and
+  writes `status=dry-run` for every selected add-on. It makes zero SSH, device,
+  or remote service calls and transmits no secrets.
 - Provisioning itself cannot sign Emby in. Use the post-deployment helper if
   you want guarded Emby, PM4K account-mode, or YouTube assistance.
 
@@ -111,10 +114,15 @@ CoreELEC device itself before reporting success:
 
 - **Home Assistant Weather** (`weather.ha`): requests `/api/config`, then `/api/states/<HOME_ASSISTANT_WEATHER_ENTITY>` with the configured bearer token, and executes `weather.ha` once only after both responses succeed.
 - **NextPVR** (`pvr.nextpvr`): performs `session.initiate`, calculates the add-on's lower-case MD5 login digest from `NEXTPVR_PIN`, requires a successful `session.login`, and records `PVR.GetChannelGroups` as an advisory Kodi-side observation.
+  `PVR.GetChannelGroups` is intentionally not a globally required capability;
+  an unavailable or failed observation cannot override a successful backend
+  login.
 - **PM4K local mode** (`script.plexmod`): requires HTTP 200 from Plex `/identity`, then requires the configured `PLEX_TOKEN` to receive HTTP 200 from `/`, and executes `script.plexmod` only after both checks succeed.
 
 Across both non-interactive and `--interactive` runs, expect:
 
+- `dry-run` for every selected add-on when `--dry-run` is present; no add-on
+  workflow is dispatched.
 - `already-configured` when a guided workflow finds a persisted token/session
   before sending any GUI input.
 - `configured` when a configured service answers correctly and the required

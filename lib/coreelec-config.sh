@@ -114,9 +114,20 @@ coreelec_config_validate_url() {
 
 coreelec_config_ipv4_is_private_or_loopback() {
   local value="$1" old_ifs="$IFS" first second third fourth octet
+  local restore_pathname_expansion=0
+  case "$-" in
+    *f*) ;;
+    *)
+      set -f
+      restore_pathname_expansion=1
+      ;;
+  esac
   IFS=.
   set -- ${value}
   IFS="${old_ifs}"
+  if (( restore_pathname_expansion == 1 )); then
+    set +f
+  fi
   [[ "$#" -eq 4 ]] || return 1
   first="$1"
   second="$2"
