@@ -321,10 +321,10 @@ test_production_config_locks_primary_addon_versions() {
   assert_artifact_version "plugin.video.themoviedb.helper" "6.17.1"
   assert_artifact_version "weather.ha" "0.0.6.6"
   assert_artifact_version "resource.language.en_us" "11.0.82"
-  # CoreELEC republishes upstream pvr.nextpvr 21.3.2-Omega for Amlogic-ne
-  # aarch64 with its own packaging revision appended (PKG_REV=1), so the
+  # CoreELEC republishes upstream pvr.nextpvr 21.3.2-Omega for Amlogic-ng
+  # arm with its own packaging revision appended (PKG_REV=1), so the
   # addon.xml on this platform declares 21.3.2.1. The Kodi Omega mirror
-  # publishes no Linux/aarch64 build at all.
+  # publishes no Linux/arm build at all.
   assert_artifact_version "pvr.nextpvr" "21.3.2.1"
 }
 
@@ -420,6 +420,33 @@ test_production_config_has_no_blocked_pins() {
   assert_contains "${ids}" "weather.ha" "Home Assistant Weather is locked, not absent"
 }
 
+# The device documentation mandates `CoreELEC-Amlogic-ng.arm-21.3-Omega-Generic`
+# and explicitly forbids substituting `Amlogic-ne` or `aarch64`, and
+# `validate_remote` refuses any device that does not identify as Amlogic-ng.
+# CoreELEC publishes its binary add-ons per branch and architecture --
+# Amlogic-ng carries `arm` only, Amlogic-ne carries `aarch64` -- so a binary
+# add-on taken from the wrong tree installs and then fails to load on the
+# device. Every CoreELEC-published artifact must therefore come from the tree
+# that matches the image this project installs.
+test_production_config_takes_binary_addons_from_the_installed_branch() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  local record url id
+  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+    url="$(cut -d'|' -f3 <<< "${record}")"
+    case "${url}" in
+      *addons.coreelec.org*) ;;
+      *) continue ;;
+    esac
+    id="$(cut -d'|' -f1 <<< "${record}")"
+    assert_contains "${url}" "/Amlogic-ng/${EXPECTED_RELEASE}/arm/" \
+      "${id} must come from the Amlogic-ng arm tree matching the installed image" \
+      || return 1
+    assert_not_contains "${url}" "aarch64" \
+      "${id} must not be pinned to an aarch64 build" || return 1
+  done
+}
+
 run_all_tests \
   test_defaults_are_pacific_english_us \
   test_comments_blank_lines_and_values_are_parsed \
@@ -441,4 +468,5 @@ run_all_tests \
   test_production_config_records_immutable_upstream_sources \
   test_production_config_records_each_artifact_exactly_once \
   test_production_config_artifact_records_are_well_formed \
-  test_production_config_has_no_blocked_pins
+  test_production_config_has_no_blocked_pins \
+  test_production_config_takes_binary_addons_from_the_installed_branch
