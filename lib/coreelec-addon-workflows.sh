@@ -302,15 +302,18 @@ coreelec_postdeploy_http_request() {
   [[ -n "${TARGET:-}" ]] || die "TARGET is required before calling coreelec_postdeploy_http_request"
   [[ -n "${SSH_PORT:-}" ]] || die "SSH_PORT is required before calling coreelec_postdeploy_http_request"
 
-  request_json="$(python3 - "${method}" "${url}" "${headers_json}" <<'PYEOF'
+request_json="$(HTTP_REQUEST_METHOD="${method}" \
+  HTTP_REQUEST_URL="${url}" \
+  HTTP_REQUEST_HEADERS_JSON="${headers_json}" \
+  python3 - <<'PYEOF'
 import json
+import os
 import sys
 
-method, url, headers_json = sys.argv[1:4]
 payload = {
-    "method": method,
-    "url": url,
-    "headers": json.loads(headers_json),
+  "method": os.environ["HTTP_REQUEST_METHOD"],
+  "url": os.environ["HTTP_REQUEST_URL"],
+  "headers": json.loads(os.environ["HTTP_REQUEST_HEADERS_JSON"]),
 }
 sys.stdout.write(json.dumps(payload, separators=(",", ":")))
 PYEOF
@@ -397,11 +400,12 @@ coreelec_postdeploy_join_url() {
 }
 
 coreelec_postdeploy_md5_hex() {
-  python3 - "$1" <<'PYEOF'
+  MD5_INPUT="$1" python3 - <<'PYEOF'
 import hashlib
+import os
 import sys
 
-sys.stdout.write(hashlib.md5(sys.argv[1].encode("utf-8")).hexdigest())
+sys.stdout.write(hashlib.md5(os.environ["MD5_INPUT"].encode("utf-8")).hexdigest())
 PYEOF
 }
 
@@ -508,11 +512,12 @@ check_home_assistant_weather() {
     coreelec_postdeploy_http_request \
       "GET" \
       "$(coreelec_postdeploy_join_url "${HOME_ASSISTANT_URL}" "/api/config")" \
-      "$(python3 - "${HOME_ASSISTANT_TOKEN}" <<'PYEOF'
+      "$(HOME_ASSISTANT_TOKEN_VALUE="${HOME_ASSISTANT_TOKEN:-}" python3 - <<'PYEOF'
 import json
+import os
 import sys
 
-token = sys.argv[1]
+token = os.environ["HOME_ASSISTANT_TOKEN_VALUE"]
 sys.stdout.write(json.dumps({
     "Authorization": "Bearer " + token,
     "Accept": "application/json",
@@ -552,11 +557,12 @@ PYEOF
     coreelec_postdeploy_http_request \
       "GET" \
       "$(coreelec_postdeploy_join_url "${HOME_ASSISTANT_URL}" "/api/states/${HOME_ASSISTANT_WEATHER_ENTITY}")" \
-      "$(python3 - "${HOME_ASSISTANT_TOKEN}" <<'PYEOF'
+      "$(HOME_ASSISTANT_TOKEN_VALUE="${HOME_ASSISTANT_TOKEN:-}" python3 - <<'PYEOF'
 import json
+import os
 import sys
 
-token = sys.argv[1]
+token = os.environ["HOME_ASSISTANT_TOKEN_VALUE"]
 sys.stdout.write(json.dumps({
     "Authorization": "Bearer " + token,
     "Accept": "application/json",
@@ -618,7 +624,7 @@ PYEOF
 
 check_nextpvr() {
   local initiate_response initiate_transport initiate_status initiate_body parsed sid salt
-  local pin_md5 combined_md5 login_md5 login_response login_transport login_status login_body
+  local pin_md5 login_hash_input login_md5 login_response login_transport login_status login_body
   local kodi_response
   if ! coreelec_postdeploy_nextpvr_ready; then
     coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "not-configured"
@@ -663,8 +669,8 @@ check_nextpvr() {
   salt="$(printf '%s\n' "${parsed}" | sed -n '2p')"
 
   pin_md5="$(coreelec_postdeploy_md5_hex "${NEXTPVR_PIN}" | tr '[:upper:]' '[:lower:]')"
-  combined_md5=":${pin_md5}:${salt}"
-  login_md5="$(coreelec_postdeploy_md5_hex "${combined_md5}" | tr '[:upper:]' '[:lower:]')"
+  login_hash_input=":${pin_md5}:${salt}"
+  login_md5="$(coreelec_postdeploy_md5_hex "${login_hash_input}" | tr '[:upper:]' '[:lower:]')"
 
   login_response="$(
     coreelec_postdeploy_http_request \
@@ -720,7 +726,7 @@ check_pm4k_local() {
   local root_response root_transport root_status root_body root_name kodi_response
   if ! coreelec_postdeploy_pm4k_local_ready; then
     coreelec_postdeploy_observe "service.script.plexmod.failure" "not-configured"
-    printf 'authorization-required\n'
+    printf 'skipped\n'
     return 0
   fi
 
@@ -762,11 +768,12 @@ check_pm4k_local() {
     coreelec_postdeploy_http_request \
       "GET" \
       "http://${PLEX_SERVER_HOST}:${PLEX_SERVER_PORT}/" \
-      "$(python3 - "${PLEX_TOKEN}" <<'PYEOF'
+      "$(PLEX_TOKEN_VALUE="${PLEX_TOKEN:-}" python3 - <<'PYEOF'
 import json
+import os
 import sys
 
-token = sys.argv[1]
+token = os.environ["PLEX_TOKEN_VALUE"]
 sys.stdout.write(json.dumps({
     "Accept": "application/json",
     "X-Plex-Token": token,

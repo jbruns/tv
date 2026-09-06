@@ -70,6 +70,31 @@ STUB
   printf '%s\n' "${bin_dir}"
 }
 
+install_python3_argv_stub() {
+  local dir bin_dir log_dir resolved
+  dir="$1"
+  bin_dir="${dir}/python3-stub-bin"
+  log_dir="${dir}/python3-stub-logs"
+  mkdir -p "${bin_dir}" "${log_dir}"
+  resolved="$(python3 -c 'import sys; sys.stdout.write(sys.executable)')"
+  printf '%s\n' "${resolved}" > "${bin_dir}/python3-real"
+  cat > "${bin_dir}/python3" <<'STUB'
+#!/bin/bash
+set -eu
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log_dir="${script_dir}/../python3-stub-logs"
+count_file="${log_dir}/call-count"
+count=0
+[[ -f "${count_file}" ]] && count="$(cat "${count_file}")"
+count=$((count + 1))
+printf '%s\n' "${count}" > "${count_file}"
+printf '%s\n' "$*" > "${log_dir}/argv-${count}.log"
+exec "$(cat "${script_dir}/python3-real")" "$@"
+STUB
+  chmod +x "${bin_dir}/python3"
+  printf '%s\n' "${bin_dir}"
+}
+
 ssh_call_count() {
   local dir="$1"
   if [[ -f "${dir}/stub/call-count" ]]; then
@@ -77,6 +102,32 @@ ssh_call_count() {
   else
     printf '0\n'
   fi
+}
+
+python3_call_count() {
+  local dir="$1"
+  if [[ -f "${dir}/python3-stub-logs/call-count" ]]; then
+    cat "${dir}/python3-stub-logs/call-count"
+  else
+    printf '0\n'
+  fi
+}
+
+python3_argv_logs() {
+  local dir="$1" file
+  find "${dir}/python3-stub-logs" -type f -name 'argv-*.log' | LC_ALL=C sort | while IFS= read -r file; do
+    cat "${file}"
+    printf '\n'
+  done
+}
+
+assert_python3_stub_recorded_calls() {
+  local dir="$1" count="$2" message="$3"
+  if [[ "${count}" == "0" ]]; then
+    printf 'assert_python3_stub_recorded_calls: %s (dir=%s)\n' "${message}" "${dir}" >&2
+    return 1
+  fi
+  return 0
 }
 
 ssh_request_body() {
@@ -363,17 +414,18 @@ test_report_contains_statuses_but_no_secret_values() {
 }
 
 test_weather_check_accepts_config_and_entity_responses() {
-  local dir bin_dir output body
+  local dir bin_dir python_bin_dir output body
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
+  python_bin_dir="$(install_python3_argv_stub "${dir}")"
   write_http_response "${dir}/stub/response-1.json" ok 200 '{"location_name":"Home"}'
   write_http_response "${dir}/stub/response-2.json" ok 200 '{"entity_id":"weather.forecast_home","state":"sunny"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
-    export PATH="${bin_dir}:${PATH}"
+    export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
     TARGET="coreelec-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
@@ -390,6 +442,10 @@ test_weather_check_accepts_config_and_entity_responses() {
   assert_contains "${output}" "service.weather.ha.entity_http_status=200" "entity endpoint is reported" || return 1
   assert_contains "${output}" "service.weather.ha.kodi_execute=ok" "add-on launch is reported" || return 1
   assert_contains "${output}" "workflow_status=configured" "healthy weather configuration is accepted" || return 1
+  assert_not_contains "$(python3_argv_logs "${dir}")" "home-assistant-token-secret" \
+    "weather token must not leak into local python argv" || return 1
+  assert_python3_stub_recorded_calls "${dir}" "$(python3_call_count "${dir}")" \
+    "weather check should exercise local python helpers through the stub" || return 1
   body="$(ssh_request_body "${dir}" 3)"
   assert_eq '{"jsonrpc":"2.0","id":"addons-executeaddon","method":"Addons.ExecuteAddon","params":{"addonid":"weather.ha"}}' \
     "${body}" "weather check executes the configured add-on once" || return 1
@@ -425,10 +481,11 @@ test_weather_check_reports_unauthorized_without_echoing_token() {
 }
 
 test_nextpvr_check_uses_the_configured_protocol_host_port_and_pin() {
-  local dir bin_dir output expected_md5
+  local dir bin_dir python_bin_dir output expected_md5
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
+  python_bin_dir="$(install_python3_argv_stub "${dir}")"
   write_http_response "${dir}/stub/response-1.json" ok 200 '<rsp stat="ok"><sid>sid-123</sid><salt>salt-456</salt></rsp>' application/xml
   write_http_response "${dir}/stub/response-2.json" ok 200 '<rsp stat="ok"></rsp>' application/xml
   printf '%s\n' '{"jsonrpc":"2.0","id":"pvr-getchannelgroups","result":{"channelgroups":[],"limits":{"start":0,"end":0,"total":0}}}' > "${dir}/stub/response-3.json"
@@ -436,7 +493,7 @@ test_nextpvr_check_uses_the_configured_protocol_host_port_and_pin() {
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
-    export PATH="${bin_dir}:${PATH}"
+    export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
     TARGET="coreelec-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
@@ -459,6 +516,9 @@ test_nextpvr_check_uses_the_configured_protocol_host_port_and_pin() {
   assert_contains "${output}" "service.pvr.nextpvr.session_login=ok" "NextPVR login success is reported" || return 1
   assert_contains "${output}" "service.pvr.nextpvr.kodi_channel_groups=ok" "NextPVR advisory Kodi observation is reported" || return 1
   assert_contains "${output}" "workflow_status=configured" "healthy NextPVR configuration is accepted" || return 1
+  assert_not_contains "$(python3_argv_logs "${dir}")" "2468" "NextPVR PIN must not leak into local python argv" || return 1
+  assert_python3_stub_recorded_calls "${dir}" "$(python3_call_count "${dir}")" \
+    "NextPVR check should exercise local python helpers through the stub" || return 1
 }
 
 test_nextpvr_check_requires_a_successful_session_login() {
@@ -491,18 +551,19 @@ test_nextpvr_check_requires_a_successful_session_login() {
 }
 
 test_pm4k_local_check_requires_identity_and_token_authorized_root() {
-  local success_dir success_bin success_output failure_dir failure_bin failure_output body
+  local success_dir success_bin success_python_bin success_output failure_dir failure_bin failure_output body
 
   success_dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${success_dir}" "${failure_dir:-}"' RETURN
   success_bin="$(install_ssh_stub "${success_dir}")"
+  success_python_bin="$(install_python3_argv_stub "${success_dir}")"
   write_http_response "${success_dir}/stub/response-1.json" ok 200 '{"MediaContainer":{"machineIdentifier":"plex-machine-1"}}'
   write_http_response "${success_dir}/stub/response-2.json" ok 200 '{"MediaContainer":{"friendlyName":"Basement Plex"}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${success_dir}/stub/response-3.json"
 
   success_output="$({
     export COREELEC_SSH_STUB_DIR="${success_dir}/stub"
-    export PATH="${success_bin}:${PATH}"
+    export PATH="${success_python_bin}:${success_bin}:${PATH}"
     TARGET="coreelec-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
@@ -521,6 +582,10 @@ test_pm4k_local_check_requires_identity_and_token_authorized_root() {
   assert_contains "${success_output}" "service.script.plexmod.root_http_status=200" "PM4K authenticated root probe is reported" || return 1
   assert_contains "${success_output}" "service.script.plexmod.kodi_execute=ok" "PM4K launch is reported" || return 1
   assert_contains "${success_output}" "workflow_status=configured" "healthy PM4K local configuration is accepted" || return 1
+  assert_not_contains "$(python3_argv_logs "${success_dir}")" "plex-token-secret" \
+    "PM4K token must not leak into local python argv" || return 1
+  assert_python3_stub_recorded_calls "${success_dir}" "$(python3_call_count "${success_dir}")" \
+    "PM4K check should exercise local python helpers through the stub" || return 1
   body="$(ssh_request_body "${success_dir}" 3)"
   assert_eq '{"jsonrpc":"2.0","id":"addons-executeaddon","method":"Addons.ExecuteAddon","params":{"addonid":"script.plexmod"}}' \
     "${body}" "PM4K local check launches script.plexmod after successful validation" || return 1
@@ -550,6 +615,19 @@ test_pm4k_local_check_requires_identity_and_token_authorized_root() {
   assert_contains "${failure_output}" "service.script.plexmod.failure=unauthorized" "PM4K auth failure is classified distinctly" || return 1
   assert_contains "${failure_output}" "service.script.plexmod.root_http_status=401" "PM4K auth failure reports the status code" || return 1
   assert_contains "${failure_output}" "workflow_status=authorization-required" "PM4K auth failure requires new credentials" || return 1
+}
+
+test_pm4k_local_check_skips_when_local_configuration_is_absent() {
+  local output
+  output="$({
+    unset PLEX_SERVER_HOST PLEX_SERVER_PORT PLEX_SERVER_NAME PLEX_PROFILE_IDS PLEX_TOKEN
+    printf 'workflow_status=%s\n' "$(check_pm4k_local)"
+  } 2>&1)"
+
+  assert_contains "${output}" "service.script.plexmod.failure=not-configured" \
+    "PM4K local check reports the direct-path skip reason" || return 1
+  assert_contains "${output}" "workflow_status=skipped" \
+    "PM4K local check must skip when local mode is not configured" || return 1
 }
 
 test_service_checks_do_not_modify_addon_settings() {
@@ -627,4 +705,5 @@ run_all_tests \
   test_nextpvr_check_uses_the_configured_protocol_host_port_and_pin \
   test_nextpvr_check_requires_a_successful_session_login \
   test_pm4k_local_check_requires_identity_and_token_authorized_root \
+  test_pm4k_local_check_skips_when_local_configuration_is_absent \
   test_service_checks_do_not_modify_addon_settings
