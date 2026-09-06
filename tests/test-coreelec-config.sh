@@ -426,24 +426,44 @@ test_production_config_has_no_blocked_pins() {
 # CoreELEC publishes its binary add-ons per branch and architecture --
 # Amlogic-ng carries `arm` only, Amlogic-ne carries `aarch64` -- so a binary
 # add-on taken from the wrong tree installs and then fails to load on the
-# device. Every CoreELEC-published artifact must therefore come from the tree
-# that matches the image this project installs.
+# device.
+#
+# This asserts each of the three binary add-ons by exact ID, rather than
+# scanning ADDON_ARTIFACTS for whatever happens to be hosted on
+# addons.coreelec.org: an earlier version of this test filtered records by
+# `*addons.coreelec.org*` in the URL and skipped anything else, so if one of
+# these three IDs were ever repinned to a different host (or dropped from the
+# config entirely) the loop would silently `continue` past it -- the specific
+# add-on the device depends on would go unchecked while the test still
+# reported green. Requiring each ID to be present, and requiring its URL to
+# start with the exact Amlogic-ng/arm prefix, fails loudly on both a missing
+# add-on and a moved-host add-on.
 test_production_config_takes_binary_addons_from_the_installed_branch() {
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
-  local record url id
-  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
-    url="$(cut -d'|' -f3 <<< "${record}")"
-    case "${url}" in
-      *addons.coreelec.org*) ;;
-      *) continue ;;
-    esac
-    id="$(cut -d'|' -f1 <<< "${record}")"
-    assert_contains "${url}" "/Amlogic-ng/${EXPECTED_RELEASE}/arm/" \
-      "${id} must come from the Amlogic-ng arm tree matching the installed image" \
-      || return 1
-    assert_not_contains "${url}" "aarch64" \
-      "${id} must not be pinned to an aarch64 build" || return 1
+  local expected_prefix="https://addons.coreelec.org/Amlogic-ng/${EXPECTED_RELEASE}/arm/"
+  local required_ids=(pvr.nextpvr inputstream.adaptive inputstream.ffmpegdirect)
+  local id record record_id url found
+  for id in "${required_ids[@]}"; do
+    found=0
+    for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+      record_id="$(cut -d'|' -f1 <<< "${record}")"
+      [[ "${record_id}" == "${id}" ]] || continue
+      found=1
+      url="$(cut -d'|' -f3 <<< "${record}")"
+      case "${url}" in
+        "${expected_prefix}"*) ;;
+        *)
+          printf 'assert: %s must be sourced from %s* (got %s)\n' \
+            "${id}" "${expected_prefix}" "${url}" >&2
+          return 1
+          ;;
+      esac
+    done
+    if [[ "${found}" -ne 1 ]]; then
+      printf 'assert: required binary add-on %s is missing from ADDON_ARTIFACTS\n' "${id}" >&2
+      return 1
+    fi
   done
 }
 

@@ -1574,6 +1574,55 @@ test_an_unreachable_target_fails_with_an_actionable_error() {
     "a failed platform read stops before the key install" || return 1
 }
 
+# The platform read has a second branch: the administrator key is already
+# accepted (BatchMode probe succeeds, so KEY_ALREADY_ACCEPTED=1 and password
+# auth is never attempted), but the identity read itself then fails -- the
+# device dropped off the network, or the key was revoked, between the probe
+# and the read. This must die with its own diagnostic naming the identity
+# file, not fall through to the password branch or leak ssh's bare exit
+# status, and it must still stop before any artifact download or key install.
+test_a_keyed_but_failing_identity_read_fails_with_an_actionable_error() {
+  local dir bin_dir output rc calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+  # Only the BatchMode probe ("ssh_keyed_batch true") succeeds, simulating an
+  # already-accepted key; every other ssh invocation -- including the
+  # sh -c identity script that ssh_keyed sends -- still fails.
+  cat > "${bin_dir}/ssh" <<STUB
+#!/bin/bash
+printf 'ssh %s\n' "\$*" >> "${dir}/network-calls.log"
+case " \$* " in
+  *" -o BatchMode=yes "*" true"*) exit 0 ;;
+  *) exit 255 ;;
+esac
+STUB
+  chmod +x "${bin_dir}/ssh"
+  printf 'scratch administrator key\n' > "${dir}/scratch_admin_key"
+  printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
+
+  set +e
+  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a keyed but failing identity read must fail the run" || return 1
+  assert_contains "${output}" "ERROR:" \
+    "the run reports its own error rather than ssh's exit status" || return 1
+  assert_contains "${output}" "192.0.2.1" \
+    "the diagnostic names the target that could not be reached" || return 1
+  assert_contains "${output}" "scratch_admin_key" \
+    "the diagnostic names the administrator key file that was used" || return 1
+  assert_contains "${output}" "Nothing on the device has been changed." \
+    "the diagnostic states that the device is untouched" || return 1
+  assert_not_contains "${output}" "temporary CoreELEC root password" \
+    "an already-accepted key must never prompt for the temporary password" || return 1
+  calls="$(cat "${dir}/network-calls.log")"
+  assert_not_contains "${calls}" "curl " \
+    "a failed identity read stops before any artifact is downloaded" || return 1
+  assert_not_contains "${calls}" "authorized_keys" \
+    "a failed identity read stops before the key install" || return 1
+}
+
 # --- Audit report ------------------------------------------------------------
 
 # Task 6 reads this report. Every line the provisioner writes itself is
@@ -1718,4 +1767,5 @@ run_all_tests \
   test_an_unlocked_addon_is_refused_before_any_remote_call \
   test_a_default_run_survives_the_empty_addon_array_under_bash_3_2 \
   test_an_unreachable_target_fails_with_an_actionable_error \
+  test_a_keyed_but_failing_identity_read_fails_with_an_actionable_error \
   test_the_audit_report_is_key_value_and_names_the_pending_transaction
