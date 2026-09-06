@@ -198,12 +198,79 @@ test_missing_optional_secrets_are_allowed() {
   set +e
   (
     unset OMDB_API_KEY MDBLIST_API_KEY YOUTUBE_API_KEY YOUTUBE_CLIENT_ID \
-      YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN 2>/dev/null
+      YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN \
+      EMBY_PASSWORD 2>/dev/null
     coreelec_config_validate
   )
   rc=$?
   set -e
   assert_success "${rc}" "missing optional secrets must be allowed"
+}
+
+test_emby_url_requires_https_unless_local_http_is_explicitly_allowed() {
+  local rc output
+
+  coreelec_config_defaults
+  coreelec_config_assign "test.conf" "1" "EMBY_SERVER_URL" "https://emby.example.test:8920" 0
+  coreelec_config_assign "test.conf" "2" "EMBY_USERNAME" "media-user" 0
+  coreelec_config_validate
+
+  coreelec_config_defaults
+  coreelec_config_assign "test.conf" "1" "EMBY_SERVER_URL" "http://192.168.50.10:8096" 0
+  coreelec_config_assign "test.conf" "2" "EMBY_USERNAME" "media-user" 0
+  set +e
+  output="$(coreelec_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "local HTTP must require an explicit opt-in" || return 1
+  assert_contains "${output}" "EMBY_ALLOW_LOCAL_HTTP=1" "HTTP rejection explains the local opt-in" || return 1
+
+  coreelec_config_defaults
+  coreelec_config_assign "test.conf" "1" "EMBY_SERVER_URL" "http://172.20.1.9:8096" 0
+  coreelec_config_assign "test.conf" "2" "EMBY_USERNAME" "media-user" 0
+  coreelec_config_assign "test.conf" "3" "EMBY_ALLOW_LOCAL_HTTP" "1" 0
+  coreelec_config_validate
+
+  coreelec_config_defaults
+  coreelec_config_assign "test.conf" "1" "EMBY_SERVER_URL" "http://emby.example.test:8096" 0
+  coreelec_config_assign "test.conf" "2" "EMBY_USERNAME" "media-user" 0
+  coreelec_config_assign "test.conf" "3" "EMBY_ALLOW_LOCAL_HTTP" "1" 0
+  set +e
+  output="$(coreelec_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "public HTTP must remain forbidden after local HTTP opt-in" || return 1
+  assert_contains "${output}" "RFC1918 or loopback" "public HTTP rejection explains the host restriction"
+}
+
+test_emby_password_requires_server_and_username() {
+  local rc output
+
+  coreelec_config_defaults
+  set +e
+  output="$(EMBY_PASSWORD="emby-password-secret" coreelec_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "Emby password without endpoint and username must be rejected" || return 1
+  assert_contains "${output}" "EMBY_SERVER_URL and EMBY_USERNAME" "error names both required companions" || return 1
+  assert_not_contains "${output}" "emby-password-secret" "pairing error must not leak the password"
+}
+
+test_emby_password_is_rejected_in_config() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+  printf 'EMBY_PASSWORD=emby-password-secret\n' > "${file}"
+  coreelec_config_defaults
+  set +e
+  output="$(coreelec_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "EMBY_PASSWORD in config must be rejected" || return 1
+  assert_contains "${output}" "EMBY_PASSWORD" "error names EMBY_PASSWORD" || return 1
+  assert_contains "${output}" "secret" "error explains why the password was rejected" || return 1
+  assert_not_contains "${output}" "emby-password-secret" "error must not leak the password"
 }
 
 # --- Production configuration ----------------------------------------------
@@ -301,7 +368,8 @@ test_production_config_carries_no_secret_values() {
   set +e
   (
     unset OMDB_API_KEY MDBLIST_API_KEY YOUTUBE_API_KEY YOUTUBE_CLIENT_ID \
-      YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN 2>/dev/null
+      YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN \
+      EMBY_PASSWORD 2>/dev/null
     coreelec_config_validate
   )
   rc=$?
@@ -481,6 +549,9 @@ run_all_tests \
   test_partial_youtube_credentials_are_rejected \
   test_service_secret_without_endpoint_is_rejected \
   test_missing_optional_secrets_are_allowed \
+  test_emby_url_requires_https_unless_local_http_is_explicitly_allowed \
+  test_emby_password_requires_server_and_username \
+  test_emby_password_is_rejected_in_config \
   test_production_config_sets_pacific_english_us_baseline \
   test_production_config_carries_no_secret_values \
   test_production_config_locks_primary_addon_versions \

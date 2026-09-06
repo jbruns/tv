@@ -112,6 +112,75 @@ coreelec_config_validate_url() {
   esac
 }
 
+coreelec_config_ipv4_is_private_or_loopback() {
+  local value="$1" old_ifs="$IFS" first second third fourth octet
+  IFS=.
+  set -- ${value}
+  IFS="${old_ifs}"
+  [[ "$#" -eq 4 ]] || return 1
+  first="$1"
+  second="$2"
+  third="$3"
+  fourth="$4"
+  for octet in "${first}" "${second}" "${third}" "${fourth}"; do
+    case "${octet}" in
+      ""|*[!0-9]*) return 1 ;;
+    esac
+    (( 10#${octet} <= 255 )) || return 1
+  done
+  (( 10#${first} == 10 )) && return 0
+  (( 10#${first} == 127 )) && return 0
+  (( 10#${first} == 192 && 10#${second} == 168 )) && return 0
+  (( 10#${first} == 172 && 10#${second} >= 16 && 10#${second} <= 31 )) && return 0
+  return 1
+}
+
+coreelec_config_validate_emby_url() {
+  local value="$1" remainder authority host suffix port=""
+  case "${value}" in
+    https://*) remainder="${value#https://}" ;;
+    http://*) remainder="${value#http://}" ;;
+    *) die "EMBY_SERVER_URL must be an https:// URL" ;;
+  esac
+  case "${value}" in
+    *[[:space:]]*|*'@'*) die "EMBY_SERVER_URL contains unsupported URL syntax" ;;
+  esac
+  authority="${remainder%%/*}"
+  [[ -n "${authority}" ]] || die "EMBY_SERVER_URL must include a host"
+  case "${authority}" in
+    \[*\]*)
+      host="${authority%%]*}"
+      host="${host#[}"
+      suffix="${authority#*]}"
+      case "${suffix}" in
+        "") ;;
+        :*) port="${suffix#:}" ;;
+        *) die "EMBY_SERVER_URL contains unsupported URL syntax" ;;
+      esac
+      case "${port}" in *[!0-9]*) die "EMBY_SERVER_URL has an invalid port" ;; esac
+      ;;
+    *:*)
+      host="${authority%%:*}"
+      port="${authority#*:}"
+      case "${port}" in ""|*[!0-9]*) die "EMBY_SERVER_URL has an invalid port" ;; esac
+      ;;
+    *) host="${authority}" ;;
+  esac
+  [[ -n "${host}" ]] || die "EMBY_SERVER_URL must include a host"
+  [[ -z "${port}" ]] || validate_port "EMBY_SERVER_URL port" "${port}"
+
+  case "${value}" in
+    https://*) return 0 ;;
+  esac
+  [[ "${EMBY_ALLOW_LOCAL_HTTP}" == "1" ]] \
+    || die "EMBY_SERVER_URL requires https unless EMBY_ALLOW_LOCAL_HTTP=1 is set"
+  case "${host}" in
+    localhost|::1) return 0 ;;
+  esac
+  coreelec_config_ipv4_is_private_or_loopback "${host}" \
+    || die "EMBY_SERVER_URL HTTP host must be RFC1918 or loopback"
+}
+
 coreelec_config_validate_enum() {
   local label="$1" value="$2"
   shift 2
@@ -174,6 +243,10 @@ coreelec_config_defaults() {
   PLEX_SERVER_NAME=""
   PLEX_PROFILE_IDS=""
 
+  EMBY_SERVER_URL=""
+  EMBY_USERNAME=""
+  EMBY_ALLOW_LOCAL_HTTP="0"
+
   ADDON_ARTIFACTS=()
 
   COREELEC_CONFIG_SEEN_KEYS=$'\n'
@@ -193,7 +266,7 @@ coreelec_config_assign() {
   fi
 
   case "${key}" in
-    OMDB_API_KEY|MDBLIST_API_KEY|YOUTUBE_API_KEY|YOUTUBE_CLIENT_ID|YOUTUBE_CLIENT_SECRET|HOME_ASSISTANT_TOKEN|NEXTPVR_PIN|PLEX_TOKEN|TMDB_API_KEY)
+    OMDB_API_KEY|MDBLIST_API_KEY|YOUTUBE_API_KEY|YOUTUBE_CLIENT_ID|YOUTUBE_CLIENT_SECRET|HOME_ASSISTANT_TOKEN|NEXTPVR_PIN|PLEX_TOKEN|EMBY_PASSWORD|TMDB_API_KEY)
       die "${location}: ${key} is a secret and must be supplied only as an environment variable"
       ;;
   esac
@@ -312,6 +385,18 @@ coreelec_config_assign() {
       coreelec_config_validate_id_list "PLEX_PROFILE_IDS" "${value}"
       PLEX_PROFILE_IDS="${value}"
       ;;
+    EMBY_SERVER_URL)
+      [[ -n "${value}" ]] || die "EMBY_SERVER_URL must not be empty"
+      EMBY_SERVER_URL="${value}"
+      ;;
+    EMBY_USERNAME)
+      [[ -n "${value}" ]] || die "EMBY_USERNAME must not be empty"
+      EMBY_USERNAME="${value}"
+      ;;
+    EMBY_ALLOW_LOCAL_HTTP)
+      coreelec_config_validate_bool "EMBY_ALLOW_LOCAL_HTTP" "${value}"
+      EMBY_ALLOW_LOCAL_HTTP="${value}"
+      ;;
     ADDON_ARTIFACT)
       [[ -n "${value}" ]] || die "${location}: ADDON_ARTIFACT must not be empty"
       ADDON_ARTIFACTS+=("${value}")
@@ -374,6 +459,13 @@ coreelec_config_validate() {
   fi
   if [[ -n "${PLEX_TOKEN:-}" && -z "${PLEX_SERVER_HOST:-}" ]]; then
     die "PLEX_TOKEN requires PLEX_SERVER_HOST to be configured"
+  fi
+  if [[ -n "${EMBY_SERVER_URL:-}" ]]; then
+    coreelec_config_validate_emby_url "${EMBY_SERVER_URL}"
+  fi
+  if [[ -n "${EMBY_PASSWORD:-}" \
+     && ( -z "${EMBY_SERVER_URL:-}" || -z "${EMBY_USERNAME:-}" ) ]]; then
+    die "EMBY_PASSWORD requires EMBY_SERVER_URL and EMBY_USERNAME to be configured"
   fi
 
   return 0

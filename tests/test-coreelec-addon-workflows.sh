@@ -966,6 +966,117 @@ test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
   assert_contains "${output}" "service.plugin.video.youtube.failure=version-mismatch" "YouTube mismatch is classified explicitly" || return 1
 }
 
+test_emby_password_never_appears_in_argv_log_or_report() {
+  local dir bin_dir python_bin_dir config report_dir report output argv_logs secret
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  python_bin_dir="$(install_python3_argv_stub "${dir}")"
+  config="${dir}/provision.conf"
+  report_dir="${dir}/reports"
+  secret="emby-password-secret"
+  write_config "${config}" plugin.service.emby-next-gen
+  cat >> "${config}" <<'CONFIG'
+EMBY_SERVER_URL=https://emby.example.test
+EMBY_USERNAME=media-user
+CONFIG
+
+  write_introspection_response "${dir}/stub/response-1.json"
+  write_addon_details_response "${dir}/stub/response-2.json" "plugin.service.emby-next-gen" "12.4.23"
+  printf 'absent\n' > "${dir}/stub/response-3.json"
+  write_gui_state_response "${dir}/stub/response-4.json" "Select main server" "Manually add server"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-5.json"
+  write_gui_state_response "${dir}/stub/response-6.json" "Manage servers" "Host"
+  write_gui_state_response "${dir}/stub/response-7.json" "Manage servers" "Host"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-8.json"
+  write_gui_state_response "${dir}/stub/response-9.json" "Please sign in" "Username"
+  write_gui_state_response "${dir}/stub/response-10.json" "Please sign in" "Username"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-11.json"
+  write_gui_state_response "${dir}/stub/response-12.json" "Please sign in" "Password"
+  write_gui_state_response "${dir}/stub/response-13.json" "Please sign in" "Password"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-14.json"
+  write_gui_state_response "${dir}/stub/response-15.json" "Please sign in" "Sign in"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-16.json"
+  printf 'configured\n' > "${dir}/stub/response-17.json"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
+    COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0" \
+    KODI_WEB_PASSWORD="kodi-web-password-secret" \
+    EMBY_PASSWORD="${secret}" \
+      bash "${CLI_SCRIPT}" \
+        --config "${config}" \
+        --target coreelec-theater \
+        --interactive \
+        --addon plugin.service.emby-next-gen \
+        --report-dir "${report_dir}"
+  } 2>&1)"
+
+  report="$(find_single_report "${report_dir}")"
+  argv_logs="$(cat "${dir}"/stub/argv-*.log; python3_argv_logs "${dir}")"
+  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.status=configured" \
+    "successful Emby assistance is reported" || return 1
+  assert_not_contains "${output}" "${secret}" "Emby password must not appear in output" || return 1
+  assert_not_contains "${argv_logs}" "${secret}" "Emby password must not appear in process arguments" || return 1
+  assert_not_contains "$(cat "${report}")" "${secret}" "Emby password must not appear in the report"
+}
+
+test_emby_assistant_stops_on_each_unexpected_dialog() {
+  local dir phase output sent
+  for phase in server url username password; do
+    dir="$(make_scratch_dir)"
+    : > "${dir}/methods.log"
+    cat > "${dir}/scenario.sh" <<EOF
+#!/bin/bash
+set -Eeuo pipefail
+source "${WORKFLOW_LIB}"
+EMBY_SERVER_URL="https://emby.example.test"
+EMBY_USERNAME="media-user"
+LOCALE_LANGUAGE="resource.language.en_us"
+ADDON_ARTIFACTS=("$(addon_record plugin.service.emby-next-gen)")
+gui_calls=0
+coreelec_postdeploy_addon_version() { printf '12.4.23\n'; }
+coreelec_postdeploy_emby_state() { printf 'absent\n'; }
+capture_gui_state() {
+  gui_calls=\$((gui_calls + 1))
+  case "\${EMBY_TEST_PHASE}:\${gui_calls}" in
+    server:1) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+    url:1) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
+    url:2) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+    username:1) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
+    username:2|username:3) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
+    username:4) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+    password:1) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
+    password:2|password:3) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
+    password:4|password:5) KODI_GUI_WINDOW_LABEL="Please sign in"; KODI_GUI_CONTROL_LABEL="Username" ;;
+    password:6) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+  esac
+}
+kodi_rpc() {
+  printf '%s\n' "\$1" >> "${dir}/methods.log"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"test","result":"OK"}'
+}
+coreelec_postdeploy_guided_select() {
+  printf '%s\n' "Input.ExecuteAction" >> "${dir}/methods.log"
+}
+printf 'workflow_status=%s\n' "\$(assist_emby_login)"
+EOF
+    output="$(EMBY_TEST_PHASE="${phase}" EMBY_PASSWORD="emby-password-secret" \
+      bash "${dir}/scenario.sh" 2>&1)"
+    sent="$(grep -c '^Input.SendText$' "${dir}/methods.log" || true)"
+    case "${phase}" in
+      server|url) assert_eq "0" "${sent}" "${phase} drift stops before any text submission" || return 1 ;;
+      username) assert_eq "1" "${sent}" "username drift stops after only the URL submission" || return 1 ;;
+      password) assert_eq "2" "${sent}" "password drift stops after URL and username submissions" || return 1 ;;
+    esac
+    assert_contains "${output}" "workflow_status=manual-required" "${phase} drift fails closed" || return 1
+    assert_contains "${output}" "service.plugin.service.emby-next-gen.failure=unexpected-dialog" \
+      "${phase} drift is classified explicitly" || return 1
+    rm -rf -- "${dir}"
+  done
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_default_run_never_starts_account_authorization \
@@ -988,4 +1099,6 @@ run_all_tests \
   test_youtube_dismisses_only_the_expected_intro_dialog \
   test_guided_flow_times_out_as_manual_required \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
-  test_guided_flow_refuses_addon_version_mismatch_before_private_steps
+  test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
+  test_emby_password_never_appears_in_argv_log_or_report \
+  test_emby_assistant_stops_on_each_unexpected_dialog

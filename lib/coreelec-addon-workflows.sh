@@ -64,6 +64,7 @@ YOUTUBE_CLIENT_SECRET
 HOME_ASSISTANT_TOKEN
 NEXTPVR_PIN
 PLEX_TOKEN
+EMBY_PASSWORD
 SECRETS
 }
 
@@ -78,6 +79,7 @@ coreelec_postdeploy_secret_value() {
     HOME_ASSISTANT_TOKEN) printf '%s' "${HOME_ASSISTANT_TOKEN:-}" ;;
     NEXTPVR_PIN) printf '%s' "${NEXTPVR_PIN:-}" ;;
     PLEX_TOKEN) printf '%s' "${PLEX_TOKEN:-}" ;;
+    EMBY_PASSWORD) printf '%s' "${EMBY_PASSWORD:-}" ;;
     *)
       die "Unknown secret requested: $1"
       ;;
@@ -101,6 +103,17 @@ coreelec_prepare_kodi_web_password() {
   KODI_WEB_PASSWORD="$(security find-generic-password -a "${KODI_USER}" -s "${service_name}" -w 2>/dev/null || true)"
   [[ -n "${KODI_WEB_PASSWORD}" ]] \
     || die "Could not load the Kodi web password from macOS Keychain service ${service_name}; export KODI_WEB_PASSWORD or re-run the provisioner first"
+}
+
+coreelec_prepare_emby_password() {
+  if [[ -n "${EMBY_PASSWORD:-}" ]]; then
+    return 0
+  fi
+  [[ -t 0 ]] || return 1
+  printf 'Emby password for %s: ' "${EMBY_USERNAME}" >&2
+  IFS= read -r -s EMBY_PASSWORD
+  printf '\n' >&2
+  [[ -n "${EMBY_PASSWORD}" ]]
 }
 
 coreelec_trim_surrounding_whitespace() {
@@ -134,16 +147,19 @@ kodi_rpc() {
   [[ -n "${KODI_WEB_PASSWORD:-}" ]] || die "KODI_WEB_PASSWORD is required before calling kodi_rpc"
 
   request_id="$(kodi_rpc_request_id "${method}")"
-  request_json="$(python3 - "${method}" "${request_id}" "${params_json}" <<'PYEOF'
+  request_json="$(KODI_RPC_METHOD="${method}" \
+    KODI_RPC_REQUEST_ID="${request_id}" \
+    KODI_RPC_PARAMS="${params_json}" \
+    python3 - <<'PYEOF'
 import json
+import os
 import sys
 
-method, request_id, params = sys.argv[1:4]
 payload = {
     "jsonrpc": "2.0",
-    "id": request_id,
-    "method": method,
-    "params": json.loads(params),
+    "id": os.environ["KODI_RPC_REQUEST_ID"],
+    "method": os.environ["KODI_RPC_METHOD"],
+    "params": json.loads(os.environ["KODI_RPC_PARAMS"]),
 }
 sys.stdout.write(json.dumps(payload, separators=(",", ":")))
 PYEOF
@@ -479,6 +495,24 @@ coreelec_postdeploy_guided_select() {
   coreelec_postdeploy_kodi_call_ok "${response}"
 }
 
+coreelec_postdeploy_send_text_if_expected() {
+  local expected_window="$1" expected_control="$2" text="$3" params response
+  require_gui_state "${expected_window}" "${expected_control}" || return 1
+  params="$(KODI_INPUT_TEXT="${text}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+
+sys.stdout.write(json.dumps({
+    "text": os.environ["KODI_INPUT_TEXT"],
+    "done": True,
+}, separators=(",", ":")))
+PYEOF
+)" || return 1
+  response="$(kodi_rpc "Input.SendText" "${params}")" || return 1
+  coreelec_postdeploy_kodi_call_ok "${response}"
+}
+
 coreelec_postdeploy_guided_observe_token_state() {
   local observe_key="$1" token_present="$2"
   coreelec_postdeploy_observe "${observe_key}" "${token_present}"
@@ -615,6 +649,264 @@ authorize_youtube() {
 
   coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "timeout"
   printf 'manual-required\n'
+}
+
+coreelec_postdeploy_emby_state() {
+  local remote_command
+  remote_command="$(cat <<'EOF'
+set -eu
+IFS= read -r server_url || exit 1
+EMBY_SERVER_URL="${server_url}" python3 - <<'PYEOF'
+import glob
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.request
+
+paths = sorted(glob.glob(os.path.expanduser(
+    "~/.kodi/userdata/addon_data/plugin.service.emby-next-gen/servers_*.json")))
+if not paths:
+    sys.stdout.write("absent\n")
+    raise SystemExit(0)
+if len(paths) != 1:
+    sys.stdout.write("ambiguous\n")
+    raise SystemExit(0)
+
+try:
+    with open(paths[0], "r", encoding="utf-8") as handle:
+        server = json.load(handle)
+except Exception:
+    sys.stdout.write("invalid\n")
+    raise SystemExit(0)
+
+server_id = server.get("ServerId")
+token = server.get("AccessToken")
+user_id = server.get("UserId")
+if not all(isinstance(value, str) and value.strip()
+           for value in (server_id, token, user_id)):
+    sys.stdout.write("incomplete\n")
+    raise SystemExit(0)
+
+expected_name = "servers_%s.json" % server_id
+if os.path.basename(paths[0]) != expected_name:
+    sys.stdout.write("identity-mismatch\n")
+    raise SystemExit(0)
+
+request = urllib.request.Request(
+    os.environ["EMBY_SERVER_URL"].rstrip("/") + "/System/Info",
+    headers={"X-Emby-Token": token, "Accept": "application/json"})
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        system_info = json.loads(response.read().decode("utf-8"))
+except (ssl.CertificateError, ssl.SSLCertVerificationError):
+    sys.stdout.write("certificate-error\n")
+    raise SystemExit(0)
+except urllib.error.URLError as exc:
+    if isinstance(exc.reason, (ssl.CertificateError,
+                               ssl.SSLCertVerificationError)):
+        sys.stdout.write("certificate-error\n")
+    else:
+        sys.stdout.write("server-unavailable\n")
+    raise SystemExit(0)
+except Exception:
+    sys.stdout.write("server-unavailable\n")
+    raise SystemExit(0)
+
+if system_info.get("Id") != server_id:
+    sys.stdout.write("identity-mismatch\n")
+    raise SystemExit(0)
+
+database = os.path.expanduser(
+    "~/.kodi/userdata/Database/emby_%s.db" % server_id)
+if not os.path.isfile(database):
+    sys.stdout.write("handshake-pending\n")
+    raise SystemExit(0)
+sys.stdout.write("configured\n")
+PYEOF
+EOF
+)"
+  printf '%s\n' "${EMBY_SERVER_URL}" \
+    | ssh -p "${SSH_PORT}" "${TARGET}" sh -c "${remote_command}"
+}
+
+coreelec_postdeploy_emby_fail() {
+  coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.failure" "$1"
+  printf 'manual-required\n'
+}
+
+assist_emby_login() {
+  local pinned_version state attempts attempt interval_seconds
+  local url_sent=0 username_sent=0 password_sent=0 signin_selected=0
+
+  pinned_version="$(coreelec_postdeploy_pinned_addon_version "plugin.service.emby-next-gen" 2>/dev/null || true)"
+  if [[ "${pinned_version}" != "12.4.23" ]]; then
+    coreelec_postdeploy_emby_fail "version-mismatch"
+    return 0
+  fi
+  coreelec_postdeploy_require_pinned_addon_version \
+    "plugin.service.emby-next-gen" "service.plugin.service.emby-next-gen" || {
+      printf 'manual-required\n'
+      return 0
+    }
+  if [[ "${LOCALE_LANGUAGE:-}" != "resource.language.en_us" ]]; then
+    coreelec_postdeploy_emby_fail "locale-mismatch"
+    return 0
+  fi
+  if [[ -z "${EMBY_SERVER_URL:-}" || -z "${EMBY_USERNAME:-}" ]]; then
+    coreelec_postdeploy_emby_fail "not-configured"
+    return 0
+  fi
+  if ! coreelec_prepare_emby_password; then
+    coreelec_postdeploy_emby_fail "password-required"
+    return 0
+  fi
+
+  state="$(coreelec_postdeploy_emby_state 2>/dev/null || true)"
+  case "${state}" in
+    configured)
+      coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
+      printf 'already-configured\n'
+      return 0
+      ;;
+    absent) ;;
+    ambiguous)
+      coreelec_postdeploy_emby_fail "server-selection-ambiguity"
+      return 0
+      ;;
+    certificate-error)
+      coreelec_postdeploy_emby_fail "certificate-error"
+      return 0
+      ;;
+    *)
+      coreelec_postdeploy_emby_fail "credential-state-invalid"
+      return 0
+      ;;
+  esac
+
+  attempts="$(coreelec_postdeploy_guided_poll_limit)"
+  interval_seconds="$(coreelec_postdeploy_guided_poll_interval_seconds)"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if (( signin_selected == 1 )); then
+      state="$(coreelec_postdeploy_emby_state 2>/dev/null || true)"
+      case "${state}" in
+        configured)
+          coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
+          coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.handshake_database" "present"
+          printf 'configured\n'
+          return 0
+          ;;
+        ambiguous)
+          coreelec_postdeploy_emby_fail "server-selection-ambiguity"
+          return 0
+          ;;
+        certificate-error)
+          coreelec_postdeploy_emby_fail "certificate-error"
+          return 0
+          ;;
+        invalid|identity-mismatch)
+          coreelec_postdeploy_emby_fail "credential-state-invalid"
+          return 0
+          ;;
+      esac
+    fi
+
+    if ! capture_gui_state; then
+      coreelec_postdeploy_emby_fail "unexpected-dialog"
+      return 0
+    fi
+
+    case "${KODI_GUI_WINDOW_LABEL}|${KODI_GUI_CONTROL_LABEL}" in
+      "Select main server|Manually add server")
+        if (( url_sent != 0 || username_sent != 0 || password_sent != 0 )); then
+          coreelec_postdeploy_emby_fail "server-selection-ambiguity"
+          return 0
+        fi
+        coreelec_postdeploy_guided_select || {
+          coreelec_postdeploy_emby_fail "kodi-rpc"
+          return 0
+        }
+        ;;
+      "Manage servers|Host")
+        if (( url_sent != 0 )); then
+          coreelec_postdeploy_emby_fail "unexpected-dialog"
+          return 0
+        fi
+        coreelec_postdeploy_send_text_if_expected \
+          "Manage servers" "Host" "${EMBY_SERVER_URL}" || {
+            coreelec_postdeploy_emby_fail "unexpected-dialog"
+            return 0
+          }
+        url_sent=1
+        ;;
+      "Please sign in|Username")
+        if (( url_sent != 1 || username_sent != 0 )); then
+          coreelec_postdeploy_emby_fail "unexpected-dialog"
+          return 0
+        fi
+        coreelec_postdeploy_send_text_if_expected \
+          "Please sign in" "Username" "${EMBY_USERNAME}" || {
+            coreelec_postdeploy_emby_fail "unexpected-dialog"
+            return 0
+          }
+        username_sent=1
+        ;;
+      "Please sign in|Password")
+        if (( username_sent != 1 || password_sent != 0 )); then
+          coreelec_postdeploy_emby_fail "password-retry"
+          return 0
+        fi
+        coreelec_postdeploy_send_text_if_expected \
+          "Please sign in" "Password" "${EMBY_PASSWORD}" || {
+            coreelec_postdeploy_emby_fail "unexpected-dialog"
+            return 0
+          }
+        password_sent=1
+        ;;
+      "Please sign in|Sign in")
+        if (( password_sent != 1 || signin_selected != 0 )); then
+          coreelec_postdeploy_emby_fail "password-retry"
+          return 0
+        fi
+        coreelec_postdeploy_guided_select || {
+          coreelec_postdeploy_emby_fail "kodi-rpc"
+          return 0
+        }
+        signin_selected=1
+        ;;
+      "Please sign in|Manual login")
+        coreelec_postdeploy_emby_fail "multiple-public-users"
+        return 0
+        ;;
+      "Select main server|"*)
+        coreelec_postdeploy_emby_fail "server-selection-ambiguity"
+        return 0
+        ;;
+      "Please sign in|"*)
+        coreelec_postdeploy_emby_fail "multiple-public-users"
+        return 0
+        ;;
+      *[Cc]ertificate*)
+        coreelec_postdeploy_emby_fail "certificate-error"
+        return 0
+        ;;
+      *[Rr]esync*|*[Dd]atabase*)
+        coreelec_postdeploy_emby_fail "database-resync"
+        return 0
+        ;;
+      *)
+        coreelec_postdeploy_emby_fail "unexpected-dialog"
+        return 0
+        ;;
+    esac
+
+    if (( attempt < attempts && interval_seconds > 0 )); then
+      sleep "${interval_seconds}"
+    fi
+  done
+
+  coreelec_postdeploy_emby_fail "timeout"
 }
 
 coreelec_postdeploy_weather_ready() {
@@ -1203,7 +1495,7 @@ run_addon_workflow() {
       ;;
     plugin.service.emby-next-gen)
       if [[ "${INTERACTIVE:-0}" == "1" ]]; then
-        printf 'manual-required\n'
+        assist_emby_login
       else
         printf 'authorization-required\n'
       fi

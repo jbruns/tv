@@ -169,6 +169,21 @@ EOF
   (( selected_any == 1 )) || die "No supported pinned add-ons were selected for post-deployment configuration"
 }
 
+prepare_interactive_secrets() {
+  local addon_id
+  [[ "${INTERACTIVE}" == "1" ]] || return 0
+  [[ "${DRY_RUN}" != "1" ]] || return 0
+  [[ -n "${EMBY_SERVER_URL:-}" && -n "${EMBY_USERNAME:-}" ]] || return 0
+  while IFS= read -r addon_id; do
+    if [[ "${addon_id}" == "plugin.service.emby-next-gen" ]]; then
+      coreelec_prepare_emby_password || true
+      return 0
+    fi
+  done <<EOF
+$(coreelec_postdeploy_selected_addons)
+EOF
+}
+
 selected_addons_csv() {
   local addon_id output=""
   while IFS= read -r addon_id; do
@@ -241,6 +256,7 @@ main() {
   [[ -n "${TARGET}" ]] || die "--target is required"
   coreelec_config_validate
   validate_selected_addons
+  prepare_interactive_secrets
 
   if [[ "${DRY_RUN}" != "1" ]]; then
     coreelec_prepare_kodi_web_password

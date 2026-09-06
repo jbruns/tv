@@ -127,7 +127,7 @@ Configuration precedence is: built-in defaults, then the selected --config
 file, then explicit CLI options, then secret environment variables (read only
 for the fields that require them: OMDB_API_KEY, MDBLIST_API_KEY,
 YOUTUBE_API_KEY, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET,
-HOME_ASSISTANT_TOKEN, NEXTPVR_PIN, and PLEX_TOKEN). None of these may appear
+HOME_ASSISTANT_TOKEN, NEXTPVR_PIN, PLEX_TOKEN, and EMBY_PASSWORD). None may appear
 in the config file, and TARGET is never a config-file key. See
 config/README.md for every supported key, the repeated ADDON_ARTIFACT
 grammar, and the full secret list.
@@ -2721,6 +2721,7 @@ coreelec_secret_value() {
     HOME_ASSISTANT_TOKEN) printf '%s' "${HOME_ASSISTANT_TOKEN:-}" ;;
     NEXTPVR_PIN) printf '%s' "${NEXTPVR_PIN:-}" ;;
     PLEX_TOKEN) printf '%s' "${PLEX_TOKEN:-}" ;;
+    EMBY_PASSWORD) printf '%s' "${EMBY_PASSWORD:-}" ;;
     *) die "Internal error: unknown secret name: $1" ;;
   esac
 }
@@ -2736,6 +2737,7 @@ YOUTUBE_CLIENT_SECRET
 HOME_ASSISTANT_TOKEN
 NEXTPVR_PIN
 PLEX_TOKEN
+EMBY_PASSWORD
 SECRET_NAMES
 }
 
@@ -2768,6 +2770,9 @@ coreelec_config_fingerprint() {
     printf 'PLEX_SERVER_PORT=%s\n' "${PLEX_SERVER_PORT}"
     printf 'PLEX_SERVER_NAME=%s\n' "${PLEX_SERVER_NAME}"
     printf 'PLEX_PROFILE_IDS=%s\n' "${PLEX_PROFILE_IDS}"
+    printf 'EMBY_SERVER_URL=%s\n' "${EMBY_SERVER_URL}"
+    printf 'EMBY_USERNAME=%s\n' "${EMBY_USERNAME}"
+    printf 'EMBY_ALLOW_LOCAL_HTTP=%s\n' "${EMBY_ALLOW_LOCAL_HTTP}"
     for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
       printf 'ADDON_ARTIFACT=%s\n' "${record}"
     done
