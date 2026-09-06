@@ -75,6 +75,29 @@ Emby for Kodi and the official Kodi YouTube add-on are always reported `installe
 - **Emby** stores its server and user session in its own database; open Kodi and select/sign in to the Emby server from the add-on itself.
 - **YouTube** requires completing Google's device (OAuth) authorization inside the add-on; `YOUTUBE_API_KEY`/`YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` seed the API keys file but cannot sign an account in.
 
+### Post-deployment unattended service validation
+
+After step 3 has finalized, validate the shared add-ons from the Mac without rewriting any add-on settings:
+
+```bash
+./configure-coreelec-addons.sh --target <hostname-or-IP>
+```
+
+The command still writes a redacted `key=value` report, but for the fully unattended add-ons it now also performs read-only service checks from the CoreELEC device itself before reporting success:
+
+- **Home Assistant Weather** (`weather.ha`): requests `/api/config`, then `/api/states/<HOME_ASSISTANT_WEATHER_ENTITY>` with the configured bearer token, and executes `weather.ha` once only after both responses succeed.
+- **NextPVR** (`pvr.nextpvr`): performs `session.initiate`, calculates the add-on's lower-case MD5 login digest from `NEXTPVR_PIN`, requires a successful `session.login`, and records `PVR.GetChannelGroups` as an advisory Kodi-side observation.
+- **PM4K local mode** (`script.plexmod`): requires HTTP 200 from Plex `/identity`, then requires the configured `PLEX_TOKEN` to receive HTTP 200 from `/`, and executes `script.plexmod` only after both checks succeed.
+
+For this post-deployment command, expect:
+
+- `configured` when the configured service answers correctly and the required Kodi launch/advisory check succeeds.
+- `authorization-required` when the stored token or PIN is rejected (`401`/`403` or failed NextPVR session login).
+- `failed` on transport errors, malformed payloads, or a Plex/Home Assistant identity mismatch.
+- `skipped` when no unattended service configuration was supplied for that add-on.
+
+These checks are intentionally read-only: re-run `provision-coreelec.sh` with corrected values if a status shows that the stored configuration is wrong.
+
 ### Optional: PM4K, NextPVR, HA Weather, and TMDb Helper
 
 These are deployed either way, and are reported `configured` only when their values were supplied (as config keys plus the matching secret environment variable) before the run — otherwise they are `installed-unconfigured` and a `manual_action` line explains what to set, either in the add-on itself or by re-running with the missing values:

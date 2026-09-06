@@ -293,25 +293,554 @@ coreelec_postdeploy_pm4k_local_ready() {
      && -n "${PLEX_TOKEN:-}" ]]
 }
 
+coreelec_postdeploy_observe() {
+  printf '%s=%s\n' "$1" "$2" >&2
+}
+
+coreelec_postdeploy_http_request() {
+  local method="$1" url="$2" headers_json="$3" request_json remote_command
+  [[ -n "${TARGET:-}" ]] || die "TARGET is required before calling coreelec_postdeploy_http_request"
+  [[ -n "${SSH_PORT:-}" ]] || die "SSH_PORT is required before calling coreelec_postdeploy_http_request"
+
+  request_json="$(python3 - "${method}" "${url}" "${headers_json}" <<'PYEOF'
+import json
+import sys
+
+method, url, headers_json = sys.argv[1:4]
+payload = {
+    "method": method,
+    "url": url,
+    "headers": json.loads(headers_json),
+}
+sys.stdout.write(json.dumps(payload, separators=(",", ":")))
+PYEOF
+)" || die "Failed to build HTTP request for ${url}"
+
+  remote_command="$(cat <<'EOF'
+set -eu
+cache_dir="${HOME}/.cache"
+mkdir -p "${cache_dir}"
+chmod 700 "${cache_dir}"
+request_file="${cache_dir}/coreelec-addon-http-request.$$"
+cleanup() {
+  rm -f -- "${request_file}"
+}
+trap cleanup EXIT HUP INT TERM
+umask 077
+cat > "${request_file}"
+python3 - "${request_file}" <<'PYEOF'
+import json
+import sys
+import urllib.error
+import urllib.request
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    spec = json.load(handle)
+
+request = urllib.request.Request(spec["url"], method=spec["method"])
+for name, value in spec.get("headers", {}).items():
+    request.add_header(name, value)
+
+result = {
+    "transport": "error",
+    "http_status": 0,
+    "body": "",
+    "content_type": "",
+    "error": "",
+}
+
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        result["transport"] = "ok"
+        result["http_status"] = int(response.getcode() or 0)
+        result["body"] = response.read().decode("utf-8", "replace")
+        result["content_type"] = response.headers.get("Content-Type", "")
+except urllib.error.HTTPError as exc:
+    result["transport"] = "ok"
+    result["http_status"] = int(exc.code or 0)
+    result["body"] = exc.read().decode("utf-8", "replace")
+    result["content_type"] = exc.headers.get("Content-Type", "")
+except Exception as exc:
+    result["error"] = str(exc)
+
+sys.stdout.write(json.dumps(result, separators=(",", ":")))
+PYEOF
+EOF
+)"
+
+  printf '%s\n' "${request_json}" | ssh -p "${SSH_PORT}" "${TARGET}" sh -c "${remote_command}"
+}
+
+coreelec_postdeploy_http_field() {
+  local response_json="$1" field_name="$2"
+  RESPONSE_JSON="${response_json}" FIELD_NAME="${field_name}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+
+payload = json.loads(os.environ["RESPONSE_JSON"])
+value = payload.get(os.environ["FIELD_NAME"], "")
+if value is None:
+    value = ""
+if isinstance(value, (dict, list)):
+    sys.stdout.write(json.dumps(value, separators=(",", ":")))
+else:
+    sys.stdout.write(str(value))
+PYEOF
+}
+
+coreelec_postdeploy_join_url() {
+  local base="$1" suffix="$2"
+  base="${base%/}"
+  printf '%s%s\n' "${base}" "${suffix}"
+}
+
+coreelec_postdeploy_md5_hex() {
+  python3 - "$1" <<'PYEOF'
+import hashlib
+import sys
+
+sys.stdout.write(hashlib.md5(sys.argv[1].encode("utf-8")).hexdigest())
+PYEOF
+}
+
+coreelec_postdeploy_kodi_call_ok() {
+  local response="$1"
+  KODI_RESPONSE="${response}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(os.environ["KODI_RESPONSE"])
+except Exception:
+    raise SystemExit(1)
+if payload.get("error") is not None:
+    raise SystemExit(1)
+raise SystemExit(0)
+PYEOF
+}
+
+coreelec_postdeploy_validate_json_object() {
+  local payload="$1"
+  JSON_OBJECT_PAYLOAD="${payload}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    value = json.loads(os.environ["JSON_OBJECT_PAYLOAD"])
+except Exception:
+    raise SystemExit(1)
+if not isinstance(value, dict):
+    raise SystemExit(1)
+raise SystemExit(0)
+PYEOF
+}
+
+coreelec_postdeploy_json_string_field() {
+  local payload="$1" dotted_path="$2"
+  JSON_PAYLOAD="${payload}" JSON_PATH="${dotted_path}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+
+value = json.loads(os.environ["JSON_PAYLOAD"])
+for part in os.environ["JSON_PATH"].split("."):
+    if not isinstance(value, dict) or part not in value:
+        raise SystemExit(1)
+    value = value[part]
+if not isinstance(value, str) or value == "":
+    raise SystemExit(1)
+sys.stdout.write(value)
+PYEOF
+}
+
+coreelec_postdeploy_nextpvr_initiate_fields() {
+  local payload="$1"
+  XML_PAYLOAD="${payload}" python3 - <<'PYEOF'
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    root = ET.fromstring(os.environ["XML_PAYLOAD"])
+except Exception:
+    raise SystemExit(1)
+if root.attrib.get("stat") != "ok":
+    raise SystemExit(1)
+sid = root.findtext("sid") or ""
+salt = root.findtext("salt") or ""
+if not sid or not salt:
+    raise SystemExit(1)
+sys.stdout.write("%s\n%s\n" % (sid, salt))
+PYEOF
+}
+
+coreelec_postdeploy_nextpvr_login_ok() {
+  local payload="$1"
+  XML_PAYLOAD="${payload}" python3 - <<'PYEOF'
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    root = ET.fromstring(os.environ["XML_PAYLOAD"])
+except Exception:
+    raise SystemExit(1)
+if root.attrib.get("stat") != "ok":
+    raise SystemExit(1)
+raise SystemExit(0)
+PYEOF
+}
+
+check_home_assistant_weather() {
+  local config_response entity_response config_transport config_status config_body
+  local entity_transport entity_status entity_body entity_id kodi_response
+  if ! coreelec_postdeploy_weather_ready; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "not-configured"
+    printf 'skipped\n'
+    return 0
+  fi
+
+  config_response="$(
+    coreelec_postdeploy_http_request \
+      "GET" \
+      "$(coreelec_postdeploy_join_url "${HOME_ASSISTANT_URL}" "/api/config")" \
+      "$(python3 - "${HOME_ASSISTANT_TOKEN}" <<'PYEOF'
+import json
+import sys
+
+token = sys.argv[1]
+sys.stdout.write(json.dumps({
+    "Authorization": "Bearer " + token,
+    "Accept": "application/json",
+}, separators=(",", ":")))
+PYEOF
+)"
+  )"
+  config_transport="$(coreelec_postdeploy_http_field "${config_response}" "transport")"
+  config_status="$(coreelec_postdeploy_http_field "${config_response}" "http_status")"
+  config_body="$(coreelec_postdeploy_http_field "${config_response}" "body")"
+  coreelec_postdeploy_observe "service.weather.ha.config_http_status" "${config_status}"
+  if [[ "${config_transport}" != "ok" ]]; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "transport"
+    printf 'failed\n'
+    return 0
+  fi
+  case "${config_status}" in
+    401|403)
+      coreelec_postdeploy_observe "service.weather.ha.failure" "unauthorized"
+      printf 'authorization-required\n'
+      return 0
+      ;;
+    200) ;;
+    *)
+      coreelec_postdeploy_observe "service.weather.ha.failure" "http-status"
+      printf 'failed\n'
+      return 0
+      ;;
+  esac
+  if ! coreelec_postdeploy_validate_json_object "${config_body}"; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "malformed-payload"
+    printf 'failed\n'
+    return 0
+  fi
+
+  entity_response="$(
+    coreelec_postdeploy_http_request \
+      "GET" \
+      "$(coreelec_postdeploy_join_url "${HOME_ASSISTANT_URL}" "/api/states/${HOME_ASSISTANT_WEATHER_ENTITY}")" \
+      "$(python3 - "${HOME_ASSISTANT_TOKEN}" <<'PYEOF'
+import json
+import sys
+
+token = sys.argv[1]
+sys.stdout.write(json.dumps({
+    "Authorization": "Bearer " + token,
+    "Accept": "application/json",
+}, separators=(",", ":")))
+PYEOF
+)"
+  )"
+  entity_transport="$(coreelec_postdeploy_http_field "${entity_response}" "transport")"
+  entity_status="$(coreelec_postdeploy_http_field "${entity_response}" "http_status")"
+  entity_body="$(coreelec_postdeploy_http_field "${entity_response}" "body")"
+  coreelec_postdeploy_observe "service.weather.ha.entity_http_status" "${entity_status}"
+  if [[ "${entity_transport}" != "ok" ]]; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "transport"
+    printf 'failed\n'
+    return 0
+  fi
+  case "${entity_status}" in
+    401|403)
+      coreelec_postdeploy_observe "service.weather.ha.failure" "unauthorized"
+      printf 'authorization-required\n'
+      return 0
+      ;;
+    200) ;;
+    *)
+      coreelec_postdeploy_observe "service.weather.ha.failure" "http-status"
+      printf 'failed\n'
+      return 0
+      ;;
+  esac
+  if ! coreelec_postdeploy_validate_json_object "${entity_body}"; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "malformed-payload"
+    printf 'failed\n'
+    return 0
+  fi
+  if ! entity_id="$(coreelec_postdeploy_json_string_field "${entity_body}" "entity_id" 2>/dev/null)"; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "malformed-payload"
+    printf 'failed\n'
+    return 0
+  fi
+  if [[ "${entity_id}" != "${HOME_ASSISTANT_WEATHER_ENTITY}" ]]; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "identity-mismatch"
+    printf 'failed\n'
+    return 0
+  fi
+
+  kodi_response="$(kodi_rpc "Addons.ExecuteAddon" '{"addonid":"weather.ha"}')" || {
+    coreelec_postdeploy_observe "service.weather.ha.failure" "transport"
+    printf 'failed\n'
+    return 0
+  }
+  if ! coreelec_postdeploy_kodi_call_ok "${kodi_response}"; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "kodi-rpc"
+    printf 'failed\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.weather.ha.kodi_execute" "ok"
+  printf 'configured\n'
+}
+
+check_nextpvr() {
+  local initiate_response initiate_transport initiate_status initiate_body parsed sid salt
+  local pin_md5 combined_md5 login_md5 login_response login_transport login_status login_body
+  local kodi_response
+  if ! coreelec_postdeploy_nextpvr_ready; then
+    coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "not-configured"
+    printf 'skipped\n'
+    return 0
+  fi
+
+  initiate_response="$(
+    coreelec_postdeploy_http_request \
+      "GET" \
+      "${NEXTPVR_PROTOCOL}://${NEXTPVR_HOST}:${NEXTPVR_PORT}/service?method=session.initiate&ver=1.0&device=xbmc" \
+      '{}'
+  )"
+  initiate_transport="$(coreelec_postdeploy_http_field "${initiate_response}" "transport")"
+  initiate_status="$(coreelec_postdeploy_http_field "${initiate_response}" "http_status")"
+  initiate_body="$(coreelec_postdeploy_http_field "${initiate_response}" "body")"
+  coreelec_postdeploy_observe "service.pvr.nextpvr.session_initiate_http_status" "${initiate_status}"
+  if [[ "${initiate_transport}" != "ok" ]]; then
+    coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "transport"
+    printf 'failed\n'
+    return 0
+  fi
+  case "${initiate_status}" in
+    401|403)
+      coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "unauthorized"
+      printf 'authorization-required\n'
+      return 0
+      ;;
+    200) ;;
+    *)
+      coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "http-status"
+      printf 'failed\n'
+      return 0
+      ;;
+  esac
+  if ! parsed="$(coreelec_postdeploy_nextpvr_initiate_fields "${initiate_body}" 2>/dev/null)"; then
+    coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "malformed-payload"
+    printf 'failed\n'
+    return 0
+  fi
+  sid="$(printf '%s\n' "${parsed}" | sed -n '1p')"
+  salt="$(printf '%s\n' "${parsed}" | sed -n '2p')"
+
+  pin_md5="$(coreelec_postdeploy_md5_hex "${NEXTPVR_PIN}" | tr '[:upper:]' '[:lower:]')"
+  combined_md5=":${pin_md5}:${salt}"
+  login_md5="$(coreelec_postdeploy_md5_hex "${combined_md5}" | tr '[:upper:]' '[:lower:]')"
+
+  login_response="$(
+    coreelec_postdeploy_http_request \
+      "GET" \
+      "${NEXTPVR_PROTOCOL}://${NEXTPVR_HOST}:${NEXTPVR_PORT}/service?method=session.login&sid=${sid}&md5=${login_md5}" \
+      '{}'
+  )"
+  login_transport="$(coreelec_postdeploy_http_field "${login_response}" "transport")"
+  login_status="$(coreelec_postdeploy_http_field "${login_response}" "http_status")"
+  login_body="$(coreelec_postdeploy_http_field "${login_response}" "body")"
+  coreelec_postdeploy_observe "service.pvr.nextpvr.session_login_http_status" "${login_status}"
+  if [[ "${login_transport}" != "ok" ]]; then
+    coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "transport"
+    printf 'failed\n'
+    return 0
+  fi
+  case "${login_status}" in
+    401|403)
+      coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "unauthorized"
+      printf 'authorization-required\n'
+      return 0
+      ;;
+    200) ;;
+    *)
+      coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "http-status"
+      printf 'failed\n'
+      return 0
+      ;;
+  esac
+  if ! coreelec_postdeploy_nextpvr_login_ok "${login_body}" 2>/dev/null; then
+    coreelec_postdeploy_observe "service.pvr.nextpvr.session_login" "failed"
+    coreelec_postdeploy_observe "service.pvr.nextpvr.failure" "authorization-required"
+    printf 'authorization-required\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.pvr.nextpvr.session_login" "ok"
+
+  kodi_response="$(kodi_rpc "PVR.GetChannelGroups" '{"channeltype":"tv"}')" || {
+    coreelec_postdeploy_observe "service.pvr.nextpvr.kodi_channel_groups" "transport-failed"
+    printf 'configured\n'
+    return 0
+  }
+  if coreelec_postdeploy_kodi_call_ok "${kodi_response}"; then
+    coreelec_postdeploy_observe "service.pvr.nextpvr.kodi_channel_groups" "ok"
+  else
+    coreelec_postdeploy_observe "service.pvr.nextpvr.kodi_channel_groups" "failed"
+  fi
+  printf 'configured\n'
+}
+
+check_pm4k_local() {
+  local identity_response identity_transport identity_status identity_body machine_id
+  local root_response root_transport root_status root_body root_name kodi_response
+  if ! coreelec_postdeploy_pm4k_local_ready; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "not-configured"
+    printf 'authorization-required\n'
+    return 0
+  fi
+
+  identity_response="$(
+    coreelec_postdeploy_http_request \
+      "GET" \
+      "http://${PLEX_SERVER_HOST}:${PLEX_SERVER_PORT}/identity" \
+      '{"Accept":"application/json"}'
+  )"
+  identity_transport="$(coreelec_postdeploy_http_field "${identity_response}" "transport")"
+  identity_status="$(coreelec_postdeploy_http_field "${identity_response}" "http_status")"
+  identity_body="$(coreelec_postdeploy_http_field "${identity_response}" "body")"
+  coreelec_postdeploy_observe "service.script.plexmod.identity_http_status" "${identity_status}"
+  if [[ "${identity_transport}" != "ok" ]]; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "transport"
+    printf 'failed\n'
+    return 0
+  fi
+  case "${identity_status}" in
+    401|403)
+      coreelec_postdeploy_observe "service.script.plexmod.failure" "unauthorized"
+      printf 'authorization-required\n'
+      return 0
+      ;;
+    200) ;;
+    *)
+      coreelec_postdeploy_observe "service.script.plexmod.failure" "http-status"
+      printf 'failed\n'
+      return 0
+      ;;
+  esac
+  if ! machine_id="$(coreelec_postdeploy_json_string_field "${identity_body}" "MediaContainer.machineIdentifier" 2>/dev/null)"; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "malformed-payload"
+    printf 'failed\n'
+    return 0
+  fi
+
+  root_response="$(
+    coreelec_postdeploy_http_request \
+      "GET" \
+      "http://${PLEX_SERVER_HOST}:${PLEX_SERVER_PORT}/" \
+      "$(python3 - "${PLEX_TOKEN}" <<'PYEOF'
+import json
+import sys
+
+token = sys.argv[1]
+sys.stdout.write(json.dumps({
+    "Accept": "application/json",
+    "X-Plex-Token": token,
+}, separators=(",", ":")))
+PYEOF
+)"
+  )"
+  root_transport="$(coreelec_postdeploy_http_field "${root_response}" "transport")"
+  root_status="$(coreelec_postdeploy_http_field "${root_response}" "http_status")"
+  root_body="$(coreelec_postdeploy_http_field "${root_response}" "body")"
+  coreelec_postdeploy_observe "service.script.plexmod.root_http_status" "${root_status}"
+  if [[ "${root_transport}" != "ok" ]]; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "transport"
+    printf 'failed\n'
+    return 0
+  fi
+  case "${root_status}" in
+    401|403)
+      coreelec_postdeploy_observe "service.script.plexmod.failure" "unauthorized"
+      printf 'authorization-required\n'
+      return 0
+      ;;
+    200) ;;
+    *)
+      coreelec_postdeploy_observe "service.script.plexmod.failure" "http-status"
+      printf 'failed\n'
+      return 0
+      ;;
+  esac
+  if ! root_name="$(coreelec_postdeploy_json_string_field "${root_body}" "MediaContainer.friendlyName" 2>/dev/null)"; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "malformed-payload"
+    printf 'failed\n'
+    return 0
+  fi
+  if [[ "${root_name}" != "${PLEX_SERVER_NAME}" ]]; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "identity-mismatch"
+    printf 'failed\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.script.plexmod.identity_machine_id" "${machine_id}"
+
+  kodi_response="$(kodi_rpc "Addons.ExecuteAddon" '{"addonid":"script.plexmod"}')" || {
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "transport"
+    printf 'failed\n'
+    return 0
+  }
+  if ! coreelec_postdeploy_kodi_call_ok "${kodi_response}"; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "kodi-rpc"
+    printf 'failed\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.script.plexmod.kodi_execute" "ok"
+  printf 'configured\n'
+}
+
 run_addon_workflow() {
   case "$1" in
     weather.ha)
       if coreelec_postdeploy_weather_ready; then
-        printf 'already-configured\n'
+        check_home_assistant_weather
       else
         printf 'skipped\n'
       fi
       ;;
     pvr.nextpvr)
       if coreelec_postdeploy_nextpvr_ready; then
-        printf 'already-configured\n'
+        check_nextpvr
       else
         printf 'skipped\n'
       fi
       ;;
     script.plexmod)
       if coreelec_postdeploy_pm4k_local_ready; then
-        printf 'already-configured\n'
+        check_pm4k_local
       elif [[ "${INTERACTIVE:-0}" == "1" ]]; then
         printf 'manual-required\n'
       else
