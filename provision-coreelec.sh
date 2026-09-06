@@ -577,8 +577,8 @@ def main(argv):
     # --- NextPVR ------------------------------------------------------------
     # Kodi 21 has no pvrmanager.enabled setting: the PVR manager starts from an
     # enabled client instance, so instance-settings-1.xml carries the enable.
+    instance = addon_file("pvr.nextpvr", "instance-settings-1.xml")
     if nextpvr_configured:
-        instance = addon_file("pvr.nextpvr", "instance-settings-1.xml")
         set_addon_setting(instance, "host", config("NEXTPVR_HOST"))
         set_addon_setting(instance, "hostprotocol",
                           config("NEXTPVR_PROTOCOL") or "http")
@@ -587,6 +587,10 @@ def main(argv):
                           config("NEXTPVR_INSTANCE_NAME") or "NextPVR")
         set_addon_setting(instance, "pin", secret("NEXTPVR_PIN"))
         set_addon_setting(instance, "port", config("NEXTPVR_PORT") or "8866")
+    elif not os.path.exists(instance):
+        # Without a backend, Kodi's generated localhost instance fails
+        # permanently and Kodi disables the add-on itself.
+        set_addon_setting(instance, "kodi_addon_instance_enabled", "false")
 
     # --- PM4K local mode ----------------------------------------------------
     if plex_configured:

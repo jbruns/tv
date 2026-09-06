@@ -464,7 +464,7 @@ test_pm4k_local_mode_json_is_valid() {
 }
 
 test_absent_optional_secrets_do_not_create_secret_settings() {
-  local dir root payload path
+  local dir root payload path nextpvr_instance
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
@@ -476,7 +476,6 @@ test_absent_optional_secrets_do_not_create_secret_settings() {
     "$(addon_data_path "${root}" plugin.video.themoviedb.helper)/settings.xml" \
     "$(addon_data_path "${root}" script.plexmod)/settings.xml" \
     "$(addon_data_path "${root}" weather.ha)/settings.xml" \
-    "$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml" \
     "$(addon_data_path "${root}" plugin.video.youtube)/api_keys.json"; do
     [[ ! -e "${path}" ]] || {
       printf 'unexpected file created without its secret: %s\n' "${path}" >&2
@@ -484,8 +483,38 @@ test_absent_optional_secrets_do_not_create_secret_settings() {
     }
   done
 
+  nextpvr_instance="$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml"
+  assert_eq "false" "$(xml_setting "${nextpvr_instance}" kodi_addon_instance_enabled)" \
+    "the unconfigured NextPVR placeholder instance is disabled"
+  assert_eq "0" "$(xml_setting_count "${nextpvr_instance}" pin)" \
+    "the placeholder does not write a NextPVR PIN"
+  assert_eq "0" "$(xml_setting_count "${nextpvr_instance}" host)" \
+    "the placeholder does not invent a NextPVR host"
+
   assert_eq "0" "$(xml_setting_count "$(guisettings_path "${root}")" services.webserverpassword)" \
     "no web server password without a password"
+}
+
+test_absent_nextpvr_secret_preserves_an_existing_instance() {
+  local dir root configured_payload unconfigured_payload instance
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  configured_payload="${dir}/configured.conf"
+  unconfigured_payload="${dir}/unconfigured.conf"
+  write_full_payload "${configured_payload}"
+  write_base_payload "${unconfigured_payload}"
+
+  run_transform "${root}" "${configured_payload}" >/dev/null
+  instance="$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml"
+  run_transform "${root}" "${unconfigured_payload}" >/dev/null
+
+  assert_eq "true" "$(xml_setting "${instance}" kodi_addon_instance_enabled)" \
+    "an existing NextPVR instance remains enabled"
+  assert_eq "nextpvr.example.lan" "$(xml_setting "${instance}" host)" \
+    "an existing NextPVR host is preserved"
+  assert_eq "nextpvr-pin-secret" "$(xml_setting "${instance}" pin)" \
+    "an existing NextPVR PIN is preserved"
 }
 
 # --- Transport safety -------------------------------------------------------
@@ -711,6 +740,7 @@ run_all_tests \
   test_weather_provider_changes_only_when_configured \
   test_pm4k_local_mode_json_is_valid \
   test_absent_optional_secrets_do_not_create_secret_settings \
+  test_absent_nextpvr_secret_preserves_an_existing_instance \
   test_payload_values_survive_hostile_characters \
   test_transformer_output_never_reveals_secrets \
   test_atomic_writes_never_reuse_a_preexisting_temp_file \

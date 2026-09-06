@@ -248,7 +248,12 @@ Verification covers:
 - When a host and `NEXTPVR_PIN` are supplied, write Kodi 21's
   `instance-settings-1.xml`, including the instance name and enabled state.
 - Enable Kodi PVR management when NextPVR is configured.
-- Otherwise report host/PIN setup as manual.
+- Otherwise, when no instance exists yet, write a disabled, credential-free
+  placeholder and report host/PIN setup as manual. This keeps the add-on itself
+  enabled without Kodi attempting the generated `127.0.0.1:8866` default
+  instance and disabling the add-on after its permanent connection failure.
+  Preserve an existing instance so a later run without the environment-only
+  PIN cannot disable configuration completed during an earlier run or in Kodi.
 
 ### Home Assistant Weather
 

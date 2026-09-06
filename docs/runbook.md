@@ -80,7 +80,7 @@ Emby for Kodi and the official Kodi YouTube add-on are always reported `installe
 These are deployed either way, and are reported `configured` only when their values were supplied (as config keys plus the matching secret environment variable) before the run — otherwise they are `installed-unconfigured` and a `manual_action` line explains what to set, either in the add-on itself or by re-running with the missing values:
 
 - **PM4K** (`script.plexmod`): `PLEX_SERVER_HOST`/`PLEX_SERVER_PORT`/`PLEX_SERVER_NAME`/`PLEX_PROFILE_IDS` plus `PLEX_TOKEN`. Local-mode PM4K is written with `allow_insecure=always`, a deliberate relaxation required to reach a plain-HTTP LAN Plex server; use a token-authorized remote/account link instead if that relaxation is unacceptable for a given room.
-- **NextPVR** (`pvr.nextpvr`): `NEXTPVR_HOST`/`NEXTPVR_PORT`/`NEXTPVR_PROTOCOL`/`NEXTPVR_INSTANCE_NAME` plus `NEXTPVR_PIN`.
+- **NextPVR** (`pvr.nextpvr`): `NEXTPVR_HOST`/`NEXTPVR_PORT`/`NEXTPVR_PROTOCOL`/`NEXTPVR_INSTANCE_NAME` plus `NEXTPVR_PIN`. Without them, provisioning creates a disabled, credential-free placeholder client instance when none exists, so Kodi can keep the add-on installed and enabled without repeatedly trying its generated `127.0.0.1:8866` default. Existing instances are preserved when those values are omitted on a later run.
 - **Home Assistant Weather** (`weather.ha`): `HOME_ASSISTANT_URL`/`HOME_ASSISTANT_WEATHER_ENTITY`/`HOME_ASSISTANT_SUN_ENTITY` plus `HOME_ASSISTANT_TOKEN`.
 - **TMDb Helper** (`plugin.video.themoviedb.helper`): `OMDB_API_KEY` and/or `MDBLIST_API_KEY` populate metadata keys; Trakt and TMDb user-account linking remain interactive and optional either way.
 
