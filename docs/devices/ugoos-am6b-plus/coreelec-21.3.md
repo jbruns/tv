@@ -172,7 +172,31 @@ With wired networking and SSH enabled, and **before** the room-specific Dolby Vi
 ./provision-coreelec.sh --target <hostname-or-IP>
 ```
 
-This installs the pinned add-on set (Emby for Kodi Next Gen, PM4K, official Kodi YouTube, Arctic Fuse 3, NextPVR, Home Assistant Weather, TMDb Helper, and their dependencies), sets the skin active, applies the Pacific/English-US regional baseline, and writes a redacted audit report. It also applies `Adjust display refresh rate: On start/stop` and `Sync playback to display: Off` below — the only baseline table row it does not set is Dolby Vision mode, which stays room-specific. See the [shared runbook's provisioning step](../../runbook.md#3-provision-the-shared-coreelec-baseline) for validation-only commands, the interactive password/passphrase prompts, backup/rollback locations, manual Emby/YouTube authorization, and restoration after a failed run, and [`config/README.md`](../../../config/README.md) for every configuration key and secret.
+Then run the separate post-deployment checks:
+
+```bash
+./configure-coreelec-addons.sh --target <hostname-or-IP>
+./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive \
+  --addon script.plexmod \
+  --addon plugin.video.youtube \
+  --addon plugin.service.emby-next-gen
+```
+
+The first command is the transactional, unattended baseline deployment. The
+second command is a separate read-only helper for post-deployment checks, with
+optional guided PM4K/YouTube/Emby authorization. Provisioning itself still
+cannot sign Emby in. This installs the pinned add-on set (Emby for Kodi Next
+Gen, PM4K, official Kodi YouTube, Arctic Fuse 3, NextPVR, Home Assistant
+Weather, TMDb Helper, and their dependencies), sets the skin active, applies
+the Pacific/English-US regional baseline, and writes a redacted audit report.
+It also applies `Adjust display refresh rate: On start/stop` and `Sync
+playback to display: Off` below — the only baseline table row it does not set
+is Dolby Vision mode, which stays room-specific. See the [shared runbook's
+provisioning step](../../runbook.md#3-provision-the-shared-coreelec-baseline)
+for validation-only commands, the interactive password/passphrase prompts,
+backup/rollback locations, post-deployment statuses, guided authorization, and
+restoration after a failed run, and [`config/README.md`](../../../config/README.md)
+for every configuration key and secret.
 
 ## Baseline Kodi/CoreELEC settings
 
@@ -209,6 +233,23 @@ Keep CoreELEC on the microSD card until all applicable shared and room-specific 
 Mark unsupported formats as not applicable with the room's documented reason; record temporary limitations as blocked tests to repeat after the hardware change.
 
 Purple/green Dolby Vision output usually indicates a missing or incorrect `dovi.ko`, or that the connected display path is not reporting TV-led Dolby Vision support.
+
+## Post-deployment add-on acceptance status (2026-09-06)
+
+**Physical acceptance on a disposable CoreELEC target: NOT RUN.** No
+disposable target or disposable service profiles were supplied for Task 6, so
+the checks below remain required and this document is not evidence of a pass:
+
+1. [ ] Home Assistant Weather: configured and forecast request succeeds
+2. [ ] NextPVR: configured, session login succeeds, and channel groups are visible
+3. [ ] PM4K local mode: configured and the selected server opens
+4. [ ] PM4K account mode: workflow opens and links without TV text entry
+5. [ ] YouTube: sign-in route opens and authorization persists after Kodi restart
+6. [ ] Emby: URL/user/password are entered without a TV remote and reconnection survives two restarts
+7. [ ] Inspect the generated report and process list while each secret-bearing operation runs; fail acceptance if any secret is present
+
+Do not migrate this workflow to eMMC or call the shared add-on acceptance
+complete until every applicable item above is recorded against a real device.
 
 ## Optional eMMC migration
 

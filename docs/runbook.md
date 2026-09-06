@@ -32,6 +32,30 @@ Once a device can join its intended network, complete network onboarding through
 
 Once the device has completed the CoreELEC wizard with wired networking and SSH enabled (end of step 2), and **before** any room-specific playback configuration (step 4), run [`provision-coreelec.sh`](../provision-coreelec.sh) from a Mac. It applies the room-independent baseline: the pinned add-on set, Pacific/English-US regional settings, and any optional service values supplied through configuration or secret environment variables. See [`config/README.md`](../config/README.md) for every configuration key, the strict `KEY=value` grammar, and the secret environment variables.
 
+### Two-phase workflow
+
+Run the shared baseline first, then the separate post-deployment checks:
+
+```bash
+./provision-coreelec.sh --target <hostname-or-IP>
+./configure-coreelec-addons.sh --target <hostname-or-IP>
+./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive \
+  --addon script.plexmod \
+  --addon plugin.video.youtube \
+  --addon plugin.service.emby-next-gen
+```
+
+- `provision-coreelec.sh --target ...` is transactional and unattended: it
+  either commits the verified baseline or rolls it back as one remote unit.
+- `configure-coreelec-addons.sh --target ...` is a separate post-deployment
+  helper. Its default run is read-only and never rolls back a valid baseline.
+- `--interactive` is opt-in for guided account flows. It may wait while you
+  finish a browser/device-code step elsewhere, but a timeout or
+  `manual-required` result still leaves the already provisioned baseline in
+  place.
+- Provisioning itself cannot sign Emby in. Use the post-deployment helper if
+  you want guarded Emby, PM4K account-mode, or YouTube assistance.
+
 ### Validate first, without touching the device
 
 ```bash
@@ -68,21 +92,6 @@ Each run writes a redacted, `key=value` report to `<REPORT_DIR>/<target>-<UTC-ti
 - `regional.localtime.status` and `regional.date_offset.status` (regional verification, below).
 - The numbered `manual_action.*` lines — the interactive steps left for you, in a fixed order.
 
-### Guided account authorization after deployment
-
-Emby for Kodi is still fully manual: it stores its server and user session in its own database, so open Kodi and select/sign in to the Emby server from the add-on itself.
-
-For the pinned PM4K and YouTube builds, the post-deployment helper can launch the add-on's own account flow without typing on the TV:
-
-```bash
-./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive --addon script.plexmod
-./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive --addon plugin.video.youtube
-```
-
-- **PM4K account mode** (`script.plexmod` `1.14.1-beta1`): launches PM4K, waits for the pinned English-US `Sign In` control, selects it, and tells you to finish the displayed code at `https://plex.tv/link`. It only reports boolean token presence; it never prints the token itself.
-- **YouTube** (`plugin.video.youtube` `7.4.4`): opens `plugin://plugin.video.youtube/sign/in/` in Kodi's Videos window, dismisses only the pinned introductory `OK` dialog, then leaves Google's device-code creation/polling/token storage inside the add-on. Version `7.4.4` may ask you to approve more than one Google code.
-- Both guided flows are version-gated against the add-on versions pinned in `config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf`. If the installed version or expected English-US GUI label does not match, or the deadline expires, the helper returns `manual-required` and you must continue from the TV yourself.
-
 ### Post-deployment unattended service validation
 
 After step 3 has finalized, validate the shared add-ons from the Mac without rewriting any add-on settings:
@@ -91,20 +100,74 @@ After step 3 has finalized, validate the shared add-ons from the Mac without rew
 ./configure-coreelec-addons.sh --target <hostname-or-IP>
 ```
 
-The command still writes a redacted `key=value` report, but for the fully unattended add-ons it now also performs read-only service checks from the CoreELEC device itself before reporting success:
+The helper authenticates to Kodi with the web password that
+`provision-coreelec.sh` stored in the macOS Keychain service
+`coreelec-kodi-ha-<target>`; export `KODI_WEB_PASSWORD` first if you need to
+override that value or if provisioning did not run on this Mac.
+
+The command still writes a redacted `key=value` report, but for the fully
+unattended add-ons it now also performs read-only service checks from the
+CoreELEC device itself before reporting success:
 
 - **Home Assistant Weather** (`weather.ha`): requests `/api/config`, then `/api/states/<HOME_ASSISTANT_WEATHER_ENTITY>` with the configured bearer token, and executes `weather.ha` once only after both responses succeed.
 - **NextPVR** (`pvr.nextpvr`): performs `session.initiate`, calculates the add-on's lower-case MD5 login digest from `NEXTPVR_PIN`, requires a successful `session.login`, and records `PVR.GetChannelGroups` as an advisory Kodi-side observation.
 - **PM4K local mode** (`script.plexmod`): requires HTTP 200 from Plex `/identity`, then requires the configured `PLEX_TOKEN` to receive HTTP 200 from `/`, and executes `script.plexmod` only after both checks succeed.
 
-For this post-deployment command, expect:
+Across both non-interactive and `--interactive` runs, expect:
 
-- `configured` when the configured service answers correctly and the required Kodi launch/advisory check succeeds.
-- `authorization-required` when the stored token or PIN is rejected (`401`/`403` or failed NextPVR session login).
-- `failed` on transport errors, malformed payloads, or a Plex/Home Assistant identity mismatch.
-- `skipped` when no unattended service configuration was supplied for that add-on.
+- `already-configured` when a guided workflow finds a persisted token/session
+  before sending any GUI input.
+- `configured` when a configured service answers correctly and the required
+  Kodi launch/advisory check succeeds, or when a guided workflow finishes and
+  the persisted state appears.
+- `authorization-required` when a stored token or PIN is rejected
+  (`401`/`403`, failed NextPVR session login), or when a non-interactive run
+  defers a guided-only add-on to the operator.
+- `manual-required` when the guided helper refuses to continue because the
+  pinned version, English-US GUI labels, dialog flow, certificate state, or
+  timeout does not match the guarded expectations.
+- `failed` on transport errors, malformed payloads, or a Plex/Home Assistant
+  identity mismatch.
+- `skipped` when no unattended service configuration was supplied for that
+  add-on.
 
 These checks are intentionally read-only: re-run `provision-coreelec.sh` with corrected values if a status shows that the stored configuration is wrong.
+
+### Guided account authorization after deployment
+
+Provisioning itself still cannot complete Emby, PM4K account-mode, or YouTube
+account authorization. Use the separate helper only after the baseline has
+been provisioned successfully:
+
+```bash
+./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive \
+  --addon script.plexmod \
+  --addon plugin.video.youtube \
+  --addon plugin.service.emby-next-gen
+```
+
+- **PM4K account mode** (`script.plexmod` `1.14.1-beta1`): launches PM4K,
+  waits for the pinned English-US `Sign In` control, selects it, and tells you
+  to finish the displayed code at `https://plex.tv/link`. It only reports
+  boolean token presence; it never prints the token itself.
+- **YouTube** (`plugin.video.youtube` `7.4.4`): opens
+  `plugin://plugin.video.youtube/sign/in/` in Kodi's Videos window, dismisses
+  only the pinned introductory `OK` dialog, then leaves Google's device-code
+  creation, polling, and token storage inside the add-on. Version `7.4.4` may
+  ask you to approve more than one Google code.
+- **Emby for Kodi Next Gen** (`plugin.service.emby-next-gen` `12.4.23`):
+  requires `EMBY_SERVER_URL` and `EMBY_USERNAME` in the selected config file,
+  plus `EMBY_PASSWORD` from the environment or a no-echo prompt in an
+  interactive terminal. The helper launches Emby, selects `Manually add
+  server`, submits the URL, username, and password through the pinned
+  English-US dialogs, and then waits for Emby's handshake database to appear.
+  It never prints or reports the password itself.
+- All three guided flows are version-gated against the add-on versions pinned
+  in `config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf`. If the
+  installed version or expected English-US GUI label does not match, if Emby
+  surfaces certificate/ambiguity/database-resync prompts, or if the deadline
+  expires, the helper returns `manual-required` and you must continue from the
+  TV yourself.
 
 ### Optional: PM4K, NextPVR, HA Weather, and TMDb Helper
 
@@ -166,8 +229,8 @@ Step 3 already installed and, where values were supplied, configured every share
 
 1. Final Kodi video and room audio settings.
 2. Home Assistant network reachability, monitoring, suspend, and wake.
-3. Complete Emby sign-in and YouTube Google authorization (always manual, above).
-4. Complete any PM4K/NextPVR/HA Weather/TMDb Helper items still listed as `installed-unconfigured` in the audit report, either interactively or by supplying the missing values and re-running.
+3. Complete any Emby, PM4K account-mode, or YouTube items that still report `authorization-required` or `manual-required`; the helper above can assist, but you may still need to finish on the TV or in another browser.
+4. Complete any PM4K/NextPVR/HA Weather/TMDb Helper items still listed as `installed-unconfigured` in the provisioning audit report, or `skipped`/`failed` in the post-deployment report, by supplying the missing values and re-running the appropriate command.
 
 Record room-specific integration choices alongside the relevant device.
 

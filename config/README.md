@@ -43,6 +43,33 @@ UDP port before deployment.
 
 ## Running it
 
+### Two-phase operator workflow
+
+Run shared provisioning first, then the separate post-deployment checks:
+
+```bash
+./provision-coreelec.sh --target <host>
+./configure-coreelec-addons.sh --target <host>
+./configure-coreelec-addons.sh --target <host> --interactive \
+  --addon script.plexmod \
+  --addon plugin.video.youtube \
+  --addon plugin.service.emby-next-gen
+```
+
+- `provision-coreelec.sh --target <host>` is transactional and unattended:
+  it stages the pinned baseline, verifies it from the device's own localhost,
+  and then commits or rolls back as one unit.
+- `configure-coreelec-addons.sh --target <host>` is a separate
+  post-deployment command. Its default run is read-only, never rewrites
+  settings, and never rolls back an already valid baseline.
+- `--interactive` is opt-in for guarded PM4K, YouTube, and Emby account
+  flows. It may pause while you finish browser/device-code approval elsewhere,
+  but a timeout or `manual-required` result still leaves the provisioned
+  baseline intact.
+- Provisioning itself still cannot sign Emby in. `EMBY_PASSWORD` appears in
+  the shared config/help surface because the post-deployment helper uses the
+  same configuration library, not because the provisioner consumes it.
+
 ```bash
 ./provision-coreelec.sh --check-config
 ./provision-coreelec.sh --check-artifacts
@@ -81,7 +108,7 @@ expansion, so shell metacharacters in a value are inert data:
   `duplicate configuration key: KEY`.
 - `ADDON_ARTIFACT` is the one repeatable key; each occurrence appends a
   record instead of overwriting.
-- Any of the nine reserved secret keys (below) found in the file is rejected
+- Any of the ten reserved secret keys (below) found in the file is rejected
   outright, naming the key, never its value.
 - `TARGET` is not a supported key and can never be set from a config file.
 
@@ -115,6 +142,9 @@ expansion, so shell metacharacters in a value are inert data:
 | `PLEX_SERVER_PORT` | unset | `1`-`65535` |
 | `PLEX_SERVER_NAME` | unset | free-text display charset |
 | `PLEX_PROFILE_IDS` | unset | comma-separated numeric IDs |
+| `EMBY_SERVER_URL` | unset | `https://...`; `http://...` only for RFC1918/loopback with `EMBY_ALLOW_LOCAL_HTTP=1` |
+| `EMBY_USERNAME` | unset | non-empty |
+| `EMBY_ALLOW_LOCAL_HTTP` | `0` | `0` or `1` |
 | `ADDON_ARTIFACT` | (34 records shipped) | repeatable, see below |
 
 `ADDON_ARTIFACT` records are `id|version|https-url|sha256`, one per line,
@@ -143,8 +173,8 @@ config-file key.
 
 ## Secret environment variables
 
-None of the nine reserved keys below may appear in the configuration file
-(each is rejected outright, naming the key, never its value); the eight
+None of the ten reserved keys below may appear in the configuration file
+(each is rejected outright, naming the key, never its value); the nine
 listed here as usable are read directly from the process environment and
 are never echoed, logged, or written into the audit report:
 
@@ -155,9 +185,12 @@ are never echoed, logged, or written into the audit report:
 - `HOME_ASSISTANT_TOKEN` (requires `HOME_ASSISTANT_URL`)
 - `NEXTPVR_PIN` (requires `NEXTPVR_HOST`)
 - `PLEX_TOKEN` (requires `PLEX_SERVER_HOST`)
+- `EMBY_PASSWORD` (requires `EMBY_SERVER_URL` and `EMBY_USERNAME`; used only
+  by `configure-coreelec-addons.sh --interactive`, never by the transactional
+  provisioner)
 
-`TMDB_API_KEY` is the ninth reserved key: it is rejected from the
-configuration file exactly like the eight above, but it is not a usable
+`TMDB_API_KEY` is the tenth reserved key: it is rejected from the
+configuration file exactly like the nine above, but it is not a usable
 exported secret — current TMDb Helper has no user-configurable TMDb
 API-key setting. TMDb Helper metadata keys are populated only by
 `OMDB_API_KEY` and/or `MDBLIST_API_KEY` (see below); never export
@@ -177,6 +210,17 @@ export MDBLIST_API_KEY="REPLACE_ME"
 ./provision-coreelec.sh --target 172.16.99.50
 ```
 
+If you plan to use guided Emby sign-in, also configure `EMBY_SERVER_URL` and
+`EMBY_USERNAME` in the selected config file, then run:
+
+```bash
+export EMBY_PASSWORD="REPLACE_ME"
+./configure-coreelec-addons.sh --target <host> --interactive \
+  --addon plugin.service.emby-next-gen
+```
+
+`provision-coreelec.sh` itself ignores `EMBY_PASSWORD`.
+
 ## Shared versus room-specific boundary
 
 The shared file carries only values that are identical for every matching
@@ -184,9 +228,10 @@ unit: platform/regional defaults and the pinned add-on lock. Everything that
 differs per installation stays outside it and out of the repository:
 
 - The device address/hostname (`--target`, CLI-only, never a config key).
-- Site-specific service endpoints (`HOME_ASSISTANT_URL`, `NEXTPVR_HOST`,
-  `PLEX_SERVER_HOST`, ...) are commented out by default in the shipped file;
-  set them per deployment, or point `--config` at a separate file.
+- Site-specific service endpoints and account names (`HOME_ASSISTANT_URL`,
+  `NEXTPVR_HOST`, `PLEX_SERVER_HOST`, `EMBY_SERVER_URL`, `EMBY_USERNAME`, ...)
+  are commented out by default in the shipped file; set them per deployment,
+  or point `--config` at a separate file.
 - All API keys, tokens, and PINs — environment variables only, supplied at
   run time, never committed.
 - Room video/audio settings, hardware validation, and network reservations
