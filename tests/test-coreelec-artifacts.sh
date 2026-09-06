@@ -1541,6 +1541,39 @@ test_a_default_run_survives_the_empty_addon_array_under_bash_3_2() {
   assert_eq "" "$(cat "${dir}/network-calls.log")" "a cancelled run never contacts the device"
 }
 
+# The read-only platform check is the first remote call of a run, and an
+# unreachable or unauthenticated device is its most common outcome. Ending on
+# ssh's own exit status leaves the operator with a bare transport message right
+# after being told to type a password that was never asked for, so the run must
+# fail with its own diagnostic instead.
+test_an_unreachable_target_fails_with_an_actionable_error() {
+  local dir bin_dir output rc calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+  # An administrator key that already exists carries the run past key creation
+  # and into the platform read, which is the call under test.
+  printf 'scratch administrator key\n' > "${dir}/scratch_admin_key"
+  printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
+
+  set +e
+  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreachable target must fail the run" || return 1
+  assert_contains "${output}" "ERROR:" \
+    "the run reports its own error rather than ssh's exit status" || return 1
+  assert_contains "${output}" "192.0.2.1" \
+    "the diagnostic names the target that could not be reached" || return 1
+  assert_contains "${output}" "Nothing on the device has been changed." \
+    "the diagnostic states that the device is untouched" || return 1
+  calls="$(cat "${dir}/network-calls.log")"
+  assert_not_contains "${calls}" "curl " \
+    "a failed platform read stops before any artifact is downloaded" || return 1
+  assert_not_contains "${calls}" "authorized_keys" \
+    "a failed platform read stops before the key install" || return 1
+}
+
 # --- Audit report ------------------------------------------------------------
 
 # Task 6 reads this report. Every line the provisioner writes itself is
@@ -1684,4 +1717,5 @@ run_all_tests \
   test_a_failed_deployment_discards_the_remote_secret_payload \
   test_an_unlocked_addon_is_refused_before_any_remote_call \
   test_a_default_run_survives_the_empty_addon_array_under_bash_3_2 \
+  test_an_unreachable_target_fails_with_an_actionable_error \
   test_the_audit_report_is_key_value_and_names_the_pending_transaction

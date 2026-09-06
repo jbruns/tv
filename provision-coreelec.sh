@@ -3549,12 +3549,15 @@ chmod 700 "${TASK_TEMP_DIR}"
 create_or_load_admin_key
 
 info "Reading and validating the remote platform"
+# The platform read is the first remote call of a run. Both of its paths end
+# the run on failure, so each one reports what the operator has to fix instead
+# of leaving ssh's transport status as the only explanation.
 if ssh_keyed_batch true >/dev/null 2>&1; then
   KEY_ALREADY_ACCEPTED="1"
-  REMOTE_IDENTITY="$(remote_identity)"
+  REMOTE_IDENTITY="$(remote_identity)" || die "Could not read the platform from root@${TARGET}:${SSH_PORT} using ${IDENTITY_FILE}. Confirm the device is still reachable and that the administrator key is still authorized. Nothing on the device has been changed."
 else
   info "Enter the temporary CoreELEC root password for this read-only platform check."
-  REMOTE_IDENTITY="$(remote_identity_with_password)"
+  REMOTE_IDENTITY="$(remote_identity_with_password)" || die "Could not complete the read-only platform check on root@${TARGET}:${SSH_PORT}. Confirm the device is powered on and reachable at that address, that SSH is enabled in CoreELEC's Services settings, and that the temporary root password is correct. Nothing on the device has been changed."
 fi
 printf '%s\n' "${REMOTE_IDENTITY}"
 validate_remote "${REMOTE_IDENTITY}"
