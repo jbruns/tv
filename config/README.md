@@ -143,9 +143,10 @@ config-file key.
 
 ## Secret environment variables
 
-None of these may appear in the configuration file; each is read directly
-from the process environment and is never echoed, logged, or written into
-the audit report:
+None of the nine reserved keys below may appear in the configuration file
+(each is rejected outright, naming the key, never its value); the eight
+listed here as usable are read directly from the process environment and
+are never echoed, logged, or written into the audit report:
 
 - `OMDB_API_KEY`
 - `MDBLIST_API_KEY`
@@ -154,6 +155,13 @@ the audit report:
 - `HOME_ASSISTANT_TOKEN` (requires `HOME_ASSISTANT_URL`)
 - `NEXTPVR_PIN` (requires `NEXTPVR_HOST`)
 - `PLEX_TOKEN` (requires `PLEX_SERVER_HOST`)
+
+`TMDB_API_KEY` is the ninth reserved key: it is rejected from the
+configuration file exactly like the eight above, but it is not a usable
+exported secret — current TMDb Helper has no user-configurable TMDb
+API-key setting. TMDb Helper metadata keys are populated only by
+`OMDB_API_KEY` and/or `MDBLIST_API_KEY` (see below); never export
+`TMDB_API_KEY` expecting it to do anything.
 
 Safe example — placeholder names only, never a usable credential:
 

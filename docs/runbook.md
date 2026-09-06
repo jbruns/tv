@@ -90,7 +90,7 @@ These are deployed either way, and are reported `configured` only when their val
 The device verifies its own Pacific/English-US baseline over localhost and reports it in the audit file rather than requiring a manual on-screen check:
 
 - `regional.localtime.status` compares `/etc/localtime` against the requested zone, accepting either a symlink into zoneinfo or a byte-identical copy (`regional.localtime.match`) — both CoreELEC layouts are recognized.
-- `regional.date_offset.status` is **advisory only**: it compares the device's reported UTC offset against the expected one when the device's `date` output is well-formed, but never fails a deployment on its own (BusyBox `date` formatting is not guaranteed). Confirm the displayed date/time on screen if this reads `unavailable`.
+- `regional.date_offset.status` compares the device's reported UTC offset against the expected one from `date +%Z%z`. `/etc/localtime`, its zoneinfo content, and Kodi's own timezone setting are checked strictly first (above); `date +%Z%z` is only a BusyBox capability question on top of that. A malformed or unavailable `date +%Z%z` output is advisory only and reads `unavailable` — it never fails a deployment by itself (BusyBox `date` formatting is not guaranteed). But once the output is well-formed, a genuine offset mismatch (`regional.date_offset.status=mismatch`) **is** a verification failure that counts toward `verification_failures` and triggers rollback like any other failed check. Confirm the displayed date/time on screen if this reads `unavailable`.
 
 ### Restoration/retry after a failed run
 
