@@ -1546,11 +1546,21 @@ test_a_default_run_survives_the_empty_addon_array_under_bash_3_2() {
 # Task 6 reads this report. Every line the provisioner writes itself is
 # key=value, and the pending transaction and its state are named explicitly.
 test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
-  local dir report body line
+  local dir report body line name
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
 
-  load_provisioner_function write_audit_report || return 1
+  # The writer is assembled from several small functions; loading each one
+  # keeps this a unit test of the report itself, including the device
+  # inventory block that the Task 6 fixtures deliberately skip.
+  for name in coreelec_report_path coreelec_manifest_contains \
+    coreelec_weather_configured coreelec_nextpvr_configured \
+    coreelec_plex_configured coreelec_secret_names coreelec_secret_value \
+    coreelec_config_fingerprint coreelec_report_manual_actions \
+    coreelec_report_render coreelec_report_redaction_check \
+    coreelec_write_report_file coreelec_remote_inventory write_audit_report; do
+    load_provisioner_function "${name}" || return 1
+  done
   timestamp() { printf '2026-01-01T00:00:00Z\n'; }
   ssh_keyed() { cat >/dev/null; printf 'hostname=fixture\n'; }
   SCRIPT_VERSION="9.9.9"
@@ -1563,10 +1573,37 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
   KODI_USER="homeassistant"
   REPORT_DIR="${dir}/reports"
   REMOTE_TRANSACTION="/storage/backup/coreelec-provision/20260101T000000Z"
+  REMOTE_BACKUP_PATH=""
   ARTIFACT_STAGE_DIR="${dir}/artifacts"
   ADDONS=()
+  DEPLOYMENT_STATE="pending-verification"
+  VERIFICATION_RESULT="not-run"
+  VERIFICATION_REPORT_FILE=""
+  RECOVERY_INSTRUCTIONS=""
+  KODI_JSONRPC_LOCAL_REACHABLE="unknown"
+  CONFIG_FILE="${dir}/provision.conf"
+  EXPECTED_RELEASE="21.3"
+  TIMEZONE="America/Los_Angeles"
+  TIMEZONE_COUNTRY="United States"
+  LOCALE_LANGUAGE="resource.language.en_us"
+  LOCALE_COUNTRY="USA (12h)"
+  KEYBOARD_LAYOUT="English QWERTY"
+  ADDON_UPDATE_MODE="notify"
+  HOME_ASSISTANT_URL=""
+  HOME_ASSISTANT_WEATHER_ENTITY=""
+  HOME_ASSISTANT_SUN_ENTITY=""
+  NEXTPVR_HOST=""
+  NEXTPVR_PORT=""
+  NEXTPVR_PROTOCOL=""
+  NEXTPVR_INSTANCE_NAME=""
+  PLEX_SERVER_HOST=""
+  PLEX_SERVER_PORT=""
+  PLEX_SERVER_NAME=""
+  PLEX_PROFILE_IDS=""
+  ADDON_ARTIFACTS=()
   mkdir -p "${ARTIFACT_STAGE_DIR}"
   printf '1\tplugin.video.youtube\t7.4.4\t1.zip\n' > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
 
   report="$(write_audit_report)"
   [[ -f "${report}" ]] || { printf 'no report file was written\n' >&2; return 1; }

@@ -19,6 +19,10 @@ CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
 DEPLOY_ACTION=""
+VERIFY_FIXTURE=()
+CLASSIFY_ADDON=""
+REPORT_FIXTURE=()
+CONCLUDE_FIXTURE=()
 
 TASK_TEMP_DIR=""
 CURL_CONFIG_FILE=""
@@ -26,6 +30,16 @@ KODI_WEB_PASSWORD=""
 KEY_ALREADY_ACCEPTED="0"
 ARTIFACT_STAGE_DIR=""
 REMOTE_TRANSACTION=""
+REMOTE_BACKUP_PATH=""
+DEPLOY_MANIFEST=""
+DEPLOYMENT_STATE="not-started"
+VERIFICATION_RESULT="not-run"
+VERIFICATION_REPORT_FILE=""
+RECOVERY_INSTRUCTIONS=""
+# Reachability of the device's JSON-RPC port *from this Mac*. It is recorded
+# for the operator, never used as a verification verdict: the device checks
+# itself over its own localhost endpoint.
+KODI_JSONRPC_LOCAL_REACHABLE="unknown"
 
 usage() {
   cat <<'USAGE'
@@ -71,9 +85,10 @@ Internal:
                              contacts a device.
   --emit-remote-script NAME [ROOT]
                           Print the remote 'backup', 'payload', 'stage',
-                           'deploy', 'rollback', or 'finalize' shell program
-                           for ROOT (default /storage), then exit. Used by
-                           the test suites; it never contacts a device.
+                           'deploy', 'rollback', 'finalize', 'verify', or
+                           'verify-probe' program for ROOT (default /storage),
+                           then exit. Used by the test suites; it never
+                           contacts a device.
   --render-remote-deploy-script [ROOT]
                           Alias of --emit-remote-script deploy: print the
                            remote deployment transaction program for ROOT
@@ -81,6 +96,18 @@ Internal:
   --print-addon-selection MANIFEST
                           Print the manifest lines this run would deploy,
                            honoring --addon, then exit.
+  --verify-fixture OBSERVATIONS MANIFEST
+                          Compare a fixture observation set with the manifest
+                           and print the verification report lines, then exit.
+  --classify-addon ID     Print the configured/manual status of one add-on,
+                           then exit.
+  --report-fixture DIR OBSERVATIONS MANIFEST REACHABLE
+                          Write a full audit report into DIR from fixture
+                           observations, without the device inventory, then
+                           exit.
+  --conclude-fixture OBSERVATIONS MANIFEST FINALIZE_STATUS ROLLBACK_STATUS LOG
+                          Run the verify -> finalize/rollback decision with
+                           the remote calls recorded in LOG, then exit.
 
 Example:
   ./provision-coreelec.sh --target 172.16.99.50 --with-youtube
@@ -122,6 +149,12 @@ cleanup() {
   fi
   if [[ -n "${TASK_TEMP_DIR}" && -d "${TASK_TEMP_DIR}/artifacts" ]]; then
     rm -rf -- "${TASK_TEMP_DIR}/artifacts"
+  fi
+  # The observations and the comparison they produced are working files; the
+  # report keeps the parts an operator needs.
+  if [[ -n "${TASK_TEMP_DIR}" ]]; then
+    rm -f -- "${TASK_TEMP_DIR}/verify-observations.conf" \
+      "${TASK_TEMP_DIR}/verification.conf"
   fi
   if [[ -n "${TASK_TEMP_DIR}" && -d "${TASK_TEMP_DIR}" ]]; then
     rmdir "${TASK_TEMP_DIR}" 2>/dev/null || true
@@ -685,15 +718,21 @@ printf '%s\n' "${backup}"
 REMOTE_BACKUP
 }
 
+# Writes one mode-0600 file in the private provisioning cache from stdin. The
+# file name is a parameter because the same atomic, private write is used for
+# the settings payload and for the verification request; keeping one
+# implementation is what stops the second one from being written less
+# carefully than the first.
 coreelec_remote_payload_script() {
   local root="${1:-/storage}"
+  local name="${2:-settings-payload.conf}"
   cat <<REMOTE_PAYLOAD_HEADER
 set -eu
 umask 077
 payload_dir="${root}/.cache/coreelec-provision"
+payload_file="\${payload_dir}/${name}"
 REMOTE_PAYLOAD_HEADER
   cat <<'REMOTE_PAYLOAD'
-payload_file="${payload_dir}/settings-payload.conf"
 temporary="${payload_file}.provision-new"
 mkdir -p "${payload_dir}"
 chmod 700 "${payload_dir}"
@@ -1250,6 +1289,490 @@ printf '%s\n' "${transaction}"
 REMOTE_FINALIZE
 }
 
+# --- Remote verification probe ----------------------------------------------
+#
+# Verification is performed *on the device*, against Kodi's own localhost
+# JSON-RPC endpoint, because that is the only observer that cannot be fooled
+# by a local firewall, a NAT rule, or a stale file on disk. The probe below is
+# emitted as a Python program and run by the wrapper further down; it is also
+# emitted on its own (`--emit-remote-script verify-probe`) so the test suite
+# runs the exact program the device runs.
+#
+# It receives one mode-0600 request file of `KEY=base64(value)` lines. The only
+# secret in that request is the Kodi web password, which the probe writes into
+# a mode-0600 curl config and never echoes. Every other secret is represented
+# by a `HAVE_<KEY>` presence flag: the probe compares the *device's* files
+# locally and returns booleans, so no token, key, or PIN ever travels back to
+# the Mac.
+coreelec_remote_verify_probe_source() {
+  cat <<'PYTHON_VERIFY_PROBE_SOURCE'
+"""CoreELEC remote verification probe.
+
+Usage: python3 - STORAGE_ROOT REQUEST_PATH CURL_CONFIG_PATH [SYSTEM_ROOT]
+
+Prints `key=value` observations only. Never prints a secret: credentials are
+compared on the device and reported as booleans.
+"""
+
+import base64
+import json
+import os
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+SETTING_IDS = [
+    "locale.language",
+    "locale.country",
+    "locale.keyboardlayouts",
+    "locale.timezonecountry",
+    "locale.timezone",
+    "lookandfeel.skin",
+    "weather.addon",
+]
+
+OBSERVATIONS = []
+
+
+def fail(message):
+    raise SystemExit("verification probe: " + message)
+
+
+def observe(key, value):
+    """Records one observation. Newlines are folded because the Mac parses
+    this output as one key=value pair per line."""
+    text = "%s" % (value,)
+    text = text.replace("\r", " ").replace("\n", " ")
+    OBSERVATIONS.append("%s=%s" % (key, text))
+
+
+def read_request(path):
+    values = {}
+    handle = open(path, "r")
+    try:
+        number = 0
+        for raw_line in handle:
+            number += 1
+            line = raw_line.strip()
+            if not line:
+                continue
+            if "=" not in line:
+                fail("request line %d is not KEY=value" % number)
+            key, encoded = line.split("=", 1)
+            try:
+                values[key] = base64.b64decode(encoded).decode("utf-8")
+            except Exception:
+                fail("request line %d is not valid base64" % number)
+    finally:
+        handle.close()
+    return values
+
+
+def quote_for_curl(text):
+    return text.replace("\\", "\\\\").replace("\"", "\\\"")
+
+
+def write_curl_config(path, user, password, seconds):
+    """Creates the credential file at its final restrictive mode, never a
+    mode the umask or a planted file could widen."""
+    if os.path.lexists(path):
+        os.remove(path)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    handle = os.fdopen(descriptor, "w")
+    try:
+        handle.write("user = \"%s:%s\"\n"
+                     % (quote_for_curl(user), quote_for_curl(password)))
+        handle.write("silent\n")
+        handle.write("show-error\n")
+        handle.write("fail\n")
+        handle.write("max-time = %d\n" % seconds)
+    finally:
+        handle.close()
+
+
+def call_jsonrpc(curl_config, url, batch):
+    """One JSON-RPC round trip. The request body travels on curl's stdin and
+    the credentials travel in the config file, so neither appears in an
+    argument list."""
+    try:
+        process = subprocess.Popen(
+            ["curl", "--config", curl_config,
+             "-H", "Content-Type: application/json",
+             "--data-binary", "@-", url],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+    except OSError:
+        return None
+    body = json.dumps(batch).encode("utf-8")
+    output = process.communicate(body)[0]
+    if process.returncode != 0:
+        return None
+    try:
+        return json.loads(output.decode("utf-8"))
+    except ValueError:
+        return None
+
+
+def index_responses(payload):
+    entries = {}
+    if isinstance(payload, dict):
+        payload = [payload]
+    if not isinstance(payload, list):
+        return entries
+    for entry in payload:
+        if isinstance(entry, dict) and "id" in entry:
+            entries["%s" % (entry["id"],)] = entry
+    return entries
+
+
+def query_batch(addon_ids):
+    batch = [{"jsonrpc": "2.0", "id": "version", "method": "JSONRPC.Version"}]
+    for setting_id in SETTING_IDS:
+        batch.append({"jsonrpc": "2.0",
+                      "id": "setting:" + setting_id,
+                      "method": "Settings.GetSettingValue",
+                      "params": {"setting": setting_id}})
+    for addon_id in addon_ids:
+        batch.append({"jsonrpc": "2.0",
+                      "id": "addon:" + addon_id,
+                      "method": "Addons.GetAddonDetails",
+                      "params": {"addonid": addon_id,
+                                 "properties": ["enabled", "version"]}})
+    return batch
+
+
+def addon_state(entry):
+    """(installed, version, enabled) for one Addons.GetAddonDetails reply. An
+    add-on Kodi does not know answers with an error, which is 'not
+    installed' -- never 'installed and fine'."""
+    if not isinstance(entry, dict) or "result" not in entry:
+        return (0, "", 0)
+    result = entry["result"]
+    if not isinstance(result, dict):
+        return (0, "", 0)
+    details = result.get("addon")
+    if not isinstance(details, dict):
+        return (0, "", 0)
+    return (1,
+            details.get("version") or "",
+            1 if details.get("enabled") else 0)
+
+
+def setting_value(entries, setting_id):
+    entry = entries.get("setting:" + setting_id)
+    if not isinstance(entry, dict) or "result" not in entry:
+        return ""
+    result = entry["result"]
+    if isinstance(result, dict):
+        value = result.get("value", "")
+    else:
+        value = result
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return " ".join(["%s" % (item,) for item in value])
+    return "%s" % (value,)
+
+
+def jsonrpc_version(entries):
+    entry = entries.get("version")
+    if not isinstance(entry, dict) or not isinstance(entry.get("result"), dict):
+        return ""
+    version = entry["result"].get("version")
+    if not isinstance(version, dict):
+        return ""
+    return "%s.%s.%s" % (version.get("major", 0),
+                         version.get("minor", 0),
+                         version.get("patch", 0))
+
+
+def read_settings(path):
+    """Kodi writes add-on settings in two shapes; both are read here so the
+    check is about the stored value, not the file's generation."""
+    if not os.path.exists(path):
+        return None
+    try:
+        root = ET.parse(path).getroot()
+    except Exception:
+        return None
+    values = {}
+    for node in root.iter("setting"):
+        identifier = node.get("id")
+        if identifier is None:
+            continue
+        attribute = node.get("value")
+        values[identifier] = attribute if attribute is not None else (node.text or "")
+    return values
+
+
+def timezone_cache_value(storage_root):
+    path = os.path.join(storage_root, ".cache", "timezone")
+    if not os.path.exists(path):
+        return ""
+    handle = open(path, "r")
+    try:
+        for line in handle:
+            if line.startswith("TIMEZONE="):
+                return line.split("=", 1)[1].strip()
+    finally:
+        handle.close()
+    return ""
+
+
+def localtime_target(system_root):
+    path = os.path.join(system_root, "etc", "localtime")
+    try:
+        if os.path.islink(path):
+            return os.readlink(path)
+        if os.path.exists(path):
+            return os.path.realpath(path)
+    except OSError:
+        return ""
+    return ""
+
+
+def expected_zone_marks(timezone):
+    """The abbreviation and UTC offset the requested zone has right now,
+    computed from the device's own tz database."""
+    previous = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = timezone
+        time.tzset()
+        now = time.localtime()
+        if now.tm_isdst > 0:
+            abbreviation = time.tzname[1]
+            offset_seconds = -time.altzone
+        else:
+            abbreviation = time.tzname[0]
+            offset_seconds = -time.timezone
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+    sign = "-" if offset_seconds < 0 else "+"
+    total = abs(offset_seconds)
+    return "%s%s%02d%02d" % (abbreviation, sign, total // 3600,
+                             (total % 3600) // 60)
+
+
+def observed_zone_marks():
+    try:
+        process = subprocess.Popen(["date", "+%Z%z"],
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+    except OSError:
+        return None
+    output = process.communicate()[0]
+    if process.returncode != 0:
+        return None
+    return output.decode("utf-8", "replace").strip()
+
+
+def main(argv):
+    if len(argv) not in (4, 5):
+        fail("usage: STORAGE_ROOT REQUEST_PATH CURL_CONFIG_PATH [SYSTEM_ROOT]")
+    storage_root, request_path, curl_config = argv[1], argv[2], argv[3]
+    system_root = argv[4] if len(argv) == 5 else "/"
+
+    request = read_request(request_path)
+
+    def config(key, default=""):
+        return request.get(key, default)
+
+    def have(key):
+        return request.get("HAVE_" + key, "0") == "1"
+
+    addon_ids = [line.strip() for line in config("ADDON_IDS").split("\n")
+                 if line.strip()]
+    port = config("KODI_PORT", "8080")
+    url = "http://127.0.0.1:%s/jsonrpc" % port
+    try:
+        attempts = int(config("JSONRPC_ATTEMPTS", "30"))
+    except ValueError:
+        attempts = 30
+    attempts = max(1, attempts)
+
+    write_curl_config(curl_config, config("KODI_WEB_USER"),
+                      config("KODI_WEB_PASSWORD"), 15)
+    try:
+        entries = {}
+        for attempt in range(attempts):
+            entries = index_responses(
+                call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+            if jsonrpc_version(entries):
+                break
+            entries = {}
+            if attempt + 1 < attempts:
+                time.sleep(2)
+        if not entries:
+            fail("Kodi did not answer authenticated JSON-RPC on %s" % url)
+
+        # An installed add-on that Kodi left disabled is enabled here through
+        # JSON-RPC (never a modal dialog) and then re-queried, so the reported
+        # state is what Kodi observes afterwards rather than what was asked.
+        disabled = []
+        for addon_id in addon_ids:
+            installed, _version, enabled = addon_state(
+                entries.get("addon:" + addon_id))
+            if installed and not enabled:
+                disabled.append(addon_id)
+        if disabled:
+            enable_batch = [{"jsonrpc": "2.0",
+                             "id": "enable:" + addon_id,
+                             "method": "Addons.SetAddonEnabled",
+                             "params": {"addonid": addon_id,
+                                        "enabled": True}}
+                            for addon_id in disabled]
+            call_jsonrpc(curl_config, url, enable_batch)
+            requeried = index_responses(
+                call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+            if requeried:
+                entries = requeried
+    finally:
+        if os.path.lexists(curl_config):
+            os.remove(curl_config)
+
+    observe("observation_format", "coreelec-verification-1")
+    observe("jsonrpc_version", jsonrpc_version(entries))
+    for setting_id in SETTING_IDS:
+        observe("setting." + setting_id, setting_value(entries, setting_id))
+
+    timezone = config("TIMEZONE")
+    observe("timezone_cache", timezone_cache_value(storage_root))
+    observe("localtime_path", localtime_target(system_root))
+    if timezone:
+        observed = observed_zone_marks()
+        if observed is None:
+            observe("date_matches_timezone", "unavailable")
+        else:
+            observe("date_matches_timezone",
+                    1 if observed == expected_zone_marks(timezone) else 0)
+    else:
+        observe("date_matches_timezone", "unavailable")
+
+    for addon_id in addon_ids:
+        installed, version, enabled = addon_state(entries.get("addon:" + addon_id))
+        observe("addon.%s.installed" % addon_id, installed)
+        observe("addon.%s.version" % addon_id, version)
+        observe("addon.%s.enabled" % addon_id, enabled)
+        observe("addon.%s.enable_attempted" % addon_id,
+                1 if addon_id in disabled else 0)
+
+    def addon_data(addon_id, name):
+        return os.path.join(storage_root, ".kodi", "userdata", "addon_data",
+                            addon_id, name)
+
+    if have("HOME_ASSISTANT_TOKEN") and config("HOME_ASSISTANT_URL") \
+            and config("HOME_ASSISTANT_WEATHER_ENTITY"):
+        values = read_settings(addon_data("weather.ha", "settings.xml")) or {}
+        matched = (values.get("ha_server") == config("HOME_ASSISTANT_URL")
+                   and values.get("ha_weather_forecast_entity_id")
+                   == config("HOME_ASSISTANT_WEATHER_ENTITY")
+                   and bool(values.get("ha_key")))
+        observe("addon_settings.weather.ha.configured", 1 if matched else 0)
+
+    if have("NEXTPVR_PIN") and config("NEXTPVR_HOST"):
+        values = read_settings(
+            addon_data("pvr.nextpvr", "instance-settings-1.xml")) or {}
+        matched = (values.get("host") == config("NEXTPVR_HOST")
+                   and ("%s" % values.get("kodi_addon_instance_enabled", "")).lower() == "true"
+                   and bool(values.get("pin")))
+        if config("NEXTPVR_PORT"):
+            matched = matched and values.get("port") == config("NEXTPVR_PORT")
+        observe("addon_settings.pvr.nextpvr.configured", 1 if matched else 0)
+
+    if have("PLEX_TOKEN") and config("PLEX_SERVER_HOST"):
+        values = read_settings(
+            addon_data("script.plexmod", "settings.xml")) or {}
+        matched = ("%s" % values.get("local_mode", "")).lower() == "true"
+        try:
+            servers = json.loads(values.get("local_servers_json") or "[]")
+        except ValueError:
+            servers = []
+        if not isinstance(servers, list):
+            servers = []
+        matched = matched and any(
+            isinstance(server, dict)
+            and server.get("connection") == config("PLEX_SERVER_HOST")
+            and bool(server.get("token"))
+            for server in servers)
+        observe("addon_settings.script.plexmod.configured", 1 if matched else 0)
+
+    if have("YOUTUBE_API_KEY"):
+        matched = False
+        try:
+            handle = open(addon_data("plugin.video.youtube",
+                                     "api_keys.json"), "r")
+            try:
+                document = json.load(handle)
+            finally:
+                handle.close()
+            user = document.get("keys", {}).get("user", {})
+            matched = bool(user.get("api_key") and user.get("client_id")
+                           and user.get("client_secret"))
+        except Exception:
+            matched = False
+        observe("addon_settings.plugin.video.youtube.configured",
+                1 if matched else 0)
+
+    if have("OMDB_API_KEY") or have("MDBLIST_API_KEY"):
+        values = read_settings(
+            addon_data("plugin.video.themoviedb.helper", "settings.xml")) or {}
+        matched = True
+        if have("OMDB_API_KEY"):
+            matched = matched and bool(values.get("omdb_apikey"))
+        if have("MDBLIST_API_KEY"):
+            matched = matched and bool(values.get("mdblist_apikey"))
+        observe("addon_settings.plugin.video.themoviedb.helper.configured",
+                1 if matched else 0)
+
+    for line in OBSERVATIONS:
+        sys.stdout.write(line + "\n")
+
+
+main(sys.argv)
+PYTHON_VERIFY_PROBE_SOURCE
+}
+
+# The `sh` program the device runs. It reads the request the Mac uploaded into
+# the private provisioning cache, runs the probe, and removes both the request
+# and the curl config by trap on every exit path.
+coreelec_remote_verify_script() {
+  local root="${1:-/storage}"
+  cat <<REMOTE_VERIFY_HEADER
+set -eu
+umask 077
+storage_root="${root}"
+REMOTE_VERIFY_HEADER
+  cat <<'REMOTE_VERIFY_PROLOGUE'
+provision_cache="${storage_root}/.cache/coreelec-provision"
+request_file="${provision_cache}/verify-request.conf"
+curl_config="${provision_cache}/verify-curl.conf"
+
+discard_verification_material() {
+  rm -f "${curl_config}" "${request_file}"
+}
+trap discard_verification_material EXIT HUP INT TERM
+
+[ -f "${request_file}" ] || {
+  printf 'remote verification: no verification request was uploaded: %s\n' \
+    "${request_file}" >&2
+  exit 1
+}
+rm -f "${curl_config}"
+
+python3 - "${storage_root}" "${request_file}" "${curl_config}" "/" <<'PYTHON_VERIFY_PROBE'
+REMOTE_VERIFY_PROLOGUE
+  coreelec_remote_verify_probe_source
+  cat <<'REMOTE_VERIFY_EPILOGUE'
+PYTHON_VERIFY_PROBE
+REMOTE_VERIFY_EPILOGUE
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}"
@@ -1260,8 +1783,10 @@ coreelec_emit_remote_script() {
     deploy) coreelec_remote_deploy_script "${root}" ;;
     rollback) coreelec_remote_rollback_script "${root}" ;;
     finalize) coreelec_remote_finalize_script "${root}" ;;
+    verify) coreelec_remote_verify_script "${root}" ;;
+    verify-probe) coreelec_remote_verify_probe_source ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, or finalize, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, or verify-probe, not: ${name}"
       ;;
   esac
 }
@@ -1378,6 +1903,27 @@ while (( $# > 0 )); do
       (( $# >= 2 )) || die "--print-addon-selection requires a manifest path"
       PRINT_ADDON_SELECTION="$2"
       shift 2
+      ;;
+    --verify-fixture)
+      (( $# >= 3 )) || die "--verify-fixture requires OBSERVATIONS and MANIFEST"
+      VERIFY_FIXTURE=("$2" "$3")
+      shift 3
+      ;;
+    --classify-addon)
+      (( $# >= 2 )) || die "--classify-addon requires an add-on ID"
+      CLASSIFY_ADDON="$2"
+      shift 2
+      ;;
+    --report-fixture)
+      (( $# >= 5 )) || die "--report-fixture requires DIR, OBSERVATIONS, MANIFEST, and REACHABLE"
+      REPORT_FIXTURE=("$2" "$3" "$4" "$5")
+      shift 5
+      ;;
+    --conclude-fixture)
+      (( $# >= 6 )) \
+        || die "--conclude-fixture requires OBSERVATIONS, MANIFEST, FINALIZE_STATUS, ROLLBACK_STATUS, and LOG"
+      CONCLUDE_FIXTURE=("$2" "$3" "$4" "$5" "$6")
+      shift 6
       ;;
     --finalize-deployment)
       DEPLOY_ACTION="finalize"
@@ -1516,6 +2062,642 @@ coreelec_validate_addon_selection() {
     esac
   done
 }
+
+# --- Verification, classification, and the redacted report ------------------
+#
+# Everything below is a pure function of the configuration, the deployment
+# manifest, and the observations the device returned. Nothing here contacts a
+# host, which is why the test suite can drive the same code the run uses.
+
+# One observation value, or empty when the device did not report that key.
+# Add-on IDs are restricted to letters, digits, dot, underscore, and hyphen, so
+# a key can never carry glob syntax into this pattern match.
+coreelec_observation_value() {
+  local key="$1" file="$2" line
+  [[ -r "${file}" ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    case "${line}" in
+      "${key}="*)
+        printf '%s' "${line#*=}"
+        return 0
+        ;;
+    esac
+  done < "${file}"
+  return 1
+}
+
+# Prints an expected/observed/status triple and fails when they differ. The
+# report and the pass/fail decision therefore come from the same comparison.
+coreelec_report_comparison() {
+  local prefix="$1" expected="$2" observed="$3"
+  printf '%s.expected=%s\n' "${prefix}" "${expected}"
+  printf '%s.observed=%s\n' "${prefix}" "${observed}"
+  if [[ "${expected}" == "${observed}" ]]; then
+    printf '%s.status=ok\n' "${prefix}"
+    return 0
+  fi
+  printf '%s.status=mismatch\n' "${prefix}"
+  return 1
+}
+
+coreelec_weather_configured() {
+  [[ -n "${HOME_ASSISTANT_URL}" && -n "${HOME_ASSISTANT_WEATHER_ENTITY}" \
+     && -n "${HOME_ASSISTANT_TOKEN:-}" ]]
+}
+
+coreelec_nextpvr_configured() {
+  [[ -n "${NEXTPVR_HOST}" && -n "${NEXTPVR_PIN:-}" ]]
+}
+
+coreelec_plex_configured() {
+  [[ -n "${PLEX_SERVER_HOST}" && -n "${PLEX_TOKEN:-}" ]]
+}
+
+coreelec_tmdb_helper_configured() {
+  [[ -n "${OMDB_API_KEY:-}" || -n "${MDBLIST_API_KEY:-}" ]]
+}
+
+coreelec_youtube_configured() {
+  [[ -n "${YOUTUBE_API_KEY:-}" && -n "${YOUTUBE_CLIENT_ID:-}" \
+     && -n "${YOUTUBE_CLIENT_SECRET:-}" ]]
+}
+
+# Whether one add-on ID is part of the set this run deployed.
+coreelec_manifest_contains() {
+  local manifest="$1" wanted="$2" index addon_id rest
+  while IFS=$'\t' read -r index addon_id rest; do
+    [[ "${addon_id}" == "${wanted}" ]] && return 0
+  done < "${manifest}"
+  return 1
+}
+
+# `configured`          this run wrote the add-on's settings;
+# `installed-manual`    the add-on can only be finished interactively;
+# `installed-unconfigured` the add-on is deployed but nothing was configured
+#                       for it, either because it needs nothing or because its
+#                       optional values were not supplied.
+classify_addon_status() {
+  local addon_id="$1"
+  case "${addon_id}" in
+    plugin.service.emby-next-gen|plugin.video.youtube)
+      # Emby's server/user selection and Google's device authorization are
+      # dialog-driven; supplying credentials does not complete either.
+      printf 'installed-manual\n'
+      ;;
+    weather.ha)
+      if coreelec_weather_configured; then
+        printf 'configured\n'
+      else
+        printf 'installed-unconfigured\n'
+      fi
+      ;;
+    pvr.nextpvr)
+      if coreelec_nextpvr_configured; then
+        printf 'configured\n'
+      else
+        printf 'installed-unconfigured\n'
+      fi
+      ;;
+    script.plexmod)
+      if coreelec_plex_configured; then
+        printf 'configured\n'
+      else
+        printf 'installed-unconfigured\n'
+      fi
+      ;;
+    plugin.video.themoviedb.helper)
+      if coreelec_tmdb_helper_configured; then
+        printf 'configured\n'
+      else
+        printf 'installed-unconfigured\n'
+      fi
+      ;;
+    skin.arctic.fuse.3|resource.language.en_us)
+      # Both are activated by the regional baseline this run applies.
+      printf 'configured\n'
+      ;;
+    *)
+      printf 'installed-unconfigured\n'
+      ;;
+  esac
+}
+
+# Compares the device's observations with what this run requested. Prints the
+# report lines for the comparison and returns nonzero on any mismatch, which
+# is what makes a verification failure fatal rather than advisory.
+verify_remote_baseline() {
+  local observations="$1" manifest="$2"
+  local failures=0
+  local index addon_id version filename observed_version installed enabled attempted
+  local addon_failed value
+
+  [[ -r "${observations}" ]] || die "Verification observations are not readable: ${observations}"
+  [[ -r "${manifest}" ]] || die "Deployment manifest is not readable: ${manifest}"
+
+  printf 'verification_source=device-localhost-jsonrpc\n'
+
+  value="$(coreelec_observation_value jsonrpc_version "${observations}" || true)"
+  printf 'jsonrpc.version=%s\n' "${value}"
+  if [[ -n "${value}" ]]; then
+    printf 'jsonrpc.status=ok\n'
+  else
+    printf 'jsonrpc.status=mismatch\n'
+    failures=$((failures + 1))
+  fi
+
+  coreelec_report_comparison "regional.locale.language" "${LOCALE_LANGUAGE}" \
+    "$(coreelec_observation_value setting.locale.language "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "regional.locale.country" "${LOCALE_COUNTRY}" \
+    "$(coreelec_observation_value setting.locale.country "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "regional.locale.keyboardlayouts" "${KEYBOARD_LAYOUT}" \
+    "$(coreelec_observation_value setting.locale.keyboardlayouts "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "regional.locale.timezonecountry" "${TIMEZONE_COUNTRY}" \
+    "$(coreelec_observation_value setting.locale.timezonecountry "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "regional.locale.timezone" "${TIMEZONE}" \
+    "$(coreelec_observation_value setting.locale.timezone "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "regional.timezone_cache" "${TIMEZONE}" \
+    "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
+    || failures=$((failures + 1))
+
+  # CoreELEC images differ in where the zoneinfo tree lives, so the requested
+  # zone is matched against the tail of the resolved path rather than against
+  # one hard-coded prefix.
+  value="$(coreelec_observation_value localtime_path "${observations}" || true)"
+  printf 'regional.localtime.expected=%s\n' "${TIMEZONE}"
+  printf 'regional.localtime.observed=%s\n' "${value}"
+  case "${value}" in
+    */"${TIMEZONE}"|"${TIMEZONE}")
+      printf 'regional.localtime.status=ok\n'
+      ;;
+    *)
+      printf 'regional.localtime.status=mismatch\n'
+      failures=$((failures + 1))
+      ;;
+  esac
+
+  value="$(coreelec_observation_value date_matches_timezone "${observations}" || true)"
+  printf 'regional.date_offset.observed=%s\n' "${value}"
+  case "${value}" in
+    1) printf 'regional.date_offset.status=ok\n' ;;
+    unavailable)
+      # The device could not report its local time at all. That is a probe
+      # capability, not applied state, so it is recorded rather than fatal.
+      printf 'regional.date_offset.status=unavailable\n'
+      ;;
+    *)
+      printf 'regional.date_offset.status=mismatch\n'
+      failures=$((failures + 1))
+      ;;
+  esac
+
+  # The skin and the weather provider are only verified when this run
+  # deployed the add-on that provides them.
+  if coreelec_manifest_contains "${manifest}" "skin.arctic.fuse.3"; then
+    coreelec_report_comparison "skin" "skin.arctic.fuse.3" \
+      "$(coreelec_observation_value setting.lookandfeel.skin "${observations}" || true)" \
+      || failures=$((failures + 1))
+  fi
+
+  value="$(coreelec_observation_value setting.weather.addon "${observations}" || true)"
+  if coreelec_weather_configured && coreelec_manifest_contains "${manifest}" "weather.ha"; then
+    coreelec_report_comparison "weather_provider" "weather.ha" "${value}" \
+      || failures=$((failures + 1))
+  else
+    # Without a Home Assistant URL, entity, and token the run deliberately
+    # leaves the existing provider alone; reporting it is not a verdict.
+    printf 'weather_provider.expected=unchanged\n'
+    printf 'weather_provider.observed=%s\n' "${value}"
+    printf 'weather_provider.status=not-configured\n'
+  fi
+
+  while IFS=$'\t' read -r index addon_id version filename; do
+    [[ -n "${addon_id}" ]] || continue
+    addon_failed=0
+    installed="$(coreelec_observation_value "addon.${addon_id}.installed" "${observations}" || true)"
+    observed_version="$(coreelec_observation_value "addon.${addon_id}.version" "${observations}" || true)"
+    enabled="$(coreelec_observation_value "addon.${addon_id}.enabled" "${observations}" || true)"
+    attempted="$(coreelec_observation_value "addon.${addon_id}.enable_attempted" "${observations}" || true)"
+    printf 'addon.%s.requested_version=%s\n' "${addon_id}" "${version}"
+    printf 'addon.%s.observed_version=%s\n' "${addon_id}" "${observed_version}"
+    printf 'addon.%s.installed=%s\n' "${addon_id}" "${installed:-0}"
+    printf 'addon.%s.enabled=%s\n' "${addon_id}" "${enabled:-0}"
+    printf 'addon.%s.enable_attempted=%s\n' "${addon_id}" "${attempted:-0}"
+    printf 'addon.%s.status=%s\n' "${addon_id}" "$(classify_addon_status "${addon_id}")"
+    [[ "${installed}" == "1" ]] || addon_failed=1
+    [[ "${enabled}" == "1" ]] || addon_failed=1
+    [[ "${observed_version}" == "${version}" ]] || addon_failed=1
+    if (( addon_failed == 0 )); then
+      printf 'addon.%s.verification=ok\n' "${addon_id}"
+    else
+      printf 'addon.%s.verification=mismatch\n' "${addon_id}"
+      failures=$((failures + 1))
+    fi
+  done < "${manifest}"
+
+  # Files this run configured are checked on the device, which returns a
+  # boolean rather than the stored token, key, or PIN.
+  coreelec_verify_addon_settings "${observations}" "${manifest}" \
+    "weather.ha" coreelec_weather_configured || failures=$((failures + 1))
+  coreelec_verify_addon_settings "${observations}" "${manifest}" \
+    "pvr.nextpvr" coreelec_nextpvr_configured || failures=$((failures + 1))
+  coreelec_verify_addon_settings "${observations}" "${manifest}" \
+    "script.plexmod" coreelec_plex_configured || failures=$((failures + 1))
+  coreelec_verify_addon_settings "${observations}" "${manifest}" \
+    "plugin.video.themoviedb.helper" coreelec_tmdb_helper_configured \
+    || failures=$((failures + 1))
+  coreelec_verify_addon_settings "${observations}" "${manifest}" \
+    "plugin.video.youtube" coreelec_youtube_configured || failures=$((failures + 1))
+
+  printf 'verification_failures=%s\n' "${failures}"
+  if (( failures == 0 )); then
+    printf 'verification_result=pass\n'
+    return 0
+  fi
+  printf 'verification_result=fail\n'
+  return 1
+}
+
+# Reports whether the device confirmed the settings this run wrote for one
+# add-on. Nothing is claimed for an add-on that was not deployed or whose
+# optional values were never supplied.
+coreelec_verify_addon_settings() {
+  local observations="$1" manifest="$2" addon_id="$3" predicate="$4" value
+  coreelec_manifest_contains "${manifest}" "${addon_id}" || return 0
+  if ! "${predicate}"; then
+    printf 'addon.%s.settings_verified=not-configured\n' "${addon_id}"
+    return 0
+  fi
+  value="$(coreelec_observation_value "addon_settings.${addon_id}.configured" "${observations}" || true)"
+  if [[ "${value}" == "1" ]]; then
+    printf 'addon.%s.settings_verified=1\n' "${addon_id}"
+    return 0
+  fi
+  printf 'addon.%s.settings_verified=0\n' "${addon_id}"
+  return 1
+}
+
+# The exact value of one supported secret, read from the environment only
+# through this explicit allowlist (never through indirect expansion).
+coreelec_secret_value() {
+  case "$1" in
+    KODI_WEB_PASSWORD) printf '%s' "${KODI_WEB_PASSWORD:-}" ;;
+    OMDB_API_KEY) printf '%s' "${OMDB_API_KEY:-}" ;;
+    MDBLIST_API_KEY) printf '%s' "${MDBLIST_API_KEY:-}" ;;
+    YOUTUBE_API_KEY) printf '%s' "${YOUTUBE_API_KEY:-}" ;;
+    YOUTUBE_CLIENT_ID) printf '%s' "${YOUTUBE_CLIENT_ID:-}" ;;
+    YOUTUBE_CLIENT_SECRET) printf '%s' "${YOUTUBE_CLIENT_SECRET:-}" ;;
+    HOME_ASSISTANT_TOKEN) printf '%s' "${HOME_ASSISTANT_TOKEN:-}" ;;
+    NEXTPVR_PIN) printf '%s' "${NEXTPVR_PIN:-}" ;;
+    PLEX_TOKEN) printf '%s' "${PLEX_TOKEN:-}" ;;
+    *) die "Internal error: unknown secret name: $1" ;;
+  esac
+}
+
+coreelec_secret_names() {
+  cat <<'SECRET_NAMES'
+KODI_WEB_PASSWORD
+OMDB_API_KEY
+MDBLIST_API_KEY
+YOUTUBE_API_KEY
+YOUTUBE_CLIENT_ID
+YOUTUBE_CLIENT_SECRET
+HOME_ASSISTANT_TOKEN
+NEXTPVR_PIN
+PLEX_TOKEN
+SECRET_NAMES
+}
+
+# A digest of the configuration this run applied. Only non-secret values are
+# fed to it, so the fingerprint identifies a configuration without being able
+# to confirm a guessed secret.
+coreelec_config_fingerprint() {
+  local digest record
+  digest="$( {
+    printf 'EXPECTED_RELEASE=%s\n' "${EXPECTED_RELEASE}"
+    printf 'SSH_PORT=%s\n' "${SSH_PORT}"
+    printf 'KODI_PORT=%s\n' "${KODI_PORT}"
+    printf 'KODI_USER=%s\n' "${KODI_USER}"
+    printf 'APPLY_KODI=%s\n' "${APPLY_KODI}"
+    printf 'HARDEN_SSH=%s\n' "${HARDEN_SSH}"
+    printf 'TIMEZONE=%s\n' "${TIMEZONE}"
+    printf 'TIMEZONE_COUNTRY=%s\n' "${TIMEZONE_COUNTRY}"
+    printf 'LOCALE_LANGUAGE=%s\n' "${LOCALE_LANGUAGE}"
+    printf 'LOCALE_COUNTRY=%s\n' "${LOCALE_COUNTRY}"
+    printf 'KEYBOARD_LAYOUT=%s\n' "${KEYBOARD_LAYOUT}"
+    printf 'ADDON_UPDATE_MODE=%s\n' "${ADDON_UPDATE_MODE}"
+    printf 'HOME_ASSISTANT_URL=%s\n' "${HOME_ASSISTANT_URL}"
+    printf 'HOME_ASSISTANT_WEATHER_ENTITY=%s\n' "${HOME_ASSISTANT_WEATHER_ENTITY}"
+    printf 'HOME_ASSISTANT_SUN_ENTITY=%s\n' "${HOME_ASSISTANT_SUN_ENTITY}"
+    printf 'NEXTPVR_HOST=%s\n' "${NEXTPVR_HOST}"
+    printf 'NEXTPVR_PORT=%s\n' "${NEXTPVR_PORT}"
+    printf 'NEXTPVR_PROTOCOL=%s\n' "${NEXTPVR_PROTOCOL}"
+    printf 'NEXTPVR_INSTANCE_NAME=%s\n' "${NEXTPVR_INSTANCE_NAME}"
+    printf 'PLEX_SERVER_HOST=%s\n' "${PLEX_SERVER_HOST}"
+    printf 'PLEX_SERVER_PORT=%s\n' "${PLEX_SERVER_PORT}"
+    printf 'PLEX_SERVER_NAME=%s\n' "${PLEX_SERVER_NAME}"
+    printf 'PLEX_PROFILE_IDS=%s\n' "${PLEX_PROFILE_IDS}"
+    for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+      printf 'ADDON_ARTIFACT=%s\n' "${record}"
+    done
+  } | shasum -a 256 | awk '{print $1}')"
+  printf 'sha256:%s\n' "${digest}"
+}
+
+# The interactive work this run cannot do, in a fixed order. A step is listed
+# only when the add-on it belongs to was deployed, and only when provisioning
+# did not already complete it.
+coreelec_report_manual_actions() {
+  local manifest="$1" number=0
+
+  if coreelec_manifest_contains "${manifest}" "plugin.service.emby-next-gen"; then
+    number=$((number + 1))
+    printf 'manual_action.%s=Emby: select the server and sign in from Kodi; Emby Next Gen stores server and user state in its own database and cannot be preseeded.\n' "${number}"
+  fi
+  if coreelec_manifest_contains "${manifest}" "plugin.video.youtube"; then
+    number=$((number + 1))
+    printf 'manual_action.%s=YouTube: complete Google device authorization in the add-on to sign in; API credentials alone do not sign an account in.\n' "${number}"
+  fi
+  if coreelec_manifest_contains "${manifest}" "script.plexmod" && ! coreelec_plex_configured; then
+    number=$((number + 1))
+    printf 'manual_action.%s=Plex: link the account in PM4K or set PLEX_SERVER_HOST and PLEX_TOKEN to configure local mode.\n' "${number}"
+  fi
+  if coreelec_manifest_contains "${manifest}" "pvr.nextpvr" && ! coreelec_nextpvr_configured; then
+    number=$((number + 1))
+    printf 'manual_action.%s=NextPVR: set the server host and PIN in the client instance, or supply NEXTPVR_HOST and NEXTPVR_PIN.\n' "${number}"
+  fi
+  if coreelec_manifest_contains "${manifest}" "weather.ha" && ! coreelec_weather_configured; then
+    number=$((number + 1))
+    printf 'manual_action.%s=Home Assistant Weather: set the Home Assistant URL, long-lived token, and forecast entity, then select the provider.\n' "${number}"
+  fi
+  if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
+    number=$((number + 1))
+    printf 'manual_action.%s=Optional: authorize Trakt and a TMDb user account in TMDb Helper; both are interactive and neither is required.\n' "${number}"
+  fi
+  printf 'manual_actions=%s\n' "${number}"
+}
+
+# The report body. Every line is key=value; the raw device inventory the
+# production report appends afterwards is the one deliberately free-form
+# section, and it is fenced by begin/end markers.
+coreelec_report_render() {
+  local manifest="$1" name value index filename
+  printf 'report_format=coreelec-provisioning-report-2\n'
+  printf 'script_version=%s\n' "${SCRIPT_VERSION}"
+  printf 'created_utc=%s\n' "$(timestamp)"
+  printf 'target=%s\n' "${TARGET}"
+  printf 'ssh_port=%s\n' "${SSH_PORT}"
+  printf 'identity_file=%s\n' "${IDENTITY_FILE}"
+  printf 'ssh_password_auth_disabled=%s\n' "${HARDEN_SSH}"
+  printf 'config_file=%s\n' "${CONFIG_FILE}"
+  printf 'config_fingerprint=%s\n' "$(coreelec_config_fingerprint)"
+  printf 'kodi_baseline_requested=%s\n' "${APPLY_KODI}"
+  if [[ "${APPLY_KODI}" == "1" ]]; then
+    printf 'kodi_jsonrpc=http://%s:%s/jsonrpc\n' "${TARGET}" "${KODI_PORT}"
+    printf 'kodi_username=%s\n' "${KODI_USER}"
+    printf 'kodi_password=stored-in-macos-keychain\n'
+  fi
+  # Reachability from this Mac is environmental: the device verified itself
+  # over its own localhost JSON-RPC, so a blocked port cannot demote a
+  # successful verification to a warning.
+  printf 'kodi_jsonrpc_reachable_from_mac=%s\n' "${KODI_JSONRPC_LOCAL_REACHABLE}"
+  if [[ -n "${REMOTE_BACKUP_PATH}" ]]; then
+    printf 'remote_backup_path=%s\n' "${REMOTE_BACKUP_PATH}"
+  fi
+
+  if (( ${#ADDONS[@]} > 0 )); then
+    printf 'requested_addons=%s\n' "$(printf '%s,' ${ADDONS[@]+"${ADDONS[@]}"} | sed 's/,$//')"
+    printf 'addon_selection=subset\n'
+    # A narrowed selection deploys exactly what was named; nothing resolves
+    # its dependencies, so that stays the operator's problem and is stated.
+    printf 'addon_dependency_resolution=manual\n'
+  else
+    printf 'requested_addons=all-locked-artifacts\n'
+    printf 'addon_selection=all-locked-artifacts\n'
+    printf 'addon_dependency_resolution=complete-locked-closure\n'
+  fi
+
+  if [[ -n "${REMOTE_TRANSACTION}" ]]; then
+    printf 'deployment_transaction=%s\n' "${REMOTE_TRANSACTION}"
+  fi
+  printf 'deployment_state=%s\n' "${DEPLOYMENT_STATE}"
+  printf 'verification_result=%s\n' "${VERIFICATION_RESULT}"
+  # What this run deployed, independently of what verification observed, so
+  # the record of the change survives even a failed verification.
+  if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+    while IFS=$'\t' read -r index name value filename; do
+      [[ -n "${name}" ]] || continue
+      printf 'deployed_addon.%s=%s\n' "${name}" "${value}"
+    done < "${manifest}"
+  fi
+  if [[ -n "${VERIFICATION_REPORT_FILE}" && -r "${VERIFICATION_REPORT_FILE}" ]]; then
+    # The comparison lines are already report-shaped, and they are the same
+    # lines the pass/fail decision was made from.
+    grep -v '^verification_result=' "${VERIFICATION_REPORT_FILE}" || true
+  fi
+  if [[ -n "${RECOVERY_INSTRUCTIONS}" ]]; then
+    printf '%s\n' "${RECOVERY_INSTRUCTIONS}"
+  fi
+
+  coreelec_secret_names | while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    value="0"
+    [[ -n "$(coreelec_secret_value "${name}")" ]] && value="1"
+    printf 'secret_present.%s=%s\n' "${name}" "${value}"
+  done
+
+  if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+    coreelec_report_manual_actions "${manifest}"
+  fi
+}
+
+# Fails, and destroys the report, if any supplied secret occurs in it
+# literally. The patterns are piped to grep so no secret reaches an argument
+# list, and the diagnostic names the variable rather than echoing its value.
+coreelec_report_redaction_check() {
+  local report_file="$1" name value
+  while IFS= read -r name; do
+    [[ -n "${name}" ]] || continue
+    value="$(coreelec_secret_value "${name}")"
+    [[ -n "${value}" ]] || continue
+    # Blank pattern lines are dropped: an empty pattern matches every line and
+    # would delete a clean report. A multi-line secret is still caught,
+    # because each of its non-blank lines is its own fixed-string pattern.
+    if printf '%s\n' "${value}" | grep -v '^[[:space:]]*$' \
+      | grep -F -q -f - "${report_file}"; then
+      rm -f "${report_file}"
+      die "The audit report contained the literal value of ${name} and was deleted. This is a provisioner defect; report it before re-running."
+    fi
+  done <<EOF
+$(coreelec_secret_names)
+EOF
+}
+
+# Writes one report file: the key=value body, optionally the raw device
+# inventory, then the redaction guard. The guard runs before the path is
+# announced, so a report that leaked a secret is never handed to anyone.
+coreelec_write_report_file() {
+  local report_file="$1" manifest="$2" include_inventory="$3"
+  local report_dir
+  report_dir="$(dirname "${report_file}")"
+  mkdir -p "${report_dir}"
+  chmod 700 "${report_dir}"
+  rm -f "${report_file}"
+  {
+    coreelec_report_render "${manifest}"
+    if [[ "${include_inventory}" == "1" ]]; then
+      printf 'remote_inventory=begin\n'
+      coreelec_remote_inventory
+      printf 'remote_inventory=end\n'
+    fi
+  } > "${report_file}"
+  chmod 600 "${report_file}"
+  coreelec_report_redaction_check "${report_file}"
+  printf '%s\n' "${report_file}"
+}
+
+# Decides the fate of the pending deployment transaction: verify first,
+# finalize only on success, roll back on failure. Returns nonzero when the
+# deployment must not be treated as complete; the caller still writes the
+# report before failing, because a failed run needs its record most.
+coreelec_conclude_deployment() {
+  local manifest="$1"
+  local observations="${TASK_TEMP_DIR}/verify-observations.conf"
+  local verification="${TASK_TEMP_DIR}/verification.conf"
+  local status=0
+
+  DEPLOYMENT_STATE="pending-verification"
+  info "Verifying the deployed baseline on the device over localhost JSON-RPC" >&2
+  : > "${observations}"
+  chmod 600 "${observations}" 2>/dev/null || true
+  # A probe that cannot run is a verification failure, not a fatal error: the
+  # deployment still has to be undone rather than left half-committed.
+  coreelec_collect_remote_observations "${observations}" || status=$?
+
+  # `|| status=$?` rather than toggling errexit: this function is called from
+  # both an errexit and a non-errexit context, and toggling it here would
+  # change the caller's setting behind its back.
+  if (( status == 0 )); then
+    verify_remote_baseline "${observations}" "${manifest}" > "${verification}" \
+      || status=$?
+  else
+    printf 'verification_source=device-localhost-jsonrpc\n' > "${verification}"
+    printf 'verification_error=the device did not answer the verification probe\n' \
+      >> "${verification}"
+  fi
+  chmod 600 "${verification}" 2>/dev/null || true
+  VERIFICATION_REPORT_FILE="${verification}"
+
+  if (( status == 0 )); then
+    VERIFICATION_RESULT="pass"
+    info "Device verification passed; committing the deployment transaction" >&2
+    if finalize_remote_deployment >/dev/null; then
+      DEPLOYMENT_STATE="committed"
+      return 0
+    fi
+    # The device is verified but the rollback material could not be released.
+    # Nothing was undone, so the transaction stays pending for the operator.
+    DEPLOYMENT_STATE="pending-verification"
+    RECOVERY_INSTRUCTIONS="$(coreelec_recovery_instructions finalize)"
+    warn "The verified deployment could not be finalized; the transaction is still pending"
+    return 1
+  fi
+
+  VERIFICATION_RESULT="fail"
+  warn "Device verification failed; rolling back the deployment transaction"
+  if rollback_remote_deployment >/dev/null; then
+    DEPLOYMENT_STATE="rolled-back"
+    return 1
+  fi
+
+  DEPLOYMENT_STATE="incomplete-rollback"
+  RECOVERY_INSTRUCTIONS="$(coreelec_recovery_instructions rollback)"
+  return 1
+}
+
+# The exact commands and retained paths an operator needs when the device
+# could not finish the transaction by itself.
+coreelec_recovery_instructions() {
+  local kind="$1"
+  printf 'recovery.reason=%s\n' "${kind}"
+  printf 'recovery.transaction=%s\n' "${REMOTE_TRANSACTION}"
+  printf 'recovery.pointer_file=/storage/.cache/coreelec-provision/current-transaction\n'
+  printf 'recovery.staging_directory=/storage/.cache/coreelec-provision/stage\n'
+  if [[ "${kind}" == "finalize" ]]; then
+    printf 'recovery.command=%s --target %s --finalize-deployment\n' "$0" "${TARGET}"
+  else
+    printf 'recovery.command=%s --target %s --rollback-deployment\n' "$0" "${TARGET}"
+  fi
+  printf 'recovery.inspect=ssh -i %s -p %s root@%s\n' \
+    "${IDENTITY_FILE}" "${SSH_PORT}" "${TARGET}"
+}
+
+# The report file name identifies the device and the moment, so repeated runs
+# accumulate rather than overwrite each other.
+coreelec_report_path() {
+  local report_dir="$1" target_slug
+  target_slug="$(printf '%s' "${TARGET:-fixture}" | tr -c 'A-Za-z0-9._-' '_')"
+  printf '%s/%s-%s.txt\n' "${report_dir}" "${target_slug}" "$(date -u +%Y%m%dT%H%M%SZ)"
+}
+
+# --- Internal fixture entry points -------------------------------------------
+#
+# These run the production verification, classification, report, and
+# transaction-outcome code with the three device calls replaced by stubs, so
+# the test suite exercises the same functions a real run uses without a device.
+
+if (( ${#VERIFY_FIXTURE[@]} > 0 )); then
+  verify_remote_baseline "${VERIFY_FIXTURE[0]}" "${VERIFY_FIXTURE[1]}"
+  exit $?
+fi
+
+if [[ -n "${CLASSIFY_ADDON}" ]]; then
+  classify_addon_status "${CLASSIFY_ADDON}"
+  exit 0
+fi
+
+if (( ${#REPORT_FIXTURE[@]} > 0 )); then
+  TASK_TEMP_DIR="$(mktemp -d "${REPORT_FIXTURE[0]}.XXXXXX")"
+  KODI_JSONRPC_LOCAL_REACHABLE="${REPORT_FIXTURE[3]}"
+  REMOTE_TRANSACTION="fixture-transaction"
+  coreelec_collect_remote_observations() { cp "${REPORT_FIXTURE[1]}" "$1"; }
+  finalize_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
+  rollback_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
+  coreelec_conclude_deployment "${REPORT_FIXTURE[2]}" >/dev/null 2>&1 || true
+  coreelec_write_report_file \
+    "$(coreelec_report_path "${REPORT_FIXTURE[0]}")" "${REPORT_FIXTURE[2]}" "0"
+  exit 0
+fi
+
+if (( ${#CONCLUDE_FIXTURE[@]} > 0 )); then
+  TASK_TEMP_DIR="$(mktemp -d "${CONCLUDE_FIXTURE[4]}.XXXXXX")"
+  REMOTE_TRANSACTION="fixture-transaction"
+  : > "${CONCLUDE_FIXTURE[4]}"
+  coreelec_collect_remote_observations() {
+    printf 'verify\n' >> "${CONCLUDE_FIXTURE[4]}"
+    cp "${CONCLUDE_FIXTURE[0]}" "$1"
+  }
+  finalize_remote_deployment() {
+    printf 'finalize\n' >> "${CONCLUDE_FIXTURE[4]}"
+    return "${CONCLUDE_FIXTURE[2]}"
+  }
+  rollback_remote_deployment() {
+    printf 'rollback\n' >> "${CONCLUDE_FIXTURE[4]}"
+    return "${CONCLUDE_FIXTURE[3]}"
+  }
+  set +e
+  coreelec_conclude_deployment "${CONCLUDE_FIXTURE[1]}"
+  conclude_status=$?
+  set -e
+  printf 'verification_result=%s\n' "${VERIFICATION_RESULT}"
+  printf 'deployment_state=%s\n' "${DEPLOYMENT_STATE}"
+  [[ -z "${RECOVERY_INSTRUCTIONS}" ]] || printf '%s\n' "${RECOVERY_INSTRUCTIONS}"
+  exit "${conclude_status}"
+fi
 
 if [[ -n "${PRINT_ADDON_SELECTION}" ]]; then
   coreelec_addon_selection "${PRINT_ADDON_SELECTION}"
@@ -1975,14 +3157,19 @@ wait_for_kodi_jsonrpc() {
   } > "${CURL_CONFIG_FILE}"
   chmod 600 "${CURL_CONFIG_FILE}"
 
-  info "Waiting for authenticated Kodi JSON-RPC on TCP ${KODI_PORT}"
-  while (( attempt <= 30 )); do
+  # This probe is a convenience check of the operator's own network path. The
+  # verification that decides the run's outcome happens on the device against
+  # Kodi's localhost endpoint, so a firewall between this Mac and the device
+  # is recorded here and nowhere else.
+  info "Checking whether Kodi JSON-RPC is reachable from this Mac on TCP ${KODI_PORT}"
+  while (( attempt <= 5 )); do
     if curl --config "${CURL_CONFIG_FILE}" \
       -H 'Content-Type: application/json' \
       --data-binary '{"jsonrpc":"2.0","id":1,"method":"JSONRPC.Version"}' \
       "http://${TARGET}:${KODI_PORT}/jsonrpc" > "${response_file}" 2>/dev/null; then
       if grep -q '"result"' "${response_file}"; then
-        info "Kodi JSON-RPC authentication succeeded"
+        KODI_JSONRPC_LOCAL_REACHABLE="1"
+        info "Kodi JSON-RPC is reachable from this Mac"
         return
       fi
     fi
@@ -1990,54 +3177,84 @@ wait_for_kodi_jsonrpc() {
     attempt=$((attempt + 1))
   done
 
-  warn "Kodi settings were applied, but JSON-RPC was not reachable from this Mac. Check pfSense and TCP ${KODI_PORT}."
+  KODI_JSONRPC_LOCAL_REACHABLE="0"
+  warn "Kodi JSON-RPC is not reachable from this Mac on TCP ${KODI_PORT}; check pfSense. Verification is unaffected: the device checks itself over its own localhost endpoint."
 }
 
-write_audit_report() {
-  local report_stamp
-  local target_slug
-  local report_file
-  local deployed_index deployed_id deployed_version deployed_file
-  report_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  target_slug="$(printf '%s' "${TARGET}" | tr -c 'A-Za-z0-9._-' '_')"
-  mkdir -p "${REPORT_DIR}"
-  chmod 700 "${REPORT_DIR}"
-  report_file="${REPORT_DIR}/${target_slug}-${report_stamp}.txt"
+# The verification request. Only the Kodi web password crosses to the device
+# again, because the probe must authenticate to Kodi. Every other secret is
+# sent as a presence flag: the probe compares the device's own files and
+# answers with a boolean.
+coreelec_verify_request() {
+  local index id version filename ids=""
+  coreelec_settings_payload_entry KODI_WEB_USER "${KODI_USER}"
+  coreelec_settings_payload_entry KODI_WEB_PASSWORD "${KODI_WEB_PASSWORD}"
+  coreelec_settings_payload_entry KODI_PORT "${KODI_PORT}"
+  coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
+  coreelec_settings_payload_entry HOME_ASSISTANT_URL "${HOME_ASSISTANT_URL}"
+  coreelec_settings_payload_entry HOME_ASSISTANT_WEATHER_ENTITY "${HOME_ASSISTANT_WEATHER_ENTITY}"
+  coreelec_settings_payload_entry NEXTPVR_HOST "${NEXTPVR_HOST}"
+  coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
+  coreelec_settings_payload_entry PLEX_SERVER_HOST "${PLEX_SERVER_HOST}"
+  coreelec_settings_payload_entry HAVE_HOME_ASSISTANT_TOKEN \
+    "$([[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && printf '1' || printf '0')"
+  coreelec_settings_payload_entry HAVE_NEXTPVR_PIN \
+    "$([[ -n "${NEXTPVR_PIN:-}" ]] && printf '1' || printf '0')"
+  coreelec_settings_payload_entry HAVE_PLEX_TOKEN \
+    "$([[ -n "${PLEX_TOKEN:-}" ]] && printf '1' || printf '0')"
+  coreelec_settings_payload_entry HAVE_YOUTUBE_API_KEY \
+    "$([[ -n "${YOUTUBE_API_KEY:-}" ]] && printf '1' || printf '0')"
+  coreelec_settings_payload_entry HAVE_OMDB_API_KEY \
+    "$([[ -n "${OMDB_API_KEY:-}" ]] && printf '1' || printf '0')"
+  coreelec_settings_payload_entry HAVE_MDBLIST_API_KEY \
+    "$([[ -n "${MDBLIST_API_KEY:-}" ]] && printf '1' || printf '0')"
+  while IFS=$'\t' read -r index id version filename; do
+    [[ -n "${id}" ]] || continue
+    ids="${ids}${id}"$'\n'
+  done < "${DEPLOY_MANIFEST}"
+  coreelec_settings_payload_entry ADDON_IDS "${ids}"
+}
 
-  {
-    printf 'report_format=coreelec-provisioning-report-1\n'
-    printf 'script_version=%s\n' "${SCRIPT_VERSION}"
-    printf 'created_utc=%s\n' "$(timestamp)"
-    printf 'target=%s\n' "${TARGET}"
-    printf 'ssh_port=%s\n' "${SSH_PORT}"
-    printf 'identity_file=%s\n' "${IDENTITY_FILE}"
-    printf 'ssh_password_auth_disabled=%s\n' "${HARDEN_SSH}"
-    printf 'kodi_baseline_requested=%s\n' "${APPLY_KODI}"
-    if [[ "${APPLY_KODI}" == "1" ]]; then
-      printf 'kodi_jsonrpc=http://%s:%s/jsonrpc\n' "${TARGET}" "${KODI_PORT}"
-      printf 'kodi_username=%s\n' "${KODI_USER}"
-      printf 'kodi_password=stored-in-macos-keychain\n'
-    fi
-    # Every local line is key=value so Task 6 (and any operator running grep)
-    # can read the report without parsing prose.
-    if (( ${#ADDONS[@]} > 0 )); then
-      printf 'requested_addons=%s\n' "$(printf '%s,' ${ADDONS[@]+"${ADDONS[@]}"} | sed 's/,$//')"
-    else
-      printf 'requested_addons=all-locked-artifacts\n'
-    fi
-    if [[ -n "${REMOTE_TRANSACTION}" ]]; then
-      printf 'deployment_transaction=%s\n' "${REMOTE_TRANSACTION}"
-      printf 'deployment_state=pending-verification\n'
-    fi
-    if [[ -n "${ARTIFACT_STAGE_DIR}" && -f "${ARTIFACT_STAGE_DIR}/deploy.tsv" ]]; then
-      while IFS=$'\t' read -r deployed_index deployed_id deployed_version deployed_file; do
-        [[ -n "${deployed_id}" ]] || continue
-        printf 'deployed_addon.%s=%s\n' "${deployed_id}" "${deployed_version}"
-      done < "${ARTIFACT_STAGE_DIR}/deploy.tsv"
-    fi
-    printf 'remote_inventory=begin\n'
+upload_kodi_verify_request() {
+  local script
+  script="$(coreelec_remote_payload_script /storage verify-request.conf)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote payload script must not contain a single quote"
+  coreelec_verify_request | ssh_keyed "sh -c '${script}'"
+}
 
-    ssh_keyed 'sh -s' <<'REMOTE_INVENTORY'
+# Removes the uploaded verification request. The verify script's own trap does
+# this on every path it reaches, so this covers the case where the request was
+# uploaded but the probe never ran.
+discard_remote_verify_request() {
+  local payload_dir="/storage/.cache/coreelec-provision"
+  ssh_keyed 'sh -c '\''
+    set -eu
+    rm -f "$1/verify-request.conf" "$1/verify-request.conf.provision-new" \
+      "$1/verify-curl.conf"
+  '\'' sh' "${payload_dir}" >/dev/null 2>&1 \
+    || warn "Could not confirm removal of the uploaded verification request in ${payload_dir}"
+}
+
+# Asks the device what state it is actually in. The probe runs on the device
+# and writes its observations to this file. A failure here is a verification
+# failure rather than a fatal error, so the caller can still roll the
+# deployment back: a baseline that cannot be observed must not be committed.
+coreelec_collect_remote_observations() {
+  local destination="$1" status=0
+  upload_kodi_verify_request
+  coreelec_remote_verify_script | ssh_keyed 'sh -s' > "${destination}" || status=$?
+  if (( status != 0 )); then
+    discard_remote_verify_request
+    warn "The device could not be verified over its localhost JSON-RPC endpoint"
+    return 1
+  fi
+}
+
+# The device inventory appended to the report. It is the one deliberately
+# free-form section, fenced by begin/end markers so a parser can skip it.
+coreelec_remote_inventory() {
+  ssh_keyed 'sh -s' <<'REMOTE_INVENTORY'
 printf 'hostname=%s\n' "$(hostname)"
 printf 'date_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 printf 'kernel=%s\n' "$(uname -a)"
@@ -2091,9 +3308,11 @@ printf '\naudio_devices\n'
 cat /proc/asound/cards 2>/dev/null || true
 df -h /storage 2>/dev/null || true
 REMOTE_INVENTORY
-  } > "${report_file}"
-  chmod 600 "${report_file}"
-  printf '%s\n' "${report_file}"
+}
+
+write_audit_report() {
+  coreelec_write_report_file "$(coreelec_report_path "${REPORT_DIR}")" \
+    "${DEPLOY_MANIFEST}" "1"
 }
 
 if [[ -n "${DEPLOY_ACTION}" ]]; then
@@ -2157,6 +3376,7 @@ if [[ "${APPLY_KODI}" == "1" ]]; then
   # Resolving the selection here keeps every "which add-ons" decision -- and
   # every way it can be refused -- on the untouched-device side of the run.
   coreelec_addon_selection "${ARTIFACT_STAGE_DIR}/manifest.tsv" > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
 fi
 
 install_public_key_if_needed
@@ -2167,15 +3387,41 @@ info "Remote backup created: ${REMOTE_BACKUP_PATH}"
 harden_remote_ssh
 
 KEYCHAIN_SERVICE=""
+CONCLUDE_STATUS=0
 if [[ "${APPLY_KODI}" == "1" ]]; then
   KEYCHAIN_SERVICE="$(keychain_service_name)"
   prepare_kodi_password "${KEYCHAIN_SERVICE}"
   apply_kodi_baseline
+  # Verify before committing: a deployment that cannot be confirmed on the
+  # device is undone rather than finalized, and the report is written either
+  # way because a failed run is the one that most needs its record.
+  set +e
+  coreelec_conclude_deployment "${DEPLOY_MANIFEST}"
+  CONCLUDE_STATUS=$?
+  set -e
 elif (( ${#ADDONS[@]} > 0 )); then
   warn "Add-on selection was ignored because --no-kodi was selected"
 fi
 
 REPORT_FILE="$(write_audit_report)"
+
+if (( CONCLUDE_STATUS != 0 )); then
+  printf 'Audit report: %s\n' "${REPORT_FILE}" >&2
+  if [[ -n "${RECOVERY_INSTRUCTIONS}" ]]; then
+    printf '%s\n' "${RECOVERY_INSTRUCTIONS}" >&2
+  fi
+  case "${DEPLOYMENT_STATE}" in
+    incomplete-rollback)
+      die "Verification failed and the rollback did not complete. The transaction and its pointer are retained on the device; run the recovery command above before using this device."
+      ;;
+    pending-verification)
+      die "The deployment was verified but could not be finalized. It is still pending; run the recovery command above."
+      ;;
+    *)
+      die "Verification failed and the deployment was rolled back. The device is back to its pre-deployment state; see the audit report."
+      ;;
+  esac
+fi
 
 info "Provisioning completed"
 printf 'Audit report: %s\n' "${REPORT_FILE}"
@@ -2187,10 +3433,8 @@ if [[ "${APPLY_KODI}" == "1" ]]; then
   printf '  security find-generic-password -a %q -s %q -w\n' "${KODI_USER}" "${KEYCHAIN_SERVICE}"
 fi
 if [[ -n "${REMOTE_TRANSACTION}" ]]; then
-  printf '\nThe deployment transaction is still undoable:\n'
-  printf '  %s\n' "${REMOTE_TRANSACTION}"
-  printf 'Verify the device, then commit or undo it:\n'
-  printf '  %q --target %q --finalize-deployment\n' "$0" "${TARGET}"
-  printf '  %q --target %q --rollback-deployment\n' "$0" "${TARGET}"
+  printf '\nDeployment transaction: %s\n' "${REMOTE_TRANSACTION}"
+  printf 'State: %s (verification: %s)\n' "${DEPLOYMENT_STATE}" "${VERIFICATION_RESULT}"
+  printf 'The dated backup named in the report remains on the device.\n'
 fi
 printf 'Use the wired MAC in the audit report for the pfSense DHCP reservation.\n'
