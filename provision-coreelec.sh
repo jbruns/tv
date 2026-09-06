@@ -1928,9 +1928,85 @@ PYTHON_VERIFY_PROBE
 REMOTE_VERIFY_EPILOGUE
 }
 
+# Reads the administrator public key file and prints exactly one normalized
+# key line. The grammar is enforced here, once, because the line is embedded
+# in a program the device runs: a validated line is a single line of a known
+# key type, a base64 blob, and an optional control-character-free comment, so
+# it can never contain a quote, a newline, or the here-document delimiter that
+# carries it. Carriage returns are stripped -- one inside authorized_keys
+# makes the key silently unusable.
+coreelec_public_key_line() {
+  local key_file="$1" normalized line_count line
+  [[ -f "${key_file}" ]] || die "The administrator public key file is missing: ${key_file}"
+  normalized="$(sed -e 's/\r$//' -e 's/[[:space:]]*$//' "${key_file}" | grep '[^[:space:]]' || true)"
+  line_count="$(printf '%s\n' "${normalized}" | grep -c '[^[:space:]]' || true)"
+  [[ "${line_count}" == "1" ]] \
+    || die "Expected exactly one public key line in ${key_file}, found ${line_count}"
+  line="$(printf '%s\n' "${normalized}" | head -1)"
+  printf '%s\n' "${line}" | grep -Eq \
+    '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}( [^[:cntrl:]]*)?$' \
+    || die "The administrator public key in ${key_file} is not a well-formed OpenSSH public key line"
+  printf '%s\n' "${line}"
+}
+
+# Appends the administrator public key to /storage/.ssh/authorized_keys.
+#
+# This is the one program that runs over the temporary password session,
+# before any key exists, so it gets a single attempt on a device the operator
+# is standing in front of. Like every other remote program here it is streamed
+# to `sh -s`, which leaves `sh` and `-s` as the only argv words: an argv word
+# is joined by the ssh client and re-parsed by the device's login shell, so a
+# quoted program placed there loses its quoting in transit. The key itself
+# rides inside the program in a quoted here-document -- stdin is already
+# carrying the program, and the argv would expose the key to that same
+# re-parse and to the device's process list.
+coreelec_remote_authorized_key_script() {
+  local root="${1:-/storage}" key_file="${2:-}" key_line
+  [[ -n "${key_file}" ]] || die "The authorized-key emitter requires a public key file"
+  key_line="$(coreelec_public_key_line "${key_file}")" || return 1
+  cat <<REMOTE_AUTHORIZED_KEY_HEADER
+set -eu
+umask 077
+ssh_dir="${root}/.ssh"
+REMOTE_AUTHORIZED_KEY_HEADER
+  cat <<'REMOTE_AUTHORIZED_KEY_PROLOGUE'
+authorized="${ssh_dir}/authorized_keys"
+candidate="${ssh_dir}/authorized_keys.provision-candidate"
+mkdir -p "${ssh_dir}"
+chmod 700 "${ssh_dir}"
+# An interrupted earlier attempt can leave a candidate whose mode, hard links,
+# or symlink target this run does not control, so the name is removed before
+# the key lands in a file this program creates under umask 077.
+rm -f "${candidate}"
+REMOTE_AUTHORIZED_KEY_PROLOGUE
+  cat <<REMOTE_AUTHORIZED_KEY_DATA
+cat > "\${candidate}" <<'COREELEC_ADMIN_PUBLIC_KEY'
+${key_line}
+COREELEC_ADMIN_PUBLIC_KEY
+REMOTE_AUTHORIZED_KEY_DATA
+  cat <<'REMOTE_AUTHORIZED_KEY_INSTALL'
+chmod 600 "${candidate}"
+test -s "${candidate}"
+key_blob="$(awk '{ print $2; exit }' "${candidate}")"
+test -n "${key_blob}"
+touch "${authorized}"
+chmod 600 "${authorized}"
+# Matching on the blob alone is what makes a retry idempotent: the comment may
+# differ between runs, the key material may not.
+if ! grep -Fq "${key_blob}" "${authorized}"; then
+  cat "${candidate}" >> "${authorized}"
+fi
+rm -f "${candidate}"
+chmod 600 "${authorized}"
+# The install only counts if the device can find the key it is about to be
+# asked to authenticate with.
+grep -Fq "${key_blob}" "${authorized}"
+REMOTE_AUTHORIZED_KEY_INSTALL
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
-  local name="$1" root="${2:-/storage}"
+  local name="$1" root="${2:-/storage}" key_file="${3:-}"
   case "${name}" in
     backup) coreelec_remote_backup_script "${root}" ;;
     payload) coreelec_remote_payload_script "${root}" ;;
@@ -1940,8 +2016,9 @@ coreelec_emit_remote_script() {
     finalize) coreelec_remote_finalize_script "${root}" ;;
     verify) coreelec_remote_verify_script "${root}" ;;
     verify-probe) coreelec_remote_verify_probe_source ;;
+    authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, or verify-probe, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, or authorized-key, not: ${name}"
       ;;
   esac
 }
@@ -1978,12 +2055,19 @@ while (( config_scan_index < ${#config_scan_args[@]} )); do
       (( config_scan_index + 1 < ${#config_scan_args[@]} )) \
         || die "--emit-remote-script requires NAME"
       emit_script_root="/storage"
+      emit_script_key=""
       if (( config_scan_index + 2 < ${#config_scan_args[@]} )); then
         emit_script_root="${config_scan_args[$((config_scan_index + 2))]}"
       fi
+      # The authorized-key emitter needs the public key file as well; every
+      # other emitter stops at ROOT.
+      if (( config_scan_index + 3 < ${#config_scan_args[@]} )); then
+        emit_script_key="${config_scan_args[$((config_scan_index + 3))]}"
+      fi
       coreelec_emit_remote_script \
         "${config_scan_args[$((config_scan_index + 1))]}" \
-        "${emit_script_root}"
+        "${emit_script_root}" \
+        "${emit_script_key}"
       exit 0
       ;;
     --render-remote-deploy-script)
@@ -3012,25 +3096,14 @@ install_public_key_if_needed() {
   info "Installing the administrator public key"
   info "Enter the temporary CoreELEC root password when SSH prompts."
 
-  if ! sed -e 's/\r$//' "${IDENTITY_FILE}.pub" | ssh_password 'sh -c '\''
-    set -eu
-    umask 077
-    mkdir -p /storage/.ssh
-    chmod 700 /storage/.ssh
-    candidate=/storage/.ssh/authorized_keys.provision-candidate
-    authorized=/storage/.ssh/authorized_keys
-    rm -f "${candidate}"
-    cat > "${candidate}"
-    test -s "${candidate}"
-    key_blob="$(awk '\''{ print $2; exit }'\'' "${candidate}")"
-    test -n "${key_blob}"
-    touch "${authorized}"
-    if ! grep -Fq "${key_blob}" "${authorized}"; then
-      cat "${candidate}" >> "${authorized}"
-    fi
-    rm -f "${candidate}"
-    chmod 600 "${authorized}"
-  '\'''; then
+  # The program is rendered (and the key validated) before the pipeline, so a
+  # malformed key file fails here instead of silently feeding an empty program
+  # to the device.
+  local install_program
+  install_program="$(coreelec_remote_authorized_key_script "/storage" "${IDENTITY_FILE}.pub")" \
+    || die "Could not build the SSH public key installation program from ${IDENTITY_FILE}.pub"
+
+  if ! printf '%s\n' "${install_program}" | ssh_password 'sh -s'; then
     die "Could not install the SSH public key. Confirm SSH is enabled and the temporary root password is correct."
   fi
 

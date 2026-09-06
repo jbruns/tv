@@ -371,10 +371,11 @@ file_mode() {
 
 render_remote_script() {
   local name="$1" root="$2"
+  shift 2
   if [[ "${name}" == "deploy" ]]; then
     bash "${PROVISIONER}" --render-remote-deploy-script "${root}"
   else
-    bash "${PROVISIONER}" --emit-remote-script "${name}" "${root}"
+    bash "${PROVISIONER}" --emit-remote-script "${name}" "${root}" "$@"
   fi
 }
 
@@ -1105,6 +1106,118 @@ test_rendered_remote_scripts_are_posix_clean() {
   done
 }
 
+# --- Administrator public-key installation -----------------------------------
+
+# Emulates what the device actually receives: the ssh client joins the
+# remote-command argv into one string with single spaces, and sshd hands that
+# whole string to the login shell as `-c`. Every quote the Mac writes into
+# that argv is therefore parsed a second time on the device, which is exactly
+# how a nested single-quoted program loses its quoting in transit.
+run_through_ssh_transport() {
+  local joined="$1"
+  shift
+  local word
+  for word in "$@"; do
+    joined="${joined} ${word}"
+  done
+  sh -c "${joined}"
+}
+
+# Writes one syntactically valid public key file. The CRLF is deliberate: a
+# key file that travelled through a clipboard or a Windows editor carries one,
+# and a carriage return inside authorized_keys makes the key unusable.
+write_fixture_public_key() {
+  local path="$1" blob="$2"
+  printf 'ssh-ed25519 %s coreelec-admin@fixture\r\n' "${blob}" > "${path}"
+}
+
+# The administrator key is installed over the single password session a run is
+# allowed, before any key exists, so this program gets exactly one attempt on
+# a device the operator is standing in front of. It must therefore reach the
+# device intact -- the program travels on stdin (`sh -s`), so the only argv
+# words are `sh` and `-s` and the device's login shell has nothing of ours to
+# re-parse -- and it must leave a usable, private authorized_keys behind.
+test_the_public_key_program_installs_the_key_through_the_device_login_shell() {
+  local dir root key_file program output rc blob candidate
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  mkdir -p "${root}"
+  key_file="${dir}/coreelec-admin.pub"
+  blob="AAAAC3NzaC1lZDI1NTE5AAAAIFixtureKeyBytesForProvisioningTests000"
+  write_fixture_public_key "${key_file}" "${blob}"
+  candidate="${root}/.ssh/authorized_keys.provision-candidate"
+
+  program="$(render_remote_script authorized-key "${root}" "${key_file}")"
+  if ! printf '%s\n' "${program}" | sh -n; then
+    printf 'rendered authorized-key script is not valid POSIX sh\n' >&2
+    return 1
+  fi
+
+  set +e
+  output="$(printf '%s\n' "${program}" | run_through_ssh_transport sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the key install program must survive the device shell: ${output}"
+  assert_eq "700" "$(file_mode "${root}/.ssh")" "the key directory stays private"
+  assert_eq "600" "$(file_mode "${root}/.ssh/authorized_keys")" "authorized_keys stays private"
+  assert_eq "1" "$(grep -c -F "${blob}" "${root}/.ssh/authorized_keys")" \
+    "the administrator key is installed exactly once"
+  assert_not_contains "$(cat "${root}/.ssh/authorized_keys")" "$(printf '\r')" \
+    "no carriage return reaches authorized_keys"
+  if [[ -e "${candidate}" ]]; then
+    printf 'the candidate file must never be left behind\n' >&2
+    return 1
+  fi
+
+  # A retry after a dropped connection, and an operator key that was already
+  # there: neither may be duplicated or lost.
+  printf 'ssh-rsa AAAAB3NzaC1yc2AAAAOperatorKeyBytes operator@fixture\n' \
+    >> "${root}/.ssh/authorized_keys"
+  set +e
+  output="$(printf '%s\n' "${program}" | run_through_ssh_transport sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "re-running the key install must succeed: ${output}"
+  assert_eq "1" "$(grep -c -F "${blob}" "${root}/.ssh/authorized_keys")" \
+    "a second run never duplicates the administrator key"
+  assert_eq "1" "$(grep -c -F "AAAAB3NzaC1yc2AAAAOperatorKeyBytes" "${root}/.ssh/authorized_keys")" \
+    "an existing operator key survives the install"
+  assert_eq "600" "$(file_mode "${root}/.ssh/authorized_keys")" \
+    "authorized_keys is still private after the second run"
+
+  # The key line is embedded in the program the device runs, so a file that is
+  # not one well-formed key line has to be refused on the Mac, before anything
+  # is sent and before it can close the here-document that carries it.
+  printf "evil' \$(touch %s/pwned) key\n" "${dir}" > "${key_file}"
+  set +e
+  output="$(render_remote_script authorized-key "${root}" "${key_file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a malformed public key file must be refused before any remote call"
+  if [[ -e "${dir}/pwned" ]]; then
+    printf 'a malformed key file must never execute anything\n' >&2
+    return 1
+  fi
+}
+
+# The defect this covers put the program in the ssh argv inside nested single
+# quotes, where the device's login shell closed the quote at the embedded awk
+# program and handed `sh -c` a program truncated mid-command substitution. The
+# transport is the fix, so the transport is what is asserted here.
+test_the_public_key_install_never_sends_a_quoted_program_in_the_ssh_argv() {
+  local source install_body
+  source="$(cat "${PROVISIONER}")"
+  install_body="$(printf '%s\n' "${source}" \
+    | sed -n '/^install_public_key_if_needed()/,/^}/p')"
+  assert_contains "${install_body}" "ssh_password 'sh -s'" \
+    "the key install program travels on stdin, not in the argv"
+  assert_not_contains "${install_body}" "sh -c" \
+    "no remote program is passed as a re-parsed argv word"
+  assert_not_contains "${install_body}" "awk" \
+    "the awk program never crosses the local, ssh, and device shells"
+}
+
 # --- Add-on selection tests --------------------------------------------------
 
 print_addon_selection() {
@@ -1750,6 +1863,8 @@ run_all_tests \
   test_automatic_rollback_restores_settings_written_before_the_failure \
   test_remote_stage_upload_replaces_a_stale_bundle \
   test_rendered_remote_scripts_are_posix_clean \
+  test_the_public_key_program_installs_the_key_through_the_device_login_shell \
+  test_the_public_key_install_never_sends_a_quoted_program_in_the_ssh_argv \
   test_addon_selection_defaults_to_the_locked_manifest \
   test_addon_selection_filters_to_requested_ids \
   test_addon_selection_rejects_an_unlocked_id \
