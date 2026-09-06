@@ -239,6 +239,56 @@ test_disabled_addon_is_failure() {
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
 }
 
+# A run that could not enable an add-on says which one, so the operator is not
+# left diffing the per-add-on block to find it.
+test_unresolved_enables_are_named_in_the_report() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon.plugin.video.youtube.enabled" "0"
+  set_observation "${observations}" "addon.plugin.video.youtube.enable_attempted" "1"
+  set_observation "${observations}" "addon.script.plexmod.enabled" "0"
+  set_observation "${observations}" "addon.script.plexmod.enable_attempted" "1"
+  set_observation "${observations}" "addon_enable_unresolved" \
+    "plugin.video.youtube script.plexmod"
+
+  set +e
+  output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an add-on that could not be enabled must fail verification" || return 1
+  assert_contains "${output}" "addon_enable_unresolved=plugin.video.youtube script.plexmod" \
+    "the exact unresolved add-ons are named" || return 1
+  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
+}
+
+# A run where Kodi settled on every add-on says nothing about unresolved ones.
+test_a_settled_run_reports_no_unresolved_enables() {
+  local dir config manifest observations output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon_enable_unresolved" ""
+
+  output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  assert_not_contains "${output}" "addon_enable_unresolved" \
+    "a settled run does not report an empty unresolved list" || return 1
+  assert_contains "${output}" "verification_result=pass" "overall result passes" || return 1
+}
+
 test_missing_addon_is_failure() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
@@ -1144,6 +1194,131 @@ STUB
   printf '%s\n' "${bin_dir}"
 }
 
+# Serves JSON-RPC in place of the device's curl with the enable semantics the
+# device actually showed. Kodi answers `Addons.SetAddonEnabled` with OK for any
+# installed add-on -- `CAddonMgr::EnableAddon` enables the dependency closure
+# deepest-first and returns true even when a step of that walk did not take --
+# so the reply is never evidence. What decides the outcome is the state at the
+# moment the request is served: an add-on whose dependencies are not enabled
+# yet stays disabled, which is exactly the residue the live run left behind
+# (chardet, idna, and urllib3 enabled; certifi and the requests module that
+# needs them still disabled).
+install_kodi_addon_state_stub() {
+  local dir="$1" bin_dir="$1/stub-bin"
+  mkdir -p "${bin_dir}" "${dir}/stub"
+  cat > "${dir}/stub/fake-kodi.py" <<'FAKE'
+import json
+import os
+import sys
+
+stub = os.environ["JSONRPC_STUB_DIR"]
+addons = json.load(open(os.path.join(stub, "addons.json")))
+state_path = os.path.join(stub, "enabled.json")
+if os.path.exists(state_path):
+    enabled = set(json.load(open(state_path)))
+else:
+    enabled = set()
+
+SETTINGS = {
+    "locale.language": "resource.language.en_us",
+    "locale.country": "USA (12h)",
+    "locale.keyboardlayouts": "English QWERTY",
+    "locale.timezonecountry": "United States",
+    "locale.timezone": "America/Los_Angeles",
+    "lookandfeel.skin": "skin.arctic.fuse.3",
+    "weather.addon": "weather.ha",
+}
+
+body = json.load(open(sys.argv[1]))
+if isinstance(body, dict):
+    body = [body]
+replies = []
+for entry in body:
+    ident = entry.get("id")
+    method = entry.get("method")
+    params = entry.get("params") or {}
+    if method == "JSONRPC.Version":
+        replies.append({"jsonrpc": "2.0", "id": ident,
+                        "result": {"version": {"major": 13, "minor": 5,
+                                               "patch": 0}}})
+    elif method == "Settings.GetSettingValue":
+        replies.append({"jsonrpc": "2.0", "id": ident,
+                        "result": {"value": SETTINGS.get(params.get("setting"), "")}})
+    elif method == "Addons.GetAddonDetails":
+        addon_id = params.get("addonid")
+        details = addons.get(addon_id)
+        if details is None:
+            replies.append({"jsonrpc": "2.0", "id": ident,
+                            "error": {"code": -32602, "message": "Invalid params."}})
+        else:
+            replies.append({"jsonrpc": "2.0", "id": ident,
+                            "result": {"addon": {"addonid": addon_id,
+                                                 "version": details["version"],
+                                                 "enabled": addon_id in enabled}}})
+    elif method == "Addons.SetAddonEnabled":
+        addon_id = params.get("addonid")
+        details = addons.get(addon_id)
+        if details is None:
+            replies.append({"jsonrpc": "2.0", "id": ident,
+                            "error": {"code": -32602, "message": "Invalid params."}})
+        else:
+            if all(dep in enabled for dep in details.get("requires", [])):
+                enabled.add(addon_id)
+            replies.append({"jsonrpc": "2.0", "id": ident, "result": "OK"})
+    else:
+        replies.append({"jsonrpc": "2.0", "id": ident,
+                        "error": {"code": -32601, "message": "Method not found."}})
+
+json.dump(sorted(enabled), open(state_path, "w"))
+sys.stdout.write(json.dumps(replies))
+FAKE
+  cat > "${bin_dir}/curl" <<'STUB'
+#!/bin/bash
+set -u
+while (( $# > 0 )); do
+  case "$1" in
+    --config) shift 2 ;;
+    *) shift ;;
+  esac
+done
+count_file="${JSONRPC_STUB_DIR}/call-count"
+count=0
+[[ -f "${count_file}" ]] && count="$(cat "${count_file}")"
+count=$((count + 1))
+printf '%s\n' "${count}" > "${count_file}"
+cat > "${JSONRPC_STUB_DIR}/request-${count}.json"
+cut_off="${JSONRPC_STUB_DIR}/cut-off-call"
+if [[ -f "${cut_off}" && "$(cat "${cut_off}")" == "${count}" ]]; then
+  # What curl does when `max-time` runs out: no answer, nothing applied.
+  exit 28
+fi
+python3 "${JSONRPC_STUB_DIR}/fake-kodi.py" "${JSONRPC_STUB_DIR}/request-${count}.json"
+STUB
+  chmod +x "${bin_dir}/curl"
+  printf '%s\n' "${bin_dir}"
+}
+
+# States what the fake device has installed: `id|version|dep,dep` per line.
+# Every listed add-on starts disabled, the way a fresh unzip does.
+write_stub_addons() {
+  local file="$1"
+  python3 -c '
+import json
+import sys
+
+addons = {}
+for line in sys.stdin.read().splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    fields = (line.split("|") + ["", ""])[:3]
+    addons[fields[0]] = {"version": fields[1],
+                         "requires": [dep for dep in fields[2].split(",") if dep]}
+with open(sys.argv[1], "w") as handle:
+    json.dump(addons, handle)
+' "${file}"
+}
+
 # Builds a JSON-RPC batch response for the fixed probe request set.
 write_jsonrpc_response() {
   local file="$1" youtube_enabled="$2"
@@ -1234,7 +1409,9 @@ install_probe_path_without_curl() {
 }
 
 # Writes the probe request in the same base64 KEY=value grammar the settings
-# payload uses, so no secret ever appears in an argument list.
+# payload uses, so no secret ever appears in an argument list. A literal `\\n`
+# in a value becomes a newline, because the production request carries the
+# add-on list as one multi-line value.
 write_probe_request() {
   local file="$1" line key value
   : > "${file}"
@@ -1243,6 +1420,7 @@ write_probe_request() {
     [[ -n "${line}" ]] || continue
     key="${line%%=*}"
     value="${line#*=}"
+    value="${value//\\n/$'\n'}"
     printf '%s=%s\n' "${key}" "$(printf '%s' "${value}" | openssl base64 -A)" >> "${file}"
   done
 }
@@ -1490,6 +1668,139 @@ ENTRIES
   assert_eq "3" "$(cat "${dir}/stub/call-count")" "query, enable, re-query" || return 1
 }
 
+# One pass cannot settle this. The deployment manifest lists primary add-ons
+# before the modules they depend on, and Kodi leaves a dependent disabled when
+# its dependency is not enabled at the moment the request is served, so a
+# single sweep enables dependencies and reports their dependents disabled --
+# which is what the live run recorded. The probe must keep asking until Kodi
+# reports a settled state.
+test_remote_verify_probe_converges_on_dependency_ordered_enables() {
+  local dir root bin_dir request output calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_kodi_addon_state_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_stub_addons "${dir}/stub/addons.json" <<'ADDONS'
+plugin.video.youtube|7.4.4|script.module.requests
+script.module.requests|2.31.0|script.module.certifi
+script.module.certifi|2023.5.7|
+ADDONS
+  # Manifest order: the dependent first, its dependency's dependency last.
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=plugin.video.youtube\nscript.module.requests\nscript.module.certifi
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "addon.script.module.certifi.enabled=1" \
+    "the leaf dependency is enabled" || return 1
+  assert_contains "${output}" "addon.script.module.requests.enabled=1" \
+    "a dependency enabled in an earlier pass lets its dependent enable" || return 1
+  assert_contains "${output}" "addon.plugin.video.youtube.enabled=1" \
+    "the probe keeps asking until the dependent is enabled too" || return 1
+  assert_contains "${output}" "addon.plugin.video.youtube.enable_attempted=1" \
+    "the enable attempt is recorded" || return 1
+  assert_contains "${output}" "addon.script.module.certifi.enable_attempted=1" \
+    "an add-on attempted in an earlier round keeps its attempt recorded" || return 1
+  assert_contains "${output}" "addon_enable_unresolved=" \
+    "the unresolved set is always stated" || return 1
+  assert_not_contains "${output}" "addon_enable_unresolved=plugin" \
+    "nothing is left unresolved once Kodi reports every add-on enabled" || return 1
+  calls="$(cat "${dir}/stub/call-count")"
+  if (( calls > 24 )); then
+    printf 'the probe made %s JSON-RPC calls to settle three add-ons\n' "${calls}" >&2
+    return 1
+  fi
+}
+
+# An add-on Kodi will never enable must not spin the probe and must not be
+# smoothed over: the run names it and fails.
+test_remote_verify_probe_fails_closed_on_an_addon_it_cannot_enable() {
+  local dir root bin_dir request output calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_kodi_addon_state_stub "${dir}")"
+  request="${dir}/request.conf"
+  # weather.ha needs a module this device does not have installed at all, so
+  # no number of passes can enable it.
+  write_stub_addons "${dir}/stub/addons.json" <<'ADDONS'
+weather.ha|0.0.6.6|script.module.requests
+resource.language.en_us|11.0.82|
+ADDONS
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha\nresource.language.en_us
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "addon.weather.ha.enabled=0" \
+    "an add-on Kodi never enabled is not reported enabled" || return 1
+  assert_contains "${output}" "addon.weather.ha.enable_attempted=1" \
+    "the attempt is still recorded" || return 1
+  assert_contains "${output}" "addon.resource.language.en_us.enabled=1" \
+    "the add-ons that can be enabled still are" || return 1
+  assert_contains "${output}" "addon_enable_unresolved=weather.ha" \
+    "the exact unresolved add-on is named" || return 1
+  assert_not_contains "${output}" "kodi-web-password-secret" \
+    "no Kodi password leaves the device" || return 1
+  calls="$(cat "${dir}/stub/call-count")"
+  if (( calls > 24 )); then
+    printf 'the probe retried an add-on that cannot be enabled %s times\n' "${calls}" >&2
+    return 1
+  fi
+}
+
+# A request curl gave up on is not an answer. The state Kodi reports right
+# after one is not evidence that nothing more can happen, so a round that was
+# cut short must not be read as "this device has settled".
+test_remote_verify_probe_keeps_going_when_an_enable_request_is_cut_off() {
+  local dir root bin_dir request output calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_kodi_addon_state_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_stub_addons "${dir}/stub/addons.json" <<'ADDONS'
+weather.ha|0.0.6.6|
+ADDONS
+  # Call 1 is the first query, so call 2 is the first enable request.
+  printf '2\n' > "${dir}/stub/cut-off-call"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "addon.weather.ha.enabled=1" \
+    "the add-on is asked again after a request that was cut off" || return 1
+  assert_contains "${output}" "addon.weather.ha.enable_attempted=1" \
+    "the enable attempt is recorded" || return 1
+  assert_not_contains "${output}" "addon_enable_unresolved=weather.ha" \
+    "an add-on that did settle is not reported unresolved" || return 1
+  calls="$(cat "${dir}/stub/call-count")"
+  if (( calls > 24 )); then
+    printf 'the probe made %s JSON-RPC calls to settle one add-on\n' "${calls}" >&2
+    return 1
+  fi
+}
+
 test_remote_verify_probe_reports_a_missing_addon() {
   local dir root bin_dir request output
   dir="$(make_scratch_dir)"
@@ -1545,6 +1856,8 @@ ENTRIES
 run_all_tests \
   test_all_expected_addon_versions_are_verified \
   test_disabled_addon_is_failure \
+  test_unresolved_enables_are_named_in_the_report \
+  test_a_settled_run_reports_no_unresolved_enables \
   test_missing_addon_is_failure \
   test_addon_version_mismatch_is_failure \
   test_active_skin_is_verified \
@@ -1580,5 +1893,8 @@ run_all_tests \
   test_remote_verify_probe_judges_device_date_against_the_requested_zone \
   test_remote_verify_probe_fails_immediately_when_curl_is_missing \
   test_remote_verify_probe_enables_a_disabled_addon_over_jsonrpc \
+  test_remote_verify_probe_converges_on_dependency_ordered_enables \
+  test_remote_verify_probe_fails_closed_on_an_addon_it_cannot_enable \
+  test_remote_verify_probe_keeps_going_when_an_enable_request_is_cut_off \
   test_remote_verify_probe_reports_a_missing_addon \
   test_remote_verify_probe_uses_a_private_curl_config_and_removes_it

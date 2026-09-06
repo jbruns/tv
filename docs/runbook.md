@@ -95,6 +95,13 @@ The device verifies its own Pacific/English-US baseline over localhost and repor
 - `regional.localtime.status` compares `/etc/localtime` against the requested zone, accepting either a symlink into zoneinfo or a byte-identical copy (`regional.localtime.match`) — both CoreELEC layouts are recognized.
 - `regional.date_offset.status` compares the device's reported UTC offset against the expected one from `date +%Z%z`. `/etc/localtime`, its zoneinfo content, and Kodi's own timezone setting are checked strictly first (above); `date +%Z%z` is only a BusyBox capability question on top of that. A malformed or unavailable `date +%Z%z` output is advisory only and reads `unavailable` — it never fails a deployment by itself (BusyBox `date` formatting is not guaranteed). But once the output is well-formed, a genuine offset mismatch (`regional.date_offset.status=mismatch`) **is** a verification failure that counts toward `verification_failures` and triggers rollback like any other failed check. Confirm the displayed date/time on screen if this reads `unavailable`.
 
+### Add-on enabling
+
+Add-ons are unzipped while Kodi is stopped, so Kodi decides on its own start which of them it will enable. The device asks Kodi over localhost JSON-RPC to enable every add-on it reports installed-but-disabled, then asks Kodi again, and repeats while the answer keeps changing — one pass is not enough, because Kodi leaves an add-on disabled when a module it depends on is not enabled yet, and the deployment manifest lists primary add-ons before those modules.
+
+- `addon.<id>.enable_attempted=1` means this run asked Kodi to enable that add-on in at least one pass; `addon.<id>.enabled` is what Kodi reported afterwards, never what was asked.
+- `addon_enable_unresolved=<ids>` appears only when Kodi still reported an add-on disabled after the passes stopped changing anything. Those add-ons are already counted in `verification_failures` and the run rolls back; the line names them so the failure is actionable. Check the add-on's dependencies on the device (**Settings → Add-ons → My add-ons**) and re-run `--target`.
+
 ### Restoration/retry after a failed run
 
 - `deployment_state=rolled-back` means the device already restored itself; nothing further is required before retrying `--target`.

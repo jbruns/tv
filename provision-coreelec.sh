@@ -1364,6 +1364,12 @@ ZONEINFO_ROOTS = [
     "etc/zoneinfo",
 ]
 
+# How many times the probe may ask Kodi to enable what it still reports
+# disabled. Each round costs one request per remaining add-on plus one query,
+# and the loop also stops as soon as a round changes nothing, so this is only
+# the ceiling for a device that keeps making progress.
+ENABLE_ROUNDS = 6
+
 OBSERVATIONS = []
 
 
@@ -1512,6 +1518,86 @@ def addon_state(entry):
     return (1,
             details.get("version") or "",
             1 if details.get("enabled") else 0)
+
+
+def disabled_installed_addons(entries, addon_ids):
+    """The installed add-ons Kodi still reports disabled, in request order. An
+    add-on Kodi does not have is not enabled here -- a missing add-on is a
+    deployment failure, not something to switch on."""
+    pending = []
+    for addon_id in addon_ids:
+        installed, _version, enabled = addon_state(entries.get("addon:" + addon_id))
+        if installed and not enabled:
+            pending.append(addon_id)
+    return pending
+
+
+def request_enable(curl_config, url, addon_id):
+    """Asks Kodi to enable exactly one add-on. Answers whether the request was
+    served at all.
+
+    One request per add-on rather than one batch for all of them: nothing
+    here may assume the order Kodi serves a batch in, and a single request
+    that is cut short -- a slow enable, a closed connection -- would take
+    every add-on behind it with it.
+
+    The content of the reply is deliberately not read. `Addons.SetAddonEnabled`
+    answers OK for anything installed because Kodi's enable call walks the
+    add-on's dependency closure deepest-first and reports success even when a
+    step of that walk did not take. Only a fresh query is evidence. Whether an
+    answer arrived at all is a different fact, and that one matters: a request
+    curl gave up on may have changed nothing.
+    """
+    return call_jsonrpc(curl_config, url,
+                        [{"jsonrpc": "2.0",
+                          "id": "enable:" + addon_id,
+                          "method": "Addons.SetAddonEnabled",
+                          "params": {"addonid": addon_id,
+                                     "enabled": True}}]) is not None
+
+
+def converge_enabled_addons(curl_config, url, addon_ids, entries):
+    """Enables every installed add-on Kodi reports disabled, asks Kodi again,
+    and repeats until it reports them all enabled, stops changing its answer,
+    or the round bound is reached.
+
+    One pass cannot settle this. The deployment manifest lists primary add-ons
+    before the modules they depend on, and Kodi leaves a dependent disabled
+    when its dependency is not enabled at the moment the request is served --
+    so a pass enables dependencies and reports their dependents disabled. The
+    dependents have to be asked again *after* that, which is what each further
+    round does.
+
+    Rounds are driven by what Kodi reports rather than by waiting: the next
+    round exists only because the re-query showed the state changed, or
+    because a request in that round was never served and so proved nothing. A
+    round that was fully served and changed nothing ends the loop, so an
+    add-on Kodi will not enable is reported unresolved instead of retried to
+    the bound.
+
+    Returns (entries, attempted, unresolved).
+    """
+    attempted = []
+    for _round in range(ENABLE_ROUNDS):
+        pending = disabled_installed_addons(entries, addon_ids)
+        if not pending:
+            break
+        served = True
+        for addon_id in pending:
+            if addon_id not in attempted:
+                attempted.append(addon_id)
+            if not request_enable(curl_config, url, addon_id):
+                served = False
+        requeried = index_responses(
+            call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+        if not requeried or not jsonrpc_version(requeried):
+            # Kodi stopped answering. The last state it did report stands,
+            # and an add-on left disabled in it stays a failure.
+            break
+        entries = requeried
+        if served and set(disabled_installed_addons(entries, addon_ids)) == set(pending):
+            break
+    return entries, attempted, disabled_installed_addons(entries, addon_ids)
 
 
 def setting_value(entries, setting_id):
@@ -1766,26 +1852,11 @@ def main(argv):
             fail("Kodi did not answer authenticated JSON-RPC on %s" % url)
 
         # An installed add-on that Kodi left disabled is enabled here through
-        # JSON-RPC (never a modal dialog) and then re-queried, so the reported
-        # state is what Kodi observes afterwards rather than what was asked.
-        disabled = []
-        for addon_id in addon_ids:
-            installed, _version, enabled = addon_state(
-                entries.get("addon:" + addon_id))
-            if installed and not enabled:
-                disabled.append(addon_id)
-        if disabled:
-            enable_batch = [{"jsonrpc": "2.0",
-                             "id": "enable:" + addon_id,
-                             "method": "Addons.SetAddonEnabled",
-                             "params": {"addonid": addon_id,
-                                        "enabled": True}}
-                            for addon_id in disabled]
-            call_jsonrpc(curl_config, url, enable_batch)
-            requeried = index_responses(
-                call_jsonrpc(curl_config, url, query_batch(addon_ids)))
-            if requeried:
-                entries = requeried
+        # JSON-RPC (never a modal dialog), and Kodi is then asked again --
+        # round after round -- so the reported state is what Kodi observes
+        # once it has settled rather than what a single pass asked for.
+        entries, enable_attempted, enable_unresolved = converge_enabled_addons(
+            curl_config, url, addon_ids, entries)
     finally:
         if os.path.lexists(curl_config):
             os.remove(curl_config)
@@ -1815,7 +1886,12 @@ def main(argv):
         observe("addon.%s.version" % addon_id, version)
         observe("addon.%s.enabled" % addon_id, enabled)
         observe("addon.%s.enable_attempted" % addon_id,
-                1 if addon_id in disabled else 0)
+                1 if addon_id in enable_attempted else 0)
+
+    # The add-ons Kodi was asked for and still reports disabled, named exactly.
+    # An add-on ID is not a secret, and naming them is what tells the operator
+    # which ones to look at.
+    observe("addon_enable_unresolved", " ".join(enable_unresolved))
 
     def addon_data(addon_id, name):
         return os.path.join(storage_root, ".kodi", "userdata", "addon_data",
@@ -2576,6 +2652,15 @@ verify_remote_baseline() {
       failures=$((failures + 1))
     fi
   done < "${manifest}"
+
+  # The add-ons the device asked Kodi to enable and Kodi still reports
+  # disabled, named exactly. Each one already counted as a failure above; this
+  # line says which they were, so the operator does not have to read the whole
+  # per-add-on block to find out. An add-on ID is not a secret.
+  value="$(coreelec_observation_value addon_enable_unresolved "${observations}" || true)"
+  if [[ -n "${value}" ]]; then
+    printf 'addon_enable_unresolved=%s\n' "${value}"
+  fi
 
   # Files this run configured are checked on the device, which returns a
   # boolean rather than the stored token, key, or PIN.
