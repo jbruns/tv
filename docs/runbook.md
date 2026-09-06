@@ -68,12 +68,20 @@ Each run writes a redacted, `key=value` report to `<REPORT_DIR>/<target>-<UTC-ti
 - `regional.localtime.status` and `regional.date_offset.status` (regional verification, below).
 - The numbered `manual_action.*` lines — the interactive steps left for you, in a fixed order.
 
-### Emby and YouTube: manual authorization required
+### Guided account authorization after deployment
 
-Emby for Kodi and the official Kodi YouTube add-on are always reported `installed-manual`, regardless of any credentials supplied:
+Emby for Kodi is still fully manual: it stores its server and user session in its own database, so open Kodi and select/sign in to the Emby server from the add-on itself.
 
-- **Emby** stores its server and user session in its own database; open Kodi and select/sign in to the Emby server from the add-on itself.
-- **YouTube** requires completing Google's device (OAuth) authorization inside the add-on; `YOUTUBE_API_KEY`/`YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` seed the API keys file but cannot sign an account in.
+For the pinned PM4K and YouTube builds, the post-deployment helper can launch the add-on's own account flow without typing on the TV:
+
+```bash
+./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive --addon script.plexmod
+./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive --addon plugin.video.youtube
+```
+
+- **PM4K account mode** (`script.plexmod` `1.14.1-beta1`): launches PM4K, waits for the pinned English-US `Sign In` control, selects it, and tells you to finish the displayed code at `https://plex.tv/link`. It only reports boolean token presence; it never prints the token itself.
+- **YouTube** (`plugin.video.youtube` `7.4.4`): opens `plugin://plugin.video.youtube/sign/in/` in Kodi's Videos window, dismisses only the pinned introductory `OK` dialog, then leaves Google's device-code creation/polling/token storage inside the add-on. Version `7.4.4` may ask you to approve more than one Google code.
+- Both guided flows are version-gated against the add-on versions pinned in `config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf`. If the installed version or expected English-US GUI label does not match, or the deadline expires, the helper returns `manual-required` and you must continue from the TV yourself.
 
 ### Post-deployment unattended service validation
 

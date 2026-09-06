@@ -236,11 +236,8 @@ kodi_gui_state() {
   kodi_rpc "GUI.GetProperties" '{"properties":["currentwindow","currentcontrol"]}'
 }
 
-require_gui_state() {
-  local expected_window expected_control response parsed observed_window observed_control
-  expected_window="$(coreelec_trim_surrounding_whitespace "$1")"
-  expected_control="$(coreelec_trim_surrounding_whitespace "$2")"
-  response="$(kodi_gui_state)" || return 1
+coreelec_postdeploy_parse_gui_state() {
+  local response="$1" parsed observed_window observed_control
   parsed="$(printf '%s' "${response}" | python3 -c '
 import json
 import sys
@@ -268,13 +265,356 @@ sys.stdout.write("%s\n%s\n" % (window.get("label", ""), control.get("label", "")
 
   KODI_GUI_WINDOW_LABEL="${observed_window}"
   KODI_GUI_CONTROL_LABEL="${observed_control}"
+  return 0
+}
 
-  if [[ "${observed_window}" != "${expected_window}" || "${observed_control}" != "${expected_control}" ]]; then
+capture_gui_state() {
+  local response
+  response="$(kodi_gui_state)" || return 1
+  coreelec_postdeploy_parse_gui_state "${response}"
+}
+
+require_gui_state() {
+  local expected_window expected_control
+  expected_window="$(coreelec_trim_surrounding_whitespace "$1")"
+  expected_control="$(coreelec_trim_surrounding_whitespace "$2")"
+  capture_gui_state || return 1
+  if [[ "${KODI_GUI_WINDOW_LABEL}" != "${expected_window}" || "${KODI_GUI_CONTROL_LABEL}" != "${expected_control}" ]]; then
     printf 'manual-required: expected window=%s control=%s observed window=%s control=%s\n' \
-      "${expected_window}" "${expected_control}" "${observed_window}" "${observed_control}" >&2
+      "${expected_window}" "${expected_control}" "${KODI_GUI_WINDOW_LABEL}" "${KODI_GUI_CONTROL_LABEL}" >&2
     return 1
   fi
   return 0
+}
+
+coreelec_postdeploy_pinned_addon_version() {
+  local wanted="$1" record addon_id remainder version
+  for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
+    addon_id="${record%%|*}"
+    remainder="${record#*|}"
+    version="${remainder%%|*}"
+    if [[ "${addon_id}" == "${wanted}" ]]; then
+      printf '%s\n' "${version}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+coreelec_postdeploy_addon_version() {
+  local addon_id="$1" response
+  response="$(kodi_rpc "Addons.GetAddonDetails" "{\"addonid\":\"${addon_id}\",\"properties\":[\"version\"]}")" \
+    || return 1
+  RESPONSE_JSON="${response}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(os.environ["RESPONSE_JSON"])
+except Exception:
+    raise SystemExit(1)
+
+if payload.get("error"):
+    raise SystemExit(1)
+
+addon = payload.get("result", {}).get("addon")
+if not isinstance(addon, dict):
+    raise SystemExit(1)
+
+version = addon.get("version")
+if not isinstance(version, str) or not version:
+    raise SystemExit(1)
+
+sys.stdout.write(version)
+PYEOF
+}
+
+coreelec_postdeploy_require_pinned_addon_version() {
+  local addon_id="$1" observe_prefix="$2" expected_version observed_version
+  expected_version="$(coreelec_postdeploy_pinned_addon_version "${addon_id}" 2>/dev/null || true)"
+  observed_version="$(coreelec_postdeploy_addon_version "${addon_id}" 2>/dev/null || true)"
+  [[ -n "${expected_version}" ]] && coreelec_postdeploy_observe "${observe_prefix}.requested_version" "${expected_version}"
+  [[ -n "${observed_version}" ]] && coreelec_postdeploy_observe "${observe_prefix}.observed_version" "${observed_version}"
+  if [[ -z "${expected_version}" || -z "${observed_version}" || "${observed_version}" != "${expected_version}" ]]; then
+    coreelec_postdeploy_observe "${observe_prefix}.failure" "version-mismatch"
+    return 1
+  fi
+  return 0
+}
+
+coreelec_postdeploy_read_addon_data_file() {
+  local addon_id="$1" relative_path="$2" remote_command
+  [[ -n "${TARGET:-}" ]] || die "TARGET is required before calling coreelec_postdeploy_read_addon_data_file"
+  [[ -n "${SSH_PORT:-}" ]] || die "SSH_PORT is required before calling coreelec_postdeploy_read_addon_data_file"
+  remote_command="$(cat <<EOF
+set -eu
+path="\${HOME}/.kodi/userdata/addon_data/${addon_id}/${relative_path}"
+if [ -f "\${path}" ]; then
+  cat "\${path}"
+fi
+EOF
+)"
+  ssh -p "${SSH_PORT}" "${TARGET}" sh -c "${remote_command}"
+}
+
+coreelec_postdeploy_pm4k_account_token_present() {
+  local settings_xml
+  settings_xml="$(coreelec_postdeploy_read_addon_data_file "script.plexmod" "settings.xml")" || return 1
+  SETTINGS_XML="${settings_xml}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+text = os.environ.get("SETTINGS_XML", "")
+if not text.strip():
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    root = ET.fromstring(text)
+except Exception:
+    raise SystemExit(1)
+
+settings = {}
+for node in root.findall(".//setting"):
+    setting_id = node.attrib.get("id", "")
+    value = (node.text or "").strip()
+    settings[setting_id] = value
+
+token = settings.get("auth.token", "").strip()
+if not token:
+    account_state = settings.get("myplex.MyPlexAccount", "").strip()
+    if account_state:
+        try:
+            token = (json.loads(account_state).get("authToken") or "").strip()
+        except Exception:
+            raise SystemExit(1)
+
+sys.stdout.write("1" if token else "0")
+PYEOF
+}
+
+coreelec_postdeploy_youtube_token_present() {
+  local access_manager_json
+  access_manager_json="$(coreelec_postdeploy_read_addon_data_file "plugin.video.youtube" "access_manager.json")" || return 1
+  ACCESS_MANAGER_JSON="${access_manager_json}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+
+text = os.environ.get("ACCESS_MANAGER_JSON", "")
+if not text.strip():
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    payload = json.loads(text)
+except Exception:
+    raise SystemExit(1)
+
+def has_token(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in ("access_token", "refresh_token") and isinstance(item, str) and item.strip():
+                return True
+            if has_token(item):
+                return True
+    elif isinstance(value, list):
+        for item in value:
+            if has_token(item):
+                return True
+    return False
+
+sys.stdout.write("1" if has_token(payload) else "0")
+PYEOF
+}
+
+coreelec_postdeploy_guided_timeout_seconds() {
+  local value="${COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS:-300}"
+  case "${value}" in
+    ''|*[!0-9]*) value="300" ;;
+  esac
+  printf '%s\n' "${value}"
+}
+
+coreelec_postdeploy_guided_poll_interval_seconds() {
+  local value="${COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS:-5}"
+  case "${value}" in
+    ''|*[!0-9]*) value="5" ;;
+  esac
+  printf '%s\n' "${value}"
+}
+
+coreelec_postdeploy_guided_poll_limit() {
+  local timeout_seconds interval_seconds divisor
+  timeout_seconds="$(coreelec_postdeploy_guided_timeout_seconds)"
+  interval_seconds="$(coreelec_postdeploy_guided_poll_interval_seconds)"
+  divisor="${interval_seconds}"
+  if (( divisor < 1 )); then
+    divisor=1
+  fi
+  printf '%s\n' "$((timeout_seconds / divisor + 1))"
+}
+
+coreelec_postdeploy_gui_state_matches() {
+  local expected_window expected_control
+  expected_window="$(coreelec_trim_surrounding_whitespace "$1")"
+  expected_control="$(coreelec_trim_surrounding_whitespace "$2")"
+  capture_gui_state || return 1
+  [[ "${KODI_GUI_WINDOW_LABEL}" == "${expected_window}" && "${KODI_GUI_CONTROL_LABEL}" == "${expected_control}" ]]
+}
+
+coreelec_postdeploy_gui_control_matches() {
+  local expected_control
+  expected_control="$(coreelec_trim_surrounding_whitespace "$1")"
+  capture_gui_state || return 1
+  [[ "${KODI_GUI_CONTROL_LABEL}" == "${expected_control}" ]]
+}
+
+coreelec_postdeploy_guided_select() {
+  local response
+  response="$(kodi_rpc "Input.ExecuteAction" '{"action":"select"}')" || return 1
+  coreelec_postdeploy_kodi_call_ok "${response}"
+}
+
+coreelec_postdeploy_guided_observe_token_state() {
+  local observe_key="$1" token_present="$2"
+  coreelec_postdeploy_observe "${observe_key}" "${token_present}"
+}
+
+authorize_pm4k_account() {
+  local token_present launch_response attempts attempt interval_seconds sign_in_selected=0
+  coreelec_postdeploy_require_pinned_addon_version "script.plexmod" "service.script.plexmod" || {
+    printf 'manual-required\n'
+    return 0
+  }
+
+  token_present="$(coreelec_postdeploy_pm4k_account_token_present 2>/dev/null || true)"
+  if [[ ! "${token_present}" =~ ^[01]$ ]]; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "token-state-unreadable"
+    printf 'manual-required\n'
+    return 0
+  fi
+  coreelec_postdeploy_guided_observe_token_state "service.script.plexmod.account_token_present" "${token_present}"
+  if [[ "${token_present}" == "1" ]]; then
+    printf 'already-configured\n'
+    return 0
+  fi
+
+  launch_response="$(kodi_rpc "Addons.ExecuteAddon" '{"addonid":"script.plexmod"}')" || {
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "kodi-rpc"
+    printf 'manual-required\n'
+    return 0
+  }
+  if ! coreelec_postdeploy_kodi_call_ok "${launch_response}"; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "kodi-rpc"
+    printf 'manual-required\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.script.plexmod.kodi_execute" "ok"
+  coreelec_postdeploy_observe "service.script.plexmod.next_action" "complete-link-at-https://plex.tv/link"
+
+  attempts="$(coreelec_postdeploy_guided_poll_limit)"
+  interval_seconds="$(coreelec_postdeploy_guided_poll_interval_seconds)"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if (( sign_in_selected == 0 )) && coreelec_postdeploy_gui_control_matches "Sign In"; then
+      if ! coreelec_postdeploy_guided_select; then
+        coreelec_postdeploy_observe "service.script.plexmod.failure" "kodi-rpc"
+        printf 'manual-required\n'
+        return 0
+      fi
+      coreelec_postdeploy_observe "service.script.plexmod.sign_in" "selected"
+      sign_in_selected=1
+    fi
+
+    token_present="$(coreelec_postdeploy_pm4k_account_token_present 2>/dev/null || true)"
+    if [[ ! "${token_present}" =~ ^[01]$ ]]; then
+      coreelec_postdeploy_observe "service.script.plexmod.failure" "token-state-unreadable"
+      printf 'manual-required\n'
+      return 0
+    fi
+    coreelec_postdeploy_guided_observe_token_state "service.script.plexmod.account_token_present" "${token_present}"
+    if [[ "${token_present}" == "1" ]]; then
+      printf 'configured\n'
+      return 0
+    fi
+
+    if (( attempt < attempts && interval_seconds > 0 )); then
+      sleep "${interval_seconds}"
+    fi
+  done
+
+  coreelec_postdeploy_observe "service.script.plexmod.failure" "timeout"
+  printf 'manual-required\n'
+}
+
+authorize_youtube() {
+  local token_present launch_response attempts attempt interval_seconds intro_dismissed=0
+  coreelec_postdeploy_require_pinned_addon_version "plugin.video.youtube" "service.plugin.video.youtube" || {
+    printf 'manual-required\n'
+    return 0
+  }
+
+  token_present="$(coreelec_postdeploy_youtube_token_present 2>/dev/null || true)"
+  if [[ ! "${token_present}" =~ ^[01]$ ]]; then
+    coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "token-state-unreadable"
+    printf 'manual-required\n'
+    return 0
+  fi
+  coreelec_postdeploy_guided_observe_token_state "service.plugin.video.youtube.account_token_present" "${token_present}"
+  if [[ "${token_present}" == "1" ]]; then
+    printf 'already-configured\n'
+    return 0
+  fi
+
+  launch_response="$(kodi_rpc "GUI.ActivateWindow" '{"window":"videos","parameters":["plugin://plugin.video.youtube/sign/in/"]}')" || {
+    coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "kodi-rpc"
+    printf 'manual-required\n'
+    return 0
+  }
+  if ! coreelec_postdeploy_kodi_call_ok "${launch_response}"; then
+    coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "kodi-rpc"
+    printf 'manual-required\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.plugin.video.youtube.kodi_activate" "ok"
+  coreelec_postdeploy_observe "service.plugin.video.youtube.note" "multiple-google-codes-possible-in-7.4.4"
+
+  attempts="$(coreelec_postdeploy_guided_poll_limit)"
+  interval_seconds="$(coreelec_postdeploy_guided_poll_interval_seconds)"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if (( intro_dismissed == 0 )) \
+      && coreelec_postdeploy_gui_state_matches "Please sign in and complete all access authorisation prompts" "OK"; then
+      if ! coreelec_postdeploy_guided_select; then
+        coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "kodi-rpc"
+        printf 'manual-required\n'
+        return 0
+      fi
+      coreelec_postdeploy_observe "service.plugin.video.youtube.intro_dialog" "dismissed"
+      intro_dismissed=1
+    fi
+
+    token_present="$(coreelec_postdeploy_youtube_token_present 2>/dev/null || true)"
+    if [[ ! "${token_present}" =~ ^[01]$ ]]; then
+      coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "token-state-unreadable"
+      printf 'manual-required\n'
+      return 0
+    fi
+    coreelec_postdeploy_guided_observe_token_state "service.plugin.video.youtube.account_token_present" "${token_present}"
+    if [[ "${token_present}" == "1" ]]; then
+      printf 'configured\n'
+      return 0
+    fi
+
+    if (( attempt < attempts && interval_seconds > 0 )); then
+      sleep "${interval_seconds}"
+    fi
+  done
+
+  coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "timeout"
+  printf 'manual-required\n'
 }
 
 coreelec_postdeploy_weather_ready() {
@@ -849,12 +1189,19 @@ run_addon_workflow() {
       if coreelec_postdeploy_pm4k_local_ready; then
         check_pm4k_local
       elif [[ "${INTERACTIVE:-0}" == "1" ]]; then
-        printf 'manual-required\n'
+        authorize_pm4k_account
       else
         printf 'authorization-required\n'
       fi
       ;;
-    plugin.video.youtube|plugin.service.emby-next-gen)
+    plugin.video.youtube)
+      if [[ "${INTERACTIVE:-0}" == "1" ]]; then
+        authorize_youtube
+      else
+        printf 'authorization-required\n'
+      fi
+      ;;
+    plugin.service.emby-next-gen)
       if [[ "${INTERACTIVE:-0}" == "1" ]]; then
         printf 'manual-required\n'
       else

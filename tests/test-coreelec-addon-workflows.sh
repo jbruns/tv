@@ -194,6 +194,28 @@ with open(path, "w", encoding="utf-8") as handle:
 PYEOF
 }
 
+write_addon_details_response() {
+  local file="$1" addon_id="$2" version="$3"
+  python3 - "${file}" "${addon_id}" "${version}" <<'PYEOF'
+import json
+import sys
+
+path, addon_id, version = sys.argv[1:4]
+payload = {
+    "jsonrpc": "2.0",
+    "id": "addons-getaddondetails",
+    "result": {
+        "addon": {
+            "addonid": addon_id,
+            "version": version,
+        }
+    },
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, separators=(",", ":"))
+PYEOF
+}
+
 write_http_response() {
   local file="$1" transport="$2" http_status="$3" body="$4" content_type="${5:-application/json}"
   python3 - "${file}" "${transport}" "${http_status}" "${body}" "${content_type}" <<'PYEOF'
@@ -222,6 +244,13 @@ pin_md5 = hashlib.md5(pin.encode("utf-8")).hexdigest().lower()
 combined = ":" + pin_md5 + ":" + salt
 sys.stdout.write(hashlib.md5(combined.encode("utf-8")).hexdigest())
 PYEOF
+}
+
+set_guided_flow_pins() {
+  ADDON_ARTIFACTS=(
+    "$(addon_record script.plexmod)"
+    "$(addon_record plugin.video.youtube)"
+  )
 }
 
 test_help_lists_supported_addons_and_interaction_levels() {
@@ -691,6 +720,252 @@ test_service_checks_do_not_modify_addon_settings() {
   assert_contains "${output}" "pm4k_status=configured" "PM4K check completed" || return 1
 }
 
+test_pm4k_launch_uses_addons_executeaddon() {
+  local dir bin_dir output body
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  printf '%s\n' '<settings></settings>' > "${dir}/stub/response-2.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
+  write_gui_state_response "${dir}/stub/response-4.json" "Plex" "Sign In"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-5.json"
+  printf '%s\n' '<settings><setting id="auth.token">pm4k-account-token-secret</setting></settings>' \
+    > "${dir}/stub/response-6.json"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="1"
+    export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    printf 'workflow_status=%s\n' "$(authorize_pm4k_account)"
+  } 2>&1)"
+
+  body="$(ssh_request_body "${dir}" 1)"
+  assert_eq '{"jsonrpc":"2.0","id":"addons-getaddondetails","method":"Addons.GetAddonDetails","params":{"addonid":"script.plexmod","properties":["version"]}}' \
+    "${body}" "PM4K account flow checks the installed version before private steps" || return 1
+  body="$(ssh_request_body "${dir}" 3)"
+  assert_eq '{"jsonrpc":"2.0","id":"addons-executeaddon","method":"Addons.ExecuteAddon","params":{"addonid":"script.plexmod"}}' \
+    "${body}" "PM4K account flow launches the add-on through Addons.ExecuteAddon" || return 1
+  body="$(ssh_request_body "${dir}" 5)"
+  assert_eq '{"jsonrpc":"2.0","id":"input-executeaction","method":"Input.ExecuteAction","params":{"action":"select"}}' \
+    "${body}" "PM4K account flow uses Input.ExecuteAction(select) for Sign In" || return 1
+  assert_contains "${output}" "https://plex.tv/link" "PM4K account flow points the operator at Plex linking" || return 1
+  assert_contains "${output}" "service.script.plexmod.account_token_present=1" "PM4K account flow reports token presence as a boolean" || return 1
+  assert_contains "${output}" "workflow_status=configured" "PM4K account flow succeeds once the token appears" || return 1
+  assert_not_contains "${output}" "pm4k-account-token-secret" "PM4K account flow must not print the token" || return 1
+}
+
+test_pm4k_selects_sign_in_only_when_expected_control_is_focused() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  printf '%s\n' '<settings></settings>' > "${dir}/stub/response-2.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
+  write_gui_state_response "${dir}/stub/response-4.json" "Plex" "Go to Settings"
+  printf '%s\n' '<settings></settings>' > "${dir}/stub/response-5.json"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="0"
+    export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    printf 'workflow_status=%s\n' "$(authorize_pm4k_account)"
+  } 2>&1)"
+
+  assert_eq "5" "$(ssh_call_count "${dir}")" "PM4K account flow times out without selecting an unexpected control" || return 1
+  assert_not_contains "${output}" "input-executeaction" "PM4K account flow must not select when Sign In is not focused" || return 1
+  assert_contains "${output}" "service.script.plexmod.failure=timeout" "PM4K account flow reports a bounded guided timeout" || return 1
+  assert_contains "${output}" "workflow_status=manual-required" "PM4K account flow fails closed when Sign In is not focused" || return 1
+}
+
+test_youtube_launch_uses_the_pinned_sign_in_plugin_route() {
+  local dir bin_dir output body
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "plugin.video.youtube" "7.4.4"
+  printf '%s\n' '{}' > "${dir}/stub/response-2.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"gui-activatewindow","result":"OK"}' > "${dir}/stub/response-3.json"
+  write_gui_state_response "${dir}/stub/response-4.json" \
+    "Please sign in and complete all access authorisation prompts" "OK"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-5.json"
+  cat > "${dir}/stub/response-6.json" <<'JSON'
+{"access_manager":{"users":{"0":{"access_token":"","refresh_token":"youtube-refresh-token-secret","token_expires":9999999999}},"current_user":0,"last_origin":"plugin.video.youtube","developers":{}}}
+JSON
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="1"
+    export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    printf 'workflow_status=%s\n' "$(authorize_youtube)"
+  } 2>&1)"
+
+  body="$(ssh_request_body "${dir}" 1)"
+  assert_eq '{"jsonrpc":"2.0","id":"addons-getaddondetails","method":"Addons.GetAddonDetails","params":{"addonid":"plugin.video.youtube","properties":["version"]}}' \
+    "${body}" "YouTube guided flow checks the installed version before private steps" || return 1
+  body="$(ssh_request_body "${dir}" 3)"
+  assert_eq '{"jsonrpc":"2.0","id":"gui-activatewindow","method":"GUI.ActivateWindow","params":{"window":"videos","parameters":["plugin://plugin.video.youtube/sign/in/"]}}' \
+    "${body}" "YouTube guided flow uses the pinned sign-in plugin route" || return 1
+  body="$(ssh_request_body "${dir}" 5)"
+  assert_eq '{"jsonrpc":"2.0","id":"input-executeaction","method":"Input.ExecuteAction","params":{"action":"select"}}' \
+    "${body}" "YouTube guided flow dismisses the intro dialog through Input.ExecuteAction(select)" || return 1
+  assert_contains "${output}" "service.plugin.video.youtube.note=multiple-google-codes-possible-in-7.4.4" \
+    "YouTube guided flow reports the pinned add-on caveat" || return 1
+  assert_contains "${output}" "service.plugin.video.youtube.account_token_present=1" \
+    "YouTube guided flow reports token presence as a boolean" || return 1
+  assert_contains "${output}" "workflow_status=configured" "YouTube guided flow succeeds once the token appears" || return 1
+  assert_not_contains "${output}" "youtube-refresh-token-secret" "YouTube guided flow must not print the token" || return 1
+}
+
+test_youtube_dismisses_only_the_expected_intro_dialog() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "plugin.video.youtube" "7.4.4"
+  printf '%s\n' '{}' > "${dir}/stub/response-2.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"gui-activatewindow","result":"OK"}' > "${dir}/stub/response-3.json"
+  write_gui_state_response "${dir}/stub/response-4.json" "Unexpected Dialog" "Cancel"
+  printf '%s\n' '{}' > "${dir}/stub/response-5.json"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="0"
+    export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    printf 'workflow_status=%s\n' "$(authorize_youtube)"
+  } 2>&1)"
+
+  assert_eq "5" "$(ssh_call_count "${dir}")" "YouTube guided flow times out without dismissing an unexpected dialog" || return 1
+  assert_not_contains "${output}" "input-executeaction" "YouTube guided flow must not dismiss the wrong dialog" || return 1
+  assert_contains "${output}" "service.plugin.video.youtube.failure=timeout" "YouTube guided flow reports a bounded guided timeout" || return 1
+  assert_contains "${output}" "workflow_status=manual-required" "YouTube guided flow fails closed on an unexpected dialog" || return 1
+}
+
+test_guided_flow_times_out_as_manual_required() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "plugin.video.youtube" "7.4.4"
+  printf '%s\n' '{}' > "${dir}/stub/response-2.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"gui-activatewindow","result":"OK"}' > "${dir}/stub/response-3.json"
+  write_gui_state_response "${dir}/stub/response-4.json" \
+    "Please sign in and complete all access authorisation prompts" "OK"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-5.json"
+  printf '%s\n' '{}' > "${dir}/stub/response-6.json"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="0"
+    export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    printf 'workflow_status=%s\n' "$(authorize_youtube)"
+  } 2>&1)"
+
+  assert_contains "${output}" "service.plugin.video.youtube.account_token_present=0" "guided timeout reports token absence as a boolean" || return 1
+  assert_contains "${output}" "service.plugin.video.youtube.failure=timeout" "guided timeout is classified distinctly" || return 1
+  assert_contains "${output}" "workflow_status=manual-required" "guided timeout returns manual-required" || return 1
+}
+
+test_guided_flow_detects_persisted_tokens_without_printing_them() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  printf '%s\n' '<settings><setting id="auth.token">pm4k-account-token-secret</setting></settings>' \
+    > "${dir}/stub/response-2.json"
+  write_addon_details_response "${dir}/stub/response-3.json" "plugin.video.youtube" "7.4.4"
+  cat > "${dir}/stub/response-4.json" <<'JSON'
+{"access_manager":{"users":{"0":{"access_token":"youtube-access-token-secret","refresh_token":"youtube-refresh-token-secret","token_expires":9999999999}},"current_user":0,"last_origin":"plugin.video.youtube","developers":{}}}
+JSON
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    INTERACTIVE="1"
+    printf 'pm4k_status=%s\n' "$(run_addon_workflow script.plexmod)"
+    printf 'youtube_status=%s\n' "$(run_addon_workflow plugin.video.youtube)"
+  } 2>&1)"
+
+  assert_eq "4" "$(ssh_call_count "${dir}")" "persisted-token detection stops before launch when already configured" || return 1
+  assert_contains "${output}" "pm4k_status=already-configured" "PM4K account flow detects an existing token" || return 1
+  assert_contains "${output}" "youtube_status=already-configured" "YouTube guided flow detects an existing token" || return 1
+  assert_not_contains "${output}" "pm4k-account-token-secret" "PM4K token must not be printed" || return 1
+  assert_not_contains "${output}" "youtube-access-token-secret" "YouTube access token must not be printed" || return 1
+  assert_not_contains "${output}" "youtube-refresh-token-secret" "YouTube refresh token must not be printed" || return 1
+}
+
+test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.0"
+  write_addon_details_response "${dir}/stub/response-2.json" "plugin.video.youtube" "7.4.3"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    INTERACTIVE="1"
+    printf 'pm4k_status=%s\n' "$(run_addon_workflow script.plexmod)"
+    printf 'youtube_status=%s\n' "$(run_addon_workflow plugin.video.youtube)"
+  } 2>&1)"
+
+  assert_eq "2" "$(ssh_call_count "${dir}")" "version mismatches stop before any private state or GUI steps" || return 1
+  assert_contains "${output}" "pm4k_status=manual-required" "PM4K version mismatch fails closed" || return 1
+  assert_contains "${output}" "youtube_status=manual-required" "YouTube version mismatch fails closed" || return 1
+  assert_contains "${output}" "service.script.plexmod.failure=version-mismatch" "PM4K mismatch is classified explicitly" || return 1
+  assert_contains "${output}" "service.plugin.video.youtube.failure=version-mismatch" "YouTube mismatch is classified explicitly" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_default_run_never_starts_account_authorization \
@@ -706,4 +981,11 @@ run_all_tests \
   test_nextpvr_check_requires_a_successful_session_login \
   test_pm4k_local_check_requires_identity_and_token_authorized_root \
   test_pm4k_local_check_skips_when_local_configuration_is_absent \
-  test_service_checks_do_not_modify_addon_settings
+  test_service_checks_do_not_modify_addon_settings \
+  test_pm4k_launch_uses_addons_executeaddon \
+  test_pm4k_selects_sign_in_only_when_expected_control_is_focused \
+  test_youtube_launch_uses_the_pinned_sign_in_plugin_route \
+  test_youtube_dismisses_only_the_expected_intro_dialog \
+  test_guided_flow_times_out_as_manual_required \
+  test_guided_flow_detects_persisted_tokens_without_printing_them \
+  test_guided_flow_refuses_addon_version_mismatch_before_private_steps
