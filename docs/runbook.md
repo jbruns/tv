@@ -66,7 +66,7 @@ Run the shared baseline first, then the separate post-deployment checks:
 ./provision-coreelec.sh --check-artifacts
 ```
 
-Both exit 0 without `--target`. `--check-artifacts` downloads all 34 pinned add-on artifacts, verifies their SHA-256 checksums, and confirms each is a safe, correctly identified ZIP. Run these after any configuration edit and before the first real deployment.
+Both exit 0 without `--target`. `--check-artifacts` downloads all 42 pinned add-on artifacts, verifies their SHA-256 checksums, and confirms each is a safe, correctly identified ZIP. Run these after any configuration edit and before the first real deployment.
 
 ### Provision the device
 
@@ -193,7 +193,7 @@ These are deployed either way, and are reported `configured` only when their val
 - **PM4K** (`script.plexmod`): `PLEX_SERVER_HOST`/`PLEX_SERVER_PORT`/`PLEX_SERVER_NAME`/`PLEX_PROFILE_IDS` plus `PLEX_TOKEN`. Local-mode PM4K is written with `allow_insecure=always`, a deliberate relaxation required to reach a plain-HTTP LAN Plex server; use a token-authorized remote/account link instead if that relaxation is unacceptable for a given room.
 - **NextPVR** (`pvr.nextpvr`): `NEXTPVR_HOST`/`NEXTPVR_PORT`/`NEXTPVR_PROTOCOL`/`NEXTPVR_INSTANCE_NAME` plus `NEXTPVR_PIN`. Without them, provisioning creates a disabled, credential-free placeholder client instance when none exists, so Kodi can keep the add-on installed and enabled without repeatedly trying its generated `127.0.0.1:8866` default. Existing instances are preserved when those values are omitted on a later run.
 - **Home Assistant Weather** (`weather.ha`): `HOME_ASSISTANT_URL`/`HOME_ASSISTANT_WEATHER_ENTITY`/`HOME_ASSISTANT_SUN_ENTITY` plus `HOME_ASSISTANT_TOKEN`.
-- **TMDb Helper** (`plugin.video.themoviedb.helper`): `OMDB_API_KEY` and/or `MDBLIST_API_KEY` populate metadata keys; Trakt and TMDb user-account linking remain interactive and optional either way.
+- **TMDb Helper** (`plugin.video.themoviedb.helper`): `OMDB_API_KEY` and `MDBLIST_API_KEY` are both required for real `APPLY_KODI=1` deployments; both are optional for `--check-config` and `--check-artifacts`. Trakt and TMDb user-account linking remain interactive and manual either way. See the [Arctic Fuse 3 skin integration](../config/README.md#arctic-fuse-3-skin-integration) notes for how Trakt terminology differs from a user OAuth credential.
 
 ### Full live add-on acceptance sequence
 
@@ -252,9 +252,84 @@ guided route but record a credential-related `authorization-required`,
 limitation, not a successful YouTube authorization. Do not weaken the expected
 result for the other configured services.
 
-### Arctic Fuse 3 activation
+### Arctic Fuse 3 Home and Power baseline
 
-`skin.arctic.fuse.3` is deployed and set active (`lookandfeel.skin`) by the same run, alongside the regional baseline (`videoplayer.adjustrefreshrate`=On start/stop, `videoplayer.usedisplayasclock`=Off) — no separate manual skin-activation step remains.
+`skin.arctic.fuse.3` is deployed and set active (`lookandfeel.skin`) by the same run, alongside the regional baseline (`videoplayer.adjustrefreshrate`=On start/stop, `videoplayer.usedisplayasclock`=Off) — no separate manual skin-activation step remains. The managed skin settings apply to the **primary profile only**; additional profiles are not touched. Re-running provisioning overwrites the managed Home and Power files, so any manual edits to those settings will be lost on the next run.
+
+**Home navigation order** (after the Home entry): Plex · YouTube · Next Aired · PVR · Add-ons. The options tray tile writes `Settings` at position `optionstiles.02.include`.
+
+**Home widgets** (exact order):
+
+1. In-Progress Movies (`InProgressMovies90Days.xsp`)
+2. In-Progress Shows (`InProgressShows90Days.xsp`)
+3. Recently Aired Shows (`RecentlyAiredEpisodes30Days.xsp`)
+4. Recently Released Movies (`RecentlyReleasedMovies90Days.xsp`)
+5. New Shows (`NewShows.xsp`)
+6. New Movies (`NewMovies.xsp`)
+
+**Power menu actions** (exact order):
+
+1. Power off (`Powerdown()`)
+2. Sleep timer (`AlarmClock(shutdowntimer,Shutdown())`)
+3. Suspend (`Suspend()`)
+4. Reboot (`Reset()`)
+5. Restart Kodi (`RestartApp()`)
+
+### Arctic Fuse 3 report statuses
+
+After a successful provisioning run, the audit report includes `arctic_fuse.*`
+and `metadata.*` lines. Values of `1` indicate presence; the overall status
+uses an `ok`/`mismatch` string form. `metadata.omdb.status` and
+`metadata.mdblist.status` reflect OMDb and MDbList key delivery; both are
+required integration inputs and their statuses roll into `arctic_fuse.status`.
+
+Expected lines when both metadata keys are supplied:
+
+```
+arctic_fuse.status=ok
+arctic_fuse.home.status=ok
+arctic_fuse.power.status=ok
+arctic_fuse.plex_entry.status=ok
+arctic_fuse.youtube_entry.status=ok
+metadata.omdb.status=ok
+metadata.mdblist.status=ok
+```
+
+A `mismatch` in any child status (including `metadata.omdb.status` or
+`metadata.mdblist.status`) rolls into `arctic_fuse.status=mismatch`. Inspect
+the individual child lines to identify the specific failure.
+
+### Safe acceptance sequence for Arctic Fuse 3
+
+Acceptance inspects the provisioned skin state; it does not execute Power
+actions or navigate the Home hubs on the device.
+
+Before contacting the device, validate configuration and all 42 artifacts
+without a `--target`:
+
+```bash
+./provision-coreelec.sh --check-config
+./provision-coreelec.sh --check-artifacts
+```
+
+Export the required secrets into the process environment only — never paste
+real values into tracked files, command arguments, shell history, reports, or
+issue text. Use an OS credential store or a no-echo prompt:
+
+```bash
+: "${OMDB_API_KEY:?export OMDB_API_KEY in the secure operator environment}"
+: "${MDBLIST_API_KEY:?export MDBLIST_API_KEY in the secure operator environment}"
+./provision-coreelec.sh --target coreelec-theater --yes
+```
+
+After the run, verify the audit report in `./coreelec-provision-reports/`:
+
+- `deployment_state=committed`
+- `arctic_fuse.status=ok` and all child `arctic_fuse.*` statuses `ok`
+- `metadata.omdb.status=ok` and `metadata.mdblist.status=ok`
+
+Any `mismatch` value requires re-provisioning with corrected inputs; do not
+weaken the acceptance criteria.
 
 ### Regional verification
 

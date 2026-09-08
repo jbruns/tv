@@ -89,7 +89,7 @@ cannot be declared safely.
 | PM4K account mode (`script.plexmod`) | none | none supplied to these scripts | Leaves local-server mode unset. | With `--interactive`, opens the Plex device-link flow for local or shared remote servers. |
 | YouTube (`plugin.video.youtube`) | none | `YOUTUBE_API_KEY`, `YOUTUBE_CLIENT_ID`, and `YOUTUBE_CLIENT_SECRET` together | Writes personal API credentials when all three are present. | With `--interactive`, opens the Google device-code flow and waits for persisted authorization. A token without a usable API client is only a partial login. |
 | Emby Next Gen (`plugin.service.emby-next-gen`) | `EMBY_SERVER_URL`, `EMBY_USERNAME`; `EMBY_ALLOW_LOCAL_HTTP=1` only for an RFC1918/loopback HTTP server | `EMBY_PASSWORD` | Installs the add-on but does not sign in. | With `--interactive`, opens the running service's server manager, enters credentials only through recognized dialogs, and verifies the server handshake. Unrecognized custom-skin dialogs must be completed on the TV. |
-| TMDb Helper (`plugin.video.themoviedb.helper`) | none | `OMDB_API_KEY` and/or `MDBLIST_API_KEY` | Writes whichever optional metadata keys are present. | No post-deployment workflow; Trakt and TMDb user-account linking remain manual. |
+| TMDb Helper (`plugin.video.themoviedb.helper`) | none | `OMDB_API_KEY` and `MDBLIST_API_KEY` — both required for real `APPLY_KODI=1` deployments; both optional for `--check-config` and `--check-artifacts` | Writes both metadata keys when present. | No post-deployment workflow; Trakt and TMDb user-account linking remain manual. |
 
 Supplying only a secret is not enough: each secret that belongs to a service
 endpoint requires the corresponding non-secret keys. Conversely, endpoint
@@ -200,15 +200,19 @@ expansion, so shell metacharacters in a value are inert data:
 | `EMBY_SERVER_URL` | unset | `https://...`; `http://...` only for RFC1918/loopback with `EMBY_ALLOW_LOCAL_HTTP=1` |
 | `EMBY_USERNAME` | unset | non-empty |
 | `EMBY_ALLOW_LOCAL_HTTP` | `0` | `0` or `1` |
-| `ADDON_ARTIFACT` | (34 records shipped) | repeatable, see below |
+| `ADDON_ARTIFACT` | (42 records shipped) | repeatable, see below |
 
 `ADDON_ARTIFACT` records are `id|version|https-url|sha256`, one per line,
-repeated once per locked artifact. The shipped shared file locks 34 records:
+repeated once per locked artifact. The shipped shared file locks 42 records:
 the six requested default add-ons (Emby for Kodi Next Gen, PM4K, official
 Kodi YouTube, Arctic Fuse 3, NextPVR, Home Assistant Weather) plus TMDb
-Helper, the regional language resource, their repositories, and their
+Helper, the regional language resource, their repositories, six Arctic Fuse
+optional add-ons (`script.artistslideshow`, `resource.images.arctic.waves`,
+`resource.images.weatherfanart.multi`, `resource.images.moviecountryicons.maps`,
+`resource.images.studios.white`, `service.upnext`), two transitive modules they
+introduce (`script.module.defusedxml`, `script.module.future`), and their
 complete transitive dependency closure. `--check-artifacts` downloads and
-verifies all 34 over HTTPS.
+verifies all 42 over HTTPS.
 
 ## Precedence
 
@@ -233,8 +237,11 @@ None of the ten reserved keys below may appear in the configuration file
 listed here as usable are read directly from the process environment and
 are never echoed, logged, or written into the audit report:
 
-- `OMDB_API_KEY`
-- `MDBLIST_API_KEY`
+- `OMDB_API_KEY` and `MDBLIST_API_KEY` — required together for real
+  `APPLY_KODI=1` deployments; optional for `--check-config` and
+  `--check-artifacts`. No config-file or CLI secret form exists for either key.
+  Never export `TMDB_API_KEY` expecting it to configure TMDb Helper — it is
+  not a usable exported secret (see below).
 - `YOUTUBE_API_KEY`, `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` (all three
   or none)
 - `HOME_ASSISTANT_TOKEN` (requires `HOME_ASSISTANT_URL`)
@@ -299,3 +306,31 @@ device backups outside the repository. Record download sources in the
 [shared device guide](../docs/devices/ugoos-am6b-plus/coreelec-21.3.md);
 record per-device backup locations and installed values in the appropriate
 [room guide](../README.md).
+
+## Arctic Fuse 3 skin integration
+
+The following notes clarify how the managed Arctic Fuse 3 baseline interacts
+with its widget and metadata sources. They are not operator actions.
+
+- **Next Aired** (`library_nextaired`) is an Arctic Fuse 3 built-in hub type,
+  not a separate add-on. It reads the local Emby-synced Kodi library directly
+  — no external network call or additional credential is required.
+- **Trakt terminology**: Trakt labels its application credential the
+  `trakt-api-key` HTTP header. That label is intentionally confusing because
+  it refers to an application client key, not a user personal key. The managed
+  baseline uses neither a personal Trakt developer credential nor Trakt OAuth;
+  TMDb Helper's Trakt integration remains an interactive, user-initiated step
+  that is always left manual.
+- **TMDb Helper** (`plugin.video.themoviedb.helper`): bundles its own
+  application TMDb credentials. `OMDB_API_KEY` and `MDBLIST_API_KEY` are the
+  only operator-supplied keys; `TMDB_API_KEY` is reserved and rejected from
+  the config file because TMDb Helper has no user-configurable TMDb API-key
+  setting.
+- **Plex custom slot 1101**: provisioning writes `HomeSwitcher.1101.*` skin
+  settings so the Home hub runs `script.plexmod`. PM4K exposes no external
+  widget directory.
+- **YouTube custom slot 1102**: provisioning writes `HomeSwitcher.1102.*` skin
+  settings so the Home hub opens `plugin://plugin.video.youtube/`. YouTube
+  widgets are intentionally unmanaged: the provisioner writes the hub entry
+  point only, and any widget rows visible in the YouTube hub depend on the
+  user's own YouTube account and history within the add-on.
