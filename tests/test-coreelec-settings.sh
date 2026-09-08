@@ -727,6 +727,369 @@ test_remote_backup_directory_is_private() {
   fi
 }
 
+# --- Arctic Fuse skin helpers -----------------------------------------------
+
+skin_settings_path() {
+  printf '%s/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml' "$1"
+}
+
+skinvariables_node_path() {
+  printf '%s/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/%s' \
+    "$1" "$2"
+}
+
+video_playlist_path() {
+  printf '%s/.kodi/userdata/playlists/video/%s' "$1" "$2"
+}
+
+smart_playlist_summary() {
+  python3 - "$1" <<'PYEOF'
+import json
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+root = ET.parse(path).getroot()
+result = {
+    "type": root.get("type", ""),
+    "name": "",
+    "match": "",
+    "limit": 0,
+    "rules": [],
+    "order": {},
+}
+name_node = root.find("name")
+if name_node is not None:
+    result["name"] = name_node.text or ""
+match_node = root.find("match")
+if match_node is not None:
+    result["match"] = match_node.text or ""
+limit_node = root.find("limit")
+if limit_node is not None:
+    result["limit"] = int(limit_node.text or "0")
+for rule in root.findall("rule"):
+    value_node = rule.find("value")
+    result["rules"].append({
+        "field": rule.get("field", ""),
+        "operator": rule.get("operator", ""),
+        "value": (value_node.text or "") if value_node is not None else "",
+    })
+order_node = root.find("order")
+if order_node is not None:
+    result["order"] = {
+        "field": order_node.text or "",
+        "direction": order_node.get("direction", ""),
+    }
+sys.stdout.write(json.dumps(result, sort_keys=True))
+PYEOF
+}
+
+# Reads a skin setting value (case-sensitive ID match).
+skin_setting() {
+  xml_setting "$(skin_settings_path "$1")" "$2"
+}
+
+# Counts how many setting nodes have this exact ID in the skin settings file.
+skin_setting_count() {
+  xml_setting_count "$(skin_settings_path "$1")" "$2"
+}
+
+# True if a setting ID has no node at all in the skin settings file.
+skin_setting_absent() {
+  local count
+  count="$(skin_setting_count "$1" "$2")"
+  [[ "${count}" == "0" ]]
+}
+
+# --- Arctic Fuse convergence tests ------------------------------------------
+
+test_arctic_fuse_hubs_and_options_tray_are_converged() {
+  local dir root payload skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+
+  # Seed skin settings with unrelated.keep=yes, a duplicate/case-variant
+  # HomeSwitcher.1101.Toggle, and a stale HomeSwitcher.1101.Shortcut.Target.
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  cat > "$(skin_settings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings>
+    <setting id="unrelated.keep">yes</setting>
+    <setting id="HomeSwitcher.1101.Toggle">false</setting>
+    <setting id="homeswitcher.1101.toggle">stale-case-variant</setting>
+    <setting id="HomeSwitcher.1101.Shortcut.Target">oldplex</setting>
+    <setting id="HomeSwitcher.1101.Spotlight.Path">old-spotlight</setting>
+    <setting id="HomeSwitcher.1102.Spotlight.Path">old-spotlight-2</setting>
+</settings>
+XML
+
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  skin_file="$(skin_settings_path "${root}")"
+
+  # Unrelated setting is preserved exactly once
+  assert_eq "yes" "$(xml_setting "${skin_file}" "unrelated.keep")" "unrelated.keep preserved"
+  assert_eq "1" "$(xml_setting_count "${skin_file}" "unrelated.keep")" "unrelated.keep not duplicated"
+
+  # Canonical settings
+  assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" "1101.Name"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Toggle")" "1101.Toggle"
+  assert_eq "special://home/addons/script.plexmod/icon2.png" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Icon")" "1101.Icon"
+  assert_eq "RunAddon(script.plexmod)" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Path")" "1101.Shortcut.Path"
+
+  assert_eq "YouTube" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" "1102.Name"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Toggle")" "1102.Toggle"
+  assert_eq "special://home/addons/plugin.video.youtube/resources/media/icon.png" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Icon")" "1102.Icon"
+  assert_eq "plugin://plugin.video.youtube/" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Path")" "1102.Shortcut.Path"
+  assert_eq "videos" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Target")" "1102.Shortcut.Target"
+
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1106.Toggle")" "1106.Toggle"
+  assert_eq "library_nextaired" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1106.UpNextMode")" "1106.UpNextMode"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" "1107.Toggle"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" "1108.Toggle"
+  assert_eq "Settings" "$(xml_setting "${skin_file}" "optionstiles.02.include")" "optionstiles.02"
+
+  # Duplicate/case-variant collapsed — only 1 node for 1101.Toggle
+  assert_eq "1" "$(xml_setting_count "${skin_file}" "HomeSwitcher.1101.Toggle")" \
+    "duplicate 1101.Toggle collapsed"
+
+  # Stale settings must be absent
+  skin_setting_absent "${root}" "HomeSwitcher.1101.Shortcut.Target" \
+    || { printf '1101.Shortcut.Target must be absent\n' >&2; return 1; }
+  skin_setting_absent "${root}" "HomeSwitcher.1101.Spotlight.Path" \
+    || { printf '1101.Spotlight.Path must be absent\n' >&2; return 1; }
+  skin_setting_absent "${root}" "HomeSwitcher.1102.Spotlight.Path" \
+    || { printf '1102.Spotlight.Path must be absent\n' >&2; return 1; }
+}
+
+test_arctic_fuse_home_widgets_are_exact_and_ordered() {
+  local dir root payload home_json expected actual
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  home_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-homewidgets.json")"
+  [[ -f "${home_json}" ]] || { printf 'home widgets JSON not found\n' >&2; return 1; }
+
+  expected='[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]'
+  actual="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.load(open(sys.argv[1])),sort_keys=False))' "${home_json}")"
+  assert_eq "${expected}" "${actual}" "home widgets JSON content"
+
+  # Negative assertions on raw file
+  local raw
+  raw="$(cat "${home_json}")"
+  assert_not_contains "${raw}" "Quit()" "no Quit in home"
+  assert_not_contains "${raw}" "Profiles" "no Profiles in home"
+  assert_not_contains "${raw}" "ActivateWindow(1195)" "no Favourites window in home"
+  assert_not_contains "${raw}" "Favourites" "no Favourites in home"
+  assert_not_contains "${raw}" "File manager" "no File manager in home"
+  assert_not_contains "${raw}" "Hibernate" "no Hibernate in home"
+  assert_not_contains "${raw}" "rebootfromnand" "no rebootfromnand in home"
+}
+
+test_arctic_fuse_power_menu_is_coreelec_appropriate() {
+  local dir root payload power_json expected actual raw
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  power_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-powermenu.json")"
+  [[ -f "${power_json}" ]] || { printf 'power menu JSON not found\n' >&2; return 1; }
+
+  expected='[{"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}, {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""}, {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""}, {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""}, {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""}]'
+  actual="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.load(open(sys.argv[1])),sort_keys=False))' "${power_json}")"
+  assert_eq "${expected}" "${actual}" "power menu JSON content"
+
+  raw="$(cat "${power_json}")"
+  assert_not_contains "${raw}" "Quit()" "no Quit in power"
+  assert_not_contains "${raw}" "Profiles" "no Profiles in power"
+  assert_not_contains "${raw}" "ActivateWindow(1195)" "no Favourites window in power"
+  assert_not_contains "${raw}" "Favourites" "no Favourites in power"
+  assert_not_contains "${raw}" "File manager" "no File manager in power"
+  assert_not_contains "${raw}" "Hibernate" "no Hibernate in power"
+  assert_not_contains "${raw}" "rebootfromnand" "no rebootfromnand in power"
+}
+
+test_arctic_fuse_smart_playlists_have_exact_rules() {
+  local dir root payload summary
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  # InProgressMovies90Days.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" InProgressMovies90Days.xsp)")"
+  assert_eq "movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "IPM type"
+  assert_eq "In-Progress Movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "IPM name"
+  assert_eq "50" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["limit"])')" "IPM limit"
+  assert_eq "all" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["match"])')" "IPM match"
+
+  # InProgressShows90Days.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" InProgressShows90Days.xsp)")"
+  assert_eq "tvshows" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "IPS type"
+  assert_eq "In-Progress Shows" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "IPS name"
+
+  # RecentlyAiredEpisodes30Days.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" RecentlyAiredEpisodes30Days.xsp)")"
+  assert_eq "episodes" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "RAE type"
+  assert_eq "Recently Aired Shows" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "RAE name"
+
+  # RecentlyReleasedMovies90Days.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" RecentlyReleasedMovies90Days.xsp)")"
+  assert_eq "movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "RRM type"
+  assert_eq "Recently Released Movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "RRM name"
+
+  # NewShows.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" NewShows.xsp)")"
+  assert_eq "tvshows" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "NS type"
+  assert_eq "New Shows" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "NS name"
+
+  # NewMovies.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" NewMovies.xsp)")"
+  assert_eq "movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "NM type"
+  assert_eq "New Movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "NM name"
+}
+
+test_arctic_fuse_managed_files_are_private_and_primary_profile_only() {
+  local dir root payload skin_file home_json power_json
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  # Every generated XML/JSON file is mode 600
+  skin_file="$(skin_settings_path "${root}")"
+  assert_eq "600" "$(file_mode "${skin_file}")" "skin settings mode"
+
+  home_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-homewidgets.json")"
+  assert_eq "600" "$(file_mode "${home_json}")" "home widgets mode"
+
+  power_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-powermenu.json")"
+  assert_eq "600" "$(file_mode "${power_json}")" "power menu mode"
+
+  local xsp
+  for xsp in InProgressMovies90Days.xsp InProgressShows90Days.xsp \
+    RecentlyAiredEpisodes30Days.xsp RecentlyReleasedMovies90Days.xsp \
+    NewShows.xsp NewMovies.xsp; do
+    assert_eq "600" "$(file_mode "$(video_playlist_path "${root}" "${xsp}")")" "${xsp} mode"
+  done
+
+  # Created directories are mode 700
+  assert_eq "700" "$(file_mode "$(dirname "${skin_file}")")" "skin data dir mode"
+  assert_eq "700" "$(file_mode "$(dirname "${home_json}")")" "skinvariables node dir mode"
+  assert_eq "700" "$(file_mode "${root}/.kodi/userdata/playlists/video")" "playlists video dir mode"
+
+  # No profiles/ path is created
+  if find "${root}" -path '*/profiles/*' -print -quit 2>/dev/null | grep -q .; then
+    printf 'profiles/ path must not be created\n' >&2
+    return 1
+  fi
+}
+
+test_arctic_fuse_convergence_preserves_unmanaged_skinvariables_nodes() {
+  local dir root payload sibling_path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+
+  # Create a sibling file before the transformer runs
+  sibling_path="$(skinvariables_node_path "${root}" "skinvariables-shortcut-searchwidgets.json")"
+  mkdir -p "$(dirname "${sibling_path}")"
+  printf '{"unmanaged": true}\n' > "${sibling_path}"
+
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq '{"unmanaged": true}' "$(cat "${sibling_path}")" "unmanaged sibling unchanged"
+}
+
+test_arctic_fuse_second_run_is_byte_identical() {
+  local dir root payload first second
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+
+  run_transform "${root}" "${payload}" >/dev/null
+  first="$(tree_digest "${root}")"
+  run_transform "${root}" "${payload}" >/dev/null
+  second="$(tree_digest "${root}")"
+  assert_eq "${first}" "${second}" "a second run (with skin state) rewrites nothing"
+}
+
+test_arctic_fuse_managed_paths_are_backed_up_and_rolled_back() {
+  local dir root payload managed_output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  # Check that coreelec_managed_settings_paths_block lists the skin settings,
+  # both node JSON files, and all six XSP files.
+  managed_output="$(bash "${PROVISIONER}" --emit-remote-script backup "${root}")"
+
+  assert_contains "${managed_output}" ".kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml" \
+    "skin settings in managed paths"
+  assert_contains "${managed_output}" "skinvariables-shortcut-homewidgets.json" \
+    "home widgets in managed paths"
+  assert_contains "${managed_output}" "skinvariables-shortcut-powermenu.json" \
+    "power menu in managed paths"
+  assert_contains "${managed_output}" "InProgressMovies90Days.xsp" "IPM in managed paths"
+  assert_contains "${managed_output}" "InProgressShows90Days.xsp" "IPS in managed paths"
+  assert_contains "${managed_output}" "RecentlyAiredEpisodes30Days.xsp" "RAE in managed paths"
+  assert_contains "${managed_output}" "RecentlyReleasedMovies90Days.xsp" "RRM in managed paths"
+  assert_contains "${managed_output}" "NewShows.xsp" "NS in managed paths"
+  assert_contains "${managed_output}" "NewMovies.xsp" "NM in managed paths"
+}
+
+test_arctic_fuse_failed_write_cleans_temporary_files() {
+  local dir root payload output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+
+  # Pre-create a managed skin file that will be backed up
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  printf '<settings><setting id="pre-existing">value</setting></settings>\n' \
+    > "$(skin_settings_path "${root}")"
+
+  # Create a directory where a playlist file belongs, forcing rename to fail
+  mkdir -p "$(video_playlist_path "${root}" InProgressMovies90Days.xsp)"
+
+  set +e
+  output="$(run_transform "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "the blocked write must fail"
+  assert_eq "" "$(orphan_temp_files "${root}")" "no temp files left behind"
+}
+
 run_all_tests \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
@@ -749,4 +1112,13 @@ run_all_tests \
   test_a_failed_write_leaves_no_secret_temp_file \
   test_present_but_empty_secret_is_rejected \
   test_remote_payload_upload_replaces_a_permissive_file \
-  test_remote_backup_directory_is_private
+  test_remote_backup_directory_is_private \
+  test_arctic_fuse_hubs_and_options_tray_are_converged \
+  test_arctic_fuse_home_widgets_are_exact_and_ordered \
+  test_arctic_fuse_power_menu_is_coreelec_appropriate \
+  test_arctic_fuse_smart_playlists_have_exact_rules \
+  test_arctic_fuse_managed_files_are_private_and_primary_profile_only \
+  test_arctic_fuse_convergence_preserves_unmanaged_skinvariables_nodes \
+  test_arctic_fuse_second_run_is_byte_identical \
+  test_arctic_fuse_managed_paths_are_backed_up_and_rolled_back \
+  test_arctic_fuse_failed_write_cleans_temporary_files

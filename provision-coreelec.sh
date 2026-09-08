@@ -631,6 +631,160 @@ def main(argv):
 
     commit_addon_settings()
 
+    # --- Arctic Fuse skin settings ------------------------------------------
+    skin_settings_path = addon_file(SKIN_ID, "settings.xml")
+    if os.path.exists(skin_settings_path):
+        skin_tree = ET.parse(skin_settings_path)
+        skin_root = skin_tree.getroot()
+    else:
+        skin_root = ET.Element("settings")
+        skin_tree = ET.ElementTree(skin_root)
+
+    def _skin_setting_nodes(root, setting_id):
+        wanted = setting_id.casefold()
+        return [
+            (parent, node)
+            for parent in [root] + list(root.findall("category"))
+            for node in parent.findall("setting")
+            if (node.get("id") or "").casefold() == wanted
+        ]
+
+    def set_skin_setting(setting_id, value):
+        nodes = _skin_setting_nodes(skin_root, setting_id)
+        if nodes:
+            node = nodes[0][1]
+            for parent, duplicate in nodes[1:]:
+                parent.remove(duplicate)
+        else:
+            node = ET.SubElement(skin_root, "setting", {"id": setting_id})
+        node.set("id", setting_id)
+        node.attrib.pop("value", None)
+        node.attrib.pop("default", None)
+        node.text = value
+
+    def remove_skin_setting(setting_id):
+        for parent, node in _skin_setting_nodes(skin_root, setting_id):
+            parent.remove(node)
+
+    # Hub toggles and shortcuts
+    set_skin_setting("HomeSwitcher.1101.Name", "Plex")
+    set_skin_setting("HomeSwitcher.1101.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1101.Icon",
+                     "special://home/addons/script.plexmod/icon2.png")
+    set_skin_setting("HomeSwitcher.1101.Shortcut.Path",
+                     "RunAddon(script.plexmod)")
+
+    set_skin_setting("HomeSwitcher.1102.Name", "YouTube")
+    set_skin_setting("HomeSwitcher.1102.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1102.Icon",
+                     "special://home/addons/plugin.video.youtube/resources/media/icon.png")
+    set_skin_setting("HomeSwitcher.1102.Shortcut.Path",
+                     "plugin://plugin.video.youtube/")
+    set_skin_setting("HomeSwitcher.1102.Shortcut.Target", "videos")
+
+    set_skin_setting("HomeSwitcher.1106.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1106.UpNextMode", "library_nextaired")
+    set_skin_setting("HomeSwitcher.1107.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1108.Toggle", "true")
+    set_skin_setting("optionstiles.02.include", "Settings")
+
+    # Remove stale direct-hub state
+    remove_skin_setting("HomeSwitcher.1101.Shortcut.Target")
+    remove_skin_setting("HomeSwitcher.1101.Spotlight.Path")
+    remove_skin_setting("HomeSwitcher.1102.Spotlight.Path")
+
+    write_xml_atomic(skin_settings_path, skin_tree)
+
+    # --- Arctic Fuse skinvariables nodes -----------------------------------
+    nodes_dir = os.path.join(addon_data, "script.skinvariables",
+                             "nodes", SKIN_ID)
+    register_managed_directory(os.path.join(addon_data, "script.skinvariables"))
+    register_managed_directory(os.path.join(addon_data, "script.skinvariables",
+                                            "nodes"))
+    register_managed_directory(nodes_dir)
+
+    home_widgets = [
+        {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
+    ]
+    write_json_atomic(os.path.join(nodes_dir,
+                                   "skinvariables-shortcut-homewidgets.json"),
+                      home_widgets)
+
+    power_menu = [
+        {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""},
+        {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""},
+        {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""},
+        {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""},
+        {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""},
+    ]
+    write_json_atomic(os.path.join(nodes_dir,
+                                   "skinvariables-shortcut-powermenu.json"),
+                      power_menu)
+
+    # --- Arctic Fuse smart playlists ----------------------------------------
+    playlists_dir = os.path.join(userdata, "playlists", "video")
+    register_managed_directory(os.path.join(userdata, "playlists"))
+    register_managed_directory(playlists_dir)
+
+    def write_smart_playlist(path, name, media_type, rules, order, limit=50):
+        root = ET.Element("smartplaylist", {"type": media_type})
+        ET.SubElement(root, "name").text = name
+        ET.SubElement(root, "match").text = "all"
+        for field, operator, value in rules:
+            rule_el = ET.SubElement(root, "rule", {
+                "field": field,
+                "operator": operator,
+            })
+            if value:
+                ET.SubElement(rule_el, "value").text = value
+        ET.SubElement(root, "limit").text = str(limit)
+        order_node = ET.SubElement(root, "order", {"direction": order[1]})
+        order_node.text = order[0]
+        write_xml_atomic(path, ET.ElementTree(root))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "InProgressMovies90Days.xsp"),
+        "In-Progress Movies", "movies",
+        [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+        ("lastplayed", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "InProgressShows90Days.xsp"),
+        "In-Progress Shows", "tvshows",
+        [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+        ("lastplayed", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "RecentlyAiredEpisodes30Days.xsp"),
+        "Recently Aired Shows", "episodes",
+        [("firstaired", "inthelast", "30 days"),
+         ("firstaired", "before", "tomorrow")],
+        ("firstaired", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "RecentlyReleasedMovies90Days.xsp"),
+        "Recently Released Movies", "movies",
+        [("premiered", "inthelast", "90 days"),
+         ("premiered", "before", "tomorrow")],
+        ("premiered", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "NewShows.xsp"),
+        "New Shows", "tvshows",
+        [("playcount", "is", "0")],
+        ("dateadded", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "NewMovies.xsp"),
+        "New Movies", "movies",
+        [("playcount", "is", "0")],
+        ("dateadded", "descending"))
+
     # --- CoreELEC timezone cache -------------------------------------------
     # Kodi's CoreELEC patch writes this file when the timezone changes through
     # the UI; offline edits must write it explicitly. It holds no secret.
@@ -676,6 +830,15 @@ managed_settings_paths() {
 .kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
 .kodi/userdata/addon_data/script.plexmod/settings.xml
 .kodi/userdata/addon_data/weather.ha/settings.xml
+.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
+.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json
+.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json
+.kodi/userdata/playlists/video/InProgressMovies90Days.xsp
+.kodi/userdata/playlists/video/InProgressShows90Days.xsp
+.kodi/userdata/playlists/video/RecentlyAiredEpisodes30Days.xsp
+.kodi/userdata/playlists/video/RecentlyReleasedMovies90Days.xsp
+.kodi/userdata/playlists/video/NewShows.xsp
+.kodi/userdata/playlists/video/NewMovies.xsp
 MANAGED_SETTINGS_PATHS
 }
 MANAGED_SETTINGS_FUNCTION
