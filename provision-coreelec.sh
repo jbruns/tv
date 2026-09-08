@@ -2379,6 +2379,19 @@ coreelec_addon_selection() {
   fi
 }
 
+# Requires that both OMDb and MDbList API keys are set when an actual Kodi
+# deployment is requested. Both keys are needed to populate Arctic Fuse 3
+# ratings metadata; without them the skin is deployed in a broken state.
+# Skipped when APPLY_KODI != 1 (--no-kodi) so config and artifact checks
+# remain keyless.
+require_arctic_fuse_metadata_keys() {
+  [[ "${APPLY_KODI}" == "1" ]] || return 0
+  [[ -n "${OMDB_API_KEY:-}" ]] \
+    || die "OMDB_API_KEY is required for an Arctic Fuse 3 Kodi deployment"
+  [[ -n "${MDBLIST_API_KEY:-}" ]] \
+    || die "MDBLIST_API_KEY is required for an Arctic Fuse 3 Kodi deployment"
+}
+
 # Refuses an --addon that is not in the locked configuration. This is a purely
 # local decision -- the IDs come from ADDON_ARTIFACT records, not from the
 # device -- so it runs in the preflight, before the administrator key is
@@ -3129,6 +3142,8 @@ validate_identifier "Kodi username" "${KODI_USER}"
 validate_identifier "Expected release" "${EXPECTED_RELEASE}"
 
 coreelec_config_validate
+
+require_arctic_fuse_metadata_keys
 
 # The add-on selection is resolved and refused here, before the first remote
 # call of any kind.

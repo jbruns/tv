@@ -1641,7 +1641,8 @@ test_an_unlocked_addon_is_refused_before_any_remote_call() {
   bin_dir="$(install_network_stubs "${dir}")"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" \
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" \
     --target 192.0.2.1 --addon plugin.video.unknown --yes 2>&1)"
   rc=$?
   set -e
@@ -1665,7 +1666,8 @@ test_a_default_run_survives_the_empty_addon_array_under_bash_3_2() {
   bin_dir="$(install_network_stubs "${dir}")"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 2>&1)"
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 2>&1)"
   rc=$?
   set -e
   assert_not_contains "${output}" "unbound variable" \
@@ -1691,7 +1693,8 @@ test_an_unreachable_target_fails_with_an_actionable_error() {
   printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
   rc=$?
   set -e
   assert_failure "${rc}" "an unreachable target must fail the run" || return 1
@@ -1736,7 +1739,8 @@ STUB
   printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
   rc=$?
   set -e
   assert_failure "${rc}" "a keyed but failing identity read must fail the run" || return 1
@@ -1755,6 +1759,85 @@ STUB
     "a failed identity read stops before any artifact is downloaded" || return 1
   assert_not_contains "${calls}" "authorized_keys" \
     "a failed identity read stops before the key install" || return 1
+}
+
+# --- Ratings-key preflight ---------------------------------------------------
+
+# A real Kodi deployment (APPLY_KODI=1, the default) must refuse before any
+# network command when both API keys are absent, when only OMDB is set, or
+# when only MDBLIST is set.
+test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact() {
+  local dir bin_dir output rc
+
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+
+  # Case 1: neither key.
+  set +e
+  output="$(run_provisioner_offline "${dir}" "${bin_dir}" \
+    --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "neither key: run must fail" || return 1
+  assert_contains "${output}" "OMDB_API_KEY" \
+    "neither key: error names OMDB_API_KEY" || return 1
+  assert_eq "" "$(cat "${dir}/network-calls.log")" \
+    "neither key: no network contact before the preflight" || return 1
+  : > "${dir}/network-calls.log"
+
+  # Case 2: only OMDB_API_KEY set — MDBLIST_API_KEY missing.
+  set +e
+  output="$(OMDB_API_KEY=omdb-secret-never-log \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "only OMDB: run must fail" || return 1
+  assert_contains "${output}" "MDBLIST_API_KEY" \
+    "only OMDB: error names MDBLIST_API_KEY" || return 1
+  assert_not_contains "${output}" "omdb-secret-never-log" \
+    "only OMDB: secret value must not appear in output" || return 1
+  assert_eq "" "$(cat "${dir}/network-calls.log")" \
+    "only OMDB: no network contact before the preflight" || return 1
+  : > "${dir}/network-calls.log"
+
+  # Case 3: only MDBLIST_API_KEY set — OMDB_API_KEY missing.
+  set +e
+  output="$(MDBLIST_API_KEY=mdblist-secret-never-log \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "only MDBLIST: run must fail" || return 1
+  assert_contains "${output}" "OMDB_API_KEY" \
+    "only MDBLIST: error names OMDB_API_KEY" || return 1
+  assert_not_contains "${output}" "mdblist-secret-never-log" \
+    "only MDBLIST: secret value must not appear in output" || return 1
+  assert_eq "" "$(cat "${dir}/network-calls.log")" \
+    "only MDBLIST: no network contact before the preflight" || return 1
+}
+
+# A --no-kodi run does not write Arctic Fuse state and must not be gated on
+# ratings keys. It should reach the first read-only SSH call, proving that
+# the preflight is skipped for non-Kodi deployment.
+test_no_kodi_deployment_does_not_require_ratings_keys() {
+  local dir bin_dir rc calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+  # Provide an existing admin key so the run skips key creation and reaches
+  # the platform-read SSH call immediately.
+  printf 'scratch administrator key\n' > "${dir}/scratch_admin_key"
+  printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
+
+  set +e
+  run_provisioner_offline "${dir}" "${bin_dir}" \
+    --target 192.0.2.1 --yes --no-kodi >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_failure "${rc}" "--no-kodi without keys fails (SSH stub exits 1), not a key-gate failure" || return 1
+  calls="$(cat "${dir}/network-calls.log")"
+  assert_contains "${calls}" "ssh " \
+    "--no-kodi reached the first SSH call without a ratings-key gate" || return 1
 }
 
 # --- Audit report ------------------------------------------------------------
@@ -1904,4 +1987,6 @@ run_all_tests \
   test_a_default_run_survives_the_empty_addon_array_under_bash_3_2 \
   test_an_unreachable_target_fails_with_an_actionable_error \
   test_a_keyed_but_failing_identity_read_fails_with_an_actionable_error \
+  test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact \
+  test_no_kodi_deployment_does_not_require_ratings_keys \
   test_the_audit_report_is_key_value_and_names_the_pending_transaction
