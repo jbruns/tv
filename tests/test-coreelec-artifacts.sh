@@ -1938,6 +1938,53 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
     "each deployed add-on is one key=value line"
 }
 
+# The managed skin paths added by Task 3 (skin settings, skinvariables nodes,
+# and playlists) participate in the same backup/rollback transaction as
+# guisettings.xml and add-on settings. This test proves that a pre-existing
+# managed file is restored and a newly created managed file is removed when the
+# transformer fails mid-run, using the same forced-failure pattern as the
+# existing guisettings rollback test.
+test_automatic_rollback_restores_skin_managed_paths() {
+  local dir root bin_dir rc output home_json playlist_path
+
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+
+  # Pre-seed a managed home widgets JSON that rollback must restore.
+  home_json="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
+  mkdir -p "$(dirname "${home_json}")"
+  printf '[{"guid":"old-widget"}]\n' > "${home_json}"
+
+  # The NewMovies.xsp playlist does not exist yet; rollback must remove it.
+  playlist_path="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  # Block the timezone cache write so the transformer fails after it has
+  # already rewritten the home widgets JSON and created the playlists.
+  mkdir -p "${root}/.cache/timezone"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a transformer failure must fail the transaction"
+
+  # A pre-existing managed file must be restored from the backup.
+  assert_eq '[{"guid":"old-widget"}]' "$(cat "${home_json}")" \
+    "the pre-existing home widgets JSON is restored by the rollback"
+
+  # A newly created managed file must be removed by the rollback.
+  if [ -e "${playlist_path}" ]; then
+    printf 'a newly created playlist must not survive the automatic rollback\n' >&2
+    return 1
+  fi
+}
+
 run_all_tests \
   test_artifact_record_requires_four_fields \
   test_artifact_record_rejects_non_https_url \
@@ -1965,6 +2012,7 @@ run_all_tests \
   test_remote_deploy_rolls_back_automatically_when_a_step_fails \
   test_remote_deploy_refuses_a_second_pending_transaction \
   test_automatic_rollback_restores_settings_written_before_the_failure \
+  test_automatic_rollback_restores_skin_managed_paths \
   test_remote_stage_upload_replaces_a_stale_bundle \
   test_rendered_remote_scripts_are_posix_clean \
   test_the_public_key_program_installs_the_key_through_the_device_login_shell \

@@ -792,13 +792,14 @@ def main(argv):
         write_text_atomic(os.path.join(storage_root, ".cache", "timezone"),
                           "TIMEZONE=%s\n" % config("TIMEZONE"), mode=0o644)
 
-    for path in WRITTEN_PATHS:
-        sys.stdout.write("settings applied: %s\n" % path)
-
 
 try:
     main(sys.argv)
 finally:
+    # Report every path written so far, even on a partial failure: the
+    # rollback needs this list to remove newly created managed files.
+    for path in WRITTEN_PATHS:
+       sys.stdout.write("settings applied: %s\n" % path)
     # Sweeps temp files an interrupted earlier run may have orphaned, on both
     # the success and the failure path.
     sweep_orphan_temporaries()
@@ -1187,6 +1188,15 @@ finish_transaction() {
     exit "${exit_status}"
   fi
   if [ -n "${transaction}" ]; then
+    # The transformer reports written paths to stdout even on failure, but the
+    # sed that normally populates APPLIED.txt only runs on the success path.
+    # Processing applied.raw here ensures rollback can remove newly created
+    # managed files that had no previous backup copy.
+    if [ -f "${transaction}/applied.raw" ]; then
+      sed -n 's/^settings applied: //p' "${transaction}/applied.raw" \
+        > "${transaction}/APPLIED.txt" 2>/dev/null || :
+      rm -f "${transaction}/applied.raw"
+    fi
     printf 'deployment failed while %s; rolling back\n' "${transaction_state}" >&2
     if rollback_transaction; then
       printf 'the device was restored to its pre-deployment state\n' >&2

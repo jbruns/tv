@@ -1038,7 +1038,7 @@ test_arctic_fuse_second_run_is_byte_identical() {
   assert_eq "${first}" "${second}" "a second run (with skin state) rewrites nothing"
 }
 
-test_arctic_fuse_managed_paths_are_backed_up_and_rolled_back() {
+test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
   local dir root payload managed_output
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
@@ -1120,5 +1120,5 @@ run_all_tests \
   test_arctic_fuse_managed_files_are_private_and_primary_profile_only \
   test_arctic_fuse_convergence_preserves_unmanaged_skinvariables_nodes \
   test_arctic_fuse_second_run_is_byte_identical \
-  test_arctic_fuse_managed_paths_are_backed_up_and_rolled_back \
+  test_arctic_fuse_managed_paths_are_listed_in_backup_block \
   test_arctic_fuse_failed_write_cleans_temporary_files
