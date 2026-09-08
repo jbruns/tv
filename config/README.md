@@ -255,7 +255,7 @@ are never echoed, logged, or written into the audit report:
 configuration file exactly like the nine above, but it is not a usable
 exported secret — current TMDb Helper has no user-configurable TMDb
 API-key setting. TMDb Helper metadata keys are populated only by
-`OMDB_API_KEY` and/or `MDBLIST_API_KEY` (see below); never export
+`OMDB_API_KEY` and `MDBLIST_API_KEY` (see below); never export
 `TMDB_API_KEY` expecting it to do anything.
 
 Safe example — placeholder names only, never a usable credential:
@@ -313,8 +313,10 @@ The following notes clarify how the managed Arctic Fuse 3 baseline interacts
 with its widget and metadata sources. They are not operator actions.
 
 - **Next Aired** (`library_nextaired`) is an Arctic Fuse 3 built-in hub type,
-  not a separate add-on. It reads the local Emby-synced Kodi library directly
-  — no external network call or additional credential is required.
+  not a separate add-on. It reads the local Emby-synced Kodi library directly;
+  because it uses only the local library, it needs neither a personal Trakt key
+  nor Trakt OAuth — no external network call or additional credential is
+  required.
 - **Trakt terminology**: Trakt labels its application credential the
   `trakt-api-key` HTTP header. That label is intentionally confusing because
   it refers to an application client key, not a user personal key. The managed
