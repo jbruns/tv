@@ -206,7 +206,7 @@ user = "\${rpc_user}:\${rpc_password}"
 url = "http://127.0.0.1:${KODI_PORT}/jsonrpc"
 header = "Content-Type: application/json"
 request = POST
-data = @"\${body}"
+data = @\${body}
 silent
 show-error
 fail
@@ -231,12 +231,15 @@ import sys
 
 required = [
     "JSONRPC.Introspect",
+    "JSONRPC.NotifyAll",
+    "XBMC.GetInfoLabels",
     "Addons.ExecuteAddon",
     "Addons.GetAddonDetails",
     "GUI.ActivateWindow",
     "GUI.GetProperties",
     "Input.ExecuteAction",
     "Input.SendText",
+    "Settings.GetSettingValue",
 ]
 # PVR.GetChannelGroups is intentionally advisory in check_nextpvr, so it is
 # not a global capability requirement.
@@ -767,7 +770,9 @@ coreelec_postdeploy_emby_fail() {
 }
 
 assist_emby_login() {
-  local pinned_version state attempts attempt interval_seconds
+  local pinned_version state launch_response attempts attempt interval_seconds
+  local pre_notification_window pre_notification_control
+  local gui_input_sent=0 add_server_selected=0 manual_server_selected=0
   local url_sent=0 username_sent=0 password_sent=0 signin_selected=0
 
   pinned_version="$(coreelec_postdeploy_pinned_addon_version "plugin.service.emby-next-gen" 2>/dev/null || true)"
@@ -815,6 +820,23 @@ assist_emby_login() {
       ;;
   esac
 
+  if ! capture_gui_state; then
+    coreelec_postdeploy_emby_fail "unexpected-dialog"
+    return 0
+  fi
+  pre_notification_window="${KODI_GUI_WINDOW_LABEL}"
+  pre_notification_control="${KODI_GUI_CONTROL_LABEL}"
+
+  launch_response="$(kodi_rpc "JSONRPC.NotifyAll" '{"sender":"Other","message":"manageserver","data":{}}')" || {
+    coreelec_postdeploy_emby_fail "kodi-rpc"
+    return 0
+  }
+  if ! coreelec_postdeploy_kodi_call_ok "${launch_response}"; then
+    coreelec_postdeploy_emby_fail "kodi-rpc"
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.manage_server" "opened"
+
   attempts="$(coreelec_postdeploy_guided_poll_limit)"
   interval_seconds="$(coreelec_postdeploy_guided_poll_interval_seconds)"
   for ((attempt = 1; attempt <= attempts; attempt++)); do
@@ -847,19 +869,43 @@ assist_emby_login() {
       return 0
     fi
 
+    if (( gui_input_sent == 0 )) &&
+      [[ "${KODI_GUI_WINDOW_LABEL}" == "${pre_notification_window}" &&
+         "${KODI_GUI_CONTROL_LABEL}" == "${pre_notification_control}" ]]; then
+      if (( attempt < attempts && interval_seconds > 0 )); then
+        sleep "${interval_seconds}"
+      fi
+      continue
+    fi
+
     case "${KODI_GUI_WINDOW_LABEL}|${KODI_GUI_CONTROL_LABEL}" in
-      "Select main server|Manually add server")
-        if (( url_sent != 0 || username_sent != 0 || password_sent != 0 )); then
-          coreelec_postdeploy_emby_fail "server-selection-ambiguity"
+      "Select dialog|Add server")
+        if (( add_server_selected != 0 || manual_server_selected != 0 ||
+              url_sent != 0 || username_sent != 0 || password_sent != 0 )); then
+          coreelec_postdeploy_emby_fail "unexpected-dialog"
           return 0
         fi
         coreelec_postdeploy_guided_select || {
           coreelec_postdeploy_emby_fail "kodi-rpc"
           return 0
         }
+        gui_input_sent=1
+        add_server_selected=1
+        ;;
+      "Select main server|Manually add server")
+        if (( manual_server_selected != 0 || url_sent != 0 || username_sent != 0 || password_sent != 0 )); then
+          coreelec_postdeploy_emby_fail "unexpected-dialog"
+          return 0
+        fi
+        coreelec_postdeploy_guided_select || {
+          coreelec_postdeploy_emby_fail "kodi-rpc"
+          return 0
+        }
+        gui_input_sent=1
+        manual_server_selected=1
         ;;
       "Manage servers|Host")
-        if (( url_sent != 0 )); then
+        if (( manual_server_selected != 1 || url_sent != 0 )); then
           coreelec_postdeploy_emby_fail "unexpected-dialog"
           return 0
         fi
@@ -868,6 +914,7 @@ assist_emby_login() {
             coreelec_postdeploy_emby_fail "unexpected-dialog"
             return 0
           }
+        gui_input_sent=1
         url_sent=1
         ;;
       "Please sign in|Username")
@@ -880,6 +927,7 @@ assist_emby_login() {
             coreelec_postdeploy_emby_fail "unexpected-dialog"
             return 0
           }
+        gui_input_sent=1
         username_sent=1
         ;;
       "Please sign in|Password")
@@ -892,6 +940,7 @@ assist_emby_login() {
             coreelec_postdeploy_emby_fail "unexpected-dialog"
             return 0
           }
+        gui_input_sent=1
         password_sent=1
         ;;
       "Please sign in|Sign in")
@@ -903,6 +952,7 @@ assist_emby_login() {
           coreelec_postdeploy_emby_fail "kodi-rpc"
           return 0
         }
+        gui_input_sent=1
         signin_selected=1
         ;;
       "Please sign in|Manual login")
@@ -1105,6 +1155,25 @@ raise SystemExit(0)
 PYEOF
 }
 
+coreelec_postdeploy_weather_labels_populated() {
+  local payload="$1"
+  JSON_PAYLOAD="${payload}" python3 - <<'PYEOF'
+import json
+import os
+
+payload = json.loads(os.environ["JSON_PAYLOAD"])
+if payload.get("error") is not None:
+    raise SystemExit(1)
+result = payload.get("result")
+if not isinstance(result, dict):
+    raise SystemExit(1)
+for label in ("Weather.Location", "Weather.Temperature", "Weather.Conditions"):
+    value = result.get(label)
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(1)
+PYEOF
+}
+
 coreelec_postdeploy_json_string_field() {
   local payload="$1" dotted_path="$2"
   JSON_PAYLOAD="${payload}" JSON_PATH="${dotted_path}" python3 - <<'PYEOF'
@@ -1163,7 +1232,7 @@ PYEOF
 
 check_home_assistant_weather() {
   local config_response entity_response config_transport config_status config_body
-  local entity_transport entity_status entity_body entity_id kodi_response
+  local entity_transport entity_status entity_body entity_id kodi_response provider_response provider
   if ! coreelec_postdeploy_weather_ready; then
     coreelec_postdeploy_observe "service.weather.ha.failure" "not-configured"
     printf 'skipped\n'
@@ -1270,17 +1339,30 @@ PYEOF
     return 0
   fi
 
-  kodi_response="$(kodi_rpc "Addons.ExecuteAddon" '{"addonid":"weather.ha"}')" || {
+  kodi_response="$(kodi_rpc "XBMC.GetInfoLabels" '{"labels":["Weather.Location","Weather.Temperature","Weather.Conditions"]}')" || {
     coreelec_postdeploy_observe "service.weather.ha.failure" "transport"
     printf 'failed\n'
     return 0
   }
-  if ! coreelec_postdeploy_kodi_call_ok "${kodi_response}"; then
-    coreelec_postdeploy_observe "service.weather.ha.failure" "kodi-rpc"
+  if ! coreelec_postdeploy_weather_labels_populated "${kodi_response}"; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "kodi-weather-labels"
     printf 'failed\n'
     return 0
   fi
-  coreelec_postdeploy_observe "service.weather.ha.kodi_execute" "ok"
+  coreelec_postdeploy_observe "service.weather.ha.kodi_weather_labels" "populated"
+
+  provider_response="$(kodi_rpc "Settings.GetSettingValue" '{"setting":"weather.addon"}')" || {
+    coreelec_postdeploy_observe "service.weather.ha.failure" "transport"
+    printf 'failed\n'
+    return 0
+  }
+  if ! provider="$(coreelec_postdeploy_json_string_field "${provider_response}" "result.value" 2>/dev/null)" \
+    || [[ "${provider}" != "weather.ha" ]]; then
+    coreelec_postdeploy_observe "service.weather.ha.failure" "kodi-weather-provider"
+    printf 'failed\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.weather.ha.kodi_provider" "${provider}"
   printf 'configured\n'
 }
 

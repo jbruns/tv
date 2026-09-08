@@ -230,12 +230,15 @@ import sys
 path, missing = sys.argv[1], sys.argv[2]
 methods = [
     "JSONRPC.Introspect",
+    "JSONRPC.NotifyAll",
+    "XBMC.GetInfoLabels",
     "Addons.ExecuteAddon",
     "Addons.GetAddonDetails",
     "GUI.ActivateWindow",
     "GUI.GetProperties",
     "Input.ExecuteAction",
     "Input.SendText",
+    "Settings.GetSettingValue",
 ]
 payload = {
     "jsonrpc": "2.0",
@@ -615,6 +618,28 @@ test_ssh_transport_matches_provisioner_hardening() {
   assert_single_remote_script_argument "${dir}" "1" "coreelec-theater"
 }
 
+test_kodi_rpc_curl_config_does_not_quote_the_at_file_path() {
+  local dir bin_dir remote_script
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  printf '%s\n' '{}' > "${dir}/stub/response-default.json"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  KODI_PORT="8080"
+  KODI_USER="homeassistant"
+  KODI_WEB_PASSWORD="kodi-web-password-secret"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    kodi_rpc "JSONRPC.Introspect" '{"getdescriptions":false,"getmetadata":false}' >/dev/null
+
+  remote_script="$(ssh_argv_element "${dir}" "1" "$(ssh_argc "${dir}" "1")")"
+  assert_contains "${remote_script}" 'data = @${body}' \
+    "curl config must not quote an @file path because curl treats the quotes as filename characters" || return 1
+  assert_not_contains "${remote_script}" 'data = @"${body}"' \
+    "curl config must not include literal quotes in the request body filename"
+}
+
 test_addon_data_reader_keeps_path_values_out_of_remote_command() {
   local dir bin_dir addon_id relative_path remote_script stdin_body
   dir="$(make_scratch_dir)"
@@ -748,7 +773,8 @@ test_weather_check_accepts_config_and_entity_responses() {
   python_bin_dir="$(install_python3_argv_stub "${dir}")"
   write_http_response "${dir}/stub/response-1.json" ok 200 '{"location_name":"Home"}'
   write_http_response "${dir}/stub/response-2.json" ok 200 '{"entity_id":"weather.forecast_home","state":"sunny"}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"xbmc-getinfolabels","result":{"Weather.Location":"Home Assistant","Weather.Temperature":"64°F","Weather.Conditions":"Sunny"}}' > "${dir}/stub/response-3.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"settings-getsettingvalue","result":{"value":"weather.ha"}}' > "${dir}/stub/response-4.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -764,18 +790,52 @@ test_weather_check_accepts_config_and_entity_responses() {
     printf 'workflow_status=%s\n' "$(check_home_assistant_weather)"
   } 2>&1)"
 
-  assert_eq "3" "$(ssh_call_count "${dir}")" "weather check performs two HTTP requests and one Kodi launch" || return 1
+  assert_eq "4" "$(ssh_call_count "${dir}")" "weather check performs two HTTP requests and two Kodi checks" || return 1
   assert_contains "${output}" "service.weather.ha.config_http_status=200" "config endpoint is reported" || return 1
   assert_contains "${output}" "service.weather.ha.entity_http_status=200" "entity endpoint is reported" || return 1
-  assert_contains "${output}" "service.weather.ha.kodi_execute=ok" "add-on launch is reported" || return 1
+  assert_contains "${output}" "service.weather.ha.kodi_weather_labels=populated" "populated Kodi weather labels are reported" || return 1
+  assert_contains "${output}" "service.weather.ha.kodi_provider=weather.ha" "active Kodi weather provider is reported" || return 1
   assert_contains "${output}" "workflow_status=configured" "healthy weather configuration is accepted" || return 1
   assert_not_contains "$(python3_argv_logs "${dir}")" "home-assistant-token-secret" \
     "weather token must not leak into local python argv" || return 1
   assert_python3_stub_recorded_calls "${dir}" "$(python3_call_count "${dir}")" \
     "weather check should exercise local python helpers through the stub" || return 1
   body="$(ssh_request_body "${dir}" 3)"
-  assert_eq '{"jsonrpc":"2.0","id":"addons-executeaddon","method":"Addons.ExecuteAddon","params":{"addonid":"weather.ha"}}' \
-    "${body}" "weather check executes the configured add-on once" || return 1
+  assert_eq '{"jsonrpc":"2.0","id":"xbmc-getinfolabels","method":"XBMC.GetInfoLabels","params":{"labels":["Weather.Location","Weather.Temperature","Weather.Conditions"]}}' \
+    "${body}" "weather check verifies the values populated inside Kodi" || return 1
+  body="$(ssh_request_body "${dir}" 4)"
+  assert_eq '{"jsonrpc":"2.0","id":"settings-getsettingvalue","method":"Settings.GetSettingValue","params":{"setting":"weather.addon"}}' \
+    "${body}" "weather check verifies the active provider" || return 1
+}
+
+test_weather_check_rejects_labels_from_another_provider() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  write_http_response "${dir}/stub/response-1.json" ok 200 '{"location_name":"Home"}'
+  write_http_response "${dir}/stub/response-2.json" ok 200 '{"entity_id":"weather.forecast_home","state":"sunny"}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":"xbmc-getinfolabels","result":{"Weather.Location":"Cached","Weather.Temperature":"64°F","Weather.Conditions":"Sunny"}}' > "${dir}/stub/response-3.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"settings-getsettingvalue","result":{"value":"weather.gismeteo"}}' > "${dir}/stub/response-4.json"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    HOME_ASSISTANT_URL="https://ha.example.lan:8123"
+    HOME_ASSISTANT_WEATHER_ENTITY="weather.forecast_home"
+    HOME_ASSISTANT_TOKEN="home-assistant-token-secret"
+    printf 'workflow_status=%s\n' "$(check_home_assistant_weather)"
+  } 2>&1)"
+
+  assert_contains "${output}" "service.weather.ha.failure=kodi-weather-provider" \
+    "cached labels from another provider are rejected" || return 1
+  assert_contains "${output}" "workflow_status=failed" \
+    "another active provider cannot pass HA Weather acceptance"
 }
 
 test_weather_check_reports_unauthorized_without_echoing_token() {
@@ -973,13 +1033,14 @@ test_service_checks_do_not_modify_addon_settings() {
 
   write_http_response "${dir}/stub/response-1.json" ok 200 '{"location_name":"Home"}'
   write_http_response "${dir}/stub/response-2.json" ok 200 '{"entity_id":"weather.forecast_home","state":"sunny"}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
-  write_http_response "${dir}/stub/response-4.json" ok 200 '<rsp stat="ok"><sid>sid-123</sid><salt>salt-456</salt></rsp>' application/xml
-  write_http_response "${dir}/stub/response-5.json" ok 200 '<rsp stat="ok"></rsp>' application/xml
-  printf '%s\n' '{"jsonrpc":"2.0","id":"pvr-getchannelgroups","result":{"channelgroups":[],"limits":{"start":0,"end":0,"total":0}}}' > "${dir}/stub/response-6.json"
-  write_http_response "${dir}/stub/response-7.json" ok 200 '{"MediaContainer":{"machineIdentifier":"plex-machine-1"}}'
-  write_http_response "${dir}/stub/response-8.json" ok 200 '{"MediaContainer":{"friendlyName":"Basement Plex"}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-9.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"xbmc-getinfolabels","result":{"Weather.Location":"Home Assistant","Weather.Temperature":"64°F","Weather.Conditions":"Sunny"}}' > "${dir}/stub/response-3.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"settings-getsettingvalue","result":{"value":"weather.ha"}}' > "${dir}/stub/response-4.json"
+  write_http_response "${dir}/stub/response-5.json" ok 200 '<rsp stat="ok"><sid>sid-123</sid><salt>salt-456</salt></rsp>' application/xml
+  write_http_response "${dir}/stub/response-6.json" ok 200 '<rsp stat="ok"></rsp>' application/xml
+  printf '%s\n' '{"jsonrpc":"2.0","id":"pvr-getchannelgroups","result":{"channelgroups":[],"limits":{"start":0,"end":0,"total":0}}}' > "${dir}/stub/response-7.json"
+  write_http_response "${dir}/stub/response-8.json" ok 200 '{"MediaContainer":{"machineIdentifier":"plex-machine-1"}}'
+  write_http_response "${dir}/stub/response-9.json" ok 200 '{"MediaContainer":{"friendlyName":"Basement Plex"}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-10.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -1282,20 +1343,25 @@ CONFIG
   write_introspection_response "${dir}/stub/response-1.json"
   write_addon_details_response "${dir}/stub/response-2.json" "plugin.service.emby-next-gen" "12.4.23"
   printf 'absent\n' > "${dir}/stub/response-3.json"
-  write_gui_state_response "${dir}/stub/response-4.json" "Select main server" "Manually add server"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-5.json"
-  write_gui_state_response "${dir}/stub/response-6.json" "Manage servers" "Host"
-  write_gui_state_response "${dir}/stub/response-7.json" "Manage servers" "Host"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-8.json"
-  write_gui_state_response "${dir}/stub/response-9.json" "Please sign in" "Username"
-  write_gui_state_response "${dir}/stub/response-10.json" "Please sign in" "Username"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-11.json"
-  write_gui_state_response "${dir}/stub/response-12.json" "Please sign in" "Password"
-  write_gui_state_response "${dir}/stub/response-13.json" "Please sign in" "Password"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-14.json"
-  write_gui_state_response "${dir}/stub/response-15.json" "Please sign in" "Sign in"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-16.json"
-  printf 'configured\n' > "${dir}/stub/response-17.json"
+  write_gui_state_response "${dir}/stub/response-4.json" "Videos" "[..]"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"jsonrpc-notifyall","result":"OK"}' > "${dir}/stub/response-5.json"
+  write_gui_state_response "${dir}/stub/response-6.json" "Videos" "[..]"
+  write_gui_state_response "${dir}/stub/response-7.json" "Select dialog" "Add server"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-8.json"
+  write_gui_state_response "${dir}/stub/response-9.json" "Select main server" "Manually add server"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-10.json"
+  write_gui_state_response "${dir}/stub/response-11.json" "Manage servers" "Host"
+  write_gui_state_response "${dir}/stub/response-12.json" "Manage servers" "Host"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-13.json"
+  write_gui_state_response "${dir}/stub/response-14.json" "Please sign in" "Username"
+  write_gui_state_response "${dir}/stub/response-15.json" "Please sign in" "Username"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-16.json"
+  write_gui_state_response "${dir}/stub/response-17.json" "Please sign in" "Password"
+  write_gui_state_response "${dir}/stub/response-18.json" "Please sign in" "Password"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-19.json"
+  write_gui_state_response "${dir}/stub/response-20.json" "Please sign in" "Sign in"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-21.json"
+  printf 'configured\n' > "${dir}/stub/response-22.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -1315,14 +1381,55 @@ CONFIG
   argv_logs="$(cat "${dir}"/stub/argv-*.log; python3_argv_logs "${dir}")"
   assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.status=configured" \
     "successful Emby assistance is reported" || return 1
+  assert_contains "$(cat "${dir}/stub/stdin-5.log")" '"method":"JSONRPC.NotifyAll"' \
+    "Emby assistance asks the running service to open its server manager" || return 1
+  assert_contains "$(cat "${dir}/stub/stdin-5.log")" '"sender":"Other","message":"manageserver"' \
+    "Emby assistance uses the add-on's supported manage-server notification" || return 1
   assert_not_contains "${output}" "${secret}" "Emby password must not appear in output" || return 1
   assert_not_contains "${argv_logs}" "${secret}" "Emby password must not appear in process arguments" || return 1
   assert_not_contains "$(cat "${report}")" "${secret}" "Emby password must not appear in the report"
 }
 
+test_emby_assistant_does_not_act_on_an_unchanged_pre_notification_dialog() {
+  local dir output actions
+  dir="$(make_scratch_dir)"
+  : > "${dir}/methods.log"
+  cat > "${dir}/scenario.sh" <<EOF
+#!/bin/bash
+set -Eeuo pipefail
+source "${WORKFLOW_LIB}"
+EMBY_SERVER_URL="https://emby.example.test"
+EMBY_USERNAME="media-user"
+LOCALE_LANGUAGE="resource.language.en_us"
+ADDON_ARTIFACTS=("$(addon_record plugin.service.emby-next-gen)")
+coreelec_postdeploy_addon_version() { printf '12.4.23\n'; }
+coreelec_postdeploy_emby_state() { printf 'absent\n'; }
+coreelec_postdeploy_guided_poll_limit() { printf '2\n'; }
+coreelec_postdeploy_guided_poll_interval_seconds() { printf '0\n'; }
+capture_gui_state() {
+  KODI_GUI_WINDOW_LABEL="Select dialog"
+  KODI_GUI_CONTROL_LABEL="Add server"
+}
+kodi_rpc() {
+  printf '%s\n' "\$1" >> "${dir}/methods.log"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"test","result":"OK"}'
+}
+coreelec_postdeploy_guided_select() {
+  printf '%s\n' "Input.ExecuteAction" >> "${dir}/methods.log"
+}
+printf 'workflow_status=%s\n' "\$(assist_emby_login)"
+EOF
+  output="$(EMBY_PASSWORD="emby-password-secret" bash "${dir}/scenario.sh" 2>&1)"
+  actions="$(grep -c '^Input.ExecuteAction$' "${dir}/methods.log" || true)"
+  assert_eq "0" "${actions}" "an unchanged pre-notification dialog receives no GUI input" || return 1
+  assert_contains "${output}" "service.plugin.service.emby-next-gen.failure=timeout" \
+    "an unchanged pre-notification dialog is bounded by the poll limit" || return 1
+  rm -rf -- "${dir}"
+}
+
 test_emby_assistant_stops_on_each_unexpected_dialog() {
-  local dir phase output sent
-  for phase in server url username password; do
+  local dir phase output sent actions
+  for phase in server selection repeat-selection selection-regression skipped-selection url username password; do
     dir="$(make_scratch_dir)"
     : > "${dir}/methods.log"
     cat > "${dir}/scenario.sh" <<EOF
@@ -1339,16 +1446,23 @@ coreelec_postdeploy_emby_state() { printf 'absent\n'; }
 capture_gui_state() {
   gui_calls=\$((gui_calls + 1))
   case "\${EMBY_TEST_PHASE}:\${gui_calls}" in
-    server:1) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
-    url:1) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
-    url:2) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
-    username:1) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
-    username:2|username:3) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
-    username:4) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
-    password:1) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
-    password:2|password:3) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
-    password:4|password:5) KODI_GUI_WINDOW_LABEL="Please sign in"; KODI_GUI_CONTROL_LABEL="Username" ;;
-    password:6) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+    *:1) KODI_GUI_WINDOW_LABEL="Videos"; KODI_GUI_CONTROL_LABEL="[..]" ;;
+    server:2) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+    selection:2) KODI_GUI_WINDOW_LABEL="Select dialog"; KODI_GUI_CONTROL_LABEL="Add server" ;;
+    selection:3) KODI_GUI_WINDOW_LABEL="Videos"; KODI_GUI_CONTROL_LABEL="[..]" ;;
+    repeat-selection:2|repeat-selection:3) KODI_GUI_WINDOW_LABEL="Select dialog"; KODI_GUI_CONTROL_LABEL="Add server" ;;
+    selection-regression:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
+    selection-regression:3) KODI_GUI_WINDOW_LABEL="Select dialog"; KODI_GUI_CONTROL_LABEL="Add server" ;;
+    skipped-selection:2) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
+    url:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
+    url:3) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+    username:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
+    username:3|username:4) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
+    username:5) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
+    password:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
+    password:3|password:4) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
+    password:5|password:6) KODI_GUI_WINDOW_LABEL="Please sign in"; KODI_GUI_CONTROL_LABEL="Username" ;;
+    password:7) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
   esac
 }
 kodi_rpc() {
@@ -1363,11 +1477,15 @@ EOF
     output="$(EMBY_TEST_PHASE="${phase}" EMBY_PASSWORD="emby-password-secret" \
       bash "${dir}/scenario.sh" 2>&1)"
     sent="$(grep -c '^Input.SendText$' "${dir}/methods.log" || true)"
+    actions="$(grep -c '^Input.ExecuteAction$' "${dir}/methods.log" || true)"
     case "${phase}" in
-      server|url) assert_eq "0" "${sent}" "${phase} drift stops before any text submission" || return 1 ;;
+      server|selection|repeat-selection|selection-regression|skipped-selection|url) assert_eq "0" "${sent}" "${phase} drift stops before any text submission" || return 1 ;;
       username) assert_eq "1" "${sent}" "username drift stops after only the URL submission" || return 1 ;;
       password) assert_eq "2" "${sent}" "password drift stops after URL and username submissions" || return 1 ;;
     esac
+    if [[ "${phase}" == "selection-regression" ]]; then
+      assert_eq "1" "${actions}" "selection regression stops before a second GUI action" || return 1
+    fi
     assert_contains "${output}" "workflow_status=manual-required" "${phase} drift fails closed" || return 1
     assert_contains "${output}" "service.plugin.service.emby-next-gen.failure=unexpected-dialog" \
       "${phase} drift is classified explicitly" || return 1
@@ -1386,12 +1504,14 @@ run_all_tests \
   test_introspection_requires_addons_getaddondetails \
   test_every_remote_script_is_one_ssh_argument \
   test_ssh_transport_matches_provisioner_hardening \
+  test_kodi_rpc_curl_config_does_not_quote_the_at_file_path \
   test_addon_data_reader_keeps_path_values_out_of_remote_command \
   test_gui_guard_accepts_expected_window_and_control \
   test_gui_guard_rejects_an_unexpected_window_without_sending_input \
   test_rpc_request_ids_never_contain_secret_values \
   test_report_contains_statuses_but_no_secret_values \
   test_weather_check_accepts_config_and_entity_responses \
+  test_weather_check_rejects_labels_from_another_provider \
   test_weather_check_reports_unauthorized_without_echoing_token \
   test_nextpvr_check_uses_the_configured_protocol_host_port_and_pin \
   test_nextpvr_check_requires_a_successful_session_login \
@@ -1406,4 +1526,5 @@ run_all_tests \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
   test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
   test_emby_password_never_appears_in_argv_log_or_report \
+  test_emby_assistant_does_not_act_on_an_unchanged_pre_notification_dialog \
   test_emby_assistant_stops_on_each_unexpected_dialog

@@ -484,7 +484,7 @@ stage_addon_bundle() {
   local dir="$1" root="$2"
   shift 2
   local stage="${root}/.cache/coreelec-provision/stage"
-  local index=0 spec id version topdir work
+  local index=0 spec id version topdir work weather_settings
   mkdir -p "${stage}"
   : > "${stage}/deploy.tsv"
   for spec in "$@"; do
@@ -501,6 +501,19 @@ stage_addon_bundle() {
       printf '%s/addon.xml\t%s\n' "${topdir}" "${work}/addon.xml"
       printf '%s/marker.txt\t%s\n' "${topdir}" "${work}/marker.txt"
     } > "${work}/zip-manifest.tsv"
+    if [[ "${id}" == "weather.ha" ]]; then
+      mkdir -p "${work}/resources"
+      weather_settings="${work}/resources/settings.xml"
+      cat > "${weather_settings}" <<'XML'
+<settings>
+  <category>
+    <setting id="ha_request_attempts" type="int" default="5" />
+  </category>
+</settings>
+XML
+      printf '%s/resources/settings.xml\t%s\n' "${topdir}" "${weather_settings}" \
+        >> "${work}/zip-manifest.tsv"
+    fi
     build_zip_from_manifest "${stage}/${index}.zip" "${work}/zip-manifest.tsv"
     printf '%s\t%s\t%s\t%s.zip\n' \
       "${index}" "${id}" "${version}" "${index}" >> "${stage}/deploy.tsv"
@@ -897,6 +910,14 @@ test_remote_deploy_uses_addon_xml_id_not_zip_directory_name() {
   assert_eq "new script.plexmod 1.14.1-beta1" \
     "$(cat "${root}/.kodi/addons/script.plexmod/marker.txt")" \
     "a differently named ZIP root is installed under its addon.xml ID"
+  assert_contains \
+    "$(cat "${root}/.kodi/addons/weather.ha/resources/settings.xml")" \
+    'type="number"' \
+    "the deployed Weather schema uses Kodi 21's valid legacy numeric type" || return 1
+  assert_not_contains \
+    "$(cat "${root}/.kodi/addons/weather.ha/resources/settings.xml")" \
+    'type="int"' \
+    "the incompatible upstream Weather setting type is removed" || return 1
   if [[ -e "${root}/.kodi/addons/weather.ha-0.0.6.6" || -e "${root}/.kodi/addons/plugin.video.pm4k" ]]; then
     printf 'the ZIP root directory name must never become the install path\n' >&2
     return 1

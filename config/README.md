@@ -73,6 +73,42 @@ Run shared provisioning first, then the separate post-deployment checks:
   the shared config/help surface because the post-deployment helper uses the
   same configuration library, not because the provisioner consumes it.
 
+### What can be configured
+
+The two commands share one config format, but they have different jobs.
+`provision-coreelec.sh` writes declarative settings transactionally.
+`configure-coreelec-addons.sh` never rewrites those settings: it validates
+configured services and, with `--interactive`, assists account flows that
+cannot be declared safely.
+
+| Add-on | Non-secret config keys | Runtime secrets | Provisioner action | Post-deployment action |
+| --- | --- | --- | --- | --- |
+| Home Assistant Weather (`weather.ha`) | `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_WEATHER_ENTITY`, `HOME_ASSISTANT_SUN_ENTITY` | `HOME_ASSISTANT_TOKEN` | Writes the provider URL and entity IDs. The deployer also patches 0.0.6.6's invalid legacy `int` setting type to Kodi 21's `number` type after checksum validation. | Calls Home Assistant from CoreELEC, verifies the weather entity, requires `weather.addon=weather.ha`, and requires populated Kodi Weather labels. |
+| NextPVR (`pvr.nextpvr`) | `NEXTPVR_HOST`, `NEXTPVR_PORT`, `NEXTPVR_PROTOCOL`, `NEXTPVR_INSTANCE_NAME` | `NEXTPVR_PIN` | Writes and enables the named client instance. | Authenticates to NextPVR from CoreELEC and observes Kodi channel groups. |
+| PM4K local-server mode (`script.plexmod`) | `PLEX_SERVER_HOST`, `PLEX_SERVER_PORT`, `PLEX_SERVER_NAME`, `PLEX_PROFILE_IDS` | `PLEX_TOKEN` | Writes direct local-server settings. | Verifies the server identity and token, then launches PM4K. |
+| PM4K account mode (`script.plexmod`) | none | none supplied to these scripts | Leaves local-server mode unset. | With `--interactive`, opens the Plex device-link flow for local or shared remote servers. |
+| YouTube (`plugin.video.youtube`) | none | `YOUTUBE_API_KEY`, `YOUTUBE_CLIENT_ID`, and `YOUTUBE_CLIENT_SECRET` together | Writes personal API credentials when all three are present. | With `--interactive`, opens the Google device-code flow and waits for persisted authorization. A token without a usable API client is only a partial login. |
+| Emby Next Gen (`plugin.service.emby-next-gen`) | `EMBY_SERVER_URL`, `EMBY_USERNAME`; `EMBY_ALLOW_LOCAL_HTTP=1` only for an RFC1918/loopback HTTP server | `EMBY_PASSWORD` | Installs the add-on but does not sign in. | With `--interactive`, opens the running service's server manager, enters credentials only through recognized dialogs, and verifies the server handshake. Unrecognized custom-skin dialogs must be completed on the TV. |
+| TMDb Helper (`plugin.video.themoviedb.helper`) | none | `OMDB_API_KEY` and/or `MDBLIST_API_KEY` | Writes whichever optional metadata keys are present. | No post-deployment workflow; Trakt and TMDb user-account linking remain manual. |
+
+Supplying only a secret is not enough: each secret that belongs to a service
+endpoint requires the corresponding non-secret keys. Conversely, endpoint
+keys without the secret leave that integration installed but unconfigured.
+YouTube is all-or-none for its three credentials. For PM4K, choose either
+local-server mode or the guided Plex account flow; remote shared servers
+normally use the account flow and need no `PLEX_SERVER_*` values.
+
+For a complete YouTube account acceptance test, supply a Google API key and
+OAuth client ID/secret whose OAuth consent-screen test-user allowlist includes
+the account being linked. A device-code flow can still leave access and
+refresh tokens when these values are absent or invalid, but the add-on reports
+that state as partially logged in and may repeatedly request authorization.
+
+The post-deployment helper supports only `weather.ha`, `pvr.nextpvr`,
+`script.plexmod`, `plugin.video.youtube`, and
+`plugin.service.emby-next-gen`. Other pinned add-ons are installed and
+verified by the provisioner but have no workflow accepted by `--addon`.
+
 ```bash
 ./provision-coreelec.sh --check-config
 ./provision-coreelec.sh --check-artifacts
@@ -94,6 +130,22 @@ Run shared provisioning first, then the separate post-deployment checks:
   default file with `device.conf` — there is no merge with the shared file;
   supply a complete file if you need one that differs from the shared
   baseline.
+
+For a real device, copy the complete shared file outside the repository,
+restrict it to the operator, and edit only the site-specific non-secret
+values:
+
+```bash
+install -d -m 700 ~/.config/tv
+install -m 600 \
+  config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf \
+  ~/.config/tv/coreelec-theater.conf
+$EDITOR ~/.config/tv/coreelec-theater.conf
+```
+
+Do not replace the shared file with a short override fragment. Because
+`--config` performs replacement rather than merging, the private file must
+retain the complete `ADDON_ARTIFACT` lock.
 
 ## Grammar (strict, never shell)
 

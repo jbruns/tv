@@ -1183,6 +1183,27 @@ while IFS="${tab}" read -r plan_archive plan_id plan_top; do
     || fail "could not expand ${plan_archive} for ${plan_id}"
   [ -f "${expanded_dir}/${plan_id}/${plan_top}/addon.xml" ] \
     || fail "the expanded ${plan_id} has no ${plan_top}/addon.xml"
+  if [ "${plan_id}" = "weather.ha" ]; then
+    weather_settings="${expanded_dir}/${plan_id}/${plan_top}/resources/settings.xml"
+    [ -f "${weather_settings}" ] \
+      || fail "the expanded weather.ha has no resources/settings.xml"
+    python3 - "${weather_settings}" <<'PYTHON_PATCH_WEATHER_SETTINGS' \
+      || fail "could not apply the Kodi 21 weather.ha settings compatibility patch"
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+matches = [
+    node for node in tree.getroot().findall(".//setting")
+    if node.get("id") == "ha_request_attempts"
+]
+if len(matches) != 1 or matches[0].get("type") != "int":
+    raise SystemExit("unexpected weather.ha request-attempts setting")
+matches[0].set("type", "number")
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYTHON_PATCH_WEATHER_SETTINGS
+  fi
 done < "${plan_file}"
 
 # --- Phase 2: mutate the device inside a recoverable transaction ------------

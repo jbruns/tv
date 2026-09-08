@@ -63,6 +63,9 @@ Supported post-deployment add-ons:
 
 The default run performs non-interactive checks only. Use --interactive
 before any PM4K account, YouTube, or Emby GUI workflow.
+This command does not write Home Assistant, NextPVR, or PM4K local-mode
+settings. Supply those values to provision-coreelec.sh first, then use this
+command to validate them. See config/README.md for the complete input matrix.
 Dry-run makes zero SSH/device calls and transmits no secrets, including when
 combined with --interactive.
 USAGE

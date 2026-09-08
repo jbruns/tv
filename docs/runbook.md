@@ -112,7 +112,7 @@ The command still writes a redacted `key=value` report, but for the fully
 unattended add-ons it now also performs read-only service checks from the
 CoreELEC device itself before reporting success:
 
-- **Home Assistant Weather** (`weather.ha`): requests `/api/config`, then `/api/states/<HOME_ASSISTANT_WEATHER_ENTITY>` with the configured bearer token, and executes `weather.ha` once only after both responses succeed.
+- **Home Assistant Weather** (`weather.ha`): requests `/api/config`, then `/api/states/<HOME_ASSISTANT_WEATHER_ENTITY>` with the configured bearer token, requires Kodi's active `weather.addon` setting to equal `weather.ha`, and requires non-empty `Weather.Location`, `Weather.Temperature`, and `Weather.Conditions` labels. The provisioner corrects 0.0.6.6's invalid legacy `ha_request_attempts` type after artifact checksum/identity validation so Kodi 21 can start the provider.
 - **NextPVR** (`pvr.nextpvr`): performs `session.initiate`, calculates the add-on's lower-case MD5 login digest from `NEXTPVR_PIN`, requires a successful `session.login`, and records `PVR.GetChannelGroups` as an advisory Kodi-side observation.
   `PVR.GetChannelGroups` is intentionally not a globally required capability;
   an unavailable or failed observation cannot override a successful backend
@@ -162,14 +162,23 @@ been provisioned successfully:
   `plugin://plugin.video.youtube/sign/in/` in Kodi's Videos window, dismisses
   only the pinned introductory `OK` dialog, then leaves Google's device-code
   creation, polling, and token storage inside the add-on. Version `7.4.4` may
-  ask you to approve more than one Google code.
+  ask you to approve more than one Google code. For a complete account test,
+  provision `YOUTUBE_API_KEY`, `YOUTUBE_CLIENT_ID`, and
+  `YOUTUBE_CLIENT_SECRET` first and include the linked account in the OAuth
+  consent screen's test-user allowlist. Token-file presence alone is not proof
+  of a working account: an absent/invalid API client produces a partial login,
+  failed authenticated views, and repeated authorization dialogs.
 - **Emby for Kodi Next Gen** (`plugin.service.emby-next-gen` `12.4.23`):
   requires `EMBY_SERVER_URL` and `EMBY_USERNAME` in the selected config file,
   plus `EMBY_PASSWORD` from the environment or a no-echo prompt in an
-  interactive terminal. The helper launches Emby, selects `Manually add
-  server`, submits the URL, username, and password through the pinned
-  English-US dialogs, and then waits for Emby's handshake database to appear.
-  It never prints or reports the password itself.
+  interactive terminal. The helper asks the already-running service to open
+  its server manager, selects `Manually add server`, submits the URL, username,
+  and password only through recognized pinned English-US dialogs, and then
+  waits for Emby's handshake database to appear. It never prints or reports
+  the password itself. Custom skins can expose misleading or empty JSON-RPC
+  labels for these dialogs; in that case the helper returns `manual-required`
+  before sending credentials. Finish on the TV and rerun the command to verify
+  the persisted server identity and handshake.
 - All three guided flows are version-gated against the add-on versions pinned
   in `config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf`. If the
   installed version or expected English-US GUI label does not match, if Emby
@@ -185,6 +194,63 @@ These are deployed either way, and are reported `configured` only when their val
 - **NextPVR** (`pvr.nextpvr`): `NEXTPVR_HOST`/`NEXTPVR_PORT`/`NEXTPVR_PROTOCOL`/`NEXTPVR_INSTANCE_NAME` plus `NEXTPVR_PIN`. Without them, provisioning creates a disabled, credential-free placeholder client instance when none exists, so Kodi can keep the add-on installed and enabled without repeatedly trying its generated `127.0.0.1:8866` default. Existing instances are preserved when those values are omitted on a later run.
 - **Home Assistant Weather** (`weather.ha`): `HOME_ASSISTANT_URL`/`HOME_ASSISTANT_WEATHER_ENTITY`/`HOME_ASSISTANT_SUN_ENTITY` plus `HOME_ASSISTANT_TOKEN`.
 - **TMDb Helper** (`plugin.video.themoviedb.helper`): `OMDB_API_KEY` and/or `MDBLIST_API_KEY` populate metadata keys; Trakt and TMDb user-account linking remain interactive and optional either way.
+
+### Full live add-on acceptance sequence
+
+Use this sequence when validating a newly provisioned device against real
+services. The private config must be a complete copy of the shared config,
+not a partial overlay. See the
+[configuration matrix](../config/README.md#what-can-be-configured) for the
+keys used by each add-on.
+
+1. Put site-specific, non-secret values in a mode-`600` config outside the
+   repository. Keep API keys, tokens, PINs, and passwords out of that file.
+2. Export the required secrets only into the process that runs each command.
+   A shell history entry must never contain a literal secret; retrieve values
+   from an OS credential store or enter them through a no-echo prompt.
+3. Validate locally before contacting the device:
+
+   ```bash
+   ./configure-coreelec-addons.sh \
+     --config ~/.config/tv/coreelec-theater.conf \
+     --target coreelec-theater \
+     --dry-run
+   ```
+
+4. Re-run the transactional provisioner with the same config and service
+   secrets. This step is required to write Home Assistant, NextPVR, PM4K
+   local-mode, YouTube API, or TMDb Helper settings; the post-deployment
+   helper intentionally cannot write them.
+5. Run the default post-deployment pass. Require `configured` for every
+   supplied unattended integration and investigate any `failed`,
+   `authorization-required`, or unexpected `skipped` status before moving on.
+6. Run each desired guided flow separately so its TV/browser prompts are
+   unambiguous:
+
+   ```bash
+   ./configure-coreelec-addons.sh \
+     --config ~/.config/tv/coreelec-theater.conf \
+     --target coreelec-theater \
+     --interactive --addon script.plexmod
+   ./configure-coreelec-addons.sh \
+     --config ~/.config/tv/coreelec-theater.conf \
+     --target coreelec-theater \
+     --interactive --addon plugin.video.youtube
+   ./configure-coreelec-addons.sh \
+     --config ~/.config/tv/coreelec-theater.conf \
+     --target coreelec-theater \
+     --interactive --addon plugin.service.emby-next-gen
+   ```
+
+7. Re-run each successful guided flow. A persisted account should report
+   `already-configured` without sending GUI input. Review every generated
+   report and confirm that no literal credential appears.
+
+For an acceptance run without personal YouTube API credentials, exercise the
+guided route but record a credential-related `authorization-required`,
+`manual-required`, partial login, or failed authenticated view as a known
+limitation, not a successful YouTube authorization. Do not weaken the expected
+result for the other configured services.
 
 ### Arctic Fuse 3 activation
 
