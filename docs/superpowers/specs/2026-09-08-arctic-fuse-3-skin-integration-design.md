@@ -22,6 +22,7 @@ This work will:
   personal Trakt developer credential nor Trakt user authorization.
 - Install and enable every add-on listed in Arctic Fuse 3's supported optional
   dependency catalog.
+- Add a first-class Plex Home entry that launches or restores PM4K.
 - Enable the Arctic Fuse 3 Next Aired, PVR, and Add-ons Home hubs.
 - Keep Settings available in the native Home options tray.
 - Replace the default Home widgets with the approved local-library widgets.
@@ -34,6 +35,7 @@ This work will not:
 
 - Add or support multiple Kodi profiles.
 - Add a Trakt account workflow or accept a user-provided "Trakt API key."
+- Add external PM4K content widgets.
 - Fork or repackage Arctic Fuse 3.
 - Automate clicks through the skin settings UI.
 - Execute destructive Power menu actions during acceptance.
@@ -104,6 +106,23 @@ and TV-show playlists and adjacent Home widgets.
 Kodi's native TV-show `inprogress` calculation is accepted for this baseline.
 No custom season-level database query or plug-in will be introduced.
 
+### PM4K Home Integration
+
+Arctic Fuse 3 provides four native configurable top-level Home slots,
+`HomeSwitcher.1101` through `HomeSwitcher.1104`. A slot can act as a direct
+shortcut when its `Shortcut.Path` is a Kodi action and its `Shortcut.Target`
+is empty.
+
+PM4K exposes both script and plugin-source extension points, but its
+`plugin://script.plexmod/` implementation is only a launcher shim. It returns
+no Kodi directory items and delegates to the main PM4K script. It therefore
+does not provide stable external directory paths suitable for Arctic Fuse
+widgets.
+
+The baseline will use custom slot `1101` as a launch-only Plex entry. Its
+action will be `RunAddon(script.plexmod)`, which starts PM4K or asks an already
+running instance to restore itself.
+
 ## Selected Approach
 
 Extend the existing transactional provisioner with declarative, version-gated
@@ -149,6 +168,12 @@ does not treat an idempotent deployment as a new set of shortcuts.
 
 The following native Home features will be enabled:
 
+- Plex custom hub:
+  - `HomeSwitcher.1101.Name=Plex`
+  - `HomeSwitcher.1101.Toggle=true`
+  - `HomeSwitcher.1101.Icon=special://home/addons/script.plexmod/icon2.png`
+  - `HomeSwitcher.1101.Shortcut.Path=RunAddon(script.plexmod)`
+  - `HomeSwitcher.1101.Shortcut.Target` is empty
 - Next Aired: `HomeSwitcher.1106.Toggle=true`
 - Next Aired data mode:
   `HomeSwitcher.1106.UpNextMode=library_nextaired`
@@ -163,6 +188,12 @@ the hub setting, while device verification will continue to require a working
 PVR add-on and observable channel groups for full PVR acceptance.
 
 No custom top-level Settings hub will be created.
+
+The fixed Arctic Fuse Home control order places custom slot `1101` immediately
+after Home and before the remaining enabled native hubs. Selecting Plex will
+launch PM4K directly rather than open an empty custom hub window. No Plex
+widgets, spotlight content, submenu, or PM4K plugin-directory URLs will be
+configured.
 
 ### Home Widget Order
 
@@ -338,6 +369,7 @@ The deployment fails closed and rolls back when any of these occur:
 - Kodi does not restart or expose localhost JSON-RPC in time.
 - The active skin, enabled add-ons, skin settings, menu nodes, playlists, or
   metadata-key presence do not match the expected state.
+- The Plex Home entry does not resolve to the pinned and enabled PM4K add-on.
 - The verification response is malformed or incomplete.
 
 Rollback must restore pre-existing versions of every managed file and remove
@@ -354,6 +386,8 @@ The remote observation step will verify:
   and enabled.
 - OMDb and MDbList settings are present when required, without returning their
   values.
+- The Plex custom entry has the exact approved label, icon, launch action,
+  empty target, and position after Home.
 - Next Aired, PVR, and Add-ons toggles are enabled.
 - Next Aired mode is `library_nextaired`.
 - The Settings options-tray entry is enabled.
@@ -367,6 +401,7 @@ The remote observation step will verify:
 The audit report will add non-secret status lines for:
 
 - Arctic Fuse Home configuration.
+- Plex Home entry configuration.
 - Arctic Fuse Power menu configuration.
 - Each managed playlist.
 - Each optional supported dependency.
@@ -404,6 +439,7 @@ Cover:
 
 - New-file and existing-file behavior.
 - Exact Home and Power JSON.
+- Exact Plex custom-slot settings, including an empty shortcut target.
 - Exact playlist XML.
 - Stable GUIDs and deterministic output.
 - Idempotent second runs.
@@ -421,6 +457,7 @@ Cover:
 - Failure for missing, malformed, reordered, duplicated, or unexpected menu
   entries.
 - Failure for incorrect playlist rules or paths.
+- Failure for an incorrect Plex label, icon, action, target, or PM4K state.
 - Failure for missing, disabled, or wrong-version optional dependencies.
 - Presence-only metadata-key verification.
 - Literal secret redaction from reports and diagnostic output.
@@ -439,11 +476,13 @@ Acceptance will:
 6. Confirm Arctic Fuse 3 is the active skin after Kodi restarts.
 7. Verify all optional supported add-ons and managed settings through the
    device's localhost JSON-RPC and SSH inspection paths.
-8. Open or query each playlist against the Emby-synced Kodi library and prove
+8. Select the Plex Home entry and confirm PM4K starts or restores without
+   exposing an intermediate empty hub.
+9. Open or query each playlist against the Emby-synced Kodi library and prove
    that every returned item satisfies its type and date/progress rules.
-9. Capture and visually inspect the Home and Power screens for labels, order,
+10. Capture and visually inspect the Home and Power screens for labels, order,
    and availability.
-10. Run the provisioner a second time and prove idempotent convergence.
+11. Run the provisioner a second time and prove idempotent convergence.
 
 Acceptance will not select Power off, Suspend, Reboot, Restart Kodi, or the
 shutdown timer from the rendered menu. Their action strings will be verified
@@ -463,6 +502,7 @@ Update the directly related documentation to describe:
   OAuth authorization.
 - Why local-library Next Aired needs neither.
 - The installed optional supported dependencies.
+- The launch-only Plex Home entry and why PM4K widgets are not configured.
 - The authoritative Home widgets and Power menu.
 - The one-profile scope.
 - New verification report fields and live acceptance steps.
