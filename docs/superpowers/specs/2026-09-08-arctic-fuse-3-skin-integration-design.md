@@ -23,6 +23,7 @@ This work will:
 - Install and enable every add-on listed in Arctic Fuse 3's supported optional
   dependency catalog.
 - Add a first-class Plex Home entry that launches or restores PM4K.
+- Add a first-class YouTube Home entry that opens the YouTube add-on.
 - Enable the Arctic Fuse 3 Next Aired, PVR, and Add-ons Home hubs.
 - Keep Settings available in the native Home options tray.
 - Replace the default Home widgets with the approved local-library widgets.
@@ -36,6 +37,7 @@ This work will not:
 - Add or support multiple Kodi profiles.
 - Add a Trakt account workflow or accept a user-provided "Trakt API key."
 - Add external PM4K content widgets.
+- Add YouTube content widgets.
 - Fork or repackage Arctic Fuse 3.
 - Automate clicks through the skin settings UI.
 - Execute destructive Power menu actions during acceptance.
@@ -123,6 +125,17 @@ The baseline will use custom slot `1101` as a launch-only Plex entry. Its
 action will be `RunAddon(script.plexmod)`, which starts PM4K or asks an already
 running instance to restore itself.
 
+### YouTube Home Integration
+
+The pinned YouTube add-on exposes a standard Kodi video plugin directory at
+`plugin://plugin.video.youtube/`. The baseline will use custom slot `1102` as
+a direct YouTube entry. Arctic Fuse will open that directory in Kodi's Videos
+window, allowing the add-on to present its own signed-in navigation.
+
+Although YouTube exposes plugin directories that could be used as widget
+sources, this design intentionally mirrors the simple Plex entry-point
+requirement. It will not select, manage, or verify YouTube content widgets.
+
 ## Selected Approach
 
 Extend the existing transactional provisioner with declarative, version-gated
@@ -174,6 +187,12 @@ The following native Home features will be enabled:
   - `HomeSwitcher.1101.Icon=special://home/addons/script.plexmod/icon2.png`
   - `HomeSwitcher.1101.Shortcut.Path=RunAddon(script.plexmod)`
   - `HomeSwitcher.1101.Shortcut.Target` is empty
+- YouTube custom hub:
+  - `HomeSwitcher.1102.Name=YouTube`
+  - `HomeSwitcher.1102.Toggle=true`
+  - `HomeSwitcher.1102.Icon=special://home/addons/plugin.video.youtube/resources/media/icon.png`
+  - `HomeSwitcher.1102.Shortcut.Path=plugin://plugin.video.youtube/`
+  - `HomeSwitcher.1102.Shortcut.Target=videos`
 - Next Aired: `HomeSwitcher.1106.Toggle=true`
 - Next Aired data mode:
   `HomeSwitcher.1106.UpNextMode=library_nextaired`
@@ -189,11 +208,11 @@ PVR add-on and observable channel groups for full PVR acceptance.
 
 No custom top-level Settings hub will be created.
 
-The fixed Arctic Fuse Home control order places custom slot `1101` immediately
-after Home and before the remaining enabled native hubs. Selecting Plex will
-launch PM4K directly rather than open an empty custom hub window. No Plex
-widgets, spotlight content, submenu, or PM4K plugin-directory URLs will be
-configured.
+The fixed Arctic Fuse Home control order places custom slots `1101` and `1102`
+immediately after Home and before the remaining enabled native hubs. Selecting
+Plex will launch PM4K directly rather than open an empty custom hub window.
+Selecting YouTube will open its root plugin directory in Kodi's Videos window.
+Neither custom entry will have widgets, spotlight content, or a submenu.
 
 ### Home Widget Order
 
@@ -370,6 +389,8 @@ The deployment fails closed and rolls back when any of these occur:
 - The active skin, enabled add-ons, skin settings, menu nodes, playlists, or
   metadata-key presence do not match the expected state.
 - The Plex Home entry does not resolve to the pinned and enabled PM4K add-on.
+- The YouTube Home entry does not resolve to the pinned and enabled YouTube
+  add-on.
 - The verification response is malformed or incomplete.
 
 Rollback must restore pre-existing versions of every managed file and remove
@@ -388,6 +409,8 @@ The remote observation step will verify:
   values.
 - The Plex custom entry has the exact approved label, icon, launch action,
   empty target, and position after Home.
+- The YouTube custom entry has the exact approved label, icon, plugin path,
+  Videos target, and position after Plex.
 - Next Aired, PVR, and Add-ons toggles are enabled.
 - Next Aired mode is `library_nextaired`.
 - The Settings options-tray entry is enabled.
@@ -402,6 +425,7 @@ The audit report will add non-secret status lines for:
 
 - Arctic Fuse Home configuration.
 - Plex Home entry configuration.
+- YouTube Home entry configuration.
 - Arctic Fuse Power menu configuration.
 - Each managed playlist.
 - Each optional supported dependency.
@@ -440,6 +464,7 @@ Cover:
 - New-file and existing-file behavior.
 - Exact Home and Power JSON.
 - Exact Plex custom-slot settings, including an empty shortcut target.
+- Exact YouTube custom-slot settings, including its Videos target.
 - Exact playlist XML.
 - Stable GUIDs and deterministic output.
 - Idempotent second runs.
@@ -458,6 +483,7 @@ Cover:
   entries.
 - Failure for incorrect playlist rules or paths.
 - Failure for an incorrect Plex label, icon, action, target, or PM4K state.
+- Failure for an incorrect YouTube label, icon, path, target, or add-on state.
 - Failure for missing, disabled, or wrong-version optional dependencies.
 - Presence-only metadata-key verification.
 - Literal secret redaction from reports and diagnostic output.
@@ -478,11 +504,13 @@ Acceptance will:
    device's localhost JSON-RPC and SSH inspection paths.
 8. Select the Plex Home entry and confirm PM4K starts or restores without
    exposing an intermediate empty hub.
-9. Open or query each playlist against the Emby-synced Kodi library and prove
+9. Select the YouTube Home entry and confirm it opens the add-on's root
+   directory in Kodi's Videos window.
+10. Open or query each playlist against the Emby-synced Kodi library and prove
    that every returned item satisfies its type and date/progress rules.
-10. Capture and visually inspect the Home and Power screens for labels, order,
+11. Capture and visually inspect the Home and Power screens for labels, order,
    and availability.
-11. Run the provisioner a second time and prove idempotent convergence.
+12. Run the provisioner a second time and prove idempotent convergence.
 
 Acceptance will not select Power off, Suspend, Reboot, Restart Kodi, or the
 shutdown timer from the rendered menu. Their action strings will be verified
@@ -503,6 +531,7 @@ Update the directly related documentation to describe:
 - Why local-library Next Aired needs neither.
 - The installed optional supported dependencies.
 - The launch-only Plex Home entry and why PM4K widgets are not configured.
+- The direct YouTube Home entry and the decision not to manage YouTube widgets.
 - The authoritative Home widgets and Power menu.
 - The one-profile scope.
 - New verification report fields and live acceptance steps.
