@@ -2048,6 +2048,330 @@ run_verify_with_keys() {
     run_verify "${config}" "${observations}" "${manifest}"
 }
 
+# --- Arctic Fuse probe fixture helpers --------------------------------------
+
+# Creates a fixture root with valid Arctic Fuse skin settings, home widgets
+# JSON, power menu JSON, and all six smart playlists. Returns the storage root.
+# Extends make_probe_fixture_root with the managed skin files the probe reads.
+make_arctic_fuse_fixture_root() {
+  local dir="$1" root
+  root="$(make_probe_fixture_root "${dir}")"
+  local userdata="${root}/.kodi/userdata"
+  local skin_dir="${userdata}/addon_data/skin.arctic.fuse.3"
+  local nodes_dir="${userdata}/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  local playlists_dir="${userdata}/playlists/video"
+  mkdir -p "${skin_dir}" "${nodes_dir}" "${playlists_dir}"
+
+  # Valid skin settings XML
+  cat > "${skin_dir}/settings.xml" <<'XML'
+<settings>
+    <setting id="HomeSwitcher.1101.Name">Plex</setting>
+    <setting id="HomeSwitcher.1101.Toggle">true</setting>
+    <setting id="HomeSwitcher.1101.Icon">special://home/addons/script.plexmod/icon2.png</setting>
+    <setting id="HomeSwitcher.1101.Shortcut.Path">RunAddon(script.plexmod)</setting>
+    <setting id="HomeSwitcher.1102.Name">YouTube</setting>
+    <setting id="HomeSwitcher.1102.Toggle">true</setting>
+    <setting id="HomeSwitcher.1102.Icon">special://home/addons/plugin.video.youtube/resources/media/icon.png</setting>
+    <setting id="HomeSwitcher.1102.Shortcut.Path">plugin://plugin.video.youtube/</setting>
+    <setting id="HomeSwitcher.1102.Shortcut.Target">videos</setting>
+    <setting id="HomeSwitcher.1106.Toggle">true</setting>
+    <setting id="HomeSwitcher.1106.UpNextMode">library_nextaired</setting>
+    <setting id="HomeSwitcher.1107.Toggle">true</setting>
+    <setting id="HomeSwitcher.1108.Toggle">true</setting>
+    <setting id="optionstiles.02.include">Settings</setting>
+</settings>
+XML
+
+  # Valid home widgets JSON
+  cat > "${nodes_dir}/skinvariables-shortcut-homewidgets.json" <<'JSON'
+[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
+JSON
+
+  # Valid power menu JSON
+  cat > "${nodes_dir}/skinvariables-shortcut-powermenu.json" <<'JSON'
+[{"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}, {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""}, {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""}, {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""}, {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""}]
+JSON
+
+  # Valid smart playlists
+  write_fixture_xsp "${playlists_dir}/InProgressMovies90Days.xsp" movies \
+    "In-Progress Movies" "all" 50 "lastplayed" "descending" \
+    "inprogress|true|" "lastplayed|inthelast|90 days"
+  write_fixture_xsp "${playlists_dir}/InProgressShows90Days.xsp" tvshows \
+    "In-Progress Shows" "all" 50 "lastplayed" "descending" \
+    "inprogress|true|" "lastplayed|inthelast|90 days"
+  write_fixture_xsp "${playlists_dir}/RecentlyAiredEpisodes30Days.xsp" episodes \
+    "Recently Aired Shows" "all" 50 "firstaired" "descending" \
+    "firstaired|inthelast|30 days" "firstaired|before|tomorrow"
+  write_fixture_xsp "${playlists_dir}/RecentlyReleasedMovies90Days.xsp" movies \
+    "Recently Released Movies" "all" 50 "premiered" "descending" \
+    "premiered|inthelast|90 days" "premiered|before|tomorrow"
+  write_fixture_xsp "${playlists_dir}/NewShows.xsp" tvshows \
+    "New Shows" "all" 50 "dateadded" "descending" \
+    "playcount|is|0"
+  write_fixture_xsp "${playlists_dir}/NewMovies.xsp" movies \
+    "New Movies" "all" 50 "dateadded" "descending" \
+    "playcount|is|0"
+
+  printf '%s\n' "${root}"
+}
+
+# Writes a valid .xsp smart playlist file. Rules are passed as trailing args
+# in field|operator|value format.
+write_fixture_xsp() {
+  local path="$1" type="$2" name="$3" match="$4" limit="$5"
+  local order_field="$6" order_dir="$7"
+  shift 7
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<smartplaylist type="%s">\n' "${type}"
+    printf '    <name>%s</name>\n' "${name}"
+    printf '    <match>%s</match>\n' "${match}"
+    local rule_spec field operator value
+    for rule_spec in "$@"; do
+      IFS='|' read -r field operator value <<< "${rule_spec}"
+      printf '    <rule field="%s" operator="%s">' "${field}" "${operator}"
+      if [[ -n "${value}" ]]; then
+        printf '<value>%s</value>' "${value}"
+      fi
+      printf '</rule>\n'
+    done
+    printf '    <limit>%s</limit>\n' "${limit}"
+    printf '    <order direction="%s">%s</order>\n' "${order_dir}" "${order_field}"
+    printf '</smartplaylist>\n'
+  } > "${path}"
+}
+
+# Runs the probe with the Arctic Fuse request parameters.
+run_arctic_fuse_probe() {
+  local dir="$1" bin_dir="$2" root="$3"
+  local request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+HOME_ASSISTANT_URL=https://homeassistant.example.lan:8123
+HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
+HOME_ASSISTANT_SUN_ENTITY=sun.sun
+HAVE_HOME_ASSISTANT_TOKEN=1
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+  run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1
+}
+
+# --- Arctic Fuse probe fixture tests ----------------------------------------
+
+test_probe_arctic_fuse_valid_baseline_emits_all_ones() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=1" "hubs ok" || return 1
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=1" "plex ok" || return 1
+  assert_contains "${output}" "arctic_fuse.youtube_entry_configured=1" "youtube ok" || return 1
+  assert_contains "${output}" "arctic_fuse.settings_tile_configured=1" "settings tile ok" || return 1
+  assert_contains "${output}" "arctic_fuse.home_widgets_configured=1" "home widgets ok" || return 1
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=1" "power menu ok" || return 1
+  assert_contains "${output}" "arctic_fuse.playlist.InProgressMovies90Days.configured=1" "playlist 1" || return 1
+  assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=1" "playlist 6" || return 1
+}
+
+test_probe_missing_skin_settings_emits_zero() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  rm "${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" "hubs 0 when settings missing" || return 1
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" "plex 0" || return 1
+  assert_contains "${output}" "arctic_fuse.settings_tile_configured=0" "settings tile 0" || return 1
+}
+
+test_probe_malformed_skin_xml_emits_zero() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  printf 'NOT VALID XML <<<>>>' > \
+    "${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" "malformed XML → hubs 0" || return 1
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" "malformed XML → plex 0" || return 1
+}
+
+test_probe_malformed_json_emits_zero_for_home_widgets() {
+  local dir root bin_dir output nodes_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  printf '{broken json' > "${nodes_dir}/skinvariables-shortcut-homewidgets.json"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.home_widgets_configured=0" \
+    "malformed JSON → home widgets 0" || return 1
+  # Power menu is unaffected
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=1" \
+    "power menu still ok" || return 1
+}
+
+test_probe_malformed_json_emits_zero_for_power_menu() {
+  local dir root bin_dir output nodes_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  printf 'NOT JSON' > "${nodes_dir}/skinvariables-shortcut-powermenu.json"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=0" \
+    "malformed JSON → power menu 0" || return 1
+}
+
+test_probe_missing_home_widgets_file_emits_zero() {
+  local dir root bin_dir output nodes_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  rm "${nodes_dir}/skinvariables-shortcut-homewidgets.json"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.home_widgets_configured=0" \
+    "missing file → home widgets 0" || return 1
+}
+
+test_probe_reordered_home_widgets_emits_zero() {
+  local dir root bin_dir output nodes_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  # Swap first two entries
+  cat > "${nodes_dir}/skinvariables-shortcut-homewidgets.json" <<'JSON'
+[{"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
+JSON
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.home_widgets_configured=0" \
+    "reordered home widgets → 0" || return 1
+}
+
+test_probe_reordered_power_menu_emits_zero() {
+  local dir root bin_dir output nodes_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  # Swap first two entries
+  cat > "${nodes_dir}/skinvariables-shortcut-powermenu.json" <<'JSON'
+[{"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""}, {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}, {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""}, {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""}, {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""}]
+JSON
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=0" \
+    "reordered power menu → 0" || return 1
+}
+
+test_probe_duplicate_power_menu_entry_emits_zero() {
+  local dir root bin_dir output nodes_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  # Add a duplicate Powerdown entry
+  cat > "${nodes_dir}/skinvariables-shortcut-powermenu.json" <<'JSON'
+[{"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}, {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""}, {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""}, {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""}, {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""}, {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}]
+JSON
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=0" \
+    "duplicate entry → 0" || return 1
+}
+
+test_probe_unexpected_home_widget_entry_emits_zero() {
+  local dir root bin_dir output nodes_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
+  # Add an unexpected 7th entry
+  cat > "${nodes_dir}/skinvariables-shortcut-homewidgets.json" <<'JSON'
+[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}, {"guid": "coreelec-home-unexpected", "icon": "", "label": "Unexpected", "path": "special://profile/playlists/video/Unexpected.xsp", "target": "videos"}]
+JSON
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.home_widgets_configured=0" \
+    "unexpected entry → 0" || return 1
+}
+
+test_probe_missing_playlist_file_emits_zero() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  rm "${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=0" \
+    "missing playlist → 0" || return 1
+  # Other playlists still pass
+  assert_contains "${output}" "arctic_fuse.playlist.InProgressMovies90Days.configured=1" \
+    "unaffected playlist still 1" || return 1
+}
+
+test_probe_malformed_playlist_xml_emits_zero() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  printf 'NOT VALID XML <<<>>>' > \
+    "${root}/.kodi/userdata/playlists/video/InProgressShows90Days.xsp"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.InProgressShows90Days.configured=0" \
+    "malformed playlist XML → 0" || return 1
+}
+
+test_probe_incorrect_playlist_rule_emits_zero() {
+  local dir root bin_dir output playlists_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  playlists_dir="${root}/.kodi/userdata/playlists/video"
+  # Replace with wrong rule value (60 days instead of 90 days)
+  write_fixture_xsp "${playlists_dir}/RecentlyReleasedMovies90Days.xsp" movies \
+    "Recently Released Movies" "all" 50 "premiered" "descending" \
+    "premiered|inthelast|60 days" "premiered|before|tomorrow"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.configured=0" \
+    "wrong rule value → 0" || return 1
+}
+
+# --- Arctic Fuse comparator tests ------------------------------------------
+
 test_arctic_fuse_complete_state_verifies() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
@@ -2074,7 +2398,7 @@ test_arctic_fuse_complete_state_verifies() {
   assert_contains "${output}" "metadata.mdblist.status=ok" "mdblist status" || return 1
 }
 
-test_arctic_fuse_missing_managed_file_fails_verification() {
+test_comparator_home_widgets_zero_fails_verification() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
@@ -2090,11 +2414,11 @@ test_arctic_fuse_missing_managed_file_fails_verification() {
   output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
   rc=$?
   set -e
-  assert_failure "${rc}" "a missing managed file must fail verification" || return 1
+  assert_failure "${rc}" "a home widgets 0 must fail verification" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
 }
 
-test_arctic_fuse_malformed_json_or_xml_fails_verification() {
+test_comparator_power_menu_zero_fails_verification() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
@@ -2110,7 +2434,7 @@ test_arctic_fuse_malformed_json_or_xml_fails_verification() {
   output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
   rc=$?
   set -e
-  assert_failure "${rc}" "malformed JSON must fail verification" || return 1
+  assert_failure "${rc}" "a power menu 0 must fail verification" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
 }
 
@@ -2195,7 +2519,7 @@ test_arctic_fuse_home_widget_order_mismatch_fails_verification() {
   assert_contains "${output}" "arctic_fuse.home" "home surface named" || return 1
 }
 
-test_arctic_fuse_duplicate_or_unexpected_menu_entry_fails_verification() {
+test_comparator_settings_tile_zero_fails_verification() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
@@ -2211,7 +2535,7 @@ test_arctic_fuse_duplicate_or_unexpected_menu_entry_fails_verification() {
   output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
   rc=$?
   set -e
-  assert_failure "${rc}" "a duplicate/unexpected menu entry must fail verification" || return 1
+  assert_failure "${rc}" "a settings tile 0 must fail verification" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
 }
 
@@ -2426,14 +2750,27 @@ run_all_tests \
   test_remote_verify_probe_keeps_going_when_an_enable_request_is_cut_off \
   test_remote_verify_probe_reports_a_missing_addon \
   test_remote_verify_probe_uses_a_private_curl_config_and_removes_it \
+  test_probe_arctic_fuse_valid_baseline_emits_all_ones \
+  test_probe_missing_skin_settings_emits_zero \
+  test_probe_malformed_skin_xml_emits_zero \
+  test_probe_malformed_json_emits_zero_for_home_widgets \
+  test_probe_malformed_json_emits_zero_for_power_menu \
+  test_probe_missing_home_widgets_file_emits_zero \
+  test_probe_reordered_home_widgets_emits_zero \
+  test_probe_reordered_power_menu_emits_zero \
+  test_probe_duplicate_power_menu_entry_emits_zero \
+  test_probe_unexpected_home_widget_entry_emits_zero \
+  test_probe_missing_playlist_file_emits_zero \
+  test_probe_malformed_playlist_xml_emits_zero \
+  test_probe_incorrect_playlist_rule_emits_zero \
   test_arctic_fuse_complete_state_verifies \
-  test_arctic_fuse_missing_managed_file_fails_verification \
-  test_arctic_fuse_malformed_json_or_xml_fails_verification \
+  test_comparator_home_widgets_zero_fails_verification \
+  test_comparator_power_menu_zero_fails_verification \
   test_arctic_fuse_hub_mismatch_fails_verification \
   test_arctic_fuse_plex_entry_mismatch_fails_verification \
   test_arctic_fuse_youtube_entry_mismatch_fails_verification \
   test_arctic_fuse_home_widget_order_mismatch_fails_verification \
-  test_arctic_fuse_duplicate_or_unexpected_menu_entry_fails_verification \
+  test_comparator_settings_tile_zero_fails_verification \
   test_arctic_fuse_power_action_mismatch_fails_verification \
   test_arctic_fuse_playlist_rule_mismatch_fails_verification \
   test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification \
