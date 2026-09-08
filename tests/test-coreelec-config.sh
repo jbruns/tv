@@ -322,6 +322,12 @@ pvr.nextpvr
 repository.beta.emby.kodi
 repository.dontpanic
 repository.jurialmunkey
+script.artistslideshow
+resource.images.arctic.waves
+resource.images.moviecountryicons.maps
+resource.images.studios.white
+resource.images.weatherfanart.multi
+service.upnext
 resource.font.robotocjksc
 resource.images.studios.coloured
 resource.images.weathericons.white
@@ -329,7 +335,9 @@ resource.language.en_us
 script.module.addon.signals
 script.module.certifi
 script.module.chardet
+script.module.defusedxml
 script.module.dateutil
+script.module.future
 script.module.idna
 script.module.infotagger
 script.module.inputstreamhelper
@@ -415,6 +423,19 @@ test_production_config_locks_primary_addon_versions() {
   assert_artifact_version "pvr.nextpvr" "21.3.2.1"
 }
 
+test_production_config_locks_arctic_fuse_supported_optional_addons() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  assert_artifact_version "script.artistslideshow" "4.2.0"
+  assert_artifact_version "resource.images.arctic.waves" "0.0.2"
+  assert_artifact_version "resource.images.weatherfanart.multi" "0.0.6"
+  assert_artifact_version "resource.images.moviecountryicons.maps" "0.0.1"
+  assert_artifact_version "resource.images.studios.white" "0.0.34"
+  assert_artifact_version "service.upnext" "1.1.9+matrix.1"
+  assert_artifact_version "script.module.defusedxml" "0.6.0+matrix.1"
+  assert_artifact_version "script.module.future" "1.0.0+matrix.1"
+}
+
 test_production_config_matches_the_reviewed_artifact_id_set() {
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
@@ -454,7 +475,7 @@ test_production_config_records_each_artifact_exactly_once() {
   local duplicates
   duplicates="$(artifact_id_versions | cut -f1 | LC_ALL=C sort | uniq -d)"
   assert_eq "" "${duplicates}" "no artifact ID appears twice"
-  assert_eq "34" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
+  assert_eq "42" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
 }
 
 # An artifact URL must be immutably addressed so the pinned bytes cannot be
@@ -575,6 +596,7 @@ run_all_tests \
   test_production_config_sets_pacific_english_us_baseline \
   test_production_config_carries_no_secret_values \
   test_production_config_locks_primary_addon_versions \
+  test_production_config_locks_arctic_fuse_supported_optional_addons \
   test_production_config_matches_the_reviewed_artifact_id_set \
   test_production_config_records_immutable_upstream_sources \
   test_production_config_records_each_artifact_exactly_once \
