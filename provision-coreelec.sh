@@ -2153,13 +2153,165 @@ def main(argv):
     if have("OMDB_API_KEY") or have("MDBLIST_API_KEY"):
         values = read_settings(
             addon_data("plugin.video.themoviedb.helper", "settings.xml")) or {}
-        matched = True
         if have("OMDB_API_KEY"):
-            matched = matched and bool(values.get("omdb_apikey"))
+            observe("addon_settings.plugin.video.themoviedb.helper.omdb_configured",
+                    1 if bool(values.get("omdb_apikey")) else 0)
         if have("MDBLIST_API_KEY"):
-            matched = matched and bool(values.get("mdblist_apikey"))
-        observe("addon_settings.plugin.video.themoviedb.helper.configured",
-                1 if matched else 0)
+            observe("addon_settings.plugin.video.themoviedb.helper.mdblist_configured",
+                    1 if bool(values.get("mdblist_apikey")) else 0)
+
+    # --- Arctic Fuse skin state -------------------------------------------
+
+    def read_json(path):
+        try:
+            with open(path, "r") as handle:
+                return json.load(handle)
+        except Exception:
+            return None
+
+    def xml_setting_values(path):
+        return read_settings(path) or {}
+
+    def smart_playlist_signature(path):
+        try:
+            root = ET.parse(path).getroot()
+        except Exception:
+            return None
+        return {
+            "type": root.get("type"),
+            "name": root.findtext("name") or "",
+            "match": root.findtext("match") or "",
+            "limit": root.findtext("limit") or "",
+            "rules": [
+                (node.get("field"), node.get("operator"),
+                 node.findtext("value") or "")
+                for node in root.findall("rule")
+            ],
+            "order": (
+                root.findtext("order") or "",
+                (root.find("order").get("direction")
+                 if root.find("order") is not None else ""),
+            ),
+        }
+
+    SKIN_ID = "skin.arctic.fuse.3"
+    userdata = os.path.join(storage_root, ".kodi", "userdata")
+    skin_settings_path = os.path.join(
+        userdata, "addon_data", SKIN_ID, "settings.xml")
+    nodes_dir = os.path.join(
+        userdata, "addon_data", "script.skinvariables", "nodes", SKIN_ID)
+    playlists_dir = os.path.join(userdata, "playlists", "video")
+
+    skin_values = xml_setting_values(skin_settings_path)
+
+    # Hub toggles and UpNext mode
+    hubs_ok = (
+        skin_values.get("HomeSwitcher.1106.Toggle") == "true"
+        and skin_values.get("HomeSwitcher.1106.UpNextMode") == "library_nextaired"
+        and skin_values.get("HomeSwitcher.1107.Toggle") == "true"
+        and skin_values.get("HomeSwitcher.1108.Toggle") == "true"
+    )
+    observe("arctic_fuse.hubs_configured", 1 if hubs_ok else 0)
+
+    # Plex entry (1101)
+    plex_ok = (
+        skin_values.get("HomeSwitcher.1101.Name") == "Plex"
+        and skin_values.get("HomeSwitcher.1101.Icon")
+            == "special://home/addons/script.plexmod/icon2.png"
+        and skin_values.get("HomeSwitcher.1101.Shortcut.Path")
+            == "RunAddon(script.plexmod)"
+        and not skin_values.get("HomeSwitcher.1101.Shortcut.Target")
+    )
+    observe("arctic_fuse.plex_entry_configured", 1 if plex_ok else 0)
+
+    # YouTube entry (1102)
+    youtube_ok = (
+        skin_values.get("HomeSwitcher.1102.Name") == "YouTube"
+        and skin_values.get("HomeSwitcher.1102.Icon")
+            == "special://home/addons/plugin.video.youtube/resources/media/icon.png"
+        and skin_values.get("HomeSwitcher.1102.Shortcut.Path")
+            == "plugin://plugin.video.youtube/"
+        and skin_values.get("HomeSwitcher.1102.Shortcut.Target") == "videos"
+    )
+    observe("arctic_fuse.youtube_entry_configured", 1 if youtube_ok else 0)
+
+    # Settings tile
+    observe("arctic_fuse.settings_tile_configured",
+            1 if skin_values.get("optionstiles.02.include") == "Settings" else 0)
+
+    # Home widgets
+    expected_home_widgets = [
+        {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
+    ]
+    actual_home_widgets = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-homewidgets.json"))
+    observe("arctic_fuse.home_widgets_configured",
+            1 if actual_home_widgets == expected_home_widgets else 0)
+
+    # Power menu
+    expected_power_menu = [
+        {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""},
+        {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""},
+        {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""},
+        {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""},
+        {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""},
+    ]
+    actual_power_menu = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-powermenu.json"))
+    observe("arctic_fuse.power_menu_configured",
+            1 if actual_power_menu == expected_power_menu else 0)
+
+    # Smart playlists
+    EXPECTED_PLAYLISTS = {
+        "InProgressMovies90Days": {
+            "type": "movies", "name": "In-Progress Movies", "match": "all",
+            "limit": "50",
+            "rules": [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+            "order": ("lastplayed", "descending"),
+        },
+        "InProgressShows90Days": {
+            "type": "tvshows", "name": "In-Progress Shows", "match": "all",
+            "limit": "50",
+            "rules": [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+            "order": ("lastplayed", "descending"),
+        },
+        "RecentlyAiredEpisodes30Days": {
+            "type": "episodes", "name": "Recently Aired Shows", "match": "all",
+            "limit": "50",
+            "rules": [("firstaired", "inthelast", "30 days"),
+                      ("firstaired", "before", "tomorrow")],
+            "order": ("firstaired", "descending"),
+        },
+        "RecentlyReleasedMovies90Days": {
+            "type": "movies", "name": "Recently Released Movies", "match": "all",
+            "limit": "50",
+            "rules": [("premiered", "inthelast", "90 days"),
+                      ("premiered", "before", "tomorrow")],
+            "order": ("premiered", "descending"),
+        },
+        "NewShows": {
+            "type": "tvshows", "name": "New Shows", "match": "all",
+            "limit": "50",
+            "rules": [("playcount", "is", "0")],
+            "order": ("dateadded", "descending"),
+        },
+        "NewMovies": {
+            "type": "movies", "name": "New Movies", "match": "all",
+            "limit": "50",
+            "rules": [("playcount", "is", "0")],
+            "order": ("dateadded", "descending"),
+        },
+    }
+    for playlist_name, expected_sig in EXPECTED_PLAYLISTS.items():
+        actual_sig = smart_playlist_signature(
+            os.path.join(playlists_dir, playlist_name + ".xsp"))
+        observe("arctic_fuse.playlist.%s.configured" % playlist_name,
+                1 if actual_sig == expected_sig else 0)
 
     for line in OBSERVATIONS:
         sys.stdout.write(line + "\n")
@@ -2642,7 +2794,7 @@ coreelec_plex_configured() {
 }
 
 coreelec_tmdb_helper_configured() {
-  [[ -n "${OMDB_API_KEY:-}" || -n "${MDBLIST_API_KEY:-}" ]]
+  [[ -n "${OMDB_API_KEY:-}" && -n "${MDBLIST_API_KEY:-}" ]]
 }
 
 coreelec_youtube_configured() {
@@ -2884,10 +3036,55 @@ verify_remote_baseline() {
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "script.plexmod" coreelec_plex_configured || failures=$((failures + 1))
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
-    "plugin.video.themoviedb.helper" coreelec_tmdb_helper_configured \
-    || failures=$((failures + 1))
-  coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "plugin.video.youtube" coreelec_youtube_configured || failures=$((failures + 1))
+
+  # Split ratings-key verification: each key is independently fatal.
+  local arctic_fuse_failures=0
+  if [[ -n "${OMDB_API_KEY:-}" ]]; then
+    coreelec_verify_boolean_observation "${observations}" \
+      "addon_settings.plugin.video.themoviedb.helper.omdb_configured" \
+      "metadata.omdb" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  fi
+  if [[ -n "${MDBLIST_API_KEY:-}" ]]; then
+    coreelec_verify_boolean_observation "${observations}" \
+      "addon_settings.plugin.video.themoviedb.helper.mdblist_configured" \
+      "metadata.mdblist" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  fi
+
+  # Arctic Fuse skin surfaces
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.hubs_configured" "arctic_fuse.hubs" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.plex_entry_configured" "arctic_fuse.plex_entry" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.youtube_entry_configured" "arctic_fuse.youtube_entry" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.settings_tile_configured" "arctic_fuse.settings_tile" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.home_widgets_configured" "arctic_fuse.home" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+
+  local playlist_name
+  for playlist_name in InProgressMovies90Days InProgressShows90Days \
+    RecentlyAiredEpisodes30Days RecentlyReleasedMovies90Days NewShows NewMovies; do
+    coreelec_verify_boolean_observation "${observations}" \
+      "arctic_fuse.playlist.${playlist_name}.configured" \
+      "arctic_fuse.playlist.${playlist_name}" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  done
+
+  if (( arctic_fuse_failures == 0 )); then
+    printf 'arctic_fuse.status=ok\n'
+  else
+    printf 'arctic_fuse.status=mismatch\n'
+  fi
 
   printf 'verification_failures=%s\n' "${failures}"
   if (( failures == 0 )); then
@@ -2898,9 +3095,13 @@ verify_remote_baseline() {
   return 1
 }
 
-# Reports whether the device confirmed the settings this run wrote for one
-# add-on. Nothing is claimed for an add-on that was not deployed or whose
-# optional values were never supplied.
+# Compares one boolean observation against the expected value of 1.
+coreelec_verify_boolean_observation() {
+  local observations="$1" observation_key="$2" report_prefix="$3"
+  coreelec_report_comparison "${report_prefix}" "1" \
+    "$(coreelec_observation_value "${observation_key}" "${observations}" || true)"
+}
+
 coreelec_verify_addon_settings() {
   local observations="$1" manifest="$2" addon_id="$3" predicate="$4" value
   coreelec_manifest_contains "${manifest}" "${addon_id}" || return 0
@@ -3017,7 +3218,7 @@ coreelec_report_manual_actions() {
   fi
   if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
     number=$((number + 1))
-    printf 'manual_action.%s=Optional: authorize Trakt and a TMDb user account in TMDb Helper; both are interactive and neither is required.\n' "${number}"
+    printf 'manual_action.%s=Optional: authorize a TMDb user account in TMDb Helper if desired; local-library Next Aired does not require Trakt authorization.\n' "${number}"
   fi
   printf 'manual_actions=%s\n' "${number}"
 }

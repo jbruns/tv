@@ -73,6 +73,40 @@ write_manifest() {
 6	plugin.service.emby-next-gen	12.4.23	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
 8	resource.language.en_us	11.0.82	8.zip
+9	repository.beta.emby.kodi	1.0.11	9.zip
+10	repository.dontpanic	0.2.10	10.zip
+11	repository.jurialmunkey	3.4	11.zip
+12	script.artistslideshow	4.2.0	12.zip
+13	resource.images.arctic.waves	0.0.2	13.zip
+14	resource.images.weatherfanart.multi	0.0.6	14.zip
+15	resource.images.moviecountryicons.maps	0.0.1	15.zip
+16	resource.images.studios.white	0.0.34	16.zip
+17	service.upnext	1.1.9+matrix.1	17.zip
+18	inputstream.adaptive	21.5.24.1	18.zip
+19	inputstream.ffmpegdirect	21.3.8.1	19.zip
+20	resource.font.robotocjksc	0.0.3	20.zip
+21	resource.images.studios.coloured	0.0.24	21.zip
+22	resource.images.weathericons.white	0.0.6	22.zip
+23	script.module.addon.signals	0.0.6+matrix.1	23.zip
+24	script.module.certifi	2023.5.7	24.zip
+25	script.module.chardet	5.1.0	25.zip
+26	script.module.defusedxml	0.6.0+matrix.1	26.zip
+27	script.module.dateutil	2.8.2	27.zip
+28	script.module.future	1.0.0+matrix.1	28.zip
+29	script.module.idna	3.10.0	29.zip
+30	script.module.infotagger	0.0.9	30.zip
+31	script.module.inputstreamhelper	0.8.5	31.zip
+32	script.module.iso8601	2.0.0	32.zip
+33	script.module.jurialmunkey	0.2.35	33.zip
+34	script.module.kodi-six	0.1.3.1	34.zip
+35	script.module.pysocks	1.7.0+matrix.1	35.zip
+36	script.module.qrcode	6.1.0+matrix.3	36.zip
+37	script.module.requests	2.31.0	37.zip
+38	script.module.six	1.16.0+matrix.1	38.zip
+39	script.module.urllib3	2.2.3	39.zip
+40	script.module.yaml	6.0.1	40.zip
+41	script.skinvariables	2.2.2	41.zip
+42	script.texturemaker	0.2.11	42.zip
 MANIFEST
 }
 
@@ -127,9 +161,159 @@ addon.resource.language.en_us.installed=1
 addon.resource.language.en_us.version=11.0.82
 addon.resource.language.en_us.enabled=1
 addon.resource.language.en_us.enable_attempted=0
+addon.repository.beta.emby.kodi.installed=1
+addon.repository.beta.emby.kodi.version=1.0.11
+addon.repository.beta.emby.kodi.enabled=1
+addon.repository.beta.emby.kodi.enable_attempted=0
+addon.repository.dontpanic.installed=1
+addon.repository.dontpanic.version=0.2.10
+addon.repository.dontpanic.enabled=1
+addon.repository.dontpanic.enable_attempted=0
+addon.repository.jurialmunkey.installed=1
+addon.repository.jurialmunkey.version=3.4
+addon.repository.jurialmunkey.enabled=1
+addon.repository.jurialmunkey.enable_attempted=0
+addon.script.artistslideshow.installed=1
+addon.script.artistslideshow.version=4.2.0
+addon.script.artistslideshow.enabled=1
+addon.script.artistslideshow.enable_attempted=0
+addon.resource.images.arctic.waves.installed=1
+addon.resource.images.arctic.waves.version=0.0.2
+addon.resource.images.arctic.waves.enabled=1
+addon.resource.images.arctic.waves.enable_attempted=0
+addon.resource.images.weatherfanart.multi.installed=1
+addon.resource.images.weatherfanart.multi.version=0.0.6
+addon.resource.images.weatherfanart.multi.enabled=1
+addon.resource.images.weatherfanart.multi.enable_attempted=0
+addon.resource.images.moviecountryicons.maps.installed=1
+addon.resource.images.moviecountryicons.maps.version=0.0.1
+addon.resource.images.moviecountryicons.maps.enabled=1
+addon.resource.images.moviecountryicons.maps.enable_attempted=0
+addon.resource.images.studios.white.installed=1
+addon.resource.images.studios.white.version=0.0.34
+addon.resource.images.studios.white.enabled=1
+addon.resource.images.studios.white.enable_attempted=0
+addon.service.upnext.installed=1
+addon.service.upnext.version=1.1.9+matrix.1
+addon.service.upnext.enabled=1
+addon.service.upnext.enable_attempted=0
+addon.inputstream.adaptive.installed=1
+addon.inputstream.adaptive.version=21.5.24.1
+addon.inputstream.adaptive.enabled=1
+addon.inputstream.adaptive.enable_attempted=0
+addon.inputstream.ffmpegdirect.installed=1
+addon.inputstream.ffmpegdirect.version=21.3.8.1
+addon.inputstream.ffmpegdirect.enabled=1
+addon.inputstream.ffmpegdirect.enable_attempted=0
+addon.resource.font.robotocjksc.installed=1
+addon.resource.font.robotocjksc.version=0.0.3
+addon.resource.font.robotocjksc.enabled=1
+addon.resource.font.robotocjksc.enable_attempted=0
+addon.resource.images.studios.coloured.installed=1
+addon.resource.images.studios.coloured.version=0.0.24
+addon.resource.images.studios.coloured.enabled=1
+addon.resource.images.studios.coloured.enable_attempted=0
+addon.resource.images.weathericons.white.installed=1
+addon.resource.images.weathericons.white.version=0.0.6
+addon.resource.images.weathericons.white.enabled=1
+addon.resource.images.weathericons.white.enable_attempted=0
+addon.script.module.addon.signals.installed=1
+addon.script.module.addon.signals.version=0.0.6+matrix.1
+addon.script.module.addon.signals.enabled=1
+addon.script.module.addon.signals.enable_attempted=0
+addon.script.module.certifi.installed=1
+addon.script.module.certifi.version=2023.5.7
+addon.script.module.certifi.enabled=1
+addon.script.module.certifi.enable_attempted=0
+addon.script.module.chardet.installed=1
+addon.script.module.chardet.version=5.1.0
+addon.script.module.chardet.enabled=1
+addon.script.module.chardet.enable_attempted=0
+addon.script.module.defusedxml.installed=1
+addon.script.module.defusedxml.version=0.6.0+matrix.1
+addon.script.module.defusedxml.enabled=1
+addon.script.module.defusedxml.enable_attempted=0
+addon.script.module.dateutil.installed=1
+addon.script.module.dateutil.version=2.8.2
+addon.script.module.dateutil.enabled=1
+addon.script.module.dateutil.enable_attempted=0
+addon.script.module.future.installed=1
+addon.script.module.future.version=1.0.0+matrix.1
+addon.script.module.future.enabled=1
+addon.script.module.future.enable_attempted=0
+addon.script.module.idna.installed=1
+addon.script.module.idna.version=3.10.0
+addon.script.module.idna.enabled=1
+addon.script.module.idna.enable_attempted=0
+addon.script.module.infotagger.installed=1
+addon.script.module.infotagger.version=0.0.9
+addon.script.module.infotagger.enabled=1
+addon.script.module.infotagger.enable_attempted=0
+addon.script.module.inputstreamhelper.installed=1
+addon.script.module.inputstreamhelper.version=0.8.5
+addon.script.module.inputstreamhelper.enabled=1
+addon.script.module.inputstreamhelper.enable_attempted=0
+addon.script.module.iso8601.installed=1
+addon.script.module.iso8601.version=2.0.0
+addon.script.module.iso8601.enabled=1
+addon.script.module.iso8601.enable_attempted=0
+addon.script.module.jurialmunkey.installed=1
+addon.script.module.jurialmunkey.version=0.2.35
+addon.script.module.jurialmunkey.enabled=1
+addon.script.module.jurialmunkey.enable_attempted=0
+addon.script.module.kodi-six.installed=1
+addon.script.module.kodi-six.version=0.1.3.1
+addon.script.module.kodi-six.enabled=1
+addon.script.module.kodi-six.enable_attempted=0
+addon.script.module.pysocks.installed=1
+addon.script.module.pysocks.version=1.7.0+matrix.1
+addon.script.module.pysocks.enabled=1
+addon.script.module.pysocks.enable_attempted=0
+addon.script.module.qrcode.installed=1
+addon.script.module.qrcode.version=6.1.0+matrix.3
+addon.script.module.qrcode.enabled=1
+addon.script.module.qrcode.enable_attempted=0
+addon.script.module.requests.installed=1
+addon.script.module.requests.version=2.31.0
+addon.script.module.requests.enabled=1
+addon.script.module.requests.enable_attempted=0
+addon.script.module.six.installed=1
+addon.script.module.six.version=1.16.0+matrix.1
+addon.script.module.six.enabled=1
+addon.script.module.six.enable_attempted=0
+addon.script.module.urllib3.installed=1
+addon.script.module.urllib3.version=2.2.3
+addon.script.module.urllib3.enabled=1
+addon.script.module.urllib3.enable_attempted=0
+addon.script.module.yaml.installed=1
+addon.script.module.yaml.version=6.0.1
+addon.script.module.yaml.enabled=1
+addon.script.module.yaml.enable_attempted=0
+addon.script.skinvariables.installed=1
+addon.script.skinvariables.version=2.2.2
+addon.script.skinvariables.enabled=1
+addon.script.skinvariables.enable_attempted=0
+addon.script.texturemaker.installed=1
+addon.script.texturemaker.version=0.2.11
+addon.script.texturemaker.enabled=1
+addon.script.texturemaker.enable_attempted=0
 addon_settings.weather.ha.configured=1
 addon_settings.pvr.nextpvr.configured=1
 addon_settings.script.plexmod.configured=1
+addon_settings.plugin.video.themoviedb.helper.omdb_configured=1
+addon_settings.plugin.video.themoviedb.helper.mdblist_configured=1
+arctic_fuse.hubs_configured=1
+arctic_fuse.plex_entry_configured=1
+arctic_fuse.youtube_entry_configured=1
+arctic_fuse.settings_tile_configured=1
+arctic_fuse.home_widgets_configured=1
+arctic_fuse.power_menu_configured=1
+arctic_fuse.playlist.InProgressMovies90Days.configured=1
+arctic_fuse.playlist.InProgressShows90Days.configured=1
+arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=1
+arctic_fuse.playlist.RecentlyReleasedMovies90Days.configured=1
+arctic_fuse.playlist.NewShows.configured=1
+arctic_fuse.playlist.NewMovies.configured=1
 OBSERVATIONS
 }
 
@@ -199,6 +383,7 @@ test_all_expected_addon_versions_are_verified() {
 
   set +e
   output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    OMDB_API_KEY=omdb-key MDBLIST_API_KEY=mdblist-key \
     run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
   rc=$?
   set -e
@@ -210,7 +395,7 @@ test_all_expected_addon_versions_are_verified() {
     "observed version is reported" || return 1
   assert_contains "${output}" "addon.script.plexmod.observed_version=1.14.1-beta1" \
     "pre-release version round-trips" || return 1
-  assert_eq "8" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
+  assert_eq "42" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
     "every manifest add-on is verified" || return 1
 }
 
@@ -736,8 +921,8 @@ test_configured_nextpvr_ha_and_pm4k_are_classified_configured() {
     "$(PLEX_TOKEN=plex-token run_classify "${config}" script.plexmod)" \
     "PM4K local mode with host and token is configured" || return 1
   assert_eq "configured" \
-    "$(OMDB_API_KEY=omdb run_classify "${config}" plugin.video.themoviedb.helper)" \
-    "TMDb Helper with a metadata key is configured" || return 1
+    "$(OMDB_API_KEY=omdb MDBLIST_API_KEY=mdblist run_classify "${config}" plugin.video.themoviedb.helper)" \
+    "TMDb Helper with both metadata keys is configured" || return 1
 }
 
 test_missing_optional_values_are_classified_unconfigured() {
@@ -1853,6 +2038,349 @@ ENTRIES
   fi
 }
 
+# --- Arctic Fuse integration verification ----------------------------------
+
+# Runs run_verify with both ratings keys set, which is the production baseline.
+run_verify_with_keys() {
+  local config="$1" observations="$2" manifest="$3"
+  HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    OMDB_API_KEY=omdb-key MDBLIST_API_KEY=mdblist-key \
+    run_verify "${config}" "${observations}" "${manifest}"
+}
+
+test_arctic_fuse_complete_state_verifies() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "complete Arctic Fuse state must verify" || return 1
+  assert_contains "${output}" "verification_result=pass" "result line present" || return 1
+  assert_contains "${output}" "arctic_fuse.status=ok" "arctic fuse overall status" || return 1
+  assert_contains "${output}" "arctic_fuse.home.status=ok" "home status" || return 1
+  assert_contains "${output}" "arctic_fuse.power.status=ok" "power status" || return 1
+  assert_contains "${output}" "arctic_fuse.plex_entry.status=ok" "plex entry status" || return 1
+  assert_contains "${output}" "arctic_fuse.youtube_entry.status=ok" "youtube entry status" || return 1
+  assert_contains "${output}" "metadata.omdb.status=ok" "omdb status" || return 1
+  assert_contains "${output}" "metadata.mdblist.status=ok" "mdblist status" || return 1
+}
+
+test_arctic_fuse_missing_managed_file_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.home_widgets_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing managed file must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
+}
+
+test_arctic_fuse_malformed_json_or_xml_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.power_menu_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "malformed JSON must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
+}
+
+test_arctic_fuse_hub_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.hubs_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a hub mismatch must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs" "the mismatching surface is named" || return 1
+}
+
+test_arctic_fuse_plex_entry_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.plex_entry_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a Plex entry mismatch must fail verification" || return 1
+  assert_contains "${output}" "arctic_fuse.plex_entry.status=mismatch" "plex entry mismatch" || return 1
+}
+
+test_arctic_fuse_youtube_entry_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.youtube_entry_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a YouTube entry mismatch must fail verification" || return 1
+  assert_contains "${output}" "arctic_fuse.youtube_entry.status=mismatch" "youtube entry mismatch" || return 1
+}
+
+test_arctic_fuse_home_widget_order_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.home_widgets_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a home widget order mismatch must fail verification" || return 1
+  assert_contains "${output}" "arctic_fuse.home" "home surface named" || return 1
+}
+
+test_arctic_fuse_duplicate_or_unexpected_menu_entry_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.settings_tile_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a duplicate/unexpected menu entry must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
+}
+
+test_arctic_fuse_power_action_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.power_menu_configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a power action mismatch must fail verification" || return 1
+  assert_contains "${output}" "arctic_fuse.power.status=mismatch" "power mismatch" || return 1
+}
+
+test_arctic_fuse_playlist_rule_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.playlist.InProgressMovies90Days.configured" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a playlist rule mismatch must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
+}
+
+test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  # Version mismatch subcase
+  set_observation "${observations}" "addon.script.artistslideshow.version" "4.1.0"
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a version mismatch for an optional addon must fail" || return 1
+  assert_contains "${output}" "addon.script.artistslideshow.verification=mismatch" \
+    "version mismatch is fatal" || return 1
+
+  # Enabled mismatch subcase
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon.resource.images.arctic.waves.enabled" "0"
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a disabled optional addon must fail" || return 1
+  assert_contains "${output}" "addon.resource.images.arctic.waves.verification=mismatch" \
+    "enabled mismatch is fatal" || return 1
+}
+
+test_each_ratings_key_presence_is_verified_separately() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  # Only OMDb missing
+  set_observation "${observations}" "addon_settings.plugin.video.themoviedb.helper.omdb_configured" "0"
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "missing OMDb key must fail" || return 1
+  assert_contains "${output}" "metadata.omdb.status=mismatch" "omdb mismatch" || return 1
+  assert_contains "${output}" "metadata.mdblist.status=ok" "mdblist still ok" || return 1
+
+  # Only MDbList missing
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon_settings.plugin.video.themoviedb.helper.mdblist_configured" "0"
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "missing MDbList key must fail" || return 1
+  assert_contains "${output}" "metadata.mdblist.status=mismatch" "mdblist mismatch" || return 1
+  assert_contains "${output}" "metadata.omdb.status=ok" "omdb still ok" || return 1
+}
+
+# --- Report content for Arctic Fuse surfaces --------------------------------
+
+test_report_names_every_arctic_fuse_surface() {
+  local dir config manifest observations report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  report="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    OMDB_API_KEY=omdb-key MDBLIST_API_KEY=mdblist-key \
+    run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
+  [[ -f "${report}" ]] || { printf 'no report\n' >&2; return 1; }
+  assert_contains "$(cat "${report}")" "arctic_fuse.status=ok" "arctic fuse status" || return 1
+  assert_contains "$(cat "${report}")" "arctic_fuse.home.status=ok" "home status" || return 1
+  assert_contains "$(cat "${report}")" "arctic_fuse.power.status=ok" "power status" || return 1
+  assert_contains "$(cat "${report}")" "arctic_fuse.plex_entry.status=ok" "plex entry" || return 1
+  assert_contains "$(cat "${report}")" "arctic_fuse.youtube_entry.status=ok" "youtube entry" || return 1
+  assert_contains "$(cat "${report}")" "metadata.omdb.status=ok" "omdb" || return 1
+  assert_contains "$(cat "${report}")" "metadata.mdblist.status=ok" "mdblist" || return 1
+}
+
+test_report_never_contains_ratings_key_values_or_managed_file_contents() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    OMDB_API_KEY=omdb-report-secret MDBLIST_API_KEY=mdblist-report-secret \
+    run_report "${config}" "${dir}/out" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_not_contains "${output}" "omdb-report-secret" "no OMDb key literal" || return 1
+  assert_not_contains "${output}" "mdblist-report-secret" "no MDbList key literal" || return 1
+}
+
+test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment() {
+  local dir config
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  write_configured_config "${config}"
+
+  assert_eq "configured" \
+    "$(OMDB_API_KEY=omdb MDBLIST_API_KEY=mdblist \
+       run_classify "${config}" plugin.video.themoviedb.helper)" \
+    "TMDb Helper with both keys is configured" || return 1
+}
+
 run_all_tests \
   test_all_expected_addon_versions_are_verified \
   test_disabled_addon_is_failure \
@@ -1897,4 +2425,19 @@ run_all_tests \
   test_remote_verify_probe_fails_closed_on_an_addon_it_cannot_enable \
   test_remote_verify_probe_keeps_going_when_an_enable_request_is_cut_off \
   test_remote_verify_probe_reports_a_missing_addon \
-  test_remote_verify_probe_uses_a_private_curl_config_and_removes_it
+  test_remote_verify_probe_uses_a_private_curl_config_and_removes_it \
+  test_arctic_fuse_complete_state_verifies \
+  test_arctic_fuse_missing_managed_file_fails_verification \
+  test_arctic_fuse_malformed_json_or_xml_fails_verification \
+  test_arctic_fuse_hub_mismatch_fails_verification \
+  test_arctic_fuse_plex_entry_mismatch_fails_verification \
+  test_arctic_fuse_youtube_entry_mismatch_fails_verification \
+  test_arctic_fuse_home_widget_order_mismatch_fails_verification \
+  test_arctic_fuse_duplicate_or_unexpected_menu_entry_fails_verification \
+  test_arctic_fuse_power_action_mismatch_fails_verification \
+  test_arctic_fuse_playlist_rule_mismatch_fails_verification \
+  test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification \
+  test_each_ratings_key_presence_is_verified_separately \
+  test_report_names_every_arctic_fuse_surface \
+  test_report_never_contains_ratings_key_values_or_managed_file_contents \
+  test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment
