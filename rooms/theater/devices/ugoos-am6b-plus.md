@@ -49,6 +49,14 @@ After the T2/R2 extender is installed and the television reports an active eARC 
 
 **Date-relative XSP defect**: Library contains 79 qualifying episodes (30-day) and 3 qualifying movies (90-day), but Kodi 21.3's `CSmartPlaylistDirectory` generates invalid SQL: `WHERE (()) AND (())`. Both JSON-RPC and internal `CGUIMediaWindow::GetDirectory` fail. Home widget tabs 503/504 hidden due to 0 items. Requires provisioner XSP rule fix.
 
+### Pending corrected acceptance expectations
+
+The next acceptance run after the provisioner XSP fix must demonstrate:
+
+- `RecentlyAiredEpisodes30Days`: loads successfully and returns current candidates
+- `RecentlyReleasedMoviesCurrentYear`: loads successfully and returns current-year candidates
+- `RecentlyReleasedMovies90Days`: absent
+
 ### Application launch results
 
 - **Plex (script.plexmod)**: PM4K started, loaded user-select screen (no PLEX_TOKEN configured). Not an empty hub — expected sign-in flow without credentials.

@@ -336,3 +336,12 @@ with its widget and metadata sources. They are not operator actions.
   widgets are intentionally unmanaged: the provisioner writes the hub entry
   point only, and any widget rows visible in the YouTube hub depend on the
   user's own YouTube account and history within the add-on.
+- **Recently Aired Shows** (`RecentlyAiredEpisodes30Days.xsp`): rolling
+  previous 30 days; future dates excluded; Kodi Omega XSP field: `airdate`.
+- **Recently Released Movies** (`RecentlyReleasedMoviesCurrentYear.xsp`):
+  premiere year equals the device year captured during provisioning; ordered by
+  year descending. Rerun provisioning after a year boundary to update the
+  literal year. Calendar-year behavior was selected because Kodi Omega exposes
+  `premiered` through a numeric XSP field that cannot perform day-level
+  relative filtering. The earlier `RecentlyReleasedMovies90Days.xsp` is
+  obsolete and is removed by provisioning; it is not a managed playlist.

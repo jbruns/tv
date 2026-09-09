@@ -263,9 +263,14 @@ result for the other configured services.
 1. In-Progress Movies (`InProgressMovies90Days.xsp`)
 2. In-Progress Shows (`InProgressShows90Days.xsp`)
 3. Recently Aired Shows (`RecentlyAiredEpisodes30Days.xsp`)
-4. Recently Released Movies (`RecentlyReleasedMovies90Days.xsp`)
+4. Recently Released Movies (`RecentlyReleasedMoviesCurrentYear.xsp`)
 5. New Shows (`NewShows.xsp`)
 6. New Movies (`NewMovies.xsp`)
+
+**Managed playlist semantics:**
+
+- **Recently Aired Shows** (`RecentlyAiredEpisodes30Days.xsp`): rolling previous 30 days; future dates excluded; Kodi Omega XSP field: `airdate`.
+- **Recently Released Movies** (`RecentlyReleasedMoviesCurrentYear.xsp`): premiere year equals the device year captured during provisioning; ordered by year descending. Rerun provisioning after a year boundary to update the literal year. Calendar-year behavior was selected because Kodi Omega exposes `premiered` through a numeric XSP field that cannot perform day-level relative filtering.
 
 **Power menu actions** (exact order):
 
