@@ -237,7 +237,7 @@ All six playlists will have a maximum of 50 items.
 | In-Progress Movies | `InProgressMovies90Days.xsp` |
 | In-Progress Shows | `InProgressShows90Days.xsp` |
 | Recently Aired Shows | `RecentlyAiredEpisodes30Days.xsp` |
-| Recently Released Movies | `RecentlyReleasedMovies90Days.xsp` |
+| Recently Released Movies | `RecentlyReleasedMoviesCurrentYear.xsp` |
 | New Shows | `NewShows.xsp` |
 | New Movies | `NewMovies.xsp` |
 
@@ -267,22 +267,36 @@ an exact partially watched season.
 
 - Type: episodes
 - Rules:
-  - `firstaired` is within the previous 30 days.
-  - `firstaired` is not in the future.
-- Order: `firstaired` descending.
+  - Kodi XSP field `airdate` is within the previous 30 days.
+  - Kodi XSP field `airdate` is before tomorrow, expressed as
+    `notinthelast -1 days`.
+- Order: Kodi XSP field `year` descending, which Kodi maps to the episode air
+  date for sorting.
 
-The widget presents individual episode cards. Entries without `firstaired`
-metadata are excluded.
+The widget presents individual episode cards. Entries without an air date are
+excluded. Kodi Omega does not recognize the JSON-RPC property name
+`firstaired` as a smart-playlist field; `airdate` is the compatible XSP field.
 
 ### Recently Released Movies
 
 - Type: movies
 - Rules:
-  - `premiered` is within the previous 90 days.
-  - `premiered` is not in the future.
-- Order: `premiered` descending.
+  - Kodi XSP field `year` equals the device's calendar year when provisioning
+    runs.
+- Order: Kodi XSP field `year` descending, which Kodi maps to the full movie
+  premiere date for sorting.
 
-Entries without `premiered` metadata are excluded.
+The provisioner writes the year as a literal because Kodi Omega does not
+support a dynamic current-year value. Rerunning provisioning updates the
+playlist at a year boundary. Entries without premiere metadata for the
+selected year are excluded.
+
+This intentionally replaces the original rolling 90-day requirement. Kodi
+Omega exposes a movie's `premiered` database column through the XSP field
+`year`, but declares that field numeric. Consequently, date-relative
+operators such as `inthelast 90 days` cannot filter movie premiere dates at
+day-level precision. The user selected the calendar-year behavior rather than
+the inaccurate `dateadded` proxy or a new periodic playlist generator.
 
 ### New Shows
 
