@@ -658,6 +658,7 @@ def main(argv):
         else:
             node = ET.SubElement(skin_root, "setting", {"id": setting_id})
         node.set("id", setting_id)
+        node.set("type", "string")
         node.attrib.pop("value", None)
         node.attrib.pop("default", None)
         node.text = value

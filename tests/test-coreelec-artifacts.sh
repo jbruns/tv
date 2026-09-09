@@ -1768,6 +1768,9 @@ STUB
 # when only MDBLIST is set.
 test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact() {
   local dir bin_dir output rc
+  # Isolate from ambient environment secrets so the preflight tests are
+  # deterministic regardless of the operator's shell.
+  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
 
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN

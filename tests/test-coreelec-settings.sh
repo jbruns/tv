@@ -140,6 +140,23 @@ sys.stdout.write(str(sum(1 for node in root.iter("setting")
 PYEOF
 }
 
+xml_setting_type() {
+  python3 - "$1" "$2" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id = sys.argv[1], sys.argv[2]
+root = ET.parse(path).getroot()
+for node in root.iter("setting"):
+    if node.get("id") == setting_id:
+        sys.stdout.write(node.get("type") or "")
+        break
+else:
+    sys.stderr.write("setting not found: %s in %s\n" % (setting_id, path))
+    raise SystemExit(3)
+PYEOF
+}
+
 xml_root_attribute() {
   python3 - "$1" "$2" <<'PYEOF'
 import sys
@@ -1065,6 +1082,59 @@ test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
   assert_contains "${managed_output}" "NewMovies.xsp" "NM in managed paths"
 }
 
+test_arctic_fuse_managed_settings_carry_type_string() {
+  local dir root payload skin_file setting_id
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+
+  # Seed a skin settings file with one managed node carrying the wrong type
+  # and another missing it entirely. The transformer must converge both.
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  cat > "$(skin_settings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings>
+    <setting id="HomeSwitcher.1101.Toggle" type="bool">false</setting>
+    <setting id="HomeSwitcher.1102.Name">stale</setting>
+    <setting id="unrelated.keep" type="integer">42</setting>
+</settings>
+XML
+
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  skin_file="$(skin_settings_path "${root}")"
+
+  # Every managed setting must carry type="string" so Kodi 21.3 preserves it.
+  for setting_id in \
+    "HomeSwitcher.1101.Name" \
+    "HomeSwitcher.1101.Toggle" \
+    "HomeSwitcher.1101.Icon" \
+    "HomeSwitcher.1101.Shortcut.Path" \
+    "HomeSwitcher.1102.Name" \
+    "HomeSwitcher.1102.Toggle" \
+    "HomeSwitcher.1102.Icon" \
+    "HomeSwitcher.1102.Shortcut.Path" \
+    "HomeSwitcher.1102.Shortcut.Target" \
+    "HomeSwitcher.1106.Toggle" \
+    "HomeSwitcher.1106.UpNextMode" \
+    "HomeSwitcher.1107.Toggle" \
+    "HomeSwitcher.1108.Toggle" \
+    "optionstiles.02.include"; do
+    assert_eq "string" "$(xml_setting_type "${skin_file}" "${setting_id}")" \
+      "${setting_id} must have type=\"string\""
+  done
+
+  # Pre-existing wrong type was converged
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Toggle")" \
+    "1101.Toggle value converged despite wrong type"
+
+  # Unrelated settings must not have their type changed
+  assert_eq "integer" "$(xml_setting_type "${skin_file}" "unrelated.keep")" \
+    "unrelated.keep type is not changed"
+}
+
 test_arctic_fuse_failed_write_cleans_temporary_files() {
   local dir root payload output status
   dir="$(make_scratch_dir)"
@@ -1120,5 +1190,6 @@ run_all_tests \
   test_arctic_fuse_managed_files_are_private_and_primary_profile_only \
   test_arctic_fuse_convergence_preserves_unmanaged_skinvariables_nodes \
   test_arctic_fuse_second_run_is_byte_identical \
+  test_arctic_fuse_managed_settings_carry_type_string \
   test_arctic_fuse_managed_paths_are_listed_in_backup_block \
   test_arctic_fuse_failed_write_cleans_temporary_files

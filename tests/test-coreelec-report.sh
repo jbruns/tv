@@ -927,6 +927,10 @@ test_configured_nextpvr_ha_and_pm4k_are_classified_configured() {
 
 test_missing_optional_values_are_classified_unconfigured() {
   local dir config addon_id
+  # Isolate from ambient environment secrets so the classification is
+  # deterministic regardless of the operator's shell.
+  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
+
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
   config="${dir}/provision.conf"
@@ -950,6 +954,10 @@ test_missing_optional_values_are_classified_unconfigured() {
 
 test_report_lists_secret_presence_without_secret_values() {
   local dir config manifest observations report
+  # Isolate from ambient environment secrets so the presence assertions are
+  # deterministic regardless of the operator's shell.
+  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
+
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
   config="${dir}/provision.conf"
@@ -1094,6 +1102,10 @@ test_report_lists_manual_actions_in_order() {
 
 test_report_states_addon_status_and_verification_per_addon() {
   local dir config manifest observations report
+  # Isolate from ambient environment secrets so the status assertions are
+  # deterministic regardless of the operator's shell.
+  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
+
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
   config="${dir}/provision.conf"
