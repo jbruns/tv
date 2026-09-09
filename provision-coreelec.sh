@@ -226,6 +226,7 @@ unchanged payload produces byte-identical files.
 """
 
 import base64
+import datetime
 import json
 import os
 import sys
@@ -708,7 +709,7 @@ def main(argv):
         {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
-        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
     ]
@@ -748,6 +749,14 @@ def main(argv):
         order_node.text = order[0]
         write_xml_atomic(path, ET.ElementTree(root))
 
+    def remove_managed_file(path):
+        if not os.path.lexists(path):
+            return
+        if not os.path.isfile(path) or os.path.islink(path):
+            fail("refusing to remove a non-regular managed file: %s" % path)
+        os.unlink(path)
+        WRITTEN_PATHS.append(path)
+
     write_smart_playlist(
         os.path.join(playlists_dir, "InProgressMovies90Days.xsp"),
         "In-Progress Movies", "movies",
@@ -763,16 +772,17 @@ def main(argv):
     write_smart_playlist(
         os.path.join(playlists_dir, "RecentlyAiredEpisodes30Days.xsp"),
         "Recently Aired Shows", "episodes",
-        [("firstaired", "inthelast", "30 days"),
-         ("firstaired", "before", "tomorrow")],
-        ("firstaired", "descending"))
+        [("airdate", "inthelast", "30 days"),
+         ("airdate", "notinthelast", "-1 days")],
+        ("year", "descending"))
 
+    remove_managed_file(
+        os.path.join(playlists_dir, "RecentlyReleasedMovies90Days.xsp"))
     write_smart_playlist(
-        os.path.join(playlists_dir, "RecentlyReleasedMovies90Days.xsp"),
+        os.path.join(playlists_dir, "RecentlyReleasedMoviesCurrentYear.xsp"),
         "Recently Released Movies", "movies",
-        [("premiered", "inthelast", "90 days"),
-         ("premiered", "before", "tomorrow")],
-        ("premiered", "descending"))
+        [("year", "is", str(datetime.date.today().year))],
+        ("year", "descending"))
 
     write_smart_playlist(
         os.path.join(playlists_dir, "NewShows.xsp"),
@@ -839,6 +849,7 @@ managed_settings_paths() {
 .kodi/userdata/playlists/video/InProgressShows90Days.xsp
 .kodi/userdata/playlists/video/RecentlyAiredEpisodes30Days.xsp
 .kodi/userdata/playlists/video/RecentlyReleasedMovies90Days.xsp
+.kodi/userdata/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp
 .kodi/userdata/playlists/video/NewShows.xsp
 .kodi/userdata/playlists/video/NewMovies.xsp
 MANAGED_SETTINGS_PATHS

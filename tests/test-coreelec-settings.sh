@@ -771,9 +771,9 @@ result = {
     "type": root.get("type", ""),
     "name": "",
     "match": "",
-    "limit": 0,
+    "limit": "0",
     "rules": [],
-    "order": {},
+    "order": [],
 }
 name_node = root.find("name")
 if name_node is not None:
@@ -783,21 +783,18 @@ if match_node is not None:
     result["match"] = match_node.text or ""
 limit_node = root.find("limit")
 if limit_node is not None:
-    result["limit"] = int(limit_node.text or "0")
+    result["limit"] = limit_node.text or "0"
 for rule in root.findall("rule"):
     value_node = rule.find("value")
-    result["rules"].append({
-        "field": rule.get("field", ""),
-        "operator": rule.get("operator", ""),
-        "value": (value_node.text or "") if value_node is not None else "",
-    })
+    result["rules"].append([
+        rule.get("field", ""),
+        rule.get("operator", ""),
+        (value_node.text or "") if value_node is not None else "",
+    ])
 order_node = root.find("order")
 if order_node is not None:
-    result["order"] = {
-        "field": order_node.text or "",
-        "direction": order_node.get("direction", ""),
-    }
-sys.stdout.write(json.dumps(result, sort_keys=True))
+    result["order"] = [order_node.text or "", order_node.get("direction", "")]
+sys.stdout.write(json.dumps(result, sort_keys=True, separators=(',', ':')))
 PYEOF
 }
 
@@ -900,7 +897,7 @@ test_arctic_fuse_home_widgets_are_exact_and_ordered() {
   home_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-homewidgets.json")"
   [[ -f "${home_json}" ]] || { printf 'home widgets JSON not found\n' >&2; return 1; }
 
-  expected='[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]'
+  expected='[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]'
   actual="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.load(open(sys.argv[1])),sort_keys=False))' "${home_json}")"
   assert_eq "${expected}" "${actual}" "home widgets JSON content"
 
@@ -965,13 +962,18 @@ test_arctic_fuse_smart_playlists_have_exact_rules() {
 
   # RecentlyAiredEpisodes30Days.xsp
   summary="$(smart_playlist_summary "$(video_playlist_path "${root}" RecentlyAiredEpisodes30Days.xsp)")"
-  assert_eq "episodes" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "RAE type"
-  assert_eq "Recently Aired Shows" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "RAE name"
+  assert_eq \
+    '{"limit":"50","match":"all","name":"Recently Aired Shows","order":["year","descending"],"rules":[["airdate","inthelast","30 days"],["airdate","notinthelast","-1 days"]],"type":"episodes"}' \
+    "${summary}" \
+    "Recently Aired Shows exact XSP"
 
-  # RecentlyReleasedMovies90Days.xsp
-  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" RecentlyReleasedMovies90Days.xsp)")"
-  assert_eq "movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["type"])')" "RRM type"
-  assert_eq "Recently Released Movies" "$(printf '%s' "${summary}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')" "RRM name"
+  # RecentlyReleasedMoviesCurrentYear.xsp
+  current_year="$(python3 -c 'import datetime; print(datetime.date.today().year)')"
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" RecentlyReleasedMoviesCurrentYear.xsp)")"
+  assert_eq \
+    "$(printf '{"limit":"50","match":"all","name":"Recently Released Movies","order":["year","descending"],"rules":[["year","is","%s"]],"type":"movies"}' "${current_year}")" \
+    "${summary}" \
+    "Recently Released Movies exact XSP"
 
   # NewShows.xsp
   summary="$(smart_playlist_summary "$(video_playlist_path "${root}" NewShows.xsp)")"
@@ -1005,7 +1007,7 @@ test_arctic_fuse_managed_files_are_private_and_primary_profile_only() {
 
   local xsp
   for xsp in InProgressMovies90Days.xsp InProgressShows90Days.xsp \
-    RecentlyAiredEpisodes30Days.xsp RecentlyReleasedMovies90Days.xsp \
+    RecentlyAiredEpisodes30Days.xsp RecentlyReleasedMoviesCurrentYear.xsp \
     NewShows.xsp NewMovies.xsp; do
     assert_eq "600" "$(file_mode "$(video_playlist_path "${root}" "${xsp}")")" "${xsp} mode"
   done
@@ -1077,7 +1079,8 @@ test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
   assert_contains "${managed_output}" "InProgressMovies90Days.xsp" "IPM in managed paths"
   assert_contains "${managed_output}" "InProgressShows90Days.xsp" "IPS in managed paths"
   assert_contains "${managed_output}" "RecentlyAiredEpisodes30Days.xsp" "RAE in managed paths"
-  assert_contains "${managed_output}" "RecentlyReleasedMovies90Days.xsp" "RRM in managed paths"
+  assert_contains "${managed_output}" "RecentlyReleasedMovies90Days.xsp" "RRM90 in managed paths"
+  assert_contains "${managed_output}" "RecentlyReleasedMoviesCurrentYear.xsp" "RRMCY in managed paths"
   assert_contains "${managed_output}" "NewShows.xsp" "NS in managed paths"
   assert_contains "${managed_output}" "NewMovies.xsp" "NM in managed paths"
 }
@@ -1160,6 +1163,42 @@ test_arctic_fuse_failed_write_cleans_temporary_files() {
   assert_eq "" "$(orphan_temp_files "${root}")" "no temp files left behind"
 }
 
+test_arctic_fuse_replaces_obsolete_recently_released_playlist() {
+  local dir root payload old_playlist new_playlist unrelated written
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+
+  old_playlist="$(video_playlist_path "${root}" RecentlyReleasedMovies90Days.xsp)"
+  new_playlist="$(video_playlist_path "${root}" RecentlyReleasedMoviesCurrentYear.xsp)"
+  mkdir -p "$(dirname "${old_playlist}")"
+  printf 'obsolete managed content\n' > "${old_playlist}"
+
+  # An unrelated playlist beside these files must survive unchanged.
+  unrelated="$(video_playlist_path "${root}" UnrelatedPlaylist.xsp)"
+  printf 'unrelated content\n' > "${unrelated}"
+
+  written="$(run_transform "${root}" "${payload}")"
+
+  [[ ! -e "${old_playlist}" ]] || {
+    printf 'obsolete movie playlist still exists\n' >&2
+    return 1
+  }
+  [[ -f "${new_playlist}" ]] || {
+    printf 'current-year movie playlist was not created\n' >&2
+    return 1
+  }
+  assert_contains "${written}" "${old_playlist}" \
+    "obsolete playlist deletion is recorded for rollback"
+  assert_contains "${written}" "${new_playlist}" \
+    "replacement playlist write is recorded for rollback"
+
+  assert_eq "unrelated content" "$(cat "${unrelated}")" \
+    "unrelated playlist beside new files is unchanged"
+}
+
 run_all_tests \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
@@ -1192,4 +1231,5 @@ run_all_tests \
   test_arctic_fuse_second_run_is_byte_identical \
   test_arctic_fuse_managed_settings_carry_type_string \
   test_arctic_fuse_managed_paths_are_listed_in_backup_block \
+  test_arctic_fuse_replaces_obsolete_recently_released_playlist \
   test_arctic_fuse_failed_write_cleans_temporary_files

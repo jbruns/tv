@@ -1948,7 +1948,7 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
 # transformer fails mid-run, using the same forced-failure pattern as the
 # existing guisettings rollback test.
 test_automatic_rollback_restores_skin_managed_paths() {
-  local dir root bin_dir rc output home_json playlist_path
+  local dir root bin_dir rc output home_json playlist_path old_playlist old_playlist_content
 
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
@@ -1964,6 +1964,12 @@ test_automatic_rollback_restores_skin_managed_paths() {
 
   # The NewMovies.xsp playlist does not exist yet; rollback must remove it.
   playlist_path="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+
+  # Pre-seed the obsolete movie playlist; rollback must restore its exact content.
+  old_playlist="${root}/.kodi/userdata/playlists/video/RecentlyReleasedMovies90Days.xsp"
+  old_playlist_content='<?xml version="1.0"?><smartplaylist type="movies"><name>old</name></smartplaylist>'
+  mkdir -p "$(dirname "${old_playlist}")"
+  printf '%s\n' "${old_playlist_content}" > "${old_playlist}"
 
   stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
 
@@ -1986,6 +1992,10 @@ test_automatic_rollback_restores_skin_managed_paths() {
     printf 'a newly created playlist must not survive the automatic rollback\n' >&2
     return 1
   fi
+
+  # The obsolete playlist that the transformer deleted must be restored.
+  assert_eq "${old_playlist_content}" "$(cat "${old_playlist}")" \
+    "the obsolete movie playlist is restored by the rollback"
 }
 
 run_all_tests \
