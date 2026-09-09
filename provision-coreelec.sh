@@ -1544,6 +1544,7 @@ compared on the device and reported as booleans.
 """
 
 import base64
+import datetime
 import errno
 import json
 import os
@@ -2256,7 +2257,7 @@ def main(argv):
         {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
-        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
     ]
@@ -2295,16 +2296,15 @@ def main(argv):
         "RecentlyAiredEpisodes30Days": {
             "type": "episodes", "name": "Recently Aired Shows", "match": "all",
             "limit": "50",
-            "rules": [("firstaired", "inthelast", "30 days"),
-                      ("firstaired", "before", "tomorrow")],
-            "order": ("firstaired", "descending"),
+            "rules": [("airdate", "inthelast", "30 days"),
+                      ("airdate", "notinthelast", "-1 days")],
+            "order": ("year", "descending"),
         },
-        "RecentlyReleasedMovies90Days": {
+        "RecentlyReleasedMoviesCurrentYear": {
             "type": "movies", "name": "Recently Released Movies", "match": "all",
             "limit": "50",
-            "rules": [("premiered", "inthelast", "90 days"),
-                      ("premiered", "before", "tomorrow")],
-            "order": ("premiered", "descending"),
+            "rules": [("year", "is", str(datetime.date.today().year))],
+            "order": ("year", "descending"),
         },
         "NewShows": {
             "type": "tvshows", "name": "New Shows", "match": "all",
@@ -2324,6 +2324,11 @@ def main(argv):
             os.path.join(playlists_dir, playlist_name + ".xsp"))
         observe("arctic_fuse.playlist.%s.configured" % playlist_name,
                 1 if actual_sig == expected_sig else 0)
+
+    observe(
+        "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent",
+        0 if os.path.lexists(os.path.join(
+            playlists_dir, "RecentlyReleasedMovies90Days.xsp")) else 1)
 
     for line in OBSERVATIONS:
         sys.stdout.write(line + "\n")
@@ -3085,12 +3090,17 @@ verify_remote_baseline() {
 
   local playlist_name
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
-    RecentlyAiredEpisodes30Days RecentlyReleasedMovies90Days NewShows NewMovies; do
+    RecentlyAiredEpisodes30Days RecentlyReleasedMoviesCurrentYear NewShows NewMovies; do
     coreelec_verify_boolean_observation "${observations}" \
       "arctic_fuse.playlist.${playlist_name}.configured" \
       "arctic_fuse.playlist.${playlist_name}" \
       || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   done
+
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent" \
+    "arctic_fuse.playlist_migration" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   if (( arctic_fuse_failures == 0 )); then
     printf 'arctic_fuse.status=ok\n'

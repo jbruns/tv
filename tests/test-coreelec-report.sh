@@ -311,7 +311,8 @@ arctic_fuse.power_menu_configured=1
 arctic_fuse.playlist.InProgressMovies90Days.configured=1
 arctic_fuse.playlist.InProgressShows90Days.configured=1
 arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=1
-arctic_fuse.playlist.RecentlyReleasedMovies90Days.configured=1
+arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=1
+arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1
 arctic_fuse.playlist.NewShows.configured=1
 arctic_fuse.playlist.NewMovies.configured=1
 OBSERVATIONS
@@ -2073,6 +2074,8 @@ make_arctic_fuse_fixture_root() {
   local nodes_dir="${userdata}/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
   local playlists_dir="${userdata}/playlists/video"
   mkdir -p "${skin_dir}" "${nodes_dir}" "${playlists_dir}"
+  local current_year
+  current_year="$(python3 -c 'import datetime; print(datetime.date.today().year)')"
 
   # Valid skin settings XML
   cat > "${skin_dir}/settings.xml" <<'XML'
@@ -2096,7 +2099,7 @@ XML
 
   # Valid home widgets JSON
   cat > "${nodes_dir}/skinvariables-shortcut-homewidgets.json" <<'JSON'
-[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
+[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
 JSON
 
   # Valid power menu JSON
@@ -2112,11 +2115,11 @@ JSON
     "In-Progress Shows" "all" 50 "lastplayed" "descending" \
     "inprogress|true|" "lastplayed|inthelast|90 days"
   write_fixture_xsp "${playlists_dir}/RecentlyAiredEpisodes30Days.xsp" episodes \
-    "Recently Aired Shows" "all" 50 "firstaired" "descending" \
-    "firstaired|inthelast|30 days" "firstaired|before|tomorrow"
-  write_fixture_xsp "${playlists_dir}/RecentlyReleasedMovies90Days.xsp" movies \
-    "Recently Released Movies" "all" 50 "premiered" "descending" \
-    "premiered|inthelast|90 days" "premiered|before|tomorrow"
+    "Recently Aired Shows" "all" 50 "year" "descending" \
+    "airdate|inthelast|30 days" "airdate|notinthelast|-1 days"
+  write_fixture_xsp "${playlists_dir}/RecentlyReleasedMoviesCurrentYear.xsp" movies \
+    "Recently Released Movies" "all" 50 "year" "descending" \
+    "year|is|${current_year}"
   write_fixture_xsp "${playlists_dir}/NewShows.xsp" tvshows \
     "New Shows" "all" 50 "dateadded" "descending" \
     "playcount|is|0"
@@ -2192,6 +2195,10 @@ test_probe_arctic_fuse_valid_baseline_emits_all_ones() {
   assert_contains "${output}" "arctic_fuse.power_menu_configured=1" "power menu ok" || return 1
   assert_contains "${output}" "arctic_fuse.playlist.InProgressMovies90Days.configured=1" "playlist 1" || return 1
   assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=1" "playlist 6" || return 1
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=1" \
+    "current year movie playlist ok" || return 1
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1" \
+    "obsolete playlist absent" || return 1
 }
 
 test_probe_missing_skin_settings_emits_zero() {
@@ -2276,7 +2283,7 @@ test_probe_reordered_home_widgets_emits_zero() {
   nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
   # Swap first two entries
   cat > "${nodes_dir}/skinvariables-shortcut-homewidgets.json" <<'JSON'
-[{"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
+[{"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
 JSON
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
@@ -2327,7 +2334,7 @@ test_probe_unexpected_home_widget_entry_emits_zero() {
   nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
   # Add an unexpected 7th entry
   cat > "${nodes_dir}/skinvariables-shortcut-homewidgets.json" <<'JSON'
-[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}, {"guid": "coreelec-home-unexpected", "icon": "", "label": "Unexpected", "path": "special://profile/playlists/video/Unexpected.xsp", "target": "videos"}]
+[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}, {"guid": "coreelec-home-unexpected", "icon": "", "label": "Unexpected", "path": "special://profile/playlists/video/Unexpected.xsp", "target": "videos"}]
 JSON
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
@@ -2372,14 +2379,48 @@ test_probe_incorrect_playlist_rule_emits_zero() {
   root="$(make_arctic_fuse_fixture_root "${dir}")"
   bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
   playlists_dir="${root}/.kodi/userdata/playlists/video"
-  # Replace with wrong rule value (60 days instead of 90 days)
-  write_fixture_xsp "${playlists_dir}/RecentlyReleasedMovies90Days.xsp" movies \
-    "Recently Released Movies" "all" 50 "premiered" "descending" \
-    "premiered|inthelast|60 days" "premiered|before|tomorrow"
+  # Replace with old-style firstaired rules (probe now expects airdate)
+  write_fixture_xsp "${playlists_dir}/RecentlyAiredEpisodes30Days.xsp" episodes \
+    "Recently Aired Shows" "all" 50 "firstaired" "descending" \
+    "firstaired|inthelast|30 days" "firstaired|before|tomorrow"
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.configured=0" \
-    "wrong rule value → 0" || return 1
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=0" \
+    "old-style firstaired rules → 0" || return 1
+}
+
+test_probe_previous_year_movie_playlist_emits_zero() {
+  local dir root bin_dir output playlists_dir current_year
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  playlists_dir="${root}/.kodi/userdata/playlists/video"
+  current_year="$(python3 -c 'import datetime; print(datetime.date.today().year)')"
+  # Overwrite with previous year's rule value
+  write_fixture_xsp "${playlists_dir}/RecentlyReleasedMoviesCurrentYear.xsp" movies \
+    "Recently Released Movies" "all" 50 "year" "descending" \
+    "year|is|$((current_year - 1))"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=0" \
+    "previous year rule → 0" || return 1
+}
+
+test_probe_obsolete_movie_playlist_emits_absent_zero() {
+  local dir root bin_dir output playlists_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  playlists_dir="${root}/.kodi/userdata/playlists/video"
+  # Introduce the obsolete file that migration should have removed
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<smartplaylist type="movies"><name>old</name></smartplaylist>\n' \
+    > "${playlists_dir}/RecentlyReleasedMovies90Days.xsp"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=0" \
+    "obsolete playlist present → absent=0" || return 1
 }
 
 # --- Arctic Fuse comparator tests ------------------------------------------
@@ -2591,6 +2632,27 @@ test_arctic_fuse_playlist_rule_mismatch_fails_verification() {
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
 }
 
+test_comparator_obsolete_playlist_present_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent" "0"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an obsolete playlist still present must fail verification" || return 1
+  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
+  assert_contains "${output}" "arctic_fuse.playlist_migration" "migration surface named" || return 1
+}
+
 test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
@@ -2775,6 +2837,8 @@ run_all_tests \
   test_probe_missing_playlist_file_emits_zero \
   test_probe_malformed_playlist_xml_emits_zero \
   test_probe_incorrect_playlist_rule_emits_zero \
+  test_probe_previous_year_movie_playlist_emits_zero \
+  test_probe_obsolete_movie_playlist_emits_absent_zero \
   test_arctic_fuse_complete_state_verifies \
   test_comparator_home_widgets_zero_fails_verification \
   test_comparator_power_menu_zero_fails_verification \
@@ -2785,6 +2849,7 @@ run_all_tests \
   test_comparator_settings_tile_zero_fails_verification \
   test_arctic_fuse_power_action_mismatch_fails_verification \
   test_arctic_fuse_playlist_rule_mismatch_fails_verification \
+  test_comparator_obsolete_playlist_present_fails_verification \
   test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification \
   test_each_ratings_key_presence_is_verified_separately \
   test_report_names_every_arctic_fuse_surface \
