@@ -38,14 +38,16 @@ After the T2/R2 extender is installed and the television reports an active eARC 
 
 ### Playlist validation (JSON-RPC Files.GetDirectory)
 
-| Playlist | Type | Items |
-|----------|------|-------|
-| InProgressMovies90Days | movies | 2 |
-| InProgressShows90Days | tvshows | 14 |
-| RecentlyAiredEpisodes30Days | episodes | JSON-RPC Invalid params (Kodi 21.3 limitation with date-relative rules; device-side structural verification passed) |
-| RecentlyReleasedMovies90Days | movies | JSON-RPC Invalid params (same limitation; device-side structural verification passed) |
-| NewShows | tvshows | 50 |
-| NewMovies | movies | 50 |
+| Playlist | Type | Items | Status |
+|----------|------|-------|--------|
+| InProgressMovies90Days | movies | 2 | OK |
+| InProgressShows90Days | tvshows | 14 | OK |
+| RecentlyAiredEpisodes30Days | episodes | 0 | **DEFECT** — Kodi 21.3 SQL syntax error on `inthelast`/`before`+`tomorrow` rules |
+| RecentlyReleasedMovies90Days | movies | 0 | **DEFECT** — same SQL generation bug |
+| NewShows | tvshows | 50 | OK |
+| NewMovies | movies | 50 | OK |
+
+**Date-relative XSP defect**: Library contains 79 qualifying episodes (30-day) and 3 qualifying movies (90-day), but Kodi 21.3's `CSmartPlaylistDirectory` generates invalid SQL: `WHERE (()) AND (())`. Both JSON-RPC and internal `CGUIMediaWindow::GetDirectory` fail. Home widget tabs 503/504 hidden due to 0 items. Requires provisioner XSP rule fix.
 
 ### Application launch results
 
@@ -58,6 +60,17 @@ After the T2/R2 extender is installed and the television reports an active eARC 
 |----------|-------------|
 | `screenshot-home.png` | Home screen with movie metadata, widget tabs (In-Progress Movies, In-Progress Shows, New Shows, New Movies), Play/More Information buttons |
 | `screenshot-power.png` | Options overlay with Settings tile, Weather, and five Power items |
+| `screenshot-home-evidence.png` | Home confirming 4 visible tabs (503/504 hidden due to XSP defect) |
+| `screenshot-hub-home-v2.png` | Home/Videos hub |
+| `screenshot-hub-plex-v2.png` | Plex hub (11101) |
+| `screenshot-hub-youtube-v2.png` | YouTube hub (11102) |
+| `screenshot-hub-nextaired-v2.png` | Next Aired hub (11106) |
+| `screenshot-hub-pvr-v2.png` | PVR hub (11107) |
+| `screenshot-hub-addons-v2.png` | Addons hub (11108) |
+
+### Hub navigation
+
+All 6 HomeSwitcher hubs verified via Right-navigation: Home (10000) → Plex (11101) → YouTube (11102) → Next Aired (11106) → PVR (11107) → Addons (11108). `Skin.String()` toggle mechanism works correctly with `type="string"` settings.
 
 ### Idempotence and hashes
 
