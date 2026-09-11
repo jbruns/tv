@@ -225,29 +225,41 @@ STUB
 # LIFECYCLE_FIXTURE_OS_RELEASE, LIFECYCLE_FIXTURE_BIN_DIR (systemctl), and
 # optionally LIFECYCLE_FIXTURE_SSHD (a fixture `sshd` binary path -- see
 # install_fixture_sshd -- substituted for the deploy script's own literal
-# `sshd='/usr/sbin/sshd'` default only when set; when unset, that default is
-# left untouched, matching production and relying on the real local
-# machine's own sshd for tests that do not care which key mode results),
-# LIFECYCLE_SABOTAGE_ROLLBACK=1, which -- only when set -- replaces the
-# fixture authorized_keys path with a directory immediately before a
-# rollback script runs, deterministically reproducing an unrestorable
-# target for the "incomplete rollback" test, LIFECYCLE_SABOTAGE_FINALIZE=1,
-# which makes the backup root read-only immediately before a finalize
-# script runs so its `rm -rf` genuinely fails (finding I3's cleanup-failed
-# path), and LIFECYCLE_SABOTAGE_DEPLOY_OUTPUT=1, which replaces a deploy
-# script's entire execution with an empty, unrecognized response (finding
-# C2's "unknown" outcome, standing in for a truncated/dropped connection).
+# `sshd='/usr/sbin/sshd'` default). This stub *always* substitutes some
+# fixture `sshd` -- it installs and wires in its own deterministic
+# "supported" (OpenSSH >= 7.2) fixture at install time, under this call's
+# own `dir`, so every full-CLI test reaches pending-verification without
+# ever depending on whether the host machine running this suite has a real
+# `/usr/sbin/sshd` at all. Setting LIFECYCLE_FIXTURE_SSHD at call time
+# overrides that default with the caller's own fixture path instead (used
+# by the focused key-mode-check tests to exercise unsupported/malformed/
+# unavailable sshd versions), LIFECYCLE_SABOTAGE_ROLLBACK=1, which -- only
+# when set -- replaces the fixture authorized_keys path with a directory
+# immediately before a rollback script runs, deterministically reproducing
+# an unrestorable target for the "incomplete rollback" test,
+# LIFECYCLE_SABOTAGE_FINALIZE=1, which makes the backup root read-only
+# immediately before a finalize script runs so its `rm -rf` genuinely fails
+# (finding I3's cleanup-failed path), and LIFECYCLE_SABOTAGE_DEPLOY_OUTPUT=1,
+# which replaces a deploy script's entire execution with an empty,
+# unrecognized response (finding C2's "unknown" outcome, standing in for a
+# truncated/dropped connection).
 install_lifecycle_ssh_stub() {
-  local dir bin_dir
+  local dir bin_dir default_sshd
   dir="$1"
   bin_dir="${dir}/ssh-stub-bin"
   mkdir -p "${bin_dir}"
-  cat > "${bin_dir}/ssh" <<'STUB'
+  # This suite's own deterministic "supported" sshd, wired in as the
+  # unconditional fallback below so this stub never falls through to
+  # whatever `/usr/sbin/sshd` (if anything) actually exists on the host
+  # running these tests.
+  default_sshd="$(install_fixture_sshd "${dir}/default-sshd" "supported")"
+  cat > "${bin_dir}/ssh.tmpl" <<'STUB'
 #!/bin/bash
 set -eu
 fixture_root="${LIFECYCLE_FIXTURE_ROOT:?LIFECYCLE_FIXTURE_ROOT is required}"
 os_release="${LIFECYCLE_FIXTURE_OS_RELEASE:?LIFECYCLE_FIXTURE_OS_RELEASE is required}"
 fixture_bin="${LIFECYCLE_FIXTURE_BIN_DIR:?LIFECYCLE_FIXTURE_BIN_DIR is required}"
+sshd_fixture="${LIFECYCLE_FIXTURE_SSHD:-__LIFECYCLE_DEFAULT_SSHD__}"
 
 n=$#
 last="${!n}"
@@ -271,11 +283,8 @@ if [[ "${last}" == "sh -s" ]]; then
   script="$(printf '%s' "${script}" | sed \
     -e "s#root='/storage'#root='${fixture_root}'#" \
     -e "s#os_release_path='/etc/os-release'#os_release_path='${os_release}'#" \
-    -e "s#SYSTEMCTL=\"/usr/bin/systemctl\"#SYSTEMCTL=\"${fixture_bin}/systemctl\"#")"
-  if [[ -n "${LIFECYCLE_FIXTURE_SSHD:-}" ]]; then
-    script="$(printf '%s' "${script}" | sed \
-      -e "s#sshd='/usr/sbin/sshd'#sshd='${LIFECYCLE_FIXTURE_SSHD}'#")"
-  fi
+    -e "s#SYSTEMCTL=\"/usr/bin/systemctl\"#SYSTEMCTL=\"${fixture_bin}/systemctl\"#" \
+    -e "s#sshd='/usr/sbin/sshd'#sshd='${sshd_fixture}'#")"
   set +e
   printf '%s\n' "${script}" | PATH="${fixture_bin}:${PATH}" sh -s
   rc=$?
@@ -289,6 +298,8 @@ rc=$?
 set -e
 exit "${rc}"
 STUB
+  sed -e "s#__LIFECYCLE_DEFAULT_SSHD__#${default_sshd}#" "${bin_dir}/ssh.tmpl" > "${bin_dir}/ssh"
+  rm -f "${bin_dir}/ssh.tmpl"
   chmod +x "${bin_dir}/ssh"
   printf '%s\n' "${bin_dir}"
 }
@@ -660,13 +671,14 @@ test_target_and_key_arguments_are_required() {
 # --- Task 3: remote deploy transaction -----------------------------------
 
 test_platform_check_requires_coreelec_21_3_amlogic_ng() {
-  local dir os_release pubkey systemctl_bin systemctl_dir script output rc
+  local dir os_release pubkey systemctl_bin systemctl_dir sshd_bin script output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "admin"
   pubkey="${dir}/admin.pub"
   systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
   systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
   os_release="${dir}/etc/os-release"
 
   write_fixture_os_release "${os_release}" "0"
@@ -680,7 +692,8 @@ test_platform_check_requires_coreelec_21_3_amlogic_ng() {
   assert_contains "${output}" "PLATFORM_CHECK_FAIL" "the refusal names the platform check" || return 1
 
   write_fixture_os_release "${os_release}" "1"
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${dir}/root2" "${os_release}" "${pubkey}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${dir}/root2" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
@@ -690,18 +703,20 @@ test_platform_check_requires_coreelec_21_3_amlogic_ng() {
 }
 
 test_deploy_creates_private_directories_and_atomic_candidates() {
-  local dir os_release pubkey systemctl_bin systemctl_dir root script output rc mode
+  local dir os_release pubkey systemctl_bin systemctl_dir sshd_bin root script output rc mode
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "admin"
   pubkey="${dir}/admin.pub"
   systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
   systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
   os_release="${dir}/etc/os-release"
   write_fixture_os_release "${os_release}" "1"
   root="${dir}/root"
 
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
@@ -731,13 +746,14 @@ test_deploy_creates_private_directories_and_atomic_candidates() {
 }
 
 test_deploy_preserves_unrelated_authorized_keys() {
-  local dir os_release pubkey systemctl_bin systemctl_dir root script output rc
+  local dir os_release pubkey systemctl_bin systemctl_dir sshd_bin root script output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "admin"
   pubkey="${dir}/admin.pub"
   systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
   systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
   os_release="${dir}/etc/os-release"
   write_fixture_os_release "${os_release}" "1"
   root="${dir}/root"
@@ -747,7 +763,8 @@ test_deploy_preserves_unrelated_authorized_keys() {
     > "${root}/.ssh/authorized_keys"
   chmod 600 "${root}/.ssh/authorized_keys"
 
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
@@ -762,7 +779,7 @@ test_deploy_preserves_unrelated_authorized_keys() {
 }
 
 test_rerun_replaces_only_the_marked_controller_key() {
-  local dir os_release systemctl_bin systemctl_dir root output rc first_pub second_pub script content
+  local dir os_release systemctl_bin systemctl_dir sshd_bin root output rc first_pub second_pub script content
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "first"
@@ -771,6 +788,7 @@ test_rerun_replaces_only_the_marked_controller_key() {
   second_pub="${dir}/second.pub"
   systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
   systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
   os_release="${dir}/etc/os-release"
   write_fixture_os_release "${os_release}" "1"
   root="${dir}/root"
@@ -778,7 +796,8 @@ test_rerun_replaces_only_the_marked_controller_key() {
   printf 'ssh-ed25519 AAAAOTHERKEYBLOB000000000000000000000000000 admin@laptop\n' \
     > "${root}/.ssh/authorized_keys"
 
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${first_pub}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${first_pub}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
@@ -797,7 +816,8 @@ test_rerun_replaces_only_the_marked_controller_key() {
   set -e
   assert_success "${rc}" "finalize must succeed: ${output}" || return 1
 
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${second_pub}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${second_pub}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
@@ -1161,8 +1181,10 @@ current_transaction_pointer() {
 # one through the full CLI each time.
 deploy_to_pending_verification() {
   local dir="$1" root="$2" os_release="$3" pubkey="$4" systemctl_dir="$5"
-  local script output rc
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  local script output rc sshd_bin
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
@@ -1702,13 +1724,14 @@ test_rollback_restoration_replaces_a_symlinked_target_without_following_it() {
 # --- Finding I7: deploy's own self-rollback must verify before reporting --
 
 test_deploy_self_rollback_restores_and_verifies_before_reporting_rolled_back() {
-  local dir root os_release pubkey systemctl_bin systemctl_dir fake_python_dir script output rc
+  local dir root os_release pubkey systemctl_bin systemctl_dir sshd_bin fake_python_dir script output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "admin"
   pubkey="${dir}/admin.pub"
   systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
   systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
   os_release="${dir}/etc/os-release"
   write_fixture_os_release "${os_release}" "1"
   root="${dir}/root"
@@ -1731,7 +1754,8 @@ exit 1
 FAKESTUB
   chmod +x "${fake_python_dir}/python3"
 
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${fake_python_dir}:${systemctl_dir}:${PATH}" sh -s 2>&1)"
