@@ -475,6 +475,29 @@ test_multiple_cec_adapter_files_fail_loudly() {
   assert_contains "${output}" "peripheral_data" "the error names the peripheral_data directory"
 }
 
+test_malformed_cec_adapter_file_fails_loudly() {
+  local dir root payload cec_path output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  cec_path="$(cec_settings_path "${root}")"
+  mkdir -p "$(dirname "${cec_path}")"
+  # Well-formed XML, but the wrong document shape: not a <settings> root.
+  printf '<peripheral><setting id="standby_pc_on_tv_standby">13011</setting></peripheral>\n' \
+    > "${cec_path}"
+
+  set +e
+  output="$(bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "a structurally invalid CEC document must fail loudly"
+  assert_contains "${output}" "unexpected root element" \
+    "the error names the shape defect, not just a parse failure"
+}
+
 test_cec_settings_file_mode_is_private() {
   local dir root payload
   dir="$(make_scratch_dir)"
@@ -1490,6 +1513,7 @@ run_all_tests \
   test_second_cec_transform_is_byte_identical \
   test_missing_cec_adapter_file_fails_loudly \
   test_multiple_cec_adapter_files_fail_loudly \
+  test_malformed_cec_adapter_file_fails_loudly \
   test_cec_settings_file_mode_is_private \
   test_remote_backup_includes_peripheral_data \
   test_tmdb_helper_keys_go_to_tmdb_helper_only \

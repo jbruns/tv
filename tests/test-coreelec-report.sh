@@ -1872,6 +1872,37 @@ ENTRIES
     "the failure names the peripheral_data directory" || return 1
 }
 
+test_remote_probe_rejects_a_malformed_cec_document() {
+  local dir root bin_dir request output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  # Well-formed XML, but the wrong document shape: not a <settings> root.
+  printf '<peripheral><setting id="standby_pc_on_tv_standby">36028</setting></peripheral>\n' \
+    > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
+
+  set +e
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a structurally invalid CEC document must fail the probe" || return 1
+  assert_contains "${output}" "unexpected root element" \
+    "the failure names the shape defect, not just a parse failure" || return 1
+}
+
 # The probe is what makes a copied /etc/localtime verifiable at all, so it
 # answers the content question the Mac cannot ask.
 test_remote_verify_probe_compares_a_copied_localtime_by_content() {
@@ -3493,6 +3524,7 @@ run_all_tests \
   test_remote_verify_script_passes_shell_syntax_check \
   test_remote_verify_probe_reports_state_without_secrets \
   test_remote_probe_reports_cec_ignore \
+  test_remote_probe_rejects_a_malformed_cec_document \
   test_remote_verify_probe_compares_a_copied_localtime_by_content \
   test_remote_verify_probe_judges_device_date_against_the_requested_zone \
   test_remote_verify_probe_fails_immediately_when_curl_is_missing \

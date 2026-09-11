@@ -475,8 +475,11 @@ def set_cec_tv_off_action(storage_root, value):
         fail("expected exactly one Kodi CEC peripheral settings file in %s; found %d"
              % (peripheral_dir, len(paths)))
     tree = ET.parse(paths[0])
+    root = tree.getroot()
+    if root.tag != "settings":
+        fail("unexpected root element in %s" % paths[0])
     _set_xml_setting(
-        tree.getroot(), "standby_pc_on_tv_standby", value, flat=False
+        root, "standby_pc_on_tv_standby", value, flat=False
     )
     write_xml_atomic(paths[0], tree)
 
@@ -1950,6 +1953,9 @@ def cec_tv_off_action_value(storage_root):
     if len(paths) != 1:
         fail("expected exactly one Kodi CEC peripheral settings file in %s; found %d"
              % (peripheral_dir, len(paths)))
+    root = ET.parse(paths[0]).getroot()
+    if root.tag != "settings":
+        fail("unexpected root element in %s" % paths[0])
     values = read_settings(paths[0])
     if not values or "standby_pc_on_tv_standby" not in values:
         fail("the Kodi CEC peripheral settings file has no "
