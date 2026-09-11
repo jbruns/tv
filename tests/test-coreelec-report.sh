@@ -2090,7 +2090,6 @@ make_arctic_fuse_fixture_root() {
     <setting id="HomeSwitcher.1102.Icon">special://home/addons/plugin.video.youtube/resources/media/icon.png</setting>
     <setting id="HomeSwitcher.1102.Shortcut.Path">plugin://plugin.video.youtube/</setting>
     <setting id="HomeSwitcher.1102.Shortcut.Target">videos</setting>
-    <setting id="HomeSwitcher.1106.Toggle">false</setting>
     <setting id="HomeSwitcher.1107.Toggle">true</setting>
     <setting id="HomeSwitcher.1108.Toggle">true</setting>
     <setting id="optionstiles.02.include">Settings</setting>
@@ -2242,16 +2241,102 @@ import xml.etree.ElementTree as ET
 
 path = sys.argv[1]
 tree = ET.parse(path)
-for node in tree.getroot().iter("setting"):
-    if node.get("id") == "HomeSwitcher.1106.Toggle":
-        node.text = "true"
-        break
+ET.SubElement(
+    tree.getroot(),
+    "setting",
+    {"id": "HomeSwitcher.1106.Toggle", "type": "string"},
+).text = "true"
 tree.write(path, encoding="UTF-8", xml_declaration=True)
 PYEOF
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
     "enabled Next Aired toggle → hubs 0" || return 1
+}
+
+# Arctic Fuse renders a hub whenever Skin.String(HomeSwitcher.1106.Toggle) is
+# non-empty, so the literal string "false" still shows Next Aired.
+test_probe_false_next_aired_toggle_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  python3 - "${skin_file}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+ET.SubElement(
+    tree.getroot(),
+    "setting",
+    {"id": "HomeSwitcher.1106.Toggle", "type": "string"},
+).text = "false"
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "non-empty false Next Aired toggle → hubs 0" || return 1
+}
+
+test_probe_empty_next_aired_toggle_placeholder_emits_one() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  python3 - "${skin_file}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+ET.SubElement(
+    tree.getroot(),
+    "setting",
+    {"id": "homeswitcher.1106.toggle", "type": "string"},
+)
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
+    "empty Next Aired toggle placeholder → hubs 1" || return 1
+}
+
+test_probe_empty_next_aired_toggle_does_not_mask_stale_variant() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  python3 - "${skin_file}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+ET.SubElement(
+    tree.getroot(),
+    "setting",
+    {"id": "homeswitcher.1106.toggle", "type": "string"},
+)
+ET.SubElement(
+    tree.getroot(),
+    "setting",
+    {"id": "HomeSwitcher.1106.Toggle", "type": "string"},
+).text = "true"
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "empty toggle cannot mask stale case variant → hubs 0" || return 1
 }
 
 test_probe_duplicate_next_aired_toggle_emits_zero() {
@@ -2962,6 +3047,9 @@ run_all_tests \
   test_probe_missing_skin_settings_emits_zero \
   test_probe_malformed_skin_xml_emits_zero \
   test_probe_enabled_next_aired_toggle_emits_zero \
+  test_probe_false_next_aired_toggle_emits_zero \
+  test_probe_empty_next_aired_toggle_placeholder_emits_one \
+  test_probe_empty_next_aired_toggle_does_not_mask_stale_variant \
   test_probe_duplicate_next_aired_toggle_emits_zero \
   test_probe_stale_next_aired_mode_emits_zero \
   test_probe_empty_next_aired_mode_placeholder_emits_one \

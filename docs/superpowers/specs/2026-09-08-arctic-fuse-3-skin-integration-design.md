@@ -98,12 +98,14 @@ configuration gap, and is not acceptable for automation.
 
 The approved, binding correction is therefore to drop Next Aired:
 
-- `HomeSwitcher.1106.Toggle=false`
 - Before Kodi starts, transformation removes every case-insensitive
-  `HomeSwitcher.1106.UpNextMode` node, including stale pre-existing values.
-- After Arctic Fuse starts, live verification accepts either no matching mode
-  node or only empty matching values. Arctic Fuse 3.2.16 recreates an empty
-  string-typed placeholder during runtime normalization; any non-empty
+  `HomeSwitcher.1106.Toggle` and `HomeSwitcher.1106.UpNextMode` node, including
+  stale pre-existing values. Arctic Fuse treats any non-empty toggle string —
+  including the literal `false` — as an enabled hub, and its own settings
+  dialog disables a hub with `Skin.Reset(HomeSwitcher.1106.Toggle)`.
+- After Arctic Fuse starts, live verification accepts either no matching
+  toggle/mode nodes or only empty matching values. Arctic Fuse 3.2.16 recreates
+  empty string-typed placeholders during runtime normalization; any non-empty
   case-insensitive match remains a failure.
 - Managed navigation after Home is Plex, YouTube, PVR, then Add-ons.
 
@@ -218,7 +220,8 @@ The following native Home features will be enabled:
   - `HomeSwitcher.1102.Icon=special://home/addons/plugin.video.youtube/resources/media/icon.png`
   - `HomeSwitcher.1102.Shortcut.Path=plugin://plugin.video.youtube/`
   - `HomeSwitcher.1102.Shortcut.Target=videos`
-- Next Aired: `HomeSwitcher.1106.Toggle=false`
+- Next Aired: `HomeSwitcher.1106.Toggle` absent in transformed state; absent or
+  empty-only after Arctic Fuse runtime normalization
 - Next Aired data mode: absent in transformed state; absent or empty-only
   after Arctic Fuse runtime normalization
 - PVR / Live TV: `HomeSwitcher.1107.Toggle=true`

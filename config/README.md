@@ -312,10 +312,11 @@ record per-device backup locations and installed values in the appropriate
 The following notes clarify how the managed Arctic Fuse 3 baseline interacts
 with its widget and metadata sources. They are not operator actions.
 
-- **Next Aired is disabled**: provisioning writes
-  `HomeSwitcher.1106.Toggle=false` and removes every case-insensitive
-  `HomeSwitcher.1106.UpNextMode` before Kodi starts. Arctic Fuse 3.2.16 may
-  recreate an empty string-typed placeholder after startup; the live verifier
+- **Next Aired is disabled**: Arctic Fuse renders a hub whenever
+  `Skin.String(HomeSwitcher.1106.Toggle)` is non-empty, so provisioning removes
+  every case-insensitive `HomeSwitcher.1106.Toggle` and
+  `HomeSwitcher.1106.UpNextMode` node before Kodi starts. Arctic Fuse 3.2.16
+  may recreate empty string-typed placeholders after startup; the live verifier
   accepts absence or empty-only matches and rejects any non-empty match.
   TMDb Helper 6.17.1's
   `library_nextaired` route uses Trakt's public calendar but still requires an

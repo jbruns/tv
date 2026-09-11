@@ -837,6 +837,7 @@ test_arctic_fuse_hubs_and_options_tray_are_converged() {
     <setting id="HomeSwitcher.1101.Spotlight.Path">old-spotlight</setting>
     <setting id="HomeSwitcher.1102.Spotlight.Path">old-spotlight-2</setting>
     <setting id="HomeSwitcher.1106.Toggle">true</setting>
+    <setting id="homeswitcher.1106.toggle">false</setting>
     <setting id="HomeSwitcher.1106.UpNextMode">library_nextaired</setting>
     <setting id="homeswitcher.1106.upnextmode">trakt_calendar</setting>
 </settings>
@@ -868,7 +869,6 @@ XML
   assert_eq "videos" \
     "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Target")" "1102.Shortcut.Target"
 
-  assert_eq "false" "$(xml_setting "${skin_file}" "HomeSwitcher.1106.Toggle")" "1106.Toggle"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" "1107.Toggle"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" "1108.Toggle"
   assert_eq "Settings" "$(xml_setting "${skin_file}" "optionstiles.02.include")" "optionstiles.02"
@@ -886,6 +886,13 @@ XML
     || { printf '1102.Spotlight.Path must be absent\n' >&2; return 1; }
   skin_setting_absent "${root}" "HomeSwitcher.1106.UpNextMode" \
     || { printf '1106.UpNextMode must be absent\n' >&2; return 1; }
+
+  # Arctic Fuse renders a hub whenever its toggle string is non-empty, so the
+  # disabled state is the absence of every case-insensitive toggle node.
+  skin_setting_absent "${root}" "HomeSwitcher.1106.Toggle" \
+    || { printf '1106.Toggle must be absent\n' >&2; return 1; }
+  skin_setting_absent "${root}" "homeswitcher.1106.toggle" \
+    || { printf 'case-variant 1106.Toggle must be absent\n' >&2; return 1; }
 }
 
 test_arctic_fuse_home_widgets_are_exact_and_ordered() {
@@ -1123,7 +1130,6 @@ XML
     "HomeSwitcher.1102.Icon" \
     "HomeSwitcher.1102.Shortcut.Path" \
     "HomeSwitcher.1102.Shortcut.Target" \
-    "HomeSwitcher.1106.Toggle" \
     "HomeSwitcher.1107.Toggle" \
     "HomeSwitcher.1108.Toggle" \
     "optionstiles.02.include"; do

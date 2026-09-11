@@ -684,7 +684,9 @@ def main(argv):
                      "plugin://plugin.video.youtube/")
     set_skin_setting("HomeSwitcher.1102.Shortcut.Target", "videos")
 
-    set_skin_setting("HomeSwitcher.1106.Toggle", "false")
+    # Arctic Fuse renders a hub whenever its toggle string is non-empty, so
+    # the disabled state is the absence of every case-insensitive toggle node.
+    remove_skin_setting("HomeSwitcher.1106.Toggle")
     remove_skin_setting("HomeSwitcher.1106.UpNextMode")
     set_skin_setting("HomeSwitcher.1107.Toggle", "true")
     set_skin_setting("HomeSwitcher.1108.Toggle", "true")
@@ -2231,16 +2233,14 @@ def main(argv):
 
     skin_values = xml_setting_values(skin_settings_path)
 
-    # Hub toggles. Arctic Fuse may recreate an empty disabled-mode placeholder.
-    next_aired_toggles = [
-        (key, value)
-        for key, value in skin_values.items()
-        if key.casefold() == "homeswitcher.1106.toggle"
-    ]
+    # Hub toggles. Arctic Fuse renders a hub whenever its toggle string is
+    # non-empty and may recreate empty disabled placeholders after startup.
+    next_aired_toggles = xml_setting_matches(
+        skin_settings_path, "HomeSwitcher.1106.Toggle")
     next_aired_modes = xml_setting_matches(
         skin_settings_path, "HomeSwitcher.1106.UpNextMode")
     hubs_ok = (
-        next_aired_toggles == [("HomeSwitcher.1106.Toggle", "false")]
+        all(value == "" for value in next_aired_toggles)
         and all(value == "" for value in next_aired_modes)
         and skin_values.get("HomeSwitcher.1107.Toggle") == "true"
         and skin_values.get("HomeSwitcher.1108.Toggle") == "true"

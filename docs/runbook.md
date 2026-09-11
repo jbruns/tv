@@ -258,10 +258,12 @@ result for the other configured services.
 
 **Home navigation order** (after the Home entry): Plex · YouTube · PVR · Add-ons. The options tray tile writes `Settings` at position `optionstiles.02.include`.
 
-**Next Aired is intentionally disabled.** Provisioning converges
-`HomeSwitcher.1106.Toggle=false` and removes every case-insensitive
-`HomeSwitcher.1106.UpNextMode` before Kodi starts. After startup, Arctic Fuse
-3.2.16 may normalize settings by recreating an empty string-typed placeholder.
+**Next Aired is intentionally disabled.** Arctic Fuse shows a hub whenever
+`Skin.String(HomeSwitcher.1106.Toggle)` is non-empty — the skin's own toggle
+uses `Skin.Reset(...)` to disable a hub — so provisioning removes every
+case-insensitive `HomeSwitcher.1106.Toggle` and `HomeSwitcher.1106.UpNextMode`
+node before Kodi starts. After startup, Arctic Fuse
+3.2.16 may normalize settings by recreating empty string-typed placeholders.
 That live state is acceptable only when every matching value is empty; any
 non-empty case-insensitive value fails verification. TMDb Helper 6.17.1's
 `library_nextaired` route still requires end-user Trakt OAuth despite using
