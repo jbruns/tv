@@ -155,8 +155,8 @@ WRAPPER_BODY
 #
 # Namespace on the device:
 #   /storage/backup/kodi-lifecycle/<UTC timestamp>/         one dated
-#     transaction directory, holding rollback/ (pre-images or *.absent
-#     markers for the wrapper and authorized_keys)
+#     transaction directory, holding a `manifest` file and rollback/
+#     (pre-images or *.absent markers for the wrapper and authorized_keys)
 #   /storage/.cache/kodi-lifecycle/current-transaction       pointer file
 #     naming the pending transaction directory; its presence is what makes a
 #     transaction "pending verification", and its removal is what finalize
@@ -184,6 +184,145 @@ esac
 PLATFORM_CHECK
 }
 
+# Determines whether the target's installed `sshd` understands the
+# authorized_keys `restrict` keyword (OpenSSH >= 7.2), by parsing the
+# version banner `sshd -V` prints, rather than by probing `ssh-keygen -l -f`
+# against candidate key text: real OpenSSH's `-l -f` syntax-checks a key
+# blob, not the leading option string, so it silently accepts a `restrict`
+# option it does not actually understand (see finding I5). This check runs
+# before any mutation and fails closed -- an unreadable/unparseable version,
+# or a missing `sshd` binary, refuses the deploy rather than guessing.
+_coreelec_lifecycle_remote_key_mode_check() {
+  cat <<'KEY_MODE_CHECK'
+if [ ! -x "${sshd}" ]; then
+  printf 'KEY_MODE_CHECK_FAIL:sshd-not-found:%s\n' "${sshd}" >&2
+  exit 15
+fi
+_kmc_version_output="$("${sshd}" -V 2>&1 || true)"
+_kmc_version="$(printf '%s\n' "${_kmc_version_output}" | grep -o 'OpenSSH_[0-9][0-9]*\.[0-9][0-9]*' | head -n 1)"
+if [ -z "${_kmc_version}" ]; then
+  printf 'KEY_MODE_CHECK_FAIL:version-unparseable:%s\n' "${_kmc_version_output}" >&2
+  exit 15
+fi
+_kmc_major="$(printf '%s\n' "${_kmc_version}" | sed -n 's/^OpenSSH_\([0-9][0-9]*\)\.[0-9][0-9]*$/\1/p')"
+_kmc_minor="$(printf '%s\n' "${_kmc_version}" | sed -n 's/^OpenSSH_[0-9][0-9]*\.\([0-9][0-9]*\)$/\1/p')"
+if [ -z "${_kmc_major}" ] || [ -z "${_kmc_minor}" ]; then
+  printf 'KEY_MODE_CHECK_FAIL:version-unparseable:%s\n' "${_kmc_version}" >&2
+  exit 15
+fi
+if [ "${_kmc_major}" -gt 7 ] || { [ "${_kmc_major}" -eq 7 ] && [ "${_kmc_minor}" -ge 2 ]; }; then
+  key_mode="restrict"
+else
+  key_mode="fallback"
+fi
+KEY_MODE_CHECK
+}
+
+# Shared, POSIX `sh` transaction-safety primitives embedded verbatim into
+# every remote program that resolves, restores, or discards a transaction
+# directory (deploy's own self-rollback, the explicit rollback program, and
+# the finalize program). No caller-supplied path -- whether the operator's
+# own `--rollback-transaction`/`--finalize-transaction` argument, or the
+# device's own pointer file -- is ever restored from, deleted, or reported
+# on until its canonical path has been proven to be an existing,
+# non-symlinked, immediate child of the lifecycle backup root: never the
+# root itself, a parent, a sibling namespace such as `/storage`, or an
+# arbitrary operator-supplied path (see finding C1).
+_coreelec_lifecycle_remote_shared_lib() {
+  cat <<'LIFECYCLE_SHARED_LIB'
+# Prints the canonical (symlink-resolved) absolute path of an existing file
+# or directory. Fails if any path component cannot be resolved.
+_lifecycle_canon() {
+  _lc_path="$1"
+  if [ -d "${_lc_path}" ]; then
+    (cd "${_lc_path}" 2>/dev/null && pwd -P)
+  else
+    _lc_dir="$(dirname "${_lc_path}")"
+    _lc_base="$(basename "${_lc_path}")"
+    _lc_resolved_dir="$(cd "${_lc_dir}" 2>/dev/null && pwd -P)" || return 1
+    printf '%s/%s\n' "${_lc_resolved_dir}" "${_lc_base}"
+  fi
+}
+
+# Resolves $1 as a transaction directory that must canonically be an
+# existing, non-symlinked, immediate child of the canonical backup root
+# passed as $2. Prints the canonical transaction path on success; prints
+# nothing and returns 1 on any failure (missing, malformed, the backup root
+# itself, a parent, or not an immediate child).
+_lifecycle_resolve_transaction() {
+  _lrt_candidate="$1"
+  _lrt_backup_root_canon="$2"
+  case "${_lrt_candidate}" in
+    '') return 1 ;;
+    *..*) return 1 ;;
+  esac
+  [ -e "${_lrt_candidate}" ] || return 1
+  [ -L "${_lrt_candidate}" ] && return 1
+  [ -d "${_lrt_candidate}" ] || return 1
+  _lrt_canon="$(_lifecycle_canon "${_lrt_candidate}")" || return 1
+  [ -n "${_lrt_canon}" ] || return 1
+  [ "${_lrt_canon}" != "${_lrt_backup_root_canon}" ] || return 1
+  _lrt_parent="$(dirname "${_lrt_canon}")"
+  [ "${_lrt_parent}" = "${_lrt_backup_root_canon}" ] || return 1
+  printf '%s\n' "${_lrt_canon}"
+}
+
+# True only when $1 carries a manifest file and exactly one of the
+# {present, .absent} markers for each of wrapper and authorized_keys.
+_lifecycle_manifest_complete() {
+  _lmc_t="$1"
+  [ -f "${_lmc_t}/manifest" ] || return 1
+  _lmc_wp=0
+  _lmc_wa=0
+  [ -f "${_lmc_t}/rollback/wrapper" ] && _lmc_wp=1
+  [ -f "${_lmc_t}/rollback/wrapper.absent" ] && _lmc_wa=1
+  [ $((_lmc_wp + _lmc_wa)) -eq 1 ] || return 1
+  _lmc_ap=0
+  _lmc_aa=0
+  [ -f "${_lmc_t}/rollback/authorized_keys" ] && _lmc_ap=1
+  [ -f "${_lmc_t}/rollback/authorized_keys.absent" ] && _lmc_aa=1
+  [ $((_lmc_ap + _lmc_aa)) -eq 1 ] || return 1
+  return 0
+}
+
+# Atomically restores one target file from its recorded pre-image at
+# "${item}" (or removes the target, if "${item}.absent" was recorded
+# instead), never truncating a live path in place: a fresh candidate file is
+# written, chmod'd, and fsynced, then renamed over the target in one step.
+_lifecycle_restore_one() {
+  _lro_item="$1"
+  _lro_target="$2"
+  _lro_mode="$3"
+  if [ -f "${_lro_item}.absent" ]; then
+    rm -f "${_lro_target}"
+    return $?
+  fi
+  [ -f "${_lro_item}" ] || return 1
+  _lro_candidate="${_lro_target}.rollback-candidate"
+  rm -f "${_lro_candidate}"
+  cp -p "${_lro_item}" "${_lro_candidate}" || { rm -f "${_lro_candidate}"; return 1; }
+  chmod "${_lro_mode}" "${_lro_candidate}" 2>/dev/null || { rm -f "${_lro_candidate}"; return 1; }
+  if command -v sync >/dev/null 2>&1; then
+    sync "${_lro_candidate}" 2>/dev/null || true
+  fi
+  mv -f "${_lro_candidate}" "${_lro_target}" || return 1
+  return 0
+}
+
+# Verifies a restored target exactly matches its recorded pre-image, or is
+# recorded absent and is indeed gone.
+_lifecycle_verify_one() {
+  _lvo_item="$1"
+  _lvo_target="$2"
+  if [ -f "${_lvo_item}.absent" ]; then
+    [ ! -e "${_lvo_target}" ]
+    return $?
+  fi
+  cmp -s "${_lvo_item}" "${_lvo_target}"
+}
+LIFECYCLE_SHARED_LIB
+}
+
 # Renders the administrator deploy program. `root` and `os_release_path` are
 # embedded as literal paths (overridable so tests can point both at a
 # scratch fixture tree, exactly like the add-on deployment's `ROOT`
@@ -194,9 +333,14 @@ PLATFORM_CHECK
 # `_coreelec_lifecycle_key_type_and_blob`), so embedding them inside a single
 # `'...'` remote shell literal is safe: that grammar can never contain a
 # single quote. `wrapper_content` is entirely our own generated text.
+# `sshd_path` defaults to its real production location and is only ever
+# overridden by tests. Note that this program never itself invokes the
+# wrapper's own `systemctl` reference -- that path is baked into
+# `wrapper_content` by the caller -- so it is not a parameter here.
 coreelec_lifecycle_remote_deploy_script() {
   local root="${1:-/storage}" os_release_path="${2:-/etc/os-release}"
   local wrapper_content="$3" restrict_entry="$4" fallback_entry="$5"
+  local sshd_path="${6:-/usr/sbin/sshd}"
   [[ -n "${wrapper_content}" ]] || die "coreelec_lifecycle_remote_deploy_script requires wrapper content"
   [[ -n "${restrict_entry}" ]] || die "coreelec_lifecycle_remote_deploy_script requires a restrict key entry"
   [[ -n "${fallback_entry}" ]] || die "coreelec_lifecycle_remote_deploy_script requires a fallback key entry"
@@ -205,6 +349,7 @@ set -eu
 umask 077
 root='${root}'
 os_release_path='${os_release_path}'
+sshd='${sshd_path}'
 marker='${COREELEC_LIFECYCLE_KEY_MARKER}'
 restrict_entry='${restrict_entry}'
 fallback_entry='${fallback_entry}'
@@ -219,9 +364,9 @@ cache_root="${root}/.cache/kodi-lifecycle"
 pointer_file="${cache_root}/current-transaction"
 DEPLOY_PATHS
   _coreelec_lifecycle_remote_platform_check
+  _coreelec_lifecycle_remote_key_mode_check
+  _coreelec_lifecycle_remote_shared_lib
   cat <<'DEPLOY_BODY'
-mkdir -p "${cache_root}"
-chmod 700 "${cache_root}"
 if [ -f "${pointer_file}" ]; then
   printf 'DEPLOY_REFUSED:pending-transaction:%s\n' "$(cat "${pointer_file}")" >&2
   exit 14
@@ -246,6 +391,12 @@ if [ "${initial_state}" = "failed" ]; then
 fi
 printf 'INITIAL_STATE:%s\n' "${initial_state}"
 
+# No mutation happens above this point: both refusals (an already-pending
+# transaction, and a kodi.service already in a failed state) are checked
+# before the cache directory -- or anything else -- is ever created.
+mkdir -p "${cache_root}"
+chmod 700 "${cache_root}"
+
 mkdir -p "${backup_root}"
 chmod 700 "${backup_root}"
 stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -262,34 +413,54 @@ chmod 700 "${transaction}" "${transaction}/rollback"
 # transaction directory behind rather than an orphaned one.
 printf '%s\n' "${transaction}" > "${pointer_file}"
 
+# `rollback_now` is defined before anything else touches the transaction
+# directory or the two target files, so every mutation below -- including
+# writing the manifest itself -- is guarded through this one path (see
+# finding C2's "guard every remote command after first mutation" and
+# finding I7's restoration-verification requirement).
 rollback_now() {
   reason="$1"
   ok=1
-  if [ -f "${transaction}/rollback/wrapper.absent" ]; then
-    rm -f "${wrapper_path}" || ok=0
-  elif [ -f "${transaction}/rollback/wrapper" ]; then
-    cp -p "${transaction}/rollback/wrapper" "${wrapper_path}" || ok=0
-    chmod 700 "${wrapper_path}" 2>/dev/null || ok=0
-  fi
-  if [ -f "${transaction}/rollback/authorized_keys.absent" ]; then
-    rm -f "${authorized}" || ok=0
-  elif [ -f "${transaction}/rollback/authorized_keys" ]; then
-    cp -p "${transaction}/rollback/authorized_keys" "${authorized}" || ok=0
-    chmod 600 "${authorized}" 2>/dev/null || ok=0
+  if _lifecycle_manifest_complete "${transaction}"; then
+    _lifecycle_restore_one "${transaction}/rollback/wrapper" "${wrapper_path}" 700 || ok=0
+    _lifecycle_restore_one "${transaction}/rollback/authorized_keys" "${authorized}" 600 || ok=0
+  else
+    ok=0
   fi
   rm -f "${wrapper_path}.candidate" "${authorized}.candidate" \
     "${cache_root}/atomic-write.py" "${cache_root}/key-check.tmp" \
     "${cache_root}/authorized-keys-candidate-source.tmp" 2>/dev/null || true
+
+  verified=0
   if [ "${ok}" -eq 1 ]; then
+    verified=1
+    _lifecycle_verify_one "${transaction}/rollback/wrapper" "${wrapper_path}" || verified=0
+    _lifecycle_verify_one "${transaction}/rollback/authorized_keys" "${authorized}" || verified=0
+  fi
+
+  if [ "${ok}" -eq 1 ] && [ "${verified}" -eq 1 ]; then
     rm -rf "${transaction}"
     rm -f "${pointer_file}"
     printf 'DEPLOY_STATE:rolled-back:%s\n' "${reason}" >&2
   else
+    # Recovery material is retained, on purpose, whenever restoration cannot
+    # be proven complete or the manifest itself was incomplete: an operator
+    # needs the dated directory and a pointer that still names it to retry,
+    # not a rollback that quietly gave up or restored only part of the
+    # state.
+    printf '%s\n' "${transaction}" > "${pointer_file}"
     printf 'DEPLOY_STATE:incomplete-rollback:%s\n' "${reason}" >&2
     printf 'TRANSACTION:%s\n' "${transaction}" >&2
   fi
   exit 1
 }
+
+{
+  printf 'MANIFEST_VERSION=1\n'
+  printf 'TRANSACTION=%s\n' "${transaction}"
+  printf 'CREATED_UTC=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+} > "${transaction}/manifest" || rollback_now "write-manifest-failed"
+chmod 600 "${transaction}/manifest" 2>/dev/null || true
 
 if [ -e "${wrapper_path}" ]; then
   cp -p "${wrapper_path}" "${transaction}/rollback/wrapper" || rollback_now "backup-wrapper-failed"
@@ -349,30 +520,13 @@ ${wrapper_content}
 WRAPPER_CANDIDATE_EOF
 WRAPPER_CANDIDATE_COMMAND
   cat <<'DEPLOY_BODY'
-# The target's own ssh-keygen is the arbiter of whether it understands the
-# `restrict` keyword: older OpenSSH releases (before 7.2) do not, and a
-# device that rejects it must fall back to the equivalent explicit options
-# instead of silently shipping an authorized_keys line sshd cannot parse.
-key_check="${cache_root}/key-check.tmp"
-rm -f "${key_check}"
-printf '%s\n' "${restrict_entry}" > "${key_check}"
-if ssh-keygen -l -f "${key_check}" >/dev/null 2>&1; then
-  key_mode="restrict"
-  chosen_entry="${restrict_entry}"
-else
-  printf '%s\n' "${fallback_entry}" > "${key_check}"
-  if ssh-keygen -l -f "${key_check}" >/dev/null 2>&1; then
-    key_mode="fallback"
-    chosen_entry="${fallback_entry}"
-  else
-    rm -f "${key_check}"
-    rollback_now "no-supported-key-restriction-syntax"
-  fi
-fi
-rm -f "${key_check}"
-
 # Only the line carrying our stable marker is ever replaced; every other
 # line -- including the administrator's own key -- passes through untouched.
+if [ "${key_mode}" = "restrict" ]; then
+  chosen_entry="${restrict_entry}"
+else
+  chosen_entry="${fallback_entry}"
+fi
 candidate_source="${cache_root}/authorized-keys-candidate-source.tmp"
 rm -f "${candidate_source}"
 {
@@ -403,12 +557,17 @@ DEPLOY_BODY
 }
 
 # Renders the administrator rollback program. With `explicit_transaction`
-# empty (the CLI's own post-verification-failure path), the pending
-# transaction named by the pointer file is restored. With it set (the
-# operator-facing `--rollback-transaction DIR` recovery path), that exact
-# directory is restored instead, regardless of what the pointer currently
-# names -- an operator retrying a previously incomplete rollback needs this
-# to work even if the pointer file itself did not survive.
+# empty (the CLI's own post-verification-failure path, and the operator's
+# `--rollback-transaction` with no directory), the transaction named by the
+# device's own pointer file is resolved and restored. With it set (an
+# operator naming a specific directory), that candidate must resolve to the
+# exact same canonical transaction the pointer currently names -- never an
+# arbitrary path, a parent, `/storage`, the backup namespace root itself, a
+# sibling transaction, or a symlink (see finding C1). Restoration itself is
+# always atomic-candidate-then-rename, never in-place (finding I6), and is
+# always verified against each item's recorded pre-image digest or absence
+# before any recovery material is discarded (finding I7's guarantee, applied
+# here too).
 coreelec_lifecycle_remote_rollback_script() {
   local root="${1:-/storage}" explicit_transaction="${2:-}"
   cat <<ROLLBACK_HEADER
@@ -416,55 +575,60 @@ set -eu
 root='${root}'
 explicit_transaction='${explicit_transaction}'
 ROLLBACK_HEADER
+  _coreelec_lifecycle_remote_shared_lib
   cat <<'ROLLBACK_BODY'
 ssh_dir="${root}/.ssh"
 authorized="${ssh_dir}/authorized_keys"
 wrapper_path="${root}/.config/kodi-lifecycle"
+backup_root="${root}/backup/kodi-lifecycle"
 cache_root="${root}/.cache/kodi-lifecycle"
 pointer_file="${cache_root}/current-transaction"
 
-if [ -n "${explicit_transaction}" ]; then
-  transaction="${explicit_transaction}"
-else
-  if [ ! -f "${pointer_file}" ]; then
-    printf 'ROLLBACK_FAIL:no-pending-transaction\n' >&2
-    exit 20
-  fi
-  transaction="$(cat "${pointer_file}")"
+if [ ! -d "${backup_root}" ] || [ ! -f "${pointer_file}" ]; then
+  printf 'ROLLBACK_FAIL:no-pending-transaction\n' >&2
+  exit 20
 fi
-if [ ! -d "${transaction}" ]; then
-  printf 'ROLLBACK_FAIL:transaction-directory-missing:%s\n' "${transaction}" >&2
+backup_root_canon="$(_lifecycle_canon "${backup_root}")" || {
+  printf 'ROLLBACK_FAIL:no-pending-transaction\n' >&2
+  exit 20
+}
+
+pointer_raw="$(cat "${pointer_file}")"
+pointer_transaction="$(_lifecycle_resolve_transaction "${pointer_raw}" "${backup_root_canon}")" || {
+  printf 'ROLLBACK_FAIL:invalid-transaction-path:pointer\n' >&2
   exit 21
+}
+
+if [ -n "${explicit_transaction}" ]; then
+  candidate_transaction="$(_lifecycle_resolve_transaction "${explicit_transaction}" "${backup_root_canon}")" || {
+    printf 'ROLLBACK_FAIL:invalid-transaction-path:explicit\n' >&2
+    exit 21
+  }
+  if [ "${candidate_transaction}" != "${pointer_transaction}" ]; then
+    printf 'ROLLBACK_FAIL:transaction-pointer-mismatch\n' >&2
+    exit 23
+  fi
+  transaction="${candidate_transaction}"
+else
+  transaction="${pointer_transaction}"
+fi
+
+if ! _lifecycle_manifest_complete "${transaction}"; then
+  printf 'ROLLBACK_FAIL:incomplete-manifest:%s\n' "${transaction}" >&2
+  printf 'TRANSACTION:%s\n' "${transaction}" >&2
+  exit 24
 fi
 
 ok=1
-if [ -f "${transaction}/rollback/wrapper.absent" ]; then
-  rm -f "${wrapper_path}" || ok=0
-elif [ -f "${transaction}/rollback/wrapper" ]; then
-  cp -p "${transaction}/rollback/wrapper" "${wrapper_path}" || ok=0
-  chmod 700 "${wrapper_path}" 2>/dev/null || ok=0
-fi
-if [ -f "${transaction}/rollback/authorized_keys.absent" ]; then
-  rm -f "${authorized}" || ok=0
-elif [ -f "${transaction}/rollback/authorized_keys" ]; then
-  cp -p "${transaction}/rollback/authorized_keys" "${authorized}" || ok=0
-  chmod 600 "${authorized}" 2>/dev/null || ok=0
-fi
+_lifecycle_restore_one "${transaction}/rollback/wrapper" "${wrapper_path}" 700 || ok=0
+_lifecycle_restore_one "${transaction}/rollback/authorized_keys" "${authorized}" 600 || ok=0
 rm -f "${wrapper_path}.candidate" "${authorized}.candidate" 2>/dev/null || true
 
-# Exact restoration is verified, not assumed: the restored path must match
-# its recorded pre-run digest, or its recorded absence, before this counts
-# as a completed rollback.
-verified=1
-if [ -f "${transaction}/rollback/wrapper.absent" ]; then
-  [ -e "${wrapper_path}" ] && verified=0
-elif [ -f "${transaction}/rollback/wrapper" ]; then
-  cmp -s "${transaction}/rollback/wrapper" "${wrapper_path}" || verified=0
-fi
-if [ -f "${transaction}/rollback/authorized_keys.absent" ]; then
-  [ -e "${authorized}" ] && verified=0
-elif [ -f "${transaction}/rollback/authorized_keys" ]; then
-  cmp -s "${transaction}/rollback/authorized_keys" "${authorized}" || verified=0
+verified=0
+if [ "${ok}" -eq 1 ]; then
+  verified=1
+  _lifecycle_verify_one "${transaction}/rollback/wrapper" "${wrapper_path}" || verified=0
+  _lifecycle_verify_one "${transaction}/rollback/authorized_keys" "${authorized}" || verified=0
 fi
 
 if [ "${ok}" -eq 1 ] && [ "${verified}" -eq 1 ]; then
@@ -484,30 +648,60 @@ ROLLBACK_BODY
 }
 
 # Renders the administrator finalize program: it only ever discards the
-# rollback material for the currently pending transaction, after the CLI has
-# already proven the restricted key restores the device to its initial
-# state. It never touches the wrapper or authorized_keys themselves.
+# rollback material for the currently pending (and, with an explicit
+# argument, pointer-matching -- see `coreelec_lifecycle_remote_rollback_script`
+# for why) transaction, after the CLI has already proven the restricted key
+# restores the device to its initial state. It never touches the wrapper or
+# authorized_keys themselves. A cleanup failure (the transaction directory
+# could not be removed) is reported as its own distinct `cleanup-failed`
+# state, never as a rollback: the installation itself is already verified
+# good at this point, so telling an operator to roll it back would be wrong
+# (finding I3). Finalize is naturally idempotent: a cleanup failure leaves
+# the pointer and transaction directory in place, so simply re-running it
+# (optionally via `--finalize-transaction`) retries the same cleanup.
 coreelec_lifecycle_remote_finalize_script() {
-  local root="${1:-/storage}"
+  local root="${1:-/storage}" explicit_transaction="${2:-}"
   cat <<FINALIZE_HEADER
 set -eu
 root='${root}'
+explicit_transaction='${explicit_transaction}'
 FINALIZE_HEADER
+  _coreelec_lifecycle_remote_shared_lib
   cat <<'FINALIZE_BODY'
 cache_root="${root}/.cache/kodi-lifecycle"
 pointer_file="${cache_root}/current-transaction"
+backup_root="${root}/backup/kodi-lifecycle"
 
-if [ ! -f "${pointer_file}" ]; then
+if [ ! -d "${backup_root}" ] || [ ! -f "${pointer_file}" ]; then
   printf 'FINALIZE_FAIL:no-pending-transaction\n' >&2
   exit 30
 fi
-transaction="$(cat "${pointer_file}")"
-if [ ! -d "${transaction}" ]; then
-  printf 'FINALIZE_FAIL:transaction-directory-missing:%s\n' "${transaction}" >&2
+backup_root_canon="$(_lifecycle_canon "${backup_root}")" || {
+  printf 'FINALIZE_FAIL:no-pending-transaction\n' >&2
+  exit 30
+}
+pointer_raw="$(cat "${pointer_file}")"
+pointer_transaction="$(_lifecycle_resolve_transaction "${pointer_raw}" "${backup_root_canon}")" || {
+  printf 'FINALIZE_FAIL:invalid-transaction-path:pointer\n' >&2
   exit 31
+}
+
+if [ -n "${explicit_transaction}" ]; then
+  candidate_transaction="$(_lifecycle_resolve_transaction "${explicit_transaction}" "${backup_root_canon}")" || {
+    printf 'FINALIZE_FAIL:invalid-transaction-path:explicit\n' >&2
+    exit 31
+  }
+  if [ "${candidate_transaction}" != "${pointer_transaction}" ]; then
+    printf 'FINALIZE_FAIL:transaction-pointer-mismatch\n' >&2
+    exit 33
+  fi
+  transaction="${candidate_transaction}"
+else
+  transaction="${pointer_transaction}"
 fi
+
 if ! rm -rf "${transaction}"; then
-  printf 'FINALIZE_STATE:incomplete-rollback\n' >&2
+  printf 'FINALIZE_STATE:cleanup-failed\n' >&2
   printf 'TRANSACTION:%s\n' "${transaction}" >&2
   exit 32
 fi
@@ -517,24 +711,54 @@ FINALIZE_BODY
 }
 
 # Renders the read-only administrator inspection program for
-# `--inspect-transaction DIR`. It reports which recovery items exist, never
-# their contents: a stray authorized_keys backup can carry other operators'
-# key material, and that must never reach a report or a terminal.
+# `--inspect-transaction [DIR]`. With no directory, it inspects whatever the
+# device's own pointer currently names. It reports which recovery items
+# exist and whether a manifest is present, never their contents: a stray
+# authorized_keys backup can carry other operators' key material, and that
+# must never reach a report or a terminal.
 coreelec_lifecycle_remote_inspect_script() {
-  local root="${1:-/storage}" transaction_dir="$2"
-  [[ -n "${transaction_dir}" ]] || die "coreelec_lifecycle_remote_inspect_script requires a transaction directory"
+  local root="${1:-/storage}" transaction_dir="${2:-}"
   cat <<INSPECT_HEADER
 set -eu
 root='${root}'
-transaction='${transaction_dir}'
+explicit_transaction='${transaction_dir}'
 INSPECT_HEADER
+  _coreelec_lifecycle_remote_shared_lib
   cat <<'INSPECT_BODY'
-if [ ! -d "${transaction}" ]; then
+cache_root="${root}/.cache/kodi-lifecycle"
+pointer_file="${cache_root}/current-transaction"
+backup_root="${root}/backup/kodi-lifecycle"
+
+if [ -n "${explicit_transaction}" ]; then
+  candidate="${explicit_transaction}"
+else
+  if [ ! -f "${pointer_file}" ]; then
+    printf 'INSPECT_STATE:missing\n'
+    exit 0
+  fi
+  candidate="$(cat "${pointer_file}")"
+fi
+
+if [ ! -d "${backup_root}" ]; then
   printf 'INSPECT_STATE:missing\n'
   exit 0
 fi
+backup_root_canon="$(_lifecycle_canon "${backup_root}")" || {
+  printf 'INSPECT_STATE:missing\n'
+  exit 0
+}
+transaction="$(_lifecycle_resolve_transaction "${candidate}" "${backup_root_canon}")" || {
+  printf 'INSPECT_STATE:invalid\n'
+  exit 0
+}
+
 printf 'INSPECT_STATE:present\n'
 printf 'TRANSACTION:%s\n' "${transaction}"
+if [ -f "${transaction}/manifest" ]; then
+  printf 'MANIFEST:present\n'
+else
+  printf 'MANIFEST:absent\n'
+fi
 for item in wrapper wrapper.absent authorized_keys authorized_keys.absent; do
   if [ -e "${transaction}/rollback/${item}" ]; then
     printf 'ROLLBACK_ITEM:%s:present\n' "${item}"
@@ -543,6 +767,66 @@ for item in wrapper wrapper.absent authorized_keys authorized_keys.absent; do
   fi
 done
 INSPECT_BODY
+}
+
+# Renders the administrator service-state-restoration program. Independent
+# of the file rollback above, this forces `kodi.service` back to
+# `initial_state` ("running" or "stopped") over the *administrator*
+# transport and verifies the resulting state, so a restricted-verification
+# failure can never leave the service itself in the wrong state merely
+# because the file rollback above only ever touches the wrapper and
+# authorized_keys (finding I4). Every mutating call is guarded so a failure
+# never aborts the script before the final state check runs: whatever
+# actually happened is always reported, never assumed. Uses the bare
+# `systemctl` command, resolved via PATH, matching the deploy script's own
+# `INITIAL_STATE` probe above: this program always runs on the
+# administrator transport, where PATH already contains the real
+# `/usr/bin`, so no parameterized path is needed here.
+coreelec_lifecycle_remote_service_restore_script() {
+  local initial_state="$1"
+  [[ -n "${initial_state}" ]] || die "coreelec_lifecycle_remote_service_restore_script requires an initial state"
+  cat <<SERVICE_RESTORE_HEADER
+set -eu
+initial_state='${initial_state}'
+SERVICE_RESTORE_HEADER
+  cat <<'SERVICE_RESTORE_BODY'
+UNIT="kodi.service"
+case "${initial_state}" in
+  running)
+    if ! systemctl is-active --quiet "${UNIT}"; then
+      systemctl start "${UNIT}" || true
+    fi
+    ;;
+  stopped)
+    if systemctl is-active --quiet "${UNIT}"; then
+      systemctl stop "${UNIT}" || true
+    fi
+    ;;
+  *)
+    printf 'SERVICE_RESTORE_FAIL:unsupported-initial-state:%s\n' "${initial_state}" >&2
+    exit 40
+    ;;
+esac
+state="$(systemctl is-active "${UNIT}" 2>/dev/null || true)"
+case "${state}" in
+  active) resulting="running" ;;
+  inactive)
+    if systemctl is-failed --quiet "${UNIT}"; then
+      resulting="failed"
+    else
+      resulting="stopped"
+    fi
+    ;;
+  failed) resulting="failed" ;;
+  *) resulting="failed" ;;
+esac
+if [ "${resulting}" = "${initial_state}" ]; then
+  printf 'SERVICE_RESTORE_STATE:restored:%s\n' "${resulting}"
+  exit 0
+fi
+printf 'SERVICE_RESTORE_STATE:mismatch:%s\n' "${resulting}" >&2
+exit 41
+SERVICE_RESTORE_BODY
 }
 
 # --- Controller transport: hardened, forced-command-only SSH -------------
@@ -562,7 +846,17 @@ coreelec_lifecycle_run_with_deadline() {
     timeout "${deadline_seconds}" "$@"
     return $?
   fi
-  local command_pid watchdog_pid rc
+  local command_pid watchdog_pid rc had_errexit
+  # `errexit` is shell-global, not function-scoped: restore the caller's
+  # original setting exactly rather than unconditionally turning it back on,
+  # since every caller of this helper (e.g. `_controller_call` in
+  # configure-kodi-lifecycle.sh) deliberately runs it with `set +e` in
+  # effect and expects that to still hold immediately after this function
+  # returns, however it exits.
+  case "$-" in
+    *e*) had_errexit=1 ;;
+    *) had_errexit=0 ;;
+  esac
   "$@" &
   command_pid=$!
   (
@@ -573,7 +867,7 @@ coreelec_lifecycle_run_with_deadline() {
   set +e
   wait "${command_pid}"
   rc=$?
-  set -e
+  (( had_errexit )) && set -e
   kill "${watchdog_pid}" 2>/dev/null || true
   wait "${watchdog_pid}" 2>/dev/null || true
   return "${rc}"

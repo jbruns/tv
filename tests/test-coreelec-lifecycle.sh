@@ -170,29 +170,37 @@ write_fixture_os_release() {
   fi
 }
 
-# Installs a fixture `ssh-keygen` that rejects any authorized_keys line
-# containing the literal word "restrict", standing in for an OpenSSH release
-# older than 7.2 that does not understand the keyword, so the deploy
-# transaction's preferred-syntax probe genuinely fails and the explicit
-# fallback is exercised. Every other well-formed, non-empty line is
-# accepted; this only replaces the `-l -f` syntax probe, nothing else.
-install_fixture_ssh_keygen_rejecting_restrict() {
-  local dir bin_dir
-  dir="$1"
-  bin_dir="${dir}/ssh-keygen-reject-bin"
+# Installs a fixture `sshd` binary standing in for a real OpenSSH server
+# binary, at a fixture-local path never found via $PATH (see finding I5):
+# the deploy transaction's key-mode check runs `sshd -V`, and real OpenSSH
+# writes its version banner to stderr and exits nonzero for that flag alone,
+# which this stub reproduces. `mode` selects which banner (or absence of a
+# binary at all) is produced:
+#   supported   -- OpenSSH >= 7.2, so `restrict` is understood
+#   unsupported -- OpenSSH < 7.2, predating the `restrict` keyword
+#   malformed   -- a banner with no parseable "OpenSSH_X.Y" token
+#   unavailable -- installs nothing at the returned path, so `[ -x ]` fails
+install_fixture_sshd() {
+  local dir="$1" mode="$2" bin_dir path banner
+  bin_dir="${dir}/sshd-fixture-bin"
   mkdir -p "${bin_dir}"
-  cat > "${bin_dir}/ssh-keygen" <<'STUB'
+  path="${bin_dir}/sshd"
+  case "${mode}" in
+    unavailable)
+      printf '%s\n' "${path}"
+      return 0
+      ;;
+    supported) banner="OpenSSH_9.9p1, OpenSSL 3.1.4 11 Feb 2024" ;;
+    unsupported) banner="OpenSSH_6.6p1, OpenSSL 1.0.1e-fips 11 Feb 2013" ;;
+    malformed) banner="this is not a version string" ;;
+  esac
+  cat > "${path}" <<STUB
 #!/bin/bash
-set -eu
-if [[ "${1:-}" == "-l" && "${2:-}" == "-f" ]]; then
-  grep -q 'restrict' "$3" && exit 1
-  [[ -s "$3" ]]
-  exit $?
-fi
+printf '%s\n' "${banner}" >&2
 exit 1
 STUB
-  chmod +x "${bin_dir}/ssh-keygen"
-  printf '%s\n' "${bin_dir}"
+  chmod +x "${path}"
+  printf '%s\n' "${path}"
 }
 
 # Installs the dual-mode `ssh` stub used for full-CLI tests. It distinguishes
@@ -214,11 +222,21 @@ STUB
 # this.
 #
 # Reads, at call time (not install time): LIFECYCLE_FIXTURE_ROOT,
-# LIFECYCLE_FIXTURE_OS_RELEASE, LIFECYCLE_FIXTURE_BIN_DIR (systemctl and,
-# where relevant, ssh-keygen), and optionally LIFECYCLE_SABOTAGE_ROLLBACK=1,
-# which -- only when set -- replaces the fixture authorized_keys path with a
-# directory immediately before a rollback script runs, deterministically
-# reproducing an unrestorable target for the "incomplete rollback" test.
+# LIFECYCLE_FIXTURE_OS_RELEASE, LIFECYCLE_FIXTURE_BIN_DIR (systemctl), and
+# optionally LIFECYCLE_FIXTURE_SSHD (a fixture `sshd` binary path -- see
+# install_fixture_sshd -- substituted for the deploy script's own literal
+# `sshd='/usr/sbin/sshd'` default only when set; when unset, that default is
+# left untouched, matching production and relying on the real local
+# machine's own sshd for tests that do not care which key mode results),
+# LIFECYCLE_SABOTAGE_ROLLBACK=1, which -- only when set -- replaces the
+# fixture authorized_keys path with a directory immediately before a
+# rollback script runs, deterministically reproducing an unrestorable
+# target for the "incomplete rollback" test, LIFECYCLE_SABOTAGE_FINALIZE=1,
+# which makes the backup root read-only immediately before a finalize
+# script runs so its `rm -rf` genuinely fails (finding I3's cleanup-failed
+# path), and LIFECYCLE_SABOTAGE_DEPLOY_OUTPUT=1, which replaces a deploy
+# script's entire execution with an empty, unrecognized response (finding
+# C2's "unknown" outcome, standing in for a truncated/dropped connection).
 install_lifecycle_ssh_stub() {
   local dir bin_dir
   dir="$1"
@@ -241,10 +259,23 @@ if [[ "${last}" == "sh -s" ]]; then
     rm -rf "${fixture_root}/.ssh/authorized_keys"
     mkdir -p "${fixture_root}/.ssh/authorized_keys"
   fi
+  if [[ -n "${LIFECYCLE_SABOTAGE_FINALIZE:-}" ]] \
+      && printf '%s' "${script}" | grep -q 'FINALIZE_STATE:committed'; then
+    chmod 500 "${fixture_root}/backup/kodi-lifecycle"
+  fi
+  if [[ -n "${LIFECYCLE_SABOTAGE_DEPLOY_OUTPUT:-}" ]] \
+      && printf '%s' "${script}" | grep -q 'DEPLOY_STATE:pending-verification'; then
+    printf 'unrecognized-truncated-response\n'
+    exit 1
+  fi
   script="$(printf '%s' "${script}" | sed \
     -e "s#root='/storage'#root='${fixture_root}'#" \
     -e "s#os_release_path='/etc/os-release'#os_release_path='${os_release}'#" \
     -e "s#SYSTEMCTL=\"/usr/bin/systemctl\"#SYSTEMCTL=\"${fixture_bin}/systemctl\"#")"
+  if [[ -n "${LIFECYCLE_FIXTURE_SSHD:-}" ]]; then
+    script="$(printf '%s' "${script}" | sed \
+      -e "s#sshd='/usr/sbin/sshd'#sshd='${LIFECYCLE_FIXTURE_SSHD}'#")"
+  fi
   set +e
   printf '%s\n' "${script}" | PATH="${fixture_bin}:${PATH}" sh -s
   rc=$?
@@ -783,18 +814,20 @@ test_rerun_replaces_only_the_marked_controller_key() {
 }
 
 test_deploy_prefers_restrict_when_sshd_supports_it() {
-  local dir os_release pubkey systemctl_bin systemctl_dir root script output rc
+  local dir os_release pubkey systemctl_bin systemctl_dir sshd_bin root script output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "admin"
   pubkey="${dir}/admin.pub"
   systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
   systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
   os_release="${dir}/etc/os-release"
   write_fixture_os_release "${os_release}" "1"
   root="${dir}/root"
 
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
     PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
@@ -802,33 +835,34 @@ test_deploy_prefers_restrict_when_sshd_supports_it() {
   set -e
   assert_success "${rc}" "the deploy must succeed: ${output}" || return 1
   assert_contains "${output}" "KEY_MODE:restrict" \
-    "when ssh-keygen accepts restrict, the deploy must prefer it" || return 1
+    "when sshd supports it (OpenSSH >= 7.2), the deploy must prefer restrict" || return 1
   assert_contains "$(cat "${root}/.ssh/authorized_keys")" 'restrict,command="/storage/.config/kodi-lifecycle"' \
     "the installed entry must use the restrict syntax"
 }
 
 test_deploy_uses_explicit_restrictions_when_restrict_is_unsupported() {
-  local dir os_release pubkey systemctl_bin systemctl_dir reject_bin root script output rc
+  local dir os_release pubkey systemctl_bin systemctl_dir sshd_bin root script output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "admin"
   pubkey="${dir}/admin.pub"
   systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
   systemctl_dir="$(dirname "${systemctl_bin}")"
-  reject_bin="$(install_fixture_ssh_keygen_rejecting_restrict "${dir}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "unsupported")"
   os_release="${dir}/etc/os-release"
   write_fixture_os_release "${os_release}" "1"
   root="${dir}/root"
 
-  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
   set +e
   output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
-    PATH="${reject_bin}:${systemctl_dir}:${PATH}" sh -s 2>&1)"
+    PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
   rc=$?
   set -e
   assert_success "${rc}" "the deploy must succeed via the fallback: ${output}" || return 1
   assert_contains "${output}" "KEY_MODE:fallback" \
-    "when ssh-keygen rejects restrict, the deploy must use the fallback" || return 1
+    "when sshd predates OpenSSH 7.2, the deploy must use the fallback" || return 1
   assert_contains "$(cat "${root}/.ssh/authorized_keys")" \
     "no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding" \
     "the installed entry must use the explicit fallback syntax"
@@ -1013,6 +1047,10 @@ test_failed_verification_rolls_back_wrapper_and_authorized_keys() {
   assert_failure "${rc}" "a verification failure must not be reported as success: ${output}" || return 1
   assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=rolled-back" \
     "a failed verification must roll back the deployment" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "file_rollback_state=rolled-back" \
+    "the report must record that file rollback succeeded (finding I4)" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "service_restore_state=restored" \
+    "restoring to a stopped initial state never depends on the broken start path (finding I4)" || return 1
 
   if [[ -e "${root}/.config/kodi-lifecycle" ]]; then
     printf 'the wrapper must not remain installed after a rollback on a fresh root\n' >&2
@@ -1106,6 +1144,765 @@ test_report_never_contains_public_or_private_key_material() {
     "the report still records that a controller key was supplied"
 }
 
+# --- Fix round 1 helpers --------------------------------------------------
+
+# Reads the transaction path a fixture root's pending-transaction pointer
+# currently names.
+current_transaction_pointer() {
+  local root="$1"
+  cat "${root}/.cache/kodi-lifecycle/current-transaction"
+}
+
+# Runs the deploy transaction directly (no SSH involved) against a fresh
+# fixture root and leaves it pending-verification: a real transaction
+# directory, with a real manifest and rollback markers, and a real pointer
+# file, exactly as a genuine in-flight deployment would. Used by tests that
+# need a legitimate transaction to attack or recover, without re-deriving
+# one through the full CLI each time.
+deploy_to_pending_verification() {
+  local dir="$1" root="$2" os_release="$3" pubkey="$4" systemctl_dir="$5"
+  local script output rc
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the setup deploy must reach pending-verification: ${output}"
+}
+
+# --- Finding C1: rollback/finalize must never accept an arbitrary path ---
+
+test_rollback_refuses_explicit_transaction_outside_backup_root() {
+  local dir root os_release pubkey systemctl_bin systemctl_dir transaction script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  root="${dir}/root"
+
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" "${pubkey}" "${systemctl_dir}" || return 1
+  transaction="$(current_transaction_pointer "${root}")"
+
+  for candidate in "${root}" "${root}/backup" "${root}/backup/kodi-lifecycle" \
+      "${root}/backup/kodi-lifecycle/../../etc"; do
+    script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${candidate}")"
+    set +e
+    output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "a candidate outside the backup root must be refused: ${candidate}: ${output}" || return 1
+    assert_contains "${output}" "ROLLBACK_FAIL:invalid-transaction-path" \
+      "the refusal names the path-validation failure for: ${candidate}" || return 1
+  done
+
+  if [[ "$(current_transaction_pointer "${root}")" != "${transaction}" ]]; then
+    printf 'the pointer must be unchanged after refused rollback attempts\n' >&2
+    return 1
+  fi
+  if [[ ! -f "${transaction}/manifest" ]]; then
+    printf 'the legitimate transaction must be untouched after refused rollback attempts\n' >&2
+    return 1
+  fi
+}
+
+test_rollback_refuses_explicit_transaction_not_matching_pointer() {
+  local dir root os_release pubkey systemctl_bin systemctl_dir pointer_transaction sibling script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  root="${dir}/root"
+
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" "${pubkey}" "${systemctl_dir}" || return 1
+  pointer_transaction="$(current_transaction_pointer "${root}")"
+
+  # A second, well-formed-looking transaction directory that the pointer
+  # does not name -- e.g. left over from an interrupted prior run.
+  sibling="${root}/backup/kodi-lifecycle/20200101T000000Z"
+  mkdir -p "${sibling}/rollback"
+  printf 'MANIFEST_VERSION=1\nTRANSACTION=%s\n' "${sibling}" > "${sibling}/manifest"
+  : > "${sibling}/rollback/wrapper.absent"
+  : > "${sibling}/rollback/authorized_keys.absent"
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${sibling}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a well-formed but non-pointer transaction must be refused: ${output}" || return 1
+  assert_contains "${output}" "ROLLBACK_FAIL:transaction-pointer-mismatch" \
+    "the refusal names the pointer mismatch" || return 1
+
+  if [[ "$(current_transaction_pointer "${root}")" != "${pointer_transaction}" ]]; then
+    printf 'the pointer must be unchanged after a refused mismatched rollback\n' >&2
+    return 1
+  fi
+  if [[ ! -d "${sibling}" ]]; then
+    printf 'the sibling transaction must not be deleted by a refused rollback\n' >&2
+    return 1
+  fi
+  if [[ ! -f "${pointer_transaction}/manifest" ]]; then
+    printf 'the legitimate pointer transaction must be untouched\n' >&2
+    return 1
+  fi
+}
+
+test_rollback_refuses_when_manifest_incomplete() {
+  local dir root os_release pubkey systemctl_bin systemctl_dir transaction original_wrapper original_keys script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  root="${dir}/root"
+
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" "${pubkey}" "${systemctl_dir}" || return 1
+  transaction="$(current_transaction_pointer "${root}")"
+  original_wrapper="$(cat "${root}/.config/kodi-lifecycle")"
+  original_keys="$(cat "${root}/.ssh/authorized_keys")"
+  rm -f "${transaction}/manifest"
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a transaction missing its manifest must be refused: ${output}" || return 1
+  assert_contains "${output}" "ROLLBACK_FAIL:incomplete-manifest" \
+    "the refusal names the incomplete manifest" || return 1
+
+  assert_eq "${original_wrapper}" "$(cat "${root}/.config/kodi-lifecycle")" \
+    "the live wrapper must be untouched when the manifest is incomplete" || return 1
+  assert_eq "${original_keys}" "$(cat "${root}/.ssh/authorized_keys")" \
+    "the live authorized_keys must be untouched when the manifest is incomplete" || return 1
+  if [[ ! -d "${transaction}" ]]; then
+    printf 'the transaction directory must be retained, not deleted, when the manifest is incomplete\n' >&2
+    return 1
+  fi
+  if [[ ! -f "${root}/.cache/kodi-lifecycle/current-transaction" ]]; then
+    printf 'the pointer must be retained when the manifest is incomplete\n' >&2
+    return 1
+  fi
+}
+
+test_finalize_refuses_mismatched_or_invalid_explicit_transaction() {
+  local dir root os_release pubkey systemctl_bin systemctl_dir transaction sibling script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  root="${dir}/root"
+
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" "${pubkey}" "${systemctl_dir}" || return 1
+  transaction="$(current_transaction_pointer "${root}")"
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${root}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a finalize on a path outside the backup root must be refused: ${output}" || return 1
+  assert_contains "${output}" "FINALIZE_FAIL:invalid-transaction-path" \
+    "the refusal names the path-validation failure" || return 1
+  if [[ ! -d "${transaction}" ]]; then
+    printf 'the transaction must not be deleted by a refused finalize\n' >&2
+    return 1
+  fi
+
+  sibling="${root}/backup/kodi-lifecycle/20200101T000000Z"
+  mkdir -p "${sibling}/rollback"
+  printf 'MANIFEST_VERSION=1\nTRANSACTION=%s\n' "${sibling}" > "${sibling}/manifest"
+  : > "${sibling}/rollback/wrapper.absent"
+  : > "${sibling}/rollback/authorized_keys.absent"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${sibling}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a finalize on a non-pointer transaction must be refused: ${output}" || return 1
+  assert_contains "${output}" "FINALIZE_FAIL:transaction-pointer-mismatch" \
+    "the refusal names the pointer mismatch" || return 1
+  if [[ ! -d "${transaction}" || ! -d "${sibling}" ]]; then
+    printf 'neither transaction may be deleted by a refused finalize\n' >&2
+    return 1
+  fi
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a finalize matching the pointer must succeed: ${output}" || return 1
+  assert_contains "${output}" "FINALIZE_STATE:committed" "the matching finalize commits" || return 1
+  if [[ -d "${transaction}" ]]; then
+    printf 'the matching transaction must be removed after a successful finalize\n' >&2
+    return 1
+  fi
+  if [[ -f "${root}/.cache/kodi-lifecycle/current-transaction" ]]; then
+    printf 'the pointer must be cleared after a successful finalize\n' >&2
+    return 1
+  fi
+}
+
+# --- Finding C2: never mislabel an unknown/refused outcome as rolled-back -
+
+test_deploy_refused_reports_platform_check_failure_without_mutation() {
+  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}" "0"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  ssh_bin="$(install_lifecycle_ssh_stub "${dir}")"
+  report_dir="${dir}/reports"
+
+  set +e
+  output="$(LIFECYCLE_FIXTURE_ROOT="${root}" LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+    LIFECYCLE_FIXTURE_BIN_DIR="${systemctl_dir}" FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller.pub" \
+    --controller-identity "${dir}/controller" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a platform-check failure must not be reported as success: ${output}" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=refused" \
+    "a platform-check failure must be reported as refused, never rolled-back" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "refusal_reason=PLATFORM_CHECK_FAIL" \
+    "the report names the platform-check refusal reason" || return 1
+  assert_not_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=rolled-back" \
+    "a pre-mutation refusal must never claim a rollback occurred" || return 1
+
+  for path in "${root}/.config" "${root}/.ssh" "${root}/backup" "${root}/.cache"; do
+    if [[ -e "${path}" ]]; then
+      printf 'a platform-check refusal must never mutate the target: %s exists\n' "${path}" >&2
+      return 1
+    fi
+  done
+}
+
+test_deploy_refused_reports_key_mode_check_failure_without_mutation() {
+  local dir root os_release systemctl_bin systemctl_dir sshd_bin ssh_bin report_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "malformed")"
+  ssh_bin="$(install_lifecycle_ssh_stub "${dir}")"
+  report_dir="${dir}/reports"
+
+  set +e
+  output="$(LIFECYCLE_FIXTURE_ROOT="${root}" LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+    LIFECYCLE_FIXTURE_BIN_DIR="${systemctl_dir}" FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    LIFECYCLE_FIXTURE_SSHD="${sshd_bin}" \
+    PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller.pub" \
+    --controller-identity "${dir}/controller" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a key-mode-check failure must not be reported as success: ${output}" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=refused" \
+    "a key-mode-check failure must be reported as refused, never rolled-back" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "refusal_reason=KEY_MODE_CHECK_FAIL" \
+    "the report names the key-mode-check refusal reason" || return 1
+
+  for path in "${root}/.config" "${root}/.ssh" "${root}/backup" "${root}/.cache"; do
+    if [[ -e "${path}" ]]; then
+      printf 'a key-mode-check refusal must never mutate the target: %s exists\n' "${path}" >&2
+      return 1
+    fi
+  done
+}
+
+test_deploy_refused_with_pending_transaction_surfaces_existing_path() {
+  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc transaction
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  ssh_bin="$(install_lifecycle_ssh_stub "${dir}")"
+  set_fixture_active_state "${dir}" "inactive"
+  report_dir="${dir}/reports"
+
+  generate_fixture_keypair "${dir}" "admin"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" "${dir}/admin.pub" "${systemctl_dir}" || return 1
+  transaction="$(current_transaction_pointer "${root}")"
+
+  set +e
+  output="$(LIFECYCLE_FIXTURE_ROOT="${root}" LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+    LIFECYCLE_FIXTURE_BIN_DIR="${systemctl_dir}" FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller.pub" \
+    --controller-identity "${dir}/controller" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a deploy over a pending transaction must not succeed: ${output}" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=refused" \
+    "a pending-transaction refusal must be reported as refused" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "refusal_reason=pending-transaction" \
+    "the report names the pending-transaction refusal reason" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "transaction=${transaction}" \
+    "the report surfaces the existing transaction's exact path" || return 1
+  assert_contains "${output}" "--rollback-transaction ${transaction}" \
+    "a targeted rollback recovery command is printed even for this refusal" || return 1
+  assert_contains "${output}" "--inspect-transaction ${transaction}" \
+    "a targeted inspect recovery command is printed even for this refusal"
+}
+
+test_unknown_deploy_output_is_never_labeled_rolled_back() {
+  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  ssh_bin="$(install_lifecycle_ssh_stub "${dir}")"
+  set_fixture_active_state "${dir}" "inactive"
+  report_dir="${dir}/reports"
+
+  set +e
+  output="$(LIFECYCLE_FIXTURE_ROOT="${root}" LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+    LIFECYCLE_FIXTURE_BIN_DIR="${systemctl_dir}" FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    LIFECYCLE_SABOTAGE_DEPLOY_OUTPUT="1" \
+    PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller.pub" \
+    --controller-identity "${dir}/controller" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unparseable deploy response must not be reported as success: ${output}" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=unknown" \
+    "an unparseable deploy response must be reported as unknown" || return 1
+  assert_not_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=rolled-back" \
+    "an unknown outcome must never be assumed to be a completed rollback" || return 1
+  assert_contains "${output}" "--inspect-transaction" \
+    "an unknown outcome still prints an inspect recovery command" || return 1
+  if grep -q -- "--inspect-transaction ${root}" <<<"${output}"; then
+    printf 'an unknown outcome must use the no-argument recovery form, not a guessed path\n' >&2
+    return 1
+  fi
+}
+
+# --- Finding I3: a finalize cleanup failure must never suggest a rollback -
+
+test_finalize_cleanup_failure_reports_committed_cleanup_pending_and_retries() {
+  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc transaction
+  dir="$(make_scratch_dir)"
+  trap 'chmod -R u+w "${root}/backup" 2>/dev/null || true; rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  ssh_bin="$(install_lifecycle_ssh_stub "${dir}")"
+  set_fixture_active_state "${dir}" "inactive"
+  report_dir="${dir}/reports"
+
+  set +e
+  output="$(LIFECYCLE_FIXTURE_ROOT="${root}" LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+    LIFECYCLE_FIXTURE_BIN_DIR="${systemctl_dir}" FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    LIFECYCLE_SABOTAGE_FINALIZE="1" \
+    PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller.pub" \
+    --controller-identity "${dir}/controller" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a finalize cleanup failure must not be reported as a full success: ${output}" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=committed-cleanup-pending" \
+    "a verified install with a finalize cleanup failure must not suggest a rollback" || return 1
+  assert_not_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=incomplete-rollback" \
+    "a finalize cleanup failure is never an incomplete rollback" || return 1
+  assert_contains "${output}" "--finalize-transaction" \
+    "the recovery command retries finalize, not rollback" || return 1
+
+  transaction="$(current_transaction_pointer "${root}")"
+  chmod -R u+w "${root}/backup"
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "retrying finalize after the fault clears must succeed: ${output}" || return 1
+  assert_contains "${output}" "FINALIZE_STATE:committed" "the retried finalize commits" || return 1
+  if [[ -d "${transaction}" ]]; then
+    printf 'the transaction must be removed once the retried finalize succeeds\n' >&2
+    return 1
+  fi
+}
+
+# --- Finding I4: a failed verification must also restore the service ------
+
+test_failed_verification_with_running_initial_state_reports_incomplete_rollback_on_service_restore_mismatch() {
+  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  ssh_bin="$(install_lifecycle_ssh_stub "${dir}")"
+  set_fixture_active_state "${dir}" "active"
+  set_fixture_fault_on_start "${dir}" "1"
+  report_dir="${dir}/reports"
+
+  set +e
+  output="$(LIFECYCLE_FIXTURE_ROOT="${root}" LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+    LIFECYCLE_FIXTURE_BIN_DIR="${systemctl_dir}" FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller.pub" \
+    --controller-identity "${dir}/controller" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a verification failure must not be reported as success: ${output}" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=incomplete-rollback" \
+    "a service-restore mismatch must not be reported as a completed rollback" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "file_rollback_state=rolled-back" \
+    "file rollback is independent of the broken start path and must still succeed" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "service_restore_state=mismatch" \
+    "the report must record the service-restore mismatch distinctly (finding I4)"
+}
+
+# --- Finding I5: fail closed on an unusable sshd version probe ------------
+
+test_key_mode_check_fails_closed_on_unavailable_or_malformed_sshd() {
+  local dir os_release pubkey systemctl_bin systemctl_dir root script output rc sshd_bin
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+
+  root="${dir}/root-unavailable"
+  sshd_bin="$(install_fixture_sshd "${dir}/unavailable-case" "unavailable")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing sshd must refuse the deploy: ${output}" || return 1
+  assert_contains "${output}" "KEY_MODE_CHECK_FAIL:sshd-not-found" \
+    "the refusal names the missing sshd binary" || return 1
+  if [[ -e "${root}/.ssh" || -e "${root}/.config" ]]; then
+    printf 'a missing-sshd refusal must never mutate the target\n' >&2
+    return 1
+  fi
+
+  root="${dir}/root-malformed"
+  sshd_bin="$(install_fixture_sshd "${dir}/malformed-case" "malformed")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unparseable sshd version must refuse the deploy: ${output}" || return 1
+  assert_contains "${output}" "KEY_MODE_CHECK_FAIL:version-unparseable" \
+    "the refusal names the unparseable version" || return 1
+  if [[ -e "${root}/.ssh" || -e "${root}/.config" ]]; then
+    printf 'an unparseable-version refusal must never mutate the target\n' >&2
+    return 1
+  fi
+}
+
+# --- Finding I6: rollback restoration is atomic, never in-place -----------
+
+test_rollback_restoration_replaces_a_symlinked_target_without_following_it() {
+  local dir root os_release pubkey systemctl_bin systemctl_dir transaction canary script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  root="${dir}/root"
+
+  mkdir -p "${root}/.config" "${root}/.ssh"
+  printf 'ORIGINAL_WRAPPER\n' > "${root}/.config/kodi-lifecycle"
+  chmod 700 "${root}/.config/kodi-lifecycle"
+  printf 'ORIGINAL_KEYS\n' > "${root}/.ssh/authorized_keys"
+  chmod 600 "${root}/.ssh/authorized_keys"
+
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" "${pubkey}" "${systemctl_dir}" || return 1
+  transaction="$(current_transaction_pointer "${root}")"
+
+  printf 'CANARY-UNTOUCHED\n' > "${dir}/canary"
+  rm -f "${root}/.config/kodi-lifecycle"
+  ln -s "${dir}/canary" "${root}/.config/kodi-lifecycle"
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the rollback must succeed even with a symlinked target: ${output}" || return 1
+  assert_contains "${output}" "ROLLBACK_STATE:rolled-back" "the rollback commits" || return 1
+
+  if [[ -L "${root}/.config/kodi-lifecycle" ]]; then
+    printf 'the rollback must replace a symlinked target with a real file, not write through it\n' >&2
+    return 1
+  fi
+  assert_eq "ORIGINAL_WRAPPER" "$(cat "${root}/.config/kodi-lifecycle")" \
+    "the restored wrapper content must exactly match the original" || return 1
+  assert_eq "CANARY-UNTOUCHED" "$(cat "${dir}/canary")" \
+    "the symlink target outside the tree must never be written through"
+}
+
+# --- Finding I7: deploy's own self-rollback must verify before reporting --
+
+test_deploy_self_rollback_restores_and_verifies_before_reporting_rolled_back() {
+  local dir root os_release pubkey systemctl_bin systemctl_dir fake_python_dir script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  root="${dir}/root"
+
+  mkdir -p "${root}/.config" "${root}/.ssh"
+  printf 'ORIGINAL_WRAPPER\n' > "${root}/.config/kodi-lifecycle"
+  chmod 700 "${root}/.config/kodi-lifecycle"
+  printf 'ORIGINAL_KEYS\n' > "${root}/.ssh/authorized_keys"
+  chmod 600 "${root}/.ssh/authorized_keys"
+
+  # A `python3` that always fails stands in for the atomic candidate writer
+  # itself failing partway through the mutation phase, after backups have
+  # already been taken -- exactly the point at which `rollback_now` must
+  # engage.
+  fake_python_dir="${dir}/fake-python-bin"
+  mkdir -p "${fake_python_dir}"
+  cat > "${fake_python_dir}/python3" <<'FAKESTUB'
+#!/bin/bash
+exit 1
+FAKESTUB
+  chmod +x "${fake_python_dir}/python3"
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${fake_python_dir}:${systemctl_dir}:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a mutation-phase failure must not be reported as a successful deploy: ${output}" || return 1
+  assert_contains "${output}" "DEPLOY_STATE:rolled-back:write-wrapper-candidate-failed" \
+    "the self-rollback names the mutation that failed" || return 1
+
+  assert_eq "ORIGINAL_WRAPPER" "$(cat "${root}/.config/kodi-lifecycle")" \
+    "the wrapper must be restored to its exact original content" || return 1
+  assert_eq "ORIGINAL_KEYS" "$(cat "${root}/.ssh/authorized_keys")" \
+    "authorized_keys must be restored to its exact original content" || return 1
+  if [[ -f "${root}/.cache/kodi-lifecycle/current-transaction" ]]; then
+    printf 'a verified self-rollback must clear the pointer\n' >&2
+    return 1
+  fi
+  if compgen -G "${root}/backup/kodi-lifecycle/*" > /dev/null 2>&1; then
+    printf 'a verified self-rollback must remove the transaction directory\n' >&2
+    return 1
+  fi
+}
+
+# --- Finding I8: the controller transport and its deadline are tested -----
+
+test_run_with_deadline_terminates_a_hung_command() {
+  local start end elapsed rc
+  start="$(date +%s)"
+  set +e
+  coreelec_lifecycle_run_with_deadline 1 sleep 20
+  rc=$?
+  set -e
+  end="$(date +%s)"
+  elapsed=$((end - start))
+  assert_failure "${rc}" "a command that outlives its deadline must not be reported as success" || return 1
+  if [[ "${elapsed}" -ge 10 ]]; then
+    printf 'run_with_deadline must terminate near its deadline, not wait for the full command (took %ss)\n' \
+      "${elapsed}" >&2
+    return 1
+  fi
+}
+
+test_controller_transport_uses_hardened_ssh_options_and_controller_identity() {
+  local dir recording_bin argv_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  recording_bin="${dir}/recording-ssh-bin"
+  mkdir -p "${recording_bin}"
+  argv_file="${dir}/ssh-argv.log"
+  cat > "${recording_bin}/ssh" <<STUB
+#!/bin/bash
+: > "${argv_file}"
+for argument in "\$@"; do
+  printf '%s\n' "\${argument}" >> "${argv_file}"
+done
+printf 'running\n'
+exit 0
+STUB
+  chmod +x "${recording_bin}/ssh"
+
+  generate_fixture_keypair "${dir}" "controller"
+  local out rc
+  TARGET="192.0.2.10"
+  SSH_PORT="22"
+  CONTROLLER_IDENTITY="${dir}/controller"
+  KNOWN_HOSTS_FILE="${dir}/known_hosts"
+  : > "${KNOWN_HOSTS_FILE}"
+  set +e
+  out="$(PATH="${recording_bin}:${PATH}" coreelec_lifecycle_ssh_controller "status")"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the controller transport call must succeed against the recording stub" || return 1
+  assert_eq "running" "${out}" "the controller transport returns the remote command's stdout" || return 1
+
+  local recorded
+  recorded="$(cat "${argv_file}")"
+  assert_contains "${recorded}" "-p
+22" "the controller transport passes -p SSH_PORT" || return 1
+  assert_contains "${recorded}" "BatchMode=yes" "the controller transport requires BatchMode=yes" || return 1
+  assert_contains "${recorded}" "ConnectTimeout=12" "the controller transport bounds connection time" || return 1
+  assert_contains "${recorded}" "ConnectionAttempts=1" "the controller transport allows only one attempt" || return 1
+  assert_contains "${recorded}" "StrictHostKeyChecking=yes" \
+    "the controller transport never auto-accepts a new host key" || return 1
+  assert_contains "${recorded}" "UserKnownHostsFile=${KNOWN_HOSTS_FILE}" \
+    "the controller transport uses its own known_hosts file" || return 1
+  assert_contains "${recorded}" "${CONTROLLER_IDENTITY}" \
+    "the controller transport uses the controller identity" || return 1
+  assert_contains "${recorded}" "IdentitiesOnly=yes" \
+    "the controller transport never falls back to an ssh-agent identity" || return 1
+  assert_contains "${recorded}" "root@${TARGET}" "the controller transport targets the right host" || return 1
+  assert_not_contains "${recorded}" "${IDENTITY_FILE:-coreelec_admin_ed25519}" \
+    "the controller transport must never use the administrator identity"
+}
+
+# --- Finding I9: key-mismatch and failed-service refusal regressions ------
+
+test_mismatched_controller_key_pair_is_rejected_before_any_ssh_call() {
+  local dir bogus_bin report_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller_a"
+  generate_fixture_keypair "${dir}" "controller_b"
+  bogus_bin="${dir}/bogus-ssh-bin"
+  mkdir -p "${bogus_bin}"
+  cat > "${bogus_bin}/ssh" <<STUB
+#!/bin/bash
+: > "${dir}/ssh-was-called"
+exit 1
+STUB
+  chmod +x "${bogus_bin}/ssh"
+  report_dir="${dir}/reports"
+
+  set +e
+  output="$(PATH="${bogus_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller_a.pub" \
+    --controller-identity "${dir}/controller_b" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a mismatched controller key pair must be rejected: ${output}" || return 1
+  assert_contains "${output}" "does not match" "the CLI explains the key-pair mismatch" || return 1
+  if [[ -e "${dir}/ssh-was-called" ]]; then
+    printf 'a key-pair mismatch must be rejected before any ssh call\n' >&2
+    return 1
+  fi
+  if compgen -G "${report_dir}/*.txt" > /dev/null 2>&1; then
+    printf 'a key-pair mismatch must never write a report\n' >&2
+    return 1
+  fi
+}
+
+test_kodi_service_failed_refuses_before_any_mutation() {
+  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  ssh_bin="$(install_lifecycle_ssh_stub "${dir}")"
+  set_fixture_active_state "${dir}" "inactive"
+  set_fixture_failed "${dir}" "1"
+  report_dir="${dir}/reports"
+
+  set +e
+  output="$(LIFECYCLE_FIXTURE_ROOT="${root}" LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+    LIFECYCLE_FIXTURE_BIN_DIR="${systemctl_dir}" FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+    --target 127.0.0.1 \
+    --controller-public-key "${dir}/controller.pub" \
+    --controller-identity "${dir}/controller" \
+    --report-dir "${report_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a deploy against a failed kodi.service must be refused: ${output}" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=refused" \
+    "a failed-service refusal must be reported as refused" || return 1
+  assert_contains "$(cat "${report_dir}"/*.txt)" "refusal_reason=kodi-service-failed" \
+    "the report names the kodi-service-failed refusal reason" || return 1
+
+  for path in "${root}/.config" "${root}/.ssh" "${root}/backup" "${root}/.cache"; do
+    if [[ -e "${path}" ]]; then
+      printf 'a kodi-service-failed refusal must never mutate the target: %s exists\n' "${path}" >&2
+      return 1
+    fi
+  done
+}
+
 run_all_tests \
   test_lifecycle_library_sources_cleanly_on_its_own \
   test_public_key_validation_accepts_one_ed25519_key \
@@ -1134,4 +1931,21 @@ run_all_tests \
   test_verification_restores_initial_stopped_state \
   test_failed_verification_rolls_back_wrapper_and_authorized_keys \
   test_failed_rollback_retains_recovery_material_and_instructions \
-  test_report_never_contains_public_or_private_key_material
+  test_report_never_contains_public_or_private_key_material \
+  test_rollback_refuses_explicit_transaction_outside_backup_root \
+  test_rollback_refuses_explicit_transaction_not_matching_pointer \
+  test_rollback_refuses_when_manifest_incomplete \
+  test_finalize_refuses_mismatched_or_invalid_explicit_transaction \
+  test_deploy_refused_reports_platform_check_failure_without_mutation \
+  test_deploy_refused_reports_key_mode_check_failure_without_mutation \
+  test_deploy_refused_with_pending_transaction_surfaces_existing_path \
+  test_unknown_deploy_output_is_never_labeled_rolled_back \
+  test_finalize_cleanup_failure_reports_committed_cleanup_pending_and_retries \
+  test_failed_verification_with_running_initial_state_reports_incomplete_rollback_on_service_restore_mismatch \
+  test_key_mode_check_fails_closed_on_unavailable_or_malformed_sshd \
+  test_rollback_restoration_replaces_a_symlinked_target_without_following_it \
+  test_deploy_self_rollback_restores_and_verifies_before_reporting_rolled_back \
+  test_run_with_deadline_terminates_a_hung_command \
+  test_controller_transport_uses_hardened_ssh_options_and_controller_identity \
+  test_mismatched_controller_key_pair_is_rejected_before_any_ssh_call \
+  test_kodi_service_failed_refuses_before_any_mutation

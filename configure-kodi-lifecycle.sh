@@ -34,6 +34,7 @@ source "${SCRIPT_DIR}/lib/coreelec-lifecycle.sh"
 REMOTE_ROOT="/storage"
 REMOTE_OS_RELEASE="/etc/os-release"
 REMOTE_SYSTEMCTL="/usr/bin/systemctl"
+REMOTE_SSHD="/usr/sbin/sshd"
 
 TARGET=""
 CONTROLLER_PUBLIC_KEY=""
@@ -43,8 +44,15 @@ SSH_PORT="22"
 DRY_RUN="0"
 REPORT_DIR="${PWD}/coreelec-lifecycle-reports"
 KNOWN_HOSTS_FILE="${HOME}/.ssh/known_hosts"
-ROLLBACK_TRANSACTION=""
-INSPECT_TRANSACTION=""
+# Each of these three is tri-state: unset (flag not given), "" (flag given
+# with no directory -- resolve against the device's own pointer file), or a
+# specific directory (flag given with an explicit argument). A plain ""
+# default cannot distinguish "not given" from "given with no argument", so a
+# sentinel that can never be a real path is used for "not given".
+RECOVERY_FLAG_UNSET=$'\x01unset'
+ROLLBACK_TRANSACTION="${RECOVERY_FLAG_UNSET}"
+INSPECT_TRANSACTION="${RECOVERY_FLAG_UNSET}"
+FINALIZE_TRANSACTION="${RECOVERY_FLAG_UNSET}"
 
 usage() {
   cat <<USAGE
@@ -70,11 +78,17 @@ Options:
                                 making any SSH connection
   --report-dir DIR             Local report directory (default:
                                 ${PWD}/coreelec-lifecycle-reports)
-  --rollback-transaction DIR   Recovery: roll back one named transaction
-                                directory on --target and exit
-  --inspect-transaction DIR    Recovery: report which rollback material a
-                                named transaction directory on --target
-                                still holds, without printing its contents
+  --rollback-transaction [DIR] Recovery: roll back the transaction on
+                                --target and exit. DIR is optional; when
+                                omitted, the device's own pending-transaction
+                                pointer is used
+  --finalize-transaction [DIR] Recovery: retry discarding recovery material
+                                for an already-verified transaction on
+                                --target and exit. DIR is optional, as above
+  --inspect-transaction [DIR]  Recovery: report which rollback material a
+                                transaction directory on --target still
+                                holds, without printing its contents. DIR is
+                                optional, as above
   --version                    Print script version
   -h, --help                    Show this help
 
@@ -127,16 +141,34 @@ parse_args() {
         shift 2
         ;;
       --rollback-transaction)
-        (( $# >= 2 )) || die "--rollback-transaction requires a transaction directory"
-        coreelec_config_validate_path "--rollback-transaction" "$2"
-        ROLLBACK_TRANSACTION="$2"
-        shift 2
+        if (( $# >= 2 )) && [[ "$2" != --* ]]; then
+          coreelec_config_validate_path "--rollback-transaction" "$2"
+          ROLLBACK_TRANSACTION="$2"
+          shift 2
+        else
+          ROLLBACK_TRANSACTION=""
+          shift
+        fi
+        ;;
+      --finalize-transaction)
+        if (( $# >= 2 )) && [[ "$2" != --* ]]; then
+          coreelec_config_validate_path "--finalize-transaction" "$2"
+          FINALIZE_TRANSACTION="$2"
+          shift 2
+        else
+          FINALIZE_TRANSACTION=""
+          shift
+        fi
         ;;
       --inspect-transaction)
-        (( $# >= 2 )) || die "--inspect-transaction requires a transaction directory"
-        coreelec_config_validate_path "--inspect-transaction" "$2"
-        INSPECT_TRANSACTION="$2"
-        shift 2
+        if (( $# >= 2 )) && [[ "$2" != --* ]]; then
+          coreelec_config_validate_path "--inspect-transaction" "$2"
+          INSPECT_TRANSACTION="$2"
+          shift 2
+        else
+          INSPECT_TRANSACTION=""
+          shift
+        fi
         ;;
       --emit-remote-script)
         # Hidden test-support hook, matching provision-coreelec.sh's
@@ -177,7 +209,7 @@ _emit_remote_script() {
   case "${name}" in
     deploy)
       local os_release_path="${3:-${REMOTE_OS_RELEASE}}" public_key_file="${4:-}"
-      local systemctl_path="${5:-${REMOTE_SYSTEMCTL}}"
+      local systemctl_path="${5:-${REMOTE_SYSTEMCTL}}" sshd_path="${6:-${REMOTE_SSHD}}"
       [[ -n "${public_key_file}" ]] || die "--emit-remote-script deploy requires a public key file"
       local normalized restrict_entry fallback_entry wrapper_content
       normalized="$(coreelec_lifecycle_validate_public_key "${public_key_file}")"
@@ -185,19 +217,22 @@ _emit_remote_script() {
       fallback_entry="$(coreelec_lifecycle_key_entry_fallback "${normalized}")"
       wrapper_content="$(coreelec_lifecycle_render_wrapper "${systemctl_path}")"
       coreelec_lifecycle_remote_deploy_script \
-        "${root}" "${os_release_path}" "${wrapper_content}" "${restrict_entry}" "${fallback_entry}"
+        "${root}" "${os_release_path}" "${wrapper_content}" "${restrict_entry}" "${fallback_entry}" "${sshd_path}"
       ;;
     rollback)
       coreelec_lifecycle_remote_rollback_script "${root}" "${3:-}"
       ;;
     finalize)
-      coreelec_lifecycle_remote_finalize_script "${root}"
+      coreelec_lifecycle_remote_finalize_script "${root}" "${3:-}"
       ;;
     inspect)
       coreelec_lifecycle_remote_inspect_script "${root}" "${3:-}"
       ;;
+    service-restore)
+      coreelec_lifecycle_remote_service_restore_script "${3:-}"
+      ;;
     *)
-      die "--emit-remote-script expects deploy, rollback, finalize, or inspect, not: ${name}"
+      die "--emit-remote-script expects deploy, rollback, finalize, inspect, or service-restore, not: ${name}"
       ;;
   esac
 }
@@ -267,6 +302,7 @@ write_report() {
       printf 'deployment_state=dry-run\n'
     else
       printf 'deployment_state=%s\n' "${DEPLOYMENT_STATE}"
+      [[ -z "${REFUSAL_REASON:-}" ]] || printf 'refusal_reason=%s\n' "${REFUSAL_REASON}"
       [[ -z "${KEY_MODE:-}" ]] || printf 'key_mode=%s\n' "${KEY_MODE}"
       [[ -z "${TRANSACTION:-}" ]] || printf 'transaction=%s\n' "${TRANSACTION}"
       if [[ -n "${VERIFICATION_ATTEMPTED:-}" ]]; then
@@ -275,6 +311,8 @@ write_report() {
         printf 'restricted.stop=%s\n' "${RESTRICTED_STOP}"
         printf 'restricted.arbitrary_command_denied=%s\n' "${RESTRICTED_ARBITRARY}"
         printf 'restored_state=%s\n' "${RESTORED_STATE}"
+        printf 'file_rollback_state=%s\n' "${FILE_ROLLBACK_STATE:-not-attempted}"
+        printf 'service_restore_state=%s\n' "${SERVICE_RESTORE_STATE:-not-attempted}"
       fi
     fi
   } > "${file}"
@@ -371,7 +409,7 @@ run_verification() {
 
 run_recovery_mode() {
   local script output rc
-  if [[ -n "${ROLLBACK_TRANSACTION}" ]]; then
+  if [[ "${ROLLBACK_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
     [[ -n "${TARGET}" ]] || die "--target is required"
     script="$(coreelec_lifecycle_remote_rollback_script "${REMOTE_ROOT}" "${ROLLBACK_TRANSACTION}")"
     set +e
@@ -381,13 +419,64 @@ run_recovery_mode() {
     printf '%s\n' "${output}"
     exit "${rc}"
   fi
-  if [[ -n "${INSPECT_TRANSACTION}" ]]; then
+  if [[ "${FINALIZE_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
+    [[ -n "${TARGET}" ]] || die "--target is required"
+    script="$(coreelec_lifecycle_remote_finalize_script "${REMOTE_ROOT}" "${FINALIZE_TRANSACTION}")"
+    set +e
+    output="$(coreelec_ssh_batch "${script}" 2>&1)"
+    rc=$?
+    set -e
+    printf '%s\n' "${output}"
+    exit "${rc}"
+  fi
+  if [[ "${INSPECT_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
     [[ -n "${TARGET}" ]] || die "--target is required"
     script="$(coreelec_lifecycle_remote_inspect_script "${REMOTE_ROOT}" "${INSPECT_TRANSACTION}")"
     output="$(coreelec_ssh_batch "${script}")"
     printf '%s\n' "${output}"
     exit 0
   fi
+}
+
+# Prints operator recovery commands appropriate to DEPLOYMENT_STATE. Uses the
+# no-argument (pointer-based) form of --rollback-transaction/
+# --inspect-transaction whenever TRANSACTION was never learned (finding C2's
+# "unknown" outcome, and any pre-mutation refusal that never reached a
+# transaction), and the explicit-directory form whenever it was.
+print_recovery_commands() {
+  case "${DEPLOYMENT_STATE}" in
+    incomplete-rollback)
+      if [[ -n "${TRANSACTION:-}" ]]; then
+        printf 'Recovery: %s --target %s --rollback-transaction %s\n' \
+          "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
+        printf 'Recovery: %s --target %s --inspect-transaction %s\n' \
+          "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
+      else
+        printf 'Recovery: %s --target %s --rollback-transaction\n' "${SCRIPT_NAME}" "${TARGET}"
+        printf 'Recovery: %s --target %s --inspect-transaction\n' "${SCRIPT_NAME}" "${TARGET}"
+      fi
+      ;;
+    committed-cleanup-pending)
+      if [[ -n "${TRANSACTION:-}" ]]; then
+        printf 'Recovery: %s --target %s --finalize-transaction %s\n' \
+          "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
+      else
+        printf 'Recovery: %s --target %s --finalize-transaction\n' "${SCRIPT_NAME}" "${TARGET}"
+      fi
+      ;;
+    refused)
+      if [[ "${REFUSAL_REASON:-}" == "pending-transaction" && -n "${TRANSACTION:-}" ]]; then
+        printf 'Recovery: %s --target %s --rollback-transaction %s\n' \
+          "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
+        printf 'Recovery: %s --target %s --inspect-transaction %s\n' \
+          "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
+      fi
+      ;;
+    unknown)
+      printf 'Recovery: %s --target %s --inspect-transaction\n' "${SCRIPT_NAME}" "${TARGET}"
+      printf 'Recovery: %s --target %s --rollback-transaction\n' "${SCRIPT_NAME}" "${TARGET}"
+      ;;
+  esac
 }
 
 main() {
@@ -398,7 +487,9 @@ main() {
   local report_file
   parse_args "$@"
 
-  if [[ -n "${ROLLBACK_TRANSACTION}" || -n "${INSPECT_TRANSACTION}" ]]; then
+  if [[ "${ROLLBACK_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
+        "${INSPECT_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
+        "${FINALIZE_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
     run_recovery_mode
     return 0
   fi
@@ -436,7 +527,7 @@ main() {
 
   local deploy_script deploy_output deploy_rc
   deploy_script="$(coreelec_lifecycle_remote_deploy_script \
-    "${REMOTE_ROOT}" "${REMOTE_OS_RELEASE}" "${wrapper_content}" "${restrict_entry}" "${fallback_entry}")"
+    "${REMOTE_ROOT}" "${REMOTE_OS_RELEASE}" "${wrapper_content}" "${restrict_entry}" "${fallback_entry}" "${REMOTE_SSHD}")"
   set +e
   deploy_output="$(coreelec_ssh_batch "${deploy_script}" 2>&1)"
   deploy_rc=$?
@@ -451,38 +542,99 @@ main() {
   deploy_state="$(printf '%s\n' "${deploy_output}" | sed -n 's/^DEPLOY_STATE:\([^:]*\).*$/\1/p' | tail -1)"
 
   if [[ "${deploy_rc}" -ne 0 || "${deploy_state}" != "pending-verification" ]]; then
-    DEPLOYMENT_STATE="${deploy_state:-rolled-back}"
+    # Every branch here must land on a specific, honestly-earned state:
+    # never assume "rolled-back" (or any other outcome) merely because the
+    # exit code was nonzero (finding C2). An unparseable, empty, or
+    # otherwise unrecognized response is reported as "unknown" so an
+    # operator investigates rather than trusts an assumed outcome.
+    # Two separate sed passes, not one with a `\|` alternation: BSD/macOS
+    # sed's basic regular expressions do not support GNU's `\|` extension,
+    # and this repository must remain portable to both.
+    local refusal_marker deploy_refused
+    refusal_marker="$(printf '%s\n' "${deploy_output}" \
+      | sed -n 's/^\(PLATFORM_CHECK_FAIL:.*\)$/\1/p' | tail -1)"
+    if [[ -z "${refusal_marker}" ]]; then
+      refusal_marker="$(printf '%s\n' "${deploy_output}" \
+        | sed -n 's/^\(KEY_MODE_CHECK_FAIL:.*\)$/\1/p' | tail -1)"
+    fi
+    deploy_refused="$(printf '%s\n' "${deploy_output}" | sed -n 's/^DEPLOY_REFUSED:\(.*\)$/\1/p' | tail -1)"
+
+    if [[ -n "${refusal_marker}" ]]; then
+      DEPLOYMENT_STATE="refused"
+      REFUSAL_REASON="${refusal_marker}"
+    elif [[ -n "${deploy_refused}" ]]; then
+      DEPLOYMENT_STATE="refused"
+      case "${deploy_refused}" in
+        pending-transaction:*)
+          REFUSAL_REASON="pending-transaction"
+          TRANSACTION="${deploy_refused#pending-transaction:}"
+          ;;
+        *)
+          REFUSAL_REASON="${deploy_refused}"
+          ;;
+      esac
+    elif [[ "${deploy_state}" == "rolled-back" || "${deploy_state}" == "incomplete-rollback" ]]; then
+      DEPLOYMENT_STATE="${deploy_state}"
+    else
+      DEPLOYMENT_STATE="unknown"
+    fi
+
     report_file="$(report_path)"
     write_report "${report_file}"
     warn "Deployment did not reach pending-verification: ${DEPLOYMENT_STATE}"
-    if [[ "${DEPLOYMENT_STATE}" == "incomplete-rollback" ]]; then
-      printf 'Recovery: %s --target %s --rollback-transaction %s\n' \
-        "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
-      printf 'Recovery: %s --target %s --inspect-transaction %s\n' \
-        "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
-    fi
+    print_recovery_commands
     printf 'Report: %s\n' "${report_file}"
     exit 1
   fi
 
   if run_verification "${INITIAL_STATE}" "${scratch}"; then
-    local finalize_script finalize_output
-    finalize_script="$(coreelec_lifecycle_remote_finalize_script "${REMOTE_ROOT}")"
+    local finalize_script finalize_output finalize_rc
+    finalize_script="$(coreelec_lifecycle_remote_finalize_script "${REMOTE_ROOT}" "")"
     set +e
     finalize_output="$(coreelec_ssh_batch "${finalize_script}" 2>&1)"
+    finalize_rc=$?
     set -e
-    if grep -q '^FINALIZE_STATE:committed$' <<<"${finalize_output}"; then
+    if [[ "${finalize_rc}" -eq 0 ]] && grep -q '^FINALIZE_STATE:committed$' <<<"${finalize_output}"; then
       DEPLOYMENT_STATE="committed"
     else
-      DEPLOYMENT_STATE="incomplete-rollback"
+      # Verification already proved the installed key/wrapper are correct:
+      # any finalize hiccup (a reported cleanup-failed, or any other
+      # unrecognized finalize response) is only a bookkeeping issue, never a
+      # reason to recommend rolling back a verified-good install (finding
+      # I3). Retrying is idempotent via --finalize-transaction.
+      DEPLOYMENT_STATE="committed-cleanup-pending"
     fi
   else
-    local rollback_script rollback_output
+    local rollback_script rollback_output rollback_rc
     rollback_script="$(coreelec_lifecycle_remote_rollback_script "${REMOTE_ROOT}" "${TRANSACTION}")"
     set +e
     rollback_output="$(coreelec_ssh_batch "${rollback_script}" 2>&1)"
+    rollback_rc=$?
     set -e
-    if grep -q '^ROLLBACK_STATE:rolled-back$' <<<"${rollback_output}"; then
+    if [[ "${rollback_rc}" -eq 0 ]] && grep -q '^ROLLBACK_STATE:rolled-back$' <<<"${rollback_output}"; then
+      FILE_ROLLBACK_STATE="rolled-back"
+    else
+      FILE_ROLLBACK_STATE="incomplete-rollback"
+    fi
+
+    # Independent of the file rollback above: a failed restricted-identity
+    # verification must never leave kodi.service in the wrong state merely
+    # because file rollback only ever touches the wrapper and
+    # authorized_keys (finding I4). Both outcomes are reported distinctly.
+    local service_restore_script service_restore_output service_restore_rc
+    service_restore_script="$(coreelec_lifecycle_remote_service_restore_script "${INITIAL_STATE}")"
+    set +e
+    service_restore_output="$(coreelec_ssh_batch "${service_restore_script}" 2>&1)"
+    service_restore_rc=$?
+    set -e
+    if [[ "${service_restore_rc}" -eq 0 ]] \
+        && grep -q '^SERVICE_RESTORE_STATE:restored:' <<<"${service_restore_output}"; then
+      SERVICE_RESTORE_STATE="restored"
+    else
+      SERVICE_RESTORE_STATE="mismatch"
+    fi
+
+    if [[ "${FILE_ROLLBACK_STATE}" == "rolled-back" && "${SERVICE_RESTORE_STATE}" == "restored" ]]; then
       DEPLOYMENT_STATE="rolled-back"
     else
       DEPLOYMENT_STATE="incomplete-rollback"
@@ -492,12 +644,7 @@ main() {
   report_file="$(report_path)"
   write_report "${report_file}"
 
-  if [[ "${DEPLOYMENT_STATE}" == "incomplete-rollback" ]]; then
-    printf 'Recovery: %s --target %s --rollback-transaction %s\n' \
-      "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
-    printf 'Recovery: %s --target %s --inspect-transaction %s\n' \
-      "${SCRIPT_NAME}" "${TARGET}" "${TRANSACTION}"
-  fi
+  print_recovery_commands
 
   printf 'Report: %s\n' "${report_file}"
   [[ "${DEPLOYMENT_STATE}" == "committed" ]]
