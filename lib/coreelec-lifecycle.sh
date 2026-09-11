@@ -6,9 +6,10 @@
 # authorized_keys entries that force every session through it.
 #
 # `die` is owned by the calling CLI, matching the existing library pattern.
-# This library depends on `coreelec_public_key_line` from lib/coreelec-ssh.sh,
-# which must be sourced first so the key grammar is enforced in exactly one
-# place.
+# This library depends on `coreelec_public_key_line` from lib/coreelec-ssh.sh
+# for the shared key grammar, and loads that sibling library itself below if
+# the caller has not already sourced it, so this file can be sourced on its
+# own.
 
 if ! declare -F die >/dev/null 2>&1; then
   die() {
@@ -17,8 +18,18 @@ if ! declare -F die >/dev/null 2>&1; then
   }
 fi
 
+# Loads the sibling SSH library for coreelec_public_key_line if it has not
+# already been sourced by the caller. Resolved relative to this file's own
+# location (matching the SCRIPT_DIR convention used by the CLIs), so sourcing
+# this file directly -- the interface the brief documents -- always works,
+# regardless of whether the caller pre-sourced lib/coreelec-ssh.sh. Sourcing
+# lib/coreelec-ssh.sh is itself idempotent (it only defines functions), so
+# this guard is an optimization, not a correctness requirement.
 if ! declare -F coreelec_public_key_line >/dev/null 2>&1; then
-  die "lib/coreelec-ssh.sh must be sourced before lib/coreelec-lifecycle.sh"
+  _COREELEC_LIFECYCLE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=lib/coreelec-ssh.sh
+  source "${_COREELEC_LIFECYCLE_LIB_DIR}/coreelec-ssh.sh"
+  unset _COREELEC_LIFECYCLE_LIB_DIR
 fi
 
 # Stable marker so later deployment tooling can find and replace this entry

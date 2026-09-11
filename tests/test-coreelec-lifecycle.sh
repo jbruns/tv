@@ -150,6 +150,31 @@ run_wrapper() {
     sh "${wrapper}"
 }
 
+# --- Library self-containment test --------------------------------------
+
+# The brief's own setup for this file is "source tests/test-helper.sh and
+# lib/coreelec-lifecycle.sh" -- nothing else. This test proves the library
+# honors that directly, in a fresh subprocess that never sources
+# lib/coreelec-ssh.sh itself, instead of only being exercised through this
+# file's own top-of-file sourcing order (which sources coreelec-ssh.sh first
+# and would hide a hard dependency on that pre-sourcing).
+test_lifecycle_library_sources_cleanly_on_its_own() {
+  local output rc
+  set +e
+  output="$(bash -c '
+    set -Eeuo pipefail
+    source "'"${LIFECYCLE_LIB}"'"
+    declare -F coreelec_public_key_line >/dev/null 2>&1 || exit 1
+    declare -F coreelec_lifecycle_render_wrapper >/dev/null 2>&1 || exit 1
+    printf "loaded\n"
+  ' 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "sourcing only lib/coreelec-lifecycle.sh must succeed: ${output}" || return 1
+  assert_eq "loaded" "${output}" \
+    "sourcing only lib/coreelec-lifecycle.sh must load its coreelec-ssh.sh dependency automatically"
+}
+
 # --- Public key validation and key entry tests --------------------------
 
 test_public_key_validation_accepts_one_ed25519_key() {
@@ -388,6 +413,7 @@ test_wrapper_never_uses_eval() {
 }
 
 run_all_tests \
+  test_lifecycle_library_sources_cleanly_on_its_own \
   test_public_key_validation_accepts_one_ed25519_key \
   test_public_key_validation_rejects_multiple_or_malformed_keys \
   test_key_entry_uses_restrict_and_forced_command \
