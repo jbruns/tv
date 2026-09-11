@@ -99,3 +99,55 @@ accepting functional stale Next Aired state, bounded by checking every
 case-insensitive match so an empty placeholder cannot mask a non-empty value.
 Task 5: two successful final deployments remain pending after the verifier
 correction.
+Task 5: the two `8390d42` deployments `coreelec-theater-20260911T200447Z.txt`
+and `coreelec-theater-20260911T200808Z.txt` both committed with
+`verification_result=pass`, `verification_failures=0`, all `metadata.*` and
+`arctic_fuse.*` statuses `ok`, and 8/8 byte-identical managed files, but final
+live acceptance rejected them: `Container(399)` still listed
+`Next Aired → ReplaceWindow(1106)` between YouTube and PVR.
+Task 5: root cause of that rejection — Arctic Fuse gates every hub on
+`!String.IsEmpty(Skin.String(HomeSwitcher.1106.Toggle))` and maps that
+parameter to `<visible>`, while its own dialog disables a hub with
+`Skin.Reset(HomeSwitcher.1106.Toggle)`. The literal string `false` is non-empty,
+so `Toggle=false` still rendered and still navigated to the Next Aired hub.
+Ruling: the disabled contract is removal, not a `false` value — transformed
+state must contain no case-insensitive `HomeSwitcher.1106.Toggle` or
+`HomeSwitcher.1106.UpNextMode` node, while acceptable live runtime state is
+absent or all matching values empty, and any non-empty match fails — if wrong,
+the cost is falsely accepting functional stale Next Aired state (or falsely
+rejecting Arctic Fuse's own empty placeholder and rolling back a good
+deployment); it is bounded by evaluating every case-insensitive match so an
+empty placeholder cannot mask a non-empty value, and by the live
+`Container(399)` navigation check that caught the original `false` defect.
+Task 5: fix round 2 commit `09c784e` (`fix: remove Next Aired hub toggle
+entirely`) followed TDD — RED `1106.Toggle must be absent` (32/33 settings) plus
+four report failures (79/83), GREEN 33/33 settings and 83/83 report, and
+229/229 across all five suites with ratings keys present and with both keys
+unset; `--check-config` and 42/42 `--check-artifacts` also passed.
+Task 5: final live acceptance of `09c784e` PASSED on 2026-09-11. Reports
+`coreelec-theater-20260911T202453Z.txt` and
+`coreelec-theater-20260911T202711Z.txt` are both committed and passing with all
+statuses `ok` and `arctic_fuse.playlist_migration.observed=1`; 8/8 managed files
+byte-identical; live state `next_aired_toggle_count=1 all_empty=True`
+(`homeswitcher.1106.toggle` empty string-typed placeholder),
+`upnext_mode_count=0`, `managed_skin_settings=12 exact=1 string_typed=1
+duplicate_free=1`; navigation `10000 → 11101 → 11102 → 11107 → 11108` with no
+Next Aired and zero Trakt/OAuth log matches; Plex started PM4K user select,
+YouTube opened 20 root items, PVR showed 21 groups and 589 channels, Add-ons
+opened the browser; six Home widgets returned 1/15/50/36/50/50 items matching
+their playlists; corrected playlists returned 50 episodes (2026-08-23..
+2026-09-09) and 36 movies (all year 2026).
+Task 5: the Power overlay `11170` was opened, focus-walked with `Input.Down`
+only (Power off system, Custom shutdown timer, Suspend, Reboot, Restart Kodi,
+then out of the list), and closed with `Input.Back`. No Power item was selected
+or executed at any point in this task.
+Task 5: minor (deferred): an exact-same-case duplicate Next Aired toggle was
+originally invisible to the dict-based check; fix round 2 replaced it with the
+list-based `xml_setting_matches()` helper, so duplicates of any case are now
+evaluated, but the verifier still does not assert a node *count*, so two
+identical empty placeholders would pass.
+Task 5: minor (deferred): the runtime verifier does not assert the Next Aired
+toggle's `type` attribute; it only evaluates values.
+Task 5: minor (deferred): the transformer's setting lookup searches the root
+element and its direct `category` children only, not arbitrary nesting depth.
+Task 5: complete (commits 2cebddc..09c784e, live acceptance passed).

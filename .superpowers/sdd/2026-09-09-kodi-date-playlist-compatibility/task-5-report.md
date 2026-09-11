@@ -1,13 +1,14 @@
 # Task 5 Report: Re-Accept on `coreelec-theater`
 
-**Status: CORRECTED PLAYLISTS ACCEPTED; NEXT AIRED REMOVAL FIRST DEPLOYMENT ROLLED BACK; TWO SUCCESSFUL DEPLOYMENTS PENDING**
+**Status: FINAL LIVE ACCEPTANCE COMPLETE — ACCEPTED**
 
 ## Environment
 
 | Field | Value |
 |---|---|
 | Branch | `agents/arctic-fuse-3-skin-integration` |
-| Deployment HEAD | `3b418af` (`fix: disable unreliable Next Aired hub`) |
+| Accepted deployment HEAD | `09c784e` (`fix: remove Next Aired hub toggle entirely`) |
+| Earlier deployment HEADs | `3b418af`, `8390d42` (both superseded) |
 | Device | `CoreELEC-theater`, CoreELEC 21.3 Omega |
 | SSH | Strict host-key checking; `root@coreelec-theater`; dedicated admin key |
 | Kodi | `kodi.service` active; authenticated JSON-RPC through device localhost |
@@ -232,15 +233,142 @@ credentials or incomplete transformation. The transformer contract remains
 strict absence before startup. The live verifier must accept absence or
 empty-only case-insensitive matches while rejecting every non-empty value.
 
-## Step 8: Final live acceptance — TWO SUCCESSFUL DEPLOYMENTS PENDING
+## Step 8: Superseded deployments of `8390d42` — NOT ACCEPTED
 
-The corrected-playlist acceptance is successful and is now recorded in
-`rooms/theater/devices/ugoos-am6b-plus.md`. Final live acceptance still
-requires two successful corrected deployments, verifying
-`HomeSwitcher.1106.Toggle=false`, verifying every case-insensitive live
-`UpNextMode` value is empty if a placeholder exists, and confirming navigation
-proceeds Home → Plex → YouTube → PVR → Add-ons without the authorization
-dialog.
+Two deployments of `8390d42` committed and passed verification
+(`coreelec-theater-20260911T200447Z.txt`,
+`coreelec-theater-20260911T200808Z.txt`; all `metadata.*` and `arctic_fuse.*`
+statuses `ok`, `arctic_fuse.playlist_migration.observed=1`,
+`verification_failures=0`), and all eight standalone managed files were
+byte-identical between them.
 
-The device was left at Home with `kodi.service` active. No Power action was
-executed at any point.
+Live inspection of the deployed result nevertheless failed the Home navigation
+requirement. `Container(399)` — the control whose
+`ListItem(±1).Property(action)` drives Left/Right hub movement from Home — still
+contained:
+
+```text
+ListItem(1)=Plex        ReplaceWindow(1101)
+ListItem(2)=YouTube     ReplaceWindow(1102)
+ListItem(3)=Next Aired  ReplaceWindow(1106)
+ListItem(4)=PVR         ReplaceWindow(1107)
+ListItem(5)=Addons      ReplaceWindow(1108)
+```
+
+Root cause, read from the deployed skin: Arctic Fuse gates every hub on
+
+```xml
+<param name="enabled">!String.IsEmpty(Skin.String(HomeSwitcher.1106.Toggle))</param>
+```
+
+and `Home_ControlList_Item` maps that parameter straight to `<visible>`. The
+skin's own toggle disables a hub with
+`Skin.Reset(HomeSwitcher.1106.Toggle)` (`Dialog_DialogShortcuts.xml:829`), so
+the disabled state is an **absent or empty** toggle string. The literal value
+`false` is non-empty and therefore still rendered the hub. Evidence:
+`screenshot-home-hubbar-defect-20260911.png`,
+`screenshot-youtube-hubbar-nextaired-defect-20260911.png`, and
+`live-skin-settings-analysis-20260911.txt`.
+
+## Step 9: Fix round 2 — remove the toggle entirely
+
+Tests were changed before production code.
+
+- `tests/test-coreelec-settings.sh` now seeds a canonical **and** a
+  case-variant `HomeSwitcher.1106.Toggle` and requires both absent after
+  transformation; the toggle was removed from the managed `type="string"` list.
+- `tests/test-coreelec-report.sh` drops the toggle from the valid baseline
+  fixture and adds `false`-value rejection, empty-placeholder acceptance, and
+  an empty-cannot-mask-a-stale-variant case.
+
+RED: `1106.Toggle must be absent` (settings, 32/33) and four report failures
+(79/83). GREEN after changing the transformer to
+`remove_skin_setting("HomeSwitcher.1106.Toggle")` and making live verification
+accept absent or empty-only case-insensitive toggle **and** mode matches while
+rejecting any non-empty value: 33/33 settings, 83/83 report, 52/52 artifacts,
+34/34 add-on workflows, 27/27 config.
+
+Commit: `09c784e` (`fix: remove Next Aired hub toggle entirely`).
+
+## Step 10: Final live acceptance of `09c784e` — PASS
+
+| Evidence | Result |
+|---|---|
+| First report | `coreelec-theater-20260911T202453Z.txt` — transaction `/storage/backup/coreelec-provision/20260911T202351Z`, `committed`, `pass`, `verification_failures=0` |
+| Second report | `coreelec-theater-20260911T202711Z.txt` — transaction `/storage/backup/coreelec-provision/20260911T202624Z`, `committed`, `pass`, `verification_failures=0` |
+| Metadata | `metadata.omdb.status=ok`; `metadata.mdblist.status=ok` in both |
+| Arctic Fuse | every `arctic_fuse.*.status=ok` in both; `arctic_fuse.status=ok` |
+| Migration | `arctic_fuse.playlist_migration.observed=1`, status `ok` in both |
+| Idempotence | `managed-hashes-before-fixround2-second-deploy-20260911.txt` vs `managed-hashes-after-fixround2-second-deploy-20260911.txt` — 8/8 byte-identical; obsolete `RecentlyReleasedMovies90Days.xsp` absent |
+
+### Live skin settings
+
+```text
+total_settings=245
+next_aired_toggle_count=1 all_empty=True   (homeswitcher.1106.toggle type=string value='')
+upnext_mode_count=0 all_empty=True
+managed_skin_settings=12 exact=1 string_typed=1 duplicate_free=1
+HomeSwitcher.1107.Toggle=true  HomeSwitcher.1108.Toggle=true
+```
+
+Arctic Fuse recreated exactly one empty string-typed toggle placeholder after
+startup — the same normalization it applies to every hub the operator never
+enabled — and recreated no `UpNextMode` node at all. The three stale managed
+IDs (`1101.Shortcut.Target`, `1101.Spotlight.Path`, `1102.Spotlight.Path`)
+remain absent.
+
+### Home navigation
+
+`Container(399)` now lists exactly Home, Plex `1101`, YouTube `1102`, PVR
+`1107`, Addons `1108`, then the options entry. Walking Right from Home
+reached `10000 → 11101 → 11102 → 11107 → 11108`. No Next Aired entry, and no
+Trakt/OAuth dialog: the Kodi log written since the final restart contains zero
+matches for `Unauthorised`, `TraktAPI`, `library_nextaired`, or
+`trakt_calendar`.
+
+- **Plex**: selecting the hub started `script.plexmod` 1.14.1-beta1, which
+  loaded `script-plex-user_select.xml` with the existing `doogie` user.
+- **YouTube**: opened Videos window `10025` at `plugin://plugin.video.youtube/`
+  with 20 items.
+- **PVR**: opened TV channels window `10700` with 589 channels
+  (first `KOMO (ABC 4)`); 21 TV channel groups; `alltv` totals 589.
+- **Add-ons**: opened Add-on browser window `10040`.
+
+### Home widgets and corrected playlists
+
+| # | Widget | Container | Items | First item |
+|---|---|---|---:|---|
+| 1 | In-Progress Movies | 501 | 1 | Charlie and the Chocolate Factory |
+| 2 | In-Progress Shows | 502 | 15 | Motorheads |
+| 3 | Recently Aired Shows | 503 | 50 | 1x08. Spoiler: We're as Confused as You Are |
+| 4 | Recently Released Movies | 504 | 36 | “Wuthering Heights” |
+| 5 | New Shows | 505 | 50 | Wonder Man |
+| 6 | New Movies | 506 | 50 | Strange World |
+
+`Files.GetDirectory` on the corrected playlists returned 50 episodes with air
+dates 2026-08-23 through 2026-09-09 — inside the inclusive 2026-08-12 through
+2026-09-11 window with no future date — and 36 movies, all year `2026`,
+premiered 2026-01-05 through 2026-08-05. Device date: 2026-09-11.
+
+### Power overlay — inspected, never executed
+
+Window `11170` was opened and its focus walked with `Input.Down` only:
+Power off system → Custom shutdown timer → Suspend → Reboot → Restart Kodi,
+after which focus left the list; there is no sixth item. The managed JSON
+holds the same five actions (`Powerdown()`,
+`AlarmClock(shutdowntimer,Shutdown())`, `Suspend()`, `Reset()`,
+`RestartApp()`). The overlay was closed with `Input.Back`. **No Power item was
+selected or executed at any point.**
+
+Screenshots: `screenshot-home-final-accepted-20260911.png`,
+`screenshot-power-final-accepted-20260911.png`,
+`screenshot-power-overlay-final-20260911.png`,
+`screenshot-plex-pm4k-final-20260911.png`,
+`screenshot-youtube-final-20260911.png`,
+`screenshot-pvr-channels-final-20260911.png`,
+`screenshot-hub-addons-final-20260911.png`,
+`screenshot-addonbrowser-final-20260911.png`. Full transcript:
+`live-acceptance-evidence-final-20260911.txt`.
+
+The device was left at Home with `kodi.service` active, no active player, and
+no Power action executed. Multiple profiles remain out of scope.

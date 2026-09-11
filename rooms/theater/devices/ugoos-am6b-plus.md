@@ -94,24 +94,73 @@ Entering Next Aired during the 2026-09-11 re-acceptance raised
 disposable live test of `library_airingnext` then hit OMDb timeouts and TMDb
 Helper thread exhaustion (`can't start new thread`).
 
-The approved final resolution is to disable Next Aired and remove its stale
-mode setting before Kodi starts. After redeployment, the managed order after
-Home is Plex → YouTube → PVR → Add-ons, with
-`HomeSwitcher.1106.Toggle=false`. Live `UpNextMode` state may be absent or an
-empty placeholder recreated by Arctic Fuse; any non-empty case-insensitive
-match remains invalid.
+The approved final resolution is to disable Next Aired by removing its managed
+state before Kodi starts. After redeployment, the managed order after Home is
+Plex → YouTube → PVR → Add-ons, with no case-insensitive
+`HomeSwitcher.1106.Toggle` or `HomeSwitcher.1106.UpNextMode` node. Live state may
+be absent or an empty placeholder recreated by Arctic Fuse; any non-empty
+case-insensitive match remains invalid.
 
 The first deployment of commit `3b418af` produced
 `coreelec-theater-20260911T180528Z.txt` and automatically rolled back because
 the verifier treated Arctic Fuse's empty runtime placeholder as stale state.
 Controlled backup/restore reproduction confirmed the transformer supplied no
 mode node and Arctic Fuse recreated exactly an empty string-typed node after
-startup. Two successful final deployments remain pending after the verifier
-correction.
+startup.
+
+Commit `8390d42` then deployed twice successfully
+(`coreelec-theater-20260911T200447Z.txt`,
+`coreelec-theater-20260911T200808Z.txt`; both committed, both passing, 8/8
+managed files byte-identical), but those runs were **not accepted**. Live
+inspection showed `Container(399)` — the control that drives Left/Right hub
+movement — still listed `Next Aired → ReplaceWindow(1106)` between YouTube and
+PVR, because Arctic Fuse renders a hub whenever
+`!String.IsEmpty(Skin.String(HomeSwitcher.1106.Toggle))` and its own dialog
+disables a hub with `Skin.Reset(...)`. The literal value `false` is non-empty.
+
+## Arctic Fuse final live acceptance — 2026-09-11 — ACCEPTED
+
+- **Accepted HEAD**: `09c784e` (`fix: remove Next Aired hub toggle entirely`)
+- **Reports**: `coreelec-theater-20260911T202453Z.txt` and
+  `coreelec-theater-20260911T202711Z.txt` — both `deployment_state=committed`,
+  `verification_result=pass`, `verification_failures=0`, every `metadata.*` and
+  `arctic_fuse.*` status `ok`, `arctic_fuse.playlist_migration.observed=1`
+- **Idempotence**: all 8 standalone managed files byte-identical between the two
+  runs; obsolete `RecentlyReleasedMovies90Days.xsp` absent
+- **Live skin settings**: `managed_skin_settings=12 exact=1 string_typed=1
+  duplicate_free=1`; one empty string-typed `homeswitcher.1106.toggle`
+  placeholder recreated by Arctic Fuse; no `UpNextMode` node;
+  `HomeSwitcher.1107.Toggle=true`, `HomeSwitcher.1108.Toggle=true`
+- **Home navigation**: `10000 → 11101 (Plex) → 11102 (YouTube) → 11107 (PVR) →
+  11108 (Add-ons)`; no Next Aired entry; no Trakt/OAuth dialog and zero
+  `Unauthorised`/`TraktAPI`/`library_nextaired` log matches
+- **Applications**: Plex started `script.plexmod` 1.14.1-beta1 at its `doogie`
+  user select; YouTube opened Videos `10025` with 20 root items; PVR opened TV
+  channels `10700` with 589 channels across 21 groups; Add-ons opened browser
+  `10040`
+- **Home widgets**: In-Progress Movies 1, In-Progress Shows 15, Recently Aired
+  Shows 50, Recently Released Movies 36, New Shows 50, New Movies 50
+- **Corrected playlists**: 50 episodes air-dated 2026-08-23 through 2026-09-09
+  (inside the inclusive 2026-08-12 through 2026-09-11 window, no future date);
+  36 movies, all year 2026, premiered 2026-01-05 through 2026-08-05
+- **Power menu**: the same five actions in order were focus-walked in overlay
+  `11170` and the overlay was closed with `Input.Back` — **no Power action was
+  selected or executed**
+- **Screenshots**: `screenshot-home-final-accepted-20260911.png`,
+  `screenshot-power-final-accepted-20260911.png`,
+  `screenshot-power-overlay-final-20260911.png`,
+  `screenshot-plex-pm4k-final-20260911.png`,
+  `screenshot-youtube-final-20260911.png`,
+  `screenshot-pvr-channels-final-20260911.png`,
+  `screenshot-hub-addons-final-20260911.png`,
+  `screenshot-addonbrowser-final-20260911.png`
+
+Multiple profiles remain out of scope; the managed settings apply to the
+primary profile only.
 
 ### Idempotence and hashes
 
-8 of 9 managed files byte-identical across deployments. The sole difference is `skin.arctic.fuse.3/settings.xml`, which Kodi modifies at runtime (non-managed settings). All 14 managed skin settings remained correct (`type="string"`, expected values) with no case-insensitive duplicate IDs (224 total settings).
+8 of 9 managed files byte-identical across deployments. The sole difference is `skin.arctic.fuse.3/settings.xml`, which Kodi modifies at runtime (non-managed settings). In the 2026-09-08 acceptance all 14 managed skin settings then in scope remained correct (`type="string"`, expected values) with no case-insensitive duplicate IDs (224 total settings). After the Next Aired removal the managed subset is 12 settings, verified exact, string-typed, and duplicate-free in the final acceptance (245 total settings).
 
 ### Power menu — five items, correct order, no execution
 
