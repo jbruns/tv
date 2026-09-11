@@ -93,7 +93,8 @@ Each run writes a redacted, `key=value` report to `<REPORT_DIR>/<target>-<UTC-ti
 - `deployment_state` (`committed`, `rolled-back`, `pending-verification`, or `incomplete-rollback` — see restoration/retry below).
 - Per-add-on status: `configured` (this run wrote its settings), `installed-unconfigured` (deployed but nothing supplied to configure), or `installed-manual` (always true for Emby and YouTube — see below).
 - `regional.localtime.status` and `regional.date_offset.status` (regional verification, below).
-- The numbered `manual_action.*` lines — the interactive steps left for you, in a fixed order.
+- The numbered `manual_action.*` lines — the interactive steps left for you, in a fixed order, counted by `manual_actions`. Only real steps are numbered here.
+- `next_aired_note` — informational, not a manual action: it explains why the Next Aired hub is disabled and asks nothing of you.
 
 ### Post-deployment unattended service validation
 
@@ -286,11 +287,14 @@ exhaustion on this device class, so it is not an automation-safe replacement.
 
 - **Recently Aired Shows** (`RecentlyAiredEpisodes30Days.xsp`): rolling previous 30 days; future dates excluded; Kodi Omega XSP field: `airdate`.
 - **Recently Released Movies** (`RecentlyReleasedMoviesCurrentYear.xsp`): premiere year equals the device year captured during provisioning; ordered by year descending. Rerun provisioning after a year boundary to update the literal year. Calendar-year behavior was selected because Kodi Omega exposes `premiered` through a numeric XSP field that cannot perform day-level relative filtering.
+  - **Dec 31 midnight boundary**: the literal year is written by the transformer and re-derived by the verifier, each from the current date at the moment it runs. A deployment that straddles the year rollover therefore writes one year and verifies against the next, fails closed on `arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.status=mismatch`, and rolls back. This is intended: rerun provisioning after midnight and the run converges on the new year.
+
+- **Recently Released Movies (obsolete)** (`RecentlyReleasedMovies90Days.xsp`): no longer a managed widget playlist. It is still managed for reversibility — it is in the backup set, provisioning removes it, and rollback restores it byte-for-byte.
 
 **Power menu actions** (exact order):
 
 1. Power off (`Powerdown()`)
-2. Sleep timer (`AlarmClock(shutdowntimer,Shutdown())`)
+2. Custom shutdown timer (`AlarmClock(shutdowntimer,Shutdown())`)
 3. Suspend (`Suspend()`)
 4. Reboot (`Reset()`)
 5. Restart Kodi (`RestartApp()`)
@@ -309,11 +313,22 @@ Expected lines when both metadata keys are supplied:
 arctic_fuse.status=ok
 arctic_fuse.home.status=ok
 arctic_fuse.power.status=ok
+arctic_fuse.hubs.status=ok
+arctic_fuse.next_aired_hub.status=ok
+arctic_fuse.pvr_hub.status=ok
+arctic_fuse.addons_hub.status=ok
 arctic_fuse.plex_entry.status=ok
 arctic_fuse.youtube_entry.status=ok
 metadata.omdb.status=ok
 metadata.mdblist.status=ok
 ```
+
+`arctic_fuse.hubs.status` is the aggregate hub verdict. The three hub lines
+beside it say which hub failed: `next_aired_hub` (must be disabled),
+`pvr_hub`, and `addons_hub` (must be enabled). Every managed skin setting is
+compared against **all** of its case-insensitive matches, because Kodi
+resolves `Skin.String` without regard to case, and at least one match must be
+a direct child of the settings root, because that is all Kodi reads.
 
 A `mismatch` in any child status (including `metadata.omdb.status` or
 `metadata.mdblist.status`) rolls into `arctic_fuse.status=mismatch`. Inspect
@@ -321,8 +336,17 @@ the individual child lines to identify the specific failure.
 
 ### Safe acceptance sequence for Arctic Fuse 3
 
-Acceptance inspects the provisioned skin state; it does not execute Power
-actions or navigate the Home hubs on the device.
+Acceptance inspects the provisioned skin state **and walks the Home hubs on
+the device**. It never executes a Power action: the Power overlay may be
+opened and focus-walked for inspection, but no Power item is ever selected or
+activated.
+
+The Home hub walk is required because report-only verification is not
+sufficient evidence that a hub is gone. During the 2026-09-11 acceptance the
+report passed every `arctic_fuse.*` status while a Next Aired hub was still
+rendered and navigable: the settings file held the disabled value the
+verifier then expected, but the skin renders a hub whenever its toggle string
+is non-empty.
 
 Before contacting the device, validate configuration and all 42 artifacts
 without a `--target`:
@@ -350,6 +374,26 @@ After the run, verify the audit report in `./coreelec-provision-reports/`:
 
 Any `mismatch` value requires re-provisioning with corrected inputs; do not
 weaken the acceptance criteria.
+
+Then walk the Home hubs on the device. This is navigation only — no Power
+item and no destructive action is ever selected:
+
+1. Read the hub list the Home hub button actually executes, `Container(399)`,
+   and confirm it is exactly Home, Plex (`ReplaceWindow(1101)`), YouTube
+   (`ReplaceWindow(1102)`), PVR (`ReplaceWindow(1107)`), Addons
+   (`ReplaceWindow(1108)`), Options. **No Next Aired entry
+   (`ReplaceWindow(1106)`) may appear**, in this list or in the hub bar of
+   any hub window.
+2. Walk the hubs in order — `10000 → 11101 → 11102 → 11107 → 11108` — and
+   confirm each hub opens its add-on or window, and that no Trakt
+   authorization dialog appears.
+3. Confirm the Kodi log written since the restart has no `Unauthorised`,
+   `TraktAPI`, `library_nextaired`, or `trakt_calendar` matches.
+4. The Power overlay (`11170`) may be opened and focus-walked to confirm the
+   five managed labels, then closed with Back. **Never select or activate a
+   Power item**: `Powerdown()`, `AlarmClock(shutdowntimer,Shutdown())`,
+   `Suspend()`, `Reset()`, and `RestartApp()` are inspected in the managed
+   JSON, not executed.
 
 ### Regional verification
 

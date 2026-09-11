@@ -651,12 +651,19 @@ def main(argv):
         ]
 
     def set_skin_setting(setting_id, value):
-        nodes = _skin_setting_nodes(skin_root, setting_id)
-        if nodes:
-            node = nodes[0][1]
-            for parent, duplicate in nodes[1:]:
-                parent.remove(duplicate)
-        else:
+        # Kodi reads only the direct `<setting>` children of the settings
+        # root, while a recursive reader also sees the legacy `<category>`
+        # nesting an old settings file can carry. Reusing a nested node would
+        # write a value the skin never resolves and still look converged, so
+        # the managed node is always the canonical root child and every other
+        # case-insensitive match is removed.
+        node = None
+        for parent, candidate in _skin_setting_nodes(skin_root, setting_id):
+            if parent is skin_root and node is None:
+                node = candidate
+                continue
+            parent.remove(candidate)
+        if node is None:
             node = ET.SubElement(skin_root, "setting", {"id": setting_id})
         node.set("id", setting_id)
         node.set("type", "string")
@@ -993,6 +1000,10 @@ addons_dir="${storage_root}/.kodi/addons"
 backup_root="${storage_root}/backup/coreelec-provision"
 tab="$(printf '\t')"
 transaction=""
+# Set when the list of paths the transformer applied could not be rebuilt, so
+# rollback can neither remove what this run created nor claim it restored the
+# device.
+applied_list_unusable=0
 
 fail() {
   printf 'remote transaction: %s\n' "$1" >&2
@@ -1090,7 +1101,7 @@ resolve_pending_transaction() {
 # not exist before. Kodi is stopped first because it rewrites guisettings.xml
 # from memory when it exits.
 rollback_transaction() {
-  rollback_failed=0
+  rollback_failed="${applied_list_unusable}"
   rollback_marker="${transaction}/.rollback-failed"
   rm -f "${rollback_marker}"
   systemctl stop kodi.service >/dev/null 2>&1 || true
@@ -1205,11 +1216,21 @@ finish_transaction() {
     # The transformer reports written paths to stdout even on failure, but the
     # sed that normally populates APPLIED.txt only runs on the success path.
     # Processing applied.raw here ensures rollback can remove newly created
-    # managed files that had no previous backup copy.
+    # managed files that had no previous backup copy. The rewrite lands on a
+    # separate file first: a rebuild that fails must never truncate the list
+    # rollback reads, and it makes this rollback an incomplete one rather
+    # than a silent partial restoration.
     if [ -f "${transaction}/applied.raw" ]; then
-      sed -n 's/^settings applied: //p' "${transaction}/applied.raw" \
-        > "${transaction}/APPLIED.txt" 2>/dev/null || :
-      rm -f "${transaction}/applied.raw"
+      if sed -n 's/^settings applied: //p' "${transaction}/applied.raw" \
+        > "${transaction}/applied.rebuilt"; then
+        mv "${transaction}/applied.rebuilt" "${transaction}/APPLIED.txt"
+        rm -f "${transaction}/applied.raw"
+      else
+        rm -f "${transaction}/applied.rebuilt"
+        applied_list_unusable=1
+        printf 'the list of applied settings paths could not be rebuilt from %s; rollback cannot remove the managed files this run created\n' \
+          "${transaction}/applied.raw" >&2
+      fi
     fi
     printf 'deployment failed while %s; rolling back\n' "${transaction_state}" >&2
     if rollback_transaction; then
@@ -2184,15 +2205,23 @@ def main(argv):
         except Exception:
             return None
 
-    def xml_setting_values(path):
-        return read_settings(path) or {}
-
     def xml_setting_matches(path, setting_id):
+        """Every case-insensitively matching node, as
+        (id, type, value, at_root). Kodi resolves `Skin.String` without
+        regard to case, so a dictionary keyed by the exact id would let a
+        lowercase or mixed-case duplicate mask the managed value. `at_root`
+        marks the direct children of the settings root, which are the only
+        nodes Kodi reads: a value that survives only inside a `<category>`
+        is invisible to the skin and must never read as configured."""
         try:
             root = ET.parse(path).getroot()
         except Exception:
             return []
         wanted = setting_id.casefold()
+        # The list is kept alive for the whole call so the identities in
+        # `at_root` cannot be reused by a later object.
+        root_children = root.findall("setting")
+        at_root = set(id(node) for node in root_children)
         return [
             (
                 node.get("id") or "",
@@ -2200,22 +2229,39 @@ def main(argv):
                 node.get("value")
                 if node.get("value") is not None
                 else (node.text or ""),
+                id(node) in at_root,
             )
             for node in root.iter("setting")
             if (node.get("id") or "").casefold() == wanted
         ]
 
     def is_empty_string_placeholder(match):
-        _, setting_type, value = match
+        _, setting_type, value, _ = match
         return setting_type.casefold() == "string" and value == ""
 
     def is_disabled_toggle(match):
-        _, setting_type, value = match
+        _, setting_type, value, _ = match
         setting_type = setting_type.casefold()
         return (
             (setting_type == "string" and value == "")
             or (setting_type == "bool" and value.casefold() == "false")
         )
+
+    def managed_setting_is(setting_id, expected):
+        """The managed value is present exactly, on a node Kodi reads, and no
+        case variant anywhere in the file disagrees with it."""
+        matches = xml_setting_matches(skin_settings_path, setting_id)
+        return (
+            any(at_root and value == expected
+                for _, _, value, at_root in matches)
+            and all(value == expected for _, _, value, _ in matches)
+        )
+
+    def managed_setting_is_unset(setting_id):
+        """Kodi treats an empty skin string as unset, so a removed managed
+        setting may exist only as empty nodes -- in any case variant."""
+        return all(value == "" for _, _, value, _
+                   in xml_setting_matches(skin_settings_path, setting_id))
 
     def smart_playlist_signature(path):
         try:
@@ -2247,48 +2293,56 @@ def main(argv):
         userdata, "addon_data", "script.skinvariables", "nodes", SKIN_ID)
     playlists_dir = os.path.join(userdata, "playlists", "video")
 
-    skin_values = xml_setting_values(skin_settings_path)
-
     # Hub toggles. Arctic Fuse renders a hub whenever its toggle string is
     # non-empty and may recreate empty disabled placeholders after startup.
+    # Each hub is observed on its own line: the aggregate says only that
+    # something is wrong, these say which hub.
     next_aired_toggles = xml_setting_matches(
         skin_settings_path, "HomeSwitcher.1106.Toggle")
     next_aired_modes = xml_setting_matches(
         skin_settings_path, "HomeSwitcher.1106.UpNextMode")
-    hubs_ok = (
+    next_aired_disabled = (
         all(is_disabled_toggle(match) for match in next_aired_toggles)
         and all(is_empty_string_placeholder(match)
                 for match in next_aired_modes)
-        and skin_values.get("HomeSwitcher.1107.Toggle") == "true"
-        and skin_values.get("HomeSwitcher.1108.Toggle") == "true"
     )
-    observe("arctic_fuse.hubs_configured", 1 if hubs_ok else 0)
+    pvr_hub_ok = managed_setting_is("HomeSwitcher.1107.Toggle", "true")
+    addons_hub_ok = managed_setting_is("HomeSwitcher.1108.Toggle", "true")
+    observe("arctic_fuse.next_aired_disabled", 1 if next_aired_disabled else 0)
+    observe("arctic_fuse.pvr_hub_configured", 1 if pvr_hub_ok else 0)
+    observe("arctic_fuse.addons_hub_configured", 1 if addons_hub_ok else 0)
+    observe("arctic_fuse.hubs_configured",
+            1 if (next_aired_disabled and pvr_hub_ok and addons_hub_ok) else 0)
 
     # Plex entry (1101)
     plex_ok = (
-        skin_values.get("HomeSwitcher.1101.Name") == "Plex"
-        and skin_values.get("HomeSwitcher.1101.Icon")
-            == "special://home/addons/script.plexmod/icon2.png"
-        and skin_values.get("HomeSwitcher.1101.Shortcut.Path")
-            == "RunAddon(script.plexmod)"
-        and not skin_values.get("HomeSwitcher.1101.Shortcut.Target")
+        managed_setting_is("HomeSwitcher.1101.Name", "Plex")
+        and managed_setting_is(
+            "HomeSwitcher.1101.Icon",
+            "special://home/addons/script.plexmod/icon2.png")
+        and managed_setting_is(
+            "HomeSwitcher.1101.Shortcut.Path", "RunAddon(script.plexmod)")
+        and managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Target")
     )
     observe("arctic_fuse.plex_entry_configured", 1 if plex_ok else 0)
 
     # YouTube entry (1102)
     youtube_ok = (
-        skin_values.get("HomeSwitcher.1102.Name") == "YouTube"
-        and skin_values.get("HomeSwitcher.1102.Icon")
-            == "special://home/addons/plugin.video.youtube/resources/media/icon.png"
-        and skin_values.get("HomeSwitcher.1102.Shortcut.Path")
-            == "plugin://plugin.video.youtube/"
-        and skin_values.get("HomeSwitcher.1102.Shortcut.Target") == "videos"
+        managed_setting_is("HomeSwitcher.1102.Name", "YouTube")
+        and managed_setting_is(
+            "HomeSwitcher.1102.Icon",
+            "special://home/addons/plugin.video.youtube/resources/media/icon.png")
+        and managed_setting_is(
+            "HomeSwitcher.1102.Shortcut.Path",
+            "plugin://plugin.video.youtube/")
+        and managed_setting_is("HomeSwitcher.1102.Shortcut.Target", "videos")
     )
     observe("arctic_fuse.youtube_entry_configured", 1 if youtube_ok else 0)
 
     # Settings tile
     observe("arctic_fuse.settings_tile_configured",
-            1 if skin_values.get("optionstiles.02.include") == "Settings" else 0)
+            1 if managed_setting_is("optionstiles.02.include", "Settings")
+            else 0)
 
     # Home widgets
     expected_home_widgets = [
@@ -3106,7 +3160,17 @@ verify_remote_baseline() {
       "metadata.mdblist" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   fi
 
-  # Arctic Fuse skin surfaces
+  # Arctic Fuse skin surfaces. The hub verdict is split so the report names
+  # the hub that failed; the aggregate remains fatal for the comparison.
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.next_aired_disabled" "arctic_fuse.next_aired_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.pvr_hub_configured" "arctic_fuse.pvr_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.addons_hub_configured" "arctic_fuse.addons_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.hubs_configured" "arctic_fuse.hubs" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
@@ -3276,11 +3340,16 @@ coreelec_report_manual_actions() {
     number=$((number + 1))
     printf 'manual_action.%s=Home Assistant Weather: set the Home Assistant URL, long-lived token, and forecast entity, then select the provider.\n' "${number}"
   fi
-  if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
-    number=$((number + 1))
-    printf 'manual_action.%s=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class.\n' "${number}"
-  fi
   printf 'manual_actions=%s\n' "${number}"
+}
+
+# Facts about the deployed state that need explaining but ask nothing of the
+# operator, so they are never numbered among the manual actions.
+coreelec_report_informational_notes() {
+  local manifest="$1"
+  if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
+    printf 'next_aired_note=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class.\n'
+  fi
 }
 
 # The report body. Every line is key=value; the raw device inventory the
@@ -3353,6 +3422,7 @@ coreelec_report_render() {
   done
 
   if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+    coreelec_report_informational_notes "${manifest}"
     coreelec_report_manual_actions "${manifest}"
   fi
 }

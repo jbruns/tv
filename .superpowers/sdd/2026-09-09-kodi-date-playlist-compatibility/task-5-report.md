@@ -401,3 +401,90 @@ Targeted verification passed: settings 33/33, report 85/85, and artifacts
 52/52. The complete five-suite run passed 231/231 with both ratings keys
 present and again with both keys unset. Keyless `--check-config` passed, and
 `--check-artifacts` validated all 42 artifacts.
+
+## Step 12: Final review fix wave — verification, transformer, and docs
+
+Final review returned READY with one important and eight minor findings. All
+were resolved in one commit, test-first, with no device contact: every change
+is verification, transformer scope, report shape, test isolation, or
+documentation.
+
+### Important: case-sensitive managed settings comparison
+
+The live probe read every managed skin setting except `HomeSwitcher.1106.*`
+through `read_settings()`, a dictionary keyed by the exact id where the last
+node wins. Kodi resolves `Skin.String` case-insensitively, so a lowercase or
+mixed-case duplicate could mask or override the managed PVR, Add-ons, Plex,
+YouTube, or settings-tile state while the verifier still reported `1`.
+
+Ruling: a managed skin setting is correct only when every case-insensitive
+match carries the intended value **and** at least one of those matches is a
+direct child of the settings root, because Kodi parses only root children. A
+removed managed setting is correct only when every case-insensitive match is
+empty. The documented `1106` disabled representations (empty string-typed
+placeholder, bool-typed `false`, empty string-typed `UpNextMode`) remain the
+only accepted runtime normalization. If wrong, the cost is rolling back a
+device whose duplicates were harmless, or accepting a hub the operator cannot
+see; it is bounded by comparing every match instead of one dictionary entry,
+and by requiring the value to exist where Kodi reads it.
+
+### Minor: transformer source/runtime scope mismatch
+
+`set_skin_setting()` could reuse a matching node nested under `<category>`,
+which Kodi never parses while the recursive verifier does. Ruling: convergence
+promotes each managed setting to one canonical root node and removes every
+other case-insensitive match, preserving stale-variant removal, atomic
+replacement, and idempotence. Unmanaged nested settings are untouched.
+
+### Minor: failure-path applied list
+
+`sed ... > APPLIED.txt 2>/dev/null || :` could truncate the list rollback uses
+to delete files this run created and still report a complete restoration. The
+rebuild now lands on a separate file and is promoted only on success; a failed
+rebuild is reported and makes the rollback an explicit incomplete rollback
+that retains the transaction, staging, and pointer.
+
+### Minor: diagnostics, report shape, docs, and test isolation
+
+- `arctic_fuse.next_aired_hub`, `arctic_fuse.pvr_hub`, and
+  `arctic_fuse.addons_hub` are observed and compared independently;
+  `arctic_fuse.hubs` remains the aggregate, fatal verdict.
+- The Next Aired explanation is now the informational `next_aired_note` report
+  field; `manual_action.N` and `manual_actions` count real steps only.
+- The acceptance runbook requires the on-device Home hub walk — the
+  report-only path passed while a Next Aired hub was still navigable — and
+  still forbids selecting or activating any Power item.
+- The Power label is the accepted `Custom shutdown timer`.
+- The Dec 31 midnight boundary of the provisioning-time current-year playlist
+  is documented: a deployment straddling the rollover fails closed and is
+  rerun.
+- `config/README.md` states that the obsolete movie playlist is not a managed
+  widget playlist but is retained in the backup set for reversible removal.
+- The theater record states that live acceptance was against `09c784e` and
+  that the later verifier-only commits accept the recorded state, so no
+  redeployment or reacceptance is claimed or required.
+- Ratings-key test isolation stashes and restores the environment instead of
+  unsetting it for the rest of the process.
+
+### RED, GREEN, and validation
+
+RED, before any production change:
+
+- `tests/test-coreelec-settings.sh`: 33/34 —
+  `test_arctic_fuse_managed_settings_are_promoted_to_root_nodes`,
+  `1107.Toggle is one root node (expected=1 1 actual=1 0)`.
+- `tests/test-coreelec-report.sh`: 85/95 — six case-variant duplicate/masking
+  fixtures (PVR, Add-ons, Plex shortcut path, stale Plex shortcut target,
+  YouTube name, settings tile), the category-only fixture, the split hub
+  observation fixture, the split hub status comparator, and the manual-action
+  count.
+- `tests/test-coreelec-artifacts.sh`: 52/53 — the applied-list rebuild failure
+  still printed `the device was restored to its pre-deployment state`.
+
+GREEN: settings 34/34, report 95/95, artifacts 53/53. All five suites passed
+243/243 with `OMDB_API_KEY` and `MDBLIST_API_KEY` present and again with both
+unset through `env -u`; values were never printed. Keyless `--check-config`
+passed and `--check-artifacts` validated all 42 artifacts.
+
+No Power action, secret handling, artifact lock, playlist behavior, or
+transformed Next Aired removal was changed, and no device was contacted.

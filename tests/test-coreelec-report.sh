@@ -303,6 +303,9 @@ addon_settings.script.plexmod.configured=1
 addon_settings.plugin.video.themoviedb.helper.omdb_configured=1
 addon_settings.plugin.video.themoviedb.helper.mdblist_configured=1
 arctic_fuse.hubs_configured=1
+arctic_fuse.next_aired_disabled=1
+arctic_fuse.pvr_hub_configured=1
+arctic_fuse.addons_hub_configured=1
 arctic_fuse.plex_entry_configured=1
 arctic_fuse.youtube_entry_configured=1
 arctic_fuse.settings_tile_configured=1
@@ -929,11 +932,12 @@ test_configured_nextpvr_ha_and_pm4k_are_classified_configured() {
 test_missing_optional_values_are_classified_unconfigured() {
   local dir config addon_id
   # Isolate from ambient environment secrets so the classification is
-  # deterministic regardless of the operator's shell.
-  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
+  # deterministic regardless of the operator's shell, and put them back so
+  # this test does not change the environment later tests observe.
+  stash_unset_env OMDB_API_KEY MDBLIST_API_KEY
 
   dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
+  trap 'rm -rf "${dir}"; restore_stashed_env' RETURN
   config="${dir}/provision.conf"
 
   # No secrets and no service settings at all.
@@ -956,11 +960,12 @@ test_missing_optional_values_are_classified_unconfigured() {
 test_report_lists_secret_presence_without_secret_values() {
   local dir config manifest observations report
   # Isolate from ambient environment secrets so the presence assertions are
-  # deterministic regardless of the operator's shell.
-  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
+  # deterministic regardless of the operator's shell, and put them back so
+  # this test does not change the environment later tests observe.
+  stash_unset_env OMDB_API_KEY MDBLIST_API_KEY
 
   dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
+  trap 'rm -rf "${dir}"; restore_stashed_env' RETURN
   config="${dir}/provision.conf"
   manifest="${dir}/deploy.tsv"
   observations="${dir}/observations.conf"
@@ -1083,9 +1088,14 @@ test_report_lists_manual_actions_in_order() {
   assert_contains "${actions}" "manual_action.4=NextPVR" "NextPVR setup is listed" || return 1
   assert_contains "${actions}" "manual_action.5=Home Assistant Weather" \
     "Home Assistant Weather setup is listed" || return 1
-  assert_contains "${actions}" \
-    "manual_action.6=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class." \
-    "the Next Aired resolution is accurate" || return 1
+  assert_eq "5" "$(report_line "${report}" manual_actions)" \
+    "only real manual steps are counted" || return 1
+  assert_not_contains "${actions}" "Next Aired" \
+    "the Next Aired explanation is not a manual action" || return 1
+  # It is a fact about the deployed state, so it is reported as one.
+  assert_contains "$(cat "${report}")" \
+    "next_aired_note=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class." \
+    "the Next Aired resolution is reported as information" || return 1
 
   # Configured integrations drop out; the always-manual ones remain.
   write_configured_config "${config}"
@@ -1098,18 +1108,40 @@ test_report_lists_manual_actions_in_order() {
   assert_not_contains "${actions}" "=NextPVR" "configured NextPVR needs no manual step" || return 1
   assert_not_contains "${actions}" "=Home Assistant Weather" \
     "configured weather needs no manual step" || return 1
-  assert_contains "${actions}" "manual_action.3=Next Aired is disabled" \
+  assert_eq "2" "$(report_line "${report}" manual_actions)" \
     "manual action numbering stays contiguous" || return 1
+  assert_contains "$(cat "${report}")" "next_aired_note=Next Aired is disabled" \
+    "the informational note is independent of the manual actions" || return 1
+}
+
+# A test that isolates itself from ambient operator secrets must not leave the
+# environment changed for whatever runs after it.
+test_ratings_key_isolation_restores_the_environment() {
+  local before
+  OMDB_API_KEY="omdb-sentinel-not-a-real-key"
+  unset MDBLIST_API_KEY 2>/dev/null || true
+  before="${OMDB_API_KEY}"
+
+  stash_unset_env OMDB_API_KEY MDBLIST_API_KEY
+  assert_eq "" "${OMDB_API_KEY-}" "the key is absent inside the isolated test" || return 1
+  assert_eq "" "${OMDB_API_KEY+set}" "the key is unset, not merely empty" || return 1
+
+  restore_stashed_env
+  assert_eq "${before}" "${OMDB_API_KEY-}" "the previous value is restored" || return 1
+  assert_eq "" "${MDBLIST_API_KEY+set}" \
+    "a variable that was unset stays unset" || return 1
+  unset OMDB_API_KEY
 }
 
 test_report_states_addon_status_and_verification_per_addon() {
   local dir config manifest observations report
   # Isolate from ambient environment secrets so the status assertions are
-  # deterministic regardless of the operator's shell.
-  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
+  # deterministic regardless of the operator's shell, and put them back so
+  # this test does not change the environment later tests observe.
+  stash_unset_env OMDB_API_KEY MDBLIST_API_KEY
 
   dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
+  trap 'rm -rf "${dir}"; restore_stashed_env' RETURN
   config="${dir}/provision.conf"
   manifest="${dir}/deploy.tsv"
   observations="${dir}/observations.conf"
@@ -2510,6 +2542,196 @@ PYEOF
     "empty mode cannot mask stale case variant → hubs 0" || return 1
 }
 
+# --- Managed skin settings: case-insensitive exact state --------------------
+
+# Kodi resolves `Skin.String` without regard to case, so any case variant of a
+# managed ID is a real value the skin may resolve. These helpers seed one.
+
+# Appends one <setting> node as a direct child of the settings root.
+append_skin_setting_node() {
+  local skin_file="$1" setting_id="$2" setting_type="$3" value="$4"
+  python3 - "${skin_file}" "${setting_id}" "${setting_type}" "${value}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id, setting_type, value = sys.argv[1:5]
+tree = ET.parse(path)
+attributes = {"id": setting_id}
+if setting_type:
+    attributes["type"] = setting_type
+node = ET.SubElement(tree.getroot(), "setting", attributes)
+if value:
+    node.text = value
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+}
+
+# Moves one managed setting out of the root and into a <category>, which Kodi
+# never reads even though a recursive reader still finds it.
+nest_skin_setting_in_category() {
+  local skin_file="$1" setting_id="$2"
+  python3 - "${skin_file}" "${setting_id}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id = sys.argv[1], sys.argv[2]
+tree = ET.parse(path)
+root = tree.getroot()
+category = ET.SubElement(root, "category", {"id": "hubs"})
+for node in list(root.findall("setting")):
+    if (node.get("id") or "").casefold() == setting_id.casefold():
+        root.remove(node)
+        category.append(node)
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+}
+
+test_probe_case_variant_pvr_toggle_duplicate_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  # A lowercase duplicate that reads as an unset hub: Kodi may resolve it
+  # instead of the managed node, so the PVR hub would silently disappear.
+  append_skin_setting_node "${skin_file}" "homeswitcher.1107.toggle" "string" ""
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=0" \
+    "a case-variant PVR toggle duplicate → pvr hub 0" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "a case-variant PVR toggle duplicate → hubs 0" || return 1
+}
+
+test_probe_case_variant_addons_toggle_duplicate_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "HOMESWITCHER.1108.TOGGLE" "string" "false"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.addons_hub_configured=0" \
+    "a case-variant Add-ons toggle duplicate → add-ons hub 0" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "a case-variant Add-ons toggle duplicate → hubs 0" || return 1
+}
+
+test_probe_case_variant_plex_shortcut_duplicate_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "homeswitcher.1101.shortcut.path" \
+    "string" "RunAddon(plugin.video.other)"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" \
+    "a case-variant Plex shortcut duplicate → plex entry 0" || return 1
+}
+
+test_probe_case_variant_stale_plex_shortcut_target_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  # The managed state removes this setting; a case variant is the same
+  # functional value to Kodi and must not pass unnoticed.
+  append_skin_setting_node "${skin_file}" "homeswitcher.1101.shortcut.target" \
+    "string" "videos"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" \
+    "a case-variant stale Plex shortcut target → plex entry 0" || return 1
+}
+
+test_probe_case_variant_youtube_name_duplicate_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "homeswitcher.1102.name" "string" \
+    "YouTube Kids"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.youtube_entry_configured=0" \
+    "a case-variant YouTube name duplicate → youtube entry 0" || return 1
+}
+
+test_probe_case_variant_settings_tile_duplicate_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "OptionsTiles.02.Include" "string" "Power"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.settings_tile_configured=0" \
+    "a case-variant settings tile duplicate → settings tile 0" || return 1
+}
+
+# A managed value that only exists inside a <category> is never read by Kodi,
+# so recursive verification must not report it as configured.
+test_probe_managed_setting_only_inside_a_category_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  nest_skin_setting_in_category "${skin_file}" "HomeSwitcher.1107.Toggle"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=0" \
+    "a managed toggle Kodi cannot read → pvr hub 0" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "a managed toggle Kodi cannot read → hubs 0" || return 1
+}
+
+# The aggregate hub verdict says only that something is wrong; the split
+# observations say which hub, so an operator reads the cause from the report.
+test_probe_reports_each_hub_observation_independently() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.next_aired_disabled=1" \
+    "baseline Next Aired is disabled" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=1" \
+    "baseline PVR hub is enabled" || return 1
+  assert_contains "${output}" "arctic_fuse.addons_hub_configured=1" \
+    "baseline Add-ons hub is enabled" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
+    "baseline aggregate hub verdict" || return 1
+
+  # Only Next Aired is wrong: the two enabled hubs still report separately.
+  append_skin_setting_node "${skin_file}" "HomeSwitcher.1106.Toggle" "string" "true"
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.next_aired_disabled=0" \
+    "a rendered Next Aired hub is named on its own line" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=1" \
+    "PVR stays ok while Next Aired fails" || return 1
+  assert_contains "${output}" "arctic_fuse.addons_hub_configured=1" \
+    "Add-ons stays ok while Next Aired fails" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "the aggregate hub verdict still fails" || return 1
+}
+
 test_probe_malformed_json_emits_zero_for_home_widgets() {
   local dir root bin_dir output nodes_dir
   dir="$(make_scratch_dir)"
@@ -2791,6 +3013,48 @@ test_arctic_fuse_hub_mismatch_fails_verification() {
   assert_failure "${rc}" "a hub mismatch must fail verification" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
   assert_contains "${output}" "arctic_fuse.hubs" "the mismatching surface is named" || return 1
+}
+
+# The split hub observations must reach the report as their own statuses, so
+# the operator reads which hub failed rather than only that "hubs" failed.
+test_arctic_fuse_split_hub_statuses_name_the_failing_hub() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a complete hub state verifies" || return 1
+  assert_contains "${output}" "arctic_fuse.next_aired_hub.status=ok" \
+    "the Next Aired hub has its own status" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_hub.status=ok" \
+    "the PVR hub has its own status" || return 1
+  assert_contains "${output}" "arctic_fuse.addons_hub.status=ok" \
+    "the Add-ons hub has its own status" || return 1
+
+  set_observation "${observations}" "arctic_fuse.pvr_hub_configured" "0"
+  set_observation "${observations}" "arctic_fuse.hubs_configured" "0"
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a PVR hub mismatch must fail verification" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_hub.status=mismatch" \
+    "the PVR hub is identified as the failure" || return 1
+  assert_contains "${output}" "arctic_fuse.next_aired_hub.status=ok" \
+    "Next Aired stays ok while PVR fails" || return 1
+  assert_contains "${output}" "arctic_fuse.addons_hub.status=ok" \
+    "Add-ons stays ok while PVR fails" || return 1
+  assert_contains "${output}" "arctic_fuse.status=mismatch" \
+    "the aggregate Arctic Fuse outcome stays fatal" || return 1
 }
 
 test_arctic_fuse_plex_entry_mismatch_fails_verification() {
@@ -3084,6 +3348,7 @@ run_all_tests \
   test_report_redacts_all_supplied_secret_values \
   test_report_records_config_fingerprint_without_secrets \
   test_report_lists_manual_actions_in_order \
+  test_ratings_key_isolation_restores_the_environment \
   test_report_states_addon_status_and_verification_per_addon \
   test_report_keeps_subset_dependency_warning_explicit \
   test_report_is_strict_key_value \
@@ -3118,6 +3383,14 @@ run_all_tests \
   test_probe_empty_next_aired_mode_placeholder_emits_one \
   test_probe_bool_empty_next_aired_mode_emits_zero \
   test_probe_empty_next_aired_mode_does_not_mask_stale_variant \
+  test_probe_case_variant_pvr_toggle_duplicate_emits_zero \
+  test_probe_case_variant_addons_toggle_duplicate_emits_zero \
+  test_probe_case_variant_plex_shortcut_duplicate_emits_zero \
+  test_probe_case_variant_stale_plex_shortcut_target_emits_zero \
+  test_probe_case_variant_youtube_name_duplicate_emits_zero \
+  test_probe_case_variant_settings_tile_duplicate_emits_zero \
+  test_probe_managed_setting_only_inside_a_category_emits_zero \
+  test_probe_reports_each_hub_observation_independently \
   test_probe_malformed_json_emits_zero_for_home_widgets \
   test_probe_malformed_json_emits_zero_for_power_menu \
   test_probe_missing_home_widgets_file_emits_zero \
@@ -3134,6 +3407,7 @@ run_all_tests \
   test_comparator_home_widgets_zero_fails_verification \
   test_comparator_power_menu_zero_fails_verification \
   test_arctic_fuse_hub_mismatch_fails_verification \
+  test_arctic_fuse_split_hub_statuses_name_the_failing_hub \
   test_arctic_fuse_plex_entry_mismatch_fails_verification \
   test_arctic_fuse_youtube_entry_mismatch_fails_verification \
   test_arctic_fuse_home_widget_order_mismatch_fails_verification \

@@ -167,3 +167,47 @@ Task 5: fix round 3 verification passed: targeted settings/report/artifact
 suites were 33/33, 85/85, and 52/52; all five suites passed 231/231 with
 ratings keys present and again with both keys unset; keyless `--check-config`
 passed and `--check-artifacts` validated 42/42 artifacts.
+Task 5: final review fix wave (single commit) resolved one important and eight
+minor findings without redeploying. Important: the live probe read every
+managed skin setting except `1106` through a case-sensitive, last-wins
+dictionary, while Kodi resolves `Skin.String` case-insensitively, so a
+lowercase duplicate could mask or override managed PVR/Add-ons/Plex/YouTube/
+settings-tile state while verification passed.
+Ruling: a managed skin setting is correct only when every case-insensitive
+match carries the intended value and at least one of those matches is a direct
+child of the settings root, because Kodi parses only root children; the
+documented `1106` disabled representations remain the sole accepted runtime
+normalization. If wrong, the cost is rolling back a device whose duplicates are
+harmless, or accepting a hub the operator cannot see; it is bounded by
+comparing every match rather than one dictionary entry, and by requiring the
+value on a node Kodi actually reads.
+Ruling: the transformer must converge each managed setting to one canonical
+root node and remove every other case-insensitive match, including one nested
+under `<category>`. If wrong, the cost is writing a value Kodi never applies
+while a recursive verifier calls it converged; it is bounded by the new
+promotion test and by the verifier's root-child requirement.
+Ruling: a failure-path rebuild of `APPLIED.txt` that cannot complete makes the
+rollback incomplete rather than silently truncating the list. If wrong, the
+cost is reporting an incomplete rollback that was actually complete — strictly
+safer than claiming full restoration with an unknown set of created files
+left behind.
+Task 5: minors resolved — split `arctic_fuse.next_aired_hub`, `pvr_hub`, and
+`addons_hub` observations beside the retained aggregate `arctic_fuse.hubs`;
+the Next Aired explanation moved from `manual_action.N` to the informational
+`next_aired_note` field; acceptance runbook now requires the on-device Home
+hub walk while still forbidding execution of any Power action; runbook Power
+label corrected to `Custom shutdown timer`; the Dec 31 midnight boundary of
+the provisioning-time current-year playlist documented as fail-closed;
+`config/README.md` clarified that the obsolete movie playlist is not a managed
+widget playlist but is retained in the backup set for reversible removal; the
+theater record states that live acceptance was against `09c784e` and that
+later verifier-only commits accept the recorded state without redeployment;
+ratings-key test isolation now restores the environment it unsets.
+Task 5: fix wave TDD — RED first: settings 33/34 (`1107.Toggle is one root
+node`, 1 total/0 at root) and report 85/95 (six case-variant masking fixtures,
+the category-only fixture, the split-observation fixture, the split-status
+comparator fixture, and the manual-action count); artifacts 52/53 for the
+applied-list rebuild, whose output still read "the device was restored to its
+pre-deployment state". GREEN: settings 34/34, report 95/95, artifacts 53/53;
+all five suites 243/243 with ratings keys present and again with both unset;
+keyless `--check-config` passed and `--check-artifacts` validated 42/42.

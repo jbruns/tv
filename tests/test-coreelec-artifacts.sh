@@ -1049,6 +1049,60 @@ test_automatic_rollback_restores_settings_written_before_the_failure() {
     "no partially applied setting may survive the rollback"
 }
 
+# The failure path rebuilds APPLIED.txt from the transformer's raw output.
+# That list is what rollback uses to delete managed files this run created,
+# so a rebuild that cannot be completed must fail the rollback loudly rather
+# than leave a truncated list behind and claim a complete restoration.
+test_a_failed_applied_list_rebuild_never_claims_a_complete_rollback() {
+  local dir root bin_dir rc output
+
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  # Only the rebuild of the applied-path list fails; every other sed the
+  # transaction runs behaves exactly as the device's own sed does.
+  cat > "${bin_dir}/sed" <<'STUB'
+#!/bin/bash
+for argument in "$@"; do
+  if [[ "${argument}" == *applied.raw ]]; then
+    printf 'sed stub: forced failure reading %s\n' "${argument}" >&2
+    exit 1
+  fi
+done
+for candidate in /usr/bin/sed /bin/sed; do
+  [[ -x "${candidate}" ]] && exec "${candidate}" "$@"
+done
+printf 'sed stub: no system sed was found\n' >&2
+exit 127
+STUB
+  chmod 755 "${bin_dir}/sed"
+
+  # Block the timezone cache write so the transformer fails after it has
+  # already created managed files.
+  mkdir -p "${root}/.cache/timezone"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a transformer failure must fail the transaction"
+  assert_contains "${output}" "could not be rebuilt" \
+    "the unusable applied-path list is reported"
+  assert_contains "${output}" "ROLLBACK INCOMPLETE" \
+    "a rollback without the applied-path list is incomplete"
+  assert_not_contains "${output}" "the device was restored to its pre-deployment state" \
+    "no complete restoration may be claimed"
+  if [[ ! -f "${root}/.cache/coreelec-provision/current-transaction" ]]; then
+    printf 'an incomplete rollback must retain the transaction pointer\n' >&2
+    return 1
+  fi
+}
+
 test_remote_deploy_refuses_a_second_pending_transaction() {
   local dir root bin_dir rc output
   dir="$(make_scratch_dir)"
@@ -1769,11 +1823,12 @@ STUB
 test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact() {
   local dir bin_dir output rc
   # Isolate from ambient environment secrets so the preflight tests are
-  # deterministic regardless of the operator's shell.
-  unset OMDB_API_KEY MDBLIST_API_KEY 2>/dev/null || true
+  # deterministic regardless of the operator's shell, and put them back so
+  # this test does not change the environment later tests observe.
+  stash_unset_env OMDB_API_KEY MDBLIST_API_KEY
 
   dir="$(make_scratch_dir)"
-  trap 'rm -rf -- "${dir}"' RETURN
+  trap 'rm -rf -- "${dir}"; restore_stashed_env' RETURN
   bin_dir="$(install_network_stubs "${dir}")"
 
   # Case 1: neither key.
@@ -2025,6 +2080,7 @@ run_all_tests \
   test_remote_deploy_rolls_back_automatically_when_a_step_fails \
   test_remote_deploy_refuses_a_second_pending_transaction \
   test_automatic_rollback_restores_settings_written_before_the_failure \
+  test_a_failed_applied_list_rebuild_never_claims_a_complete_rollback \
   test_automatic_rollback_restores_skin_managed_paths \
   test_remote_stage_upload_replaces_a_stale_bundle \
   test_rendered_remote_scripts_are_posix_clean \

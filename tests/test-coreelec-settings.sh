@@ -808,6 +808,30 @@ skin_setting_count() {
   xml_setting_count "$(skin_settings_path "$1")" "$2"
 }
 
+# Prints "TOTAL AT_ROOT" for one setting ID, matched case-insensitively the
+# way Kodi resolves `Skin.String`. Kodi only reads the direct `<setting>`
+# children of the settings root, so a managed value that survives anywhere
+# else is invisible to the skin even though a recursive reader finds it.
+xml_setting_scope_counts() {
+  python3 - "$1" "$2" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id = sys.argv[1], sys.argv[2]
+root = ET.parse(path).getroot()
+wanted = setting_id.casefold()
+total = sum(1 for node in root.iter("setting")
+            if (node.get("id") or "").casefold() == wanted)
+at_root = sum(1 for node in root.findall("setting")
+              if (node.get("id") or "").casefold() == wanted)
+sys.stdout.write("%d %d" % (total, at_root))
+PYEOF
+}
+
+skin_setting_scope_counts() {
+  xml_setting_scope_counts "$(skin_settings_path "$1")" "$2"
+}
+
 # True if a setting ID has no node at all in the skin settings file.
 skin_setting_absent() {
   local count
@@ -893,6 +917,69 @@ XML
     || { printf '1106.Toggle must be absent\n' >&2; return 1; }
   skin_setting_absent "${root}" "homeswitcher.1106.toggle" \
     || { printf 'case-variant 1106.Toggle must be absent\n' >&2; return 1; }
+}
+
+# Kodi reads only the direct `<setting>` children of a skin settings root,
+# while the verifier reads the document recursively. A managed value left
+# inside a legacy `<category>` would therefore be invisible to the skin and
+# still look converged, so convergence must promote every managed setting to
+# exactly one canonical root node and leave unmanaged nesting alone.
+test_arctic_fuse_managed_settings_are_promoted_to_root_nodes() {
+  local dir root payload skin_file first second
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  cat > "$(skin_settings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings>
+    <category id="hubs">
+        <setting id="HomeSwitcher.1107.Toggle">false</setting>
+        <setting id="homeswitcher.1108.toggle">stale-case-variant</setting>
+        <setting id="HomeSwitcher.1102.Name">Old YouTube</setting>
+        <setting id="HomeSwitcher.1106.Toggle">true</setting>
+        <setting id="homeswitcher.1106.upnextmode">library_nextaired</setting>
+        <setting id="unrelated.nested.keep">yes</setting>
+    </category>
+</settings>
+XML
+
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  skin_file="$(skin_settings_path "${root}")"
+
+  # Each managed setting converges to exactly one node, and that node is a
+  # direct child of the settings root.
+  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1107.Toggle")" \
+    "1107.Toggle is one root node"
+  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1108.Toggle")" \
+    "1108.Toggle is one root node"
+  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1102.Name")" \
+    "1102.Name is one root node"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" \
+    "promoted 1107.Toggle carries the managed value"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" \
+    "promoted 1108.Toggle carries the managed value"
+  assert_eq "YouTube" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" \
+    "promoted 1102.Name carries the managed value"
+
+  # Removed managed settings are gone from every scope.
+  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1106.Toggle")" \
+    "nested 1106.Toggle is removed everywhere"
+  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1106.UpNextMode")" \
+    "nested 1106.UpNextMode is removed everywhere"
+
+  # Unmanaged nested state is left exactly where the skin put it.
+  assert_eq "1 0" "$(skin_setting_scope_counts "${root}" "unrelated.nested.keep")" \
+    "an unmanaged nested setting is preserved in place"
+
+  # Convergence is still a transaction that reaches a fixed point.
+  first="$(cat "${skin_file}")"
+  run_transform "${root}" "${payload}" >/dev/null
+  second="$(cat "${skin_file}")"
+  assert_eq "${first}" "${second}" "a second run over promoted settings changes nothing"
 }
 
 test_arctic_fuse_home_widgets_are_exact_and_ordered() {
@@ -1231,6 +1318,7 @@ run_all_tests \
   test_remote_payload_upload_replaces_a_permissive_file \
   test_remote_backup_directory_is_private \
   test_arctic_fuse_hubs_and_options_tray_are_converged \
+  test_arctic_fuse_managed_settings_are_promoted_to_root_nodes \
   test_arctic_fuse_home_widgets_are_exact_and_ordered \
   test_arctic_fuse_power_menu_is_coreelec_appropriate \
   test_arctic_fuse_smart_playlists_have_exact_rules \

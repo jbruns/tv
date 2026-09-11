@@ -230,6 +230,17 @@ The following native Home features will be enabled:
 - Settings options-tray tile:
   `optionstiles.02.include=Settings`
 
+Every managed skin setting is a **canonical direct child of the settings
+root**. Kodi parses only the direct `<setting>` children of a skin settings
+file, so convergence promotes a managed value that an older file nested under
+`<category>` and removes every other case-insensitive match. Kodi also
+resolves `Skin.String` case-insensitively, so verification evaluates **all**
+case-insensitive matches of a managed ID, requires them to agree with the
+intended value, and requires at least one of them to be a root child. A
+lowercase or mixed-case duplicate can therefore neither mask nor silently
+override a managed hub, entry, or tile. The only accepted runtime deviations
+remain the documented Arctic Fuse `1106` disabled representations.
+
 Arctic Fuse 3 itself additionally requires `System.HasPVRAddon` and
 `PVR.HasTVChannels` before it displays the PVR hub. Provisioning will enable
 the hub setting, while device verification will continue to require a working
@@ -456,7 +467,10 @@ The remote observation step will verify:
   Videos target, and position after Plex.
 - Next Aired is disabled. Its transformed mode setting is absent; its live
   runtime state is absent or contains only empty case-insensitive placeholders.
-- PVR and Add-ons toggles are enabled.
+  It is observed on its own report line (`arctic_fuse.next_aired_hub`).
+- PVR and Add-ons toggles are enabled, each on its own report line
+  (`arctic_fuse.pvr_hub`, `arctic_fuse.addons_hub`). `arctic_fuse.hubs`
+  remains the aggregate, fatal hub verdict.
 - The Settings options-tray entry is enabled.
 - The Home widget node has the exact labels, paths, targets, order, and stable
   GUIDs.
@@ -515,7 +529,8 @@ Cover:
 - Stable GUIDs and deterministic output.
 - Idempotent second runs.
 - Preservation of unrelated settings and files.
-- Duplicate managed setting collapse.
+- Duplicate managed setting collapse, including promotion of a managed value
+  nested under `<category>` to one canonical root node.
 - Private modes and atomic replacement.
 - Cleanup of temporary files.
 - Rollback restoration and removal behavior.
@@ -537,6 +552,11 @@ Cover:
 - Success for absent or empty string-typed live `UpNextMode` placeholders;
   failure for every other type/value combination, including when an empty
   placeholder coexists with stale functional state.
+- Failure when any case-insensitive duplicate of a managed setting disagrees
+  with the intended value, and when a managed value exists only where Kodi
+  cannot read it.
+- Independent observations for the Next Aired, PVR, and Add-ons hubs, with the
+  aggregate hub verdict retained.
 - Failure for missing, disabled, or wrong-version optional dependencies.
 - Presence-only metadata-key verification.
 - Literal secret redaction from reports and diagnostic output.
@@ -593,7 +613,13 @@ Update the directly related documentation to describe:
 - The direct YouTube Home entry and the decision not to manage YouTube widgets.
 - The authoritative Home widgets and Power menu.
 - The one-profile scope.
-- New verification report fields and live acceptance steps.
+- New verification report fields and live acceptance steps, including the
+  required on-device Home hub walk that never executes a Power action.
+- The Next Aired explanation as an informational report field
+  (`next_aired_note`) rather than a numbered manual action, because it asks
+  nothing of the operator.
+- The Dec 31 midnight boundary of the provisioning-time current-year playlist:
+  a deployment straddling the rollover fails closed and is rerun.
 
 ## References
 

@@ -349,6 +349,15 @@ with its widget and metadata sources. They are not operator actions.
   point only, and any widget rows visible in the YouTube hub depend on the
   user's own YouTube account and history within the add-on.
 - **Managed Home order after Home**: Plex, YouTube, PVR, Add-ons.
+- **Managed skin settings are case-exact in effect**: Kodi resolves
+  `Skin.String` case-insensitively and reads only the direct `<setting>`
+  children of the settings root. Provisioning therefore writes each managed
+  setting as one canonical root node and removes every other case variant,
+  and verification compares all case-insensitive matches of a managed ID so a
+  lowercase duplicate can neither mask nor override the managed value.
+- **Per-hub report lines**: `arctic_fuse.next_aired_hub`,
+  `arctic_fuse.pvr_hub`, and `arctic_fuse.addons_hub` say which hub failed;
+  `arctic_fuse.hubs` remains the aggregate verdict.
 - **Recently Aired Shows** (`RecentlyAiredEpisodes30Days.xsp`): rolling
   previous 30 days; future dates excluded; Kodi Omega XSP field: `airdate`.
 - **Recently Released Movies** (`RecentlyReleasedMoviesCurrentYear.xsp`):
@@ -356,5 +365,10 @@ with its widget and metadata sources. They are not operator actions.
   year descending. Rerun provisioning after a year boundary to update the
   literal year. Calendar-year behavior was selected because Kodi Omega exposes
   `premiered` through a numeric XSP field that cannot perform day-level
-  relative filtering. The earlier `RecentlyReleasedMovies90Days.xsp` is
-  obsolete and is removed by provisioning; it is not a managed playlist.
+  relative filtering. A deployment that straddles the Dec 31 midnight boundary
+  writes one year and verifies against the next, so it fails closed and rolls
+  back; rerun it after midnight.
+- **Recently Released Movies, obsolete** (`RecentlyReleasedMovies90Days.xsp`):
+  not a managed *widget* playlist — no Home widget references it and it is
+  never written. It remains in the managed backup set so its removal is
+  reversible: provisioning deletes it, and a rollback restores it exactly.

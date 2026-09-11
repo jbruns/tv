@@ -161,6 +161,18 @@ disables a hub with `Skin.Reset(...)`. The literal value `false` is non-empty.
 Multiple profiles remain out of scope; the managed settings apply to the
 primary profile only.
 
+### Commits since the accepted deployment
+
+Live acceptance was performed against `09c784e`, not against any later commit.
+Everything committed since then changes verification and documentation only —
+the live verifier's accepted runtime representations, the split hub
+observations, case-insensitive managed-setting comparison, the transformer's
+root-node canonicalization, the failure-path applied-list handling, and the
+report's informational Next Aired field. Each of those still accepts the exact
+state recorded above, so no redeployment or reacceptance is required. No later
+commit has been deployed to `coreelec-theater`, and none is claimed to have
+been.
+
 ### Idempotence and hashes
 
 8 of 9 managed files byte-identical across deployments. The sole difference is `skin.arctic.fuse.3/settings.xml`, which Kodi modifies at runtime (non-managed settings). In the 2026-09-08 acceptance all 14 managed skin settings then in scope remained correct (`type="string"`, expected values) with no case-insensitive duplicate IDs (224 total settings). After the Next Aired removal the managed subset is 12 settings, verified exact, string-typed, and duplicate-free in the final acceptance (245 total settings).
