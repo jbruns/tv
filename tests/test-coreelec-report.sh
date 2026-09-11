@@ -1083,8 +1083,9 @@ test_report_lists_manual_actions_in_order() {
   assert_contains "${actions}" "manual_action.4=NextPVR" "NextPVR setup is listed" || return 1
   assert_contains "${actions}" "manual_action.5=Home Assistant Weather" \
     "Home Assistant Weather setup is listed" || return 1
-  assert_contains "${actions}" "manual_action.6=Optional" \
-    "optional Trakt/TMDb authorization is listed" || return 1
+  assert_contains "${actions}" \
+    "manual_action.6=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class." \
+    "the Next Aired resolution is accurate" || return 1
 
   # Configured integrations drop out; the always-manual ones remain.
   write_configured_config "${config}"
@@ -1097,7 +1098,7 @@ test_report_lists_manual_actions_in_order() {
   assert_not_contains "${actions}" "=NextPVR" "configured NextPVR needs no manual step" || return 1
   assert_not_contains "${actions}" "=Home Assistant Weather" \
     "configured weather needs no manual step" || return 1
-  assert_contains "${actions}" "manual_action.3=Optional" \
+  assert_contains "${actions}" "manual_action.3=Next Aired is disabled" \
     "manual action numbering stays contiguous" || return 1
 }
 
@@ -2089,8 +2090,7 @@ make_arctic_fuse_fixture_root() {
     <setting id="HomeSwitcher.1102.Icon">special://home/addons/plugin.video.youtube/resources/media/icon.png</setting>
     <setting id="HomeSwitcher.1102.Shortcut.Path">plugin://plugin.video.youtube/</setting>
     <setting id="HomeSwitcher.1102.Shortcut.Target">videos</setting>
-    <setting id="HomeSwitcher.1106.Toggle">true</setting>
-    <setting id="HomeSwitcher.1106.UpNextMode">library_nextaired</setting>
+    <setting id="HomeSwitcher.1106.Toggle">false</setting>
     <setting id="HomeSwitcher.1107.Toggle">true</setting>
     <setting id="HomeSwitcher.1108.Toggle">true</setting>
     <setting id="optionstiles.02.include">Settings</setting>
@@ -2227,6 +2227,83 @@ test_probe_malformed_skin_xml_emits_zero() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.hubs_configured=0" "malformed XML → hubs 0" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" "malformed XML → plex 0" || return 1
+}
+
+test_probe_enabled_next_aired_toggle_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  python3 - "${skin_file}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+for node in tree.getroot().iter("setting"):
+    if node.get("id") == "HomeSwitcher.1106.Toggle":
+        node.text = "true"
+        break
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "enabled Next Aired toggle → hubs 0" || return 1
+}
+
+test_probe_duplicate_next_aired_toggle_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  python3 - "${skin_file}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+ET.SubElement(
+    tree.getroot(),
+    "setting",
+    {"id": "homeswitcher.1106.toggle"},
+).text = "true"
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "duplicate Next Aired toggle → hubs 0" || return 1
+}
+
+test_probe_stale_next_aired_mode_emits_zero() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  python3 - "${skin_file}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+ET.SubElement(
+    tree.getroot(),
+    "setting",
+    {"id": "HomeSwitcher.1106.UpNextMode"},
+).text = "library_nextaired"
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "stale Next Aired mode → hubs 0" || return 1
 }
 
 test_probe_malformed_json_emits_zero_for_home_widgets() {
@@ -2827,6 +2904,9 @@ run_all_tests \
   test_probe_arctic_fuse_valid_baseline_emits_all_ones \
   test_probe_missing_skin_settings_emits_zero \
   test_probe_malformed_skin_xml_emits_zero \
+  test_probe_enabled_next_aired_toggle_emits_zero \
+  test_probe_duplicate_next_aired_toggle_emits_zero \
+  test_probe_stale_next_aired_mode_emits_zero \
   test_probe_malformed_json_emits_zero_for_home_widgets \
   test_probe_malformed_json_emits_zero_for_power_menu \
   test_probe_missing_home_widgets_file_emits_zero \

@@ -49,13 +49,21 @@ After the T2/R2 extender is installed and the television reports an active eARC 
 
 **Date-relative XSP defect**: Library contains 79 qualifying episodes (30-day) and 3 qualifying movies (90-day), but Kodi 21.3's `CSmartPlaylistDirectory` generates invalid SQL: `WHERE (()) AND (())`. Both JSON-RPC and internal `CGUIMediaWindow::GetDirectory` fail. Home widget tabs 503/504 hidden due to 0 items. Requires provisioner XSP rule fix.
 
-### Pending corrected acceptance expectations
+### Corrected playlist acceptance — 2026-09-11
 
-The next acceptance run after the provisioner XSP fix must demonstrate:
+The corrected playlists passed live acceptance on `coreelec-theater`:
 
-- `RecentlyAiredEpisodes30Days`: loads successfully and returns current candidates
-- `RecentlyReleasedMoviesCurrentYear`: loads successfully and returns current-year candidates
-- `RecentlyReleasedMovies90Days`: absent
+- `RecentlyAiredEpisodes30Days.xsp` returned 50 episodes dated 2026-08-23
+  through 2026-09-09, all within the rolling 30-day window with no future
+  dates.
+- `RecentlyReleasedMoviesCurrentYear.xsp` returned 36 movies, all with year
+  2026, matching the device year.
+- `RecentlyReleasedMovies90Days.xsp` was absent.
+
+Reports `coreelec-theater-20260911T164651Z.txt` and
+`coreelec-theater-20260911T165411Z.txt` both recorded committed, passing
+transactions. The second deployment confirmed the corrected playlist files
+were byte-identical.
 
 ### Application launch results
 
@@ -72,13 +80,25 @@ The next acceptance run after the provisioner XSP fix must demonstrate:
 | `screenshot-hub-home-v2.png` | Home/Videos hub |
 | `screenshot-hub-plex-v2.png` | Plex hub (11101) |
 | `screenshot-hub-youtube-v2.png` | YouTube hub (11102) |
-| `screenshot-hub-nextaired-v2.png` | Next Aired hub (11106) |
+| `screenshot-hub-nextaired-v2.png` | Historical Next Aired hub (11106); entering it exposed the Trakt OAuth defect |
 | `screenshot-hub-pvr-v2.png` | PVR hub (11107) |
 | `screenshot-hub-addons-v2.png` | Addons hub (11108) |
 
-### Hub navigation
+### Historical pre-correction hub navigation
 
 All 6 HomeSwitcher hubs verified via Right-navigation: Home (10000) → Plex (11101) → YouTube (11102) → Next Aired (11106) → PVR (11107) → Addons (11108). `Skin.String()` toggle mechanism works correctly with `type="string"` settings.
+
+Entering Next Aired during the 2026-09-11 re-acceptance raised
+`Unauthorised 401 Error TraktAPI Token`. Investigation confirmed TMDb Helper
+6.17.1's `library_nextaired` route still requires end-user Trakt OAuth. A
+disposable live test of `library_airingnext` then hit OMDb timeouts and TMDb
+Helper thread exhaustion (`can't start new thread`).
+
+The approved final resolution is to disable Next Aired and remove its stale
+mode setting. After redeployment, the managed order after Home is Plex →
+YouTube → PVR → Add-ons, with `HomeSwitcher.1106.Toggle=false` and no
+`HomeSwitcher.1106.UpNextMode`. Live confirmation of that final state remains
+pending redeployment of the corrected provisioner.
 
 ### Idempotence and hashes
 

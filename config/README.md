@@ -312,17 +312,22 @@ record per-device backup locations and installed values in the appropriate
 The following notes clarify how the managed Arctic Fuse 3 baseline interacts
 with its widget and metadata sources. They are not operator actions.
 
-- **Next Aired** (`library_nextaired`) is an Arctic Fuse 3 built-in hub type,
-  not a separate add-on. It reads the local Emby-synced Kodi library directly;
-  because it uses only the local library, it needs neither a personal Trakt key
-  nor Trakt OAuth — no external network call or additional credential is
-  required.
+- **Next Aired is disabled**: provisioning writes
+  `HomeSwitcher.1106.Toggle=false` and removes
+  `HomeSwitcher.1106.UpNextMode`. TMDb Helper 6.17.1's
+  `library_nextaired` route uses Trakt's public calendar but still requires an
+  end-user Trakt OAuth token, producing `Unauthorised 401 Error TraktAPI Token`
+  without one. The bundled Trakt client ID is valid; no missing API key can
+  correct this.
+- **No automated fallback**: the `library_airingnext` route uses local
+  Kodi/TMDb data, but disposable live testing on this device class hit OMDb
+  timeouts and TMDb Helper thread-fanout exhaustion (`can't start new thread`).
+  It is not reliable enough for the managed baseline.
 - **Trakt terminology**: Trakt labels its application credential the
   `trakt-api-key` HTTP header. That label is intentionally confusing because
-  it refers to an application client key, not a user personal key. The managed
-  baseline uses neither a personal Trakt developer credential nor Trakt OAuth;
-  TMDb Helper's Trakt integration remains an interactive, user-initiated step
-  that is always left manual.
+  it refers to an application client key, not an end-user OAuth token. The
+  managed baseline does not add a Trakt authorization workflow; it disables
+  the feature that would require one.
 - **TMDb Helper** (`plugin.video.themoviedb.helper`): bundles its own
   application TMDb credentials. `OMDB_API_KEY` and `MDBLIST_API_KEY` are the
   only operator-supplied keys; `TMDB_API_KEY` is reserved and rejected from
@@ -336,6 +341,7 @@ with its widget and metadata sources. They are not operator actions.
   widgets are intentionally unmanaged: the provisioner writes the hub entry
   point only, and any widget rows visible in the YouTube hub depend on the
   user's own YouTube account and history within the add-on.
+- **Managed Home order after Home**: Plex, YouTube, PVR, Add-ons.
 - **Recently Aired Shows** (`RecentlyAiredEpisodes30Days.xsp`): rolling
   previous 30 days; future dates excluded; Kodi Omega XSP field: `airdate`.
 - **Recently Released Movies** (`RecentlyReleasedMoviesCurrentYear.xsp`):

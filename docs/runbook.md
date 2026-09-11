@@ -256,7 +256,15 @@ result for the other configured services.
 
 `skin.arctic.fuse.3` is deployed and set active (`lookandfeel.skin`) by the same run, alongside the regional baseline (`videoplayer.adjustrefreshrate`=On start/stop, `videoplayer.usedisplayasclock`=Off) — no separate manual skin-activation step remains. The managed skin settings apply to the **primary profile only**; additional profiles are not touched. Provisioning is authoritative and idempotent: every run converges the managed Home and Power files to the declared baseline, so manual edits to those managed settings will be overwritten.
 
-**Home navigation order** (after the Home entry): Plex · YouTube · Next Aired · PVR · Add-ons. The options tray tile writes `Settings` at position `optionstiles.02.include`.
+**Home navigation order** (after the Home entry): Plex · YouTube · PVR · Add-ons. The options tray tile writes `Settings` at position `optionstiles.02.include`.
+
+**Next Aired is intentionally disabled.** Provisioning converges
+`HomeSwitcher.1106.Toggle=false` and removes
+`HomeSwitcher.1106.UpNextMode`. TMDb Helper 6.17.1's
+`library_nextaired` route still requires end-user Trakt OAuth despite using
+Trakt's public calendar. The alternative `library_airingnext` route was
+disposable-live-tested but suffered OMDb timeouts and per-library thread
+exhaustion on this device class, so it is not an automation-safe replacement.
 
 **Home widgets** (exact order):
 

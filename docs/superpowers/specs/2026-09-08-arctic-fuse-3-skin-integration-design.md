@@ -6,8 +6,8 @@
 
 Extend the existing CoreELEC provisioning transaction so Arctic Fuse 3 is
 fully configured as the shared Kodi interface, including metadata keys,
-supported optional dependencies, Home hubs and widgets, local-library Next
-Aired data, and a CoreELEC-appropriate Power menu.
+supported optional dependencies, Home hubs and widgets, the approved Next
+Aired removal, and a CoreELEC-appropriate Power menu.
 
 The result must be deterministic, idempotent, reversible, secret-safe, and
 verified on the disposable `coreelec-theater` device.
@@ -18,13 +18,12 @@ This work will:
 
 - Require and provision personal OMDb and MDbList API keys for real device
   deployments.
-- Document why Arctic Fuse 3's selected Next Aired mode requires neither a
-  personal Trakt developer credential nor Trakt user authorization.
+- Disable Arctic Fuse 3's Next Aired hub and remove its managed mode setting.
 - Install and enable every add-on listed in Arctic Fuse 3's supported optional
   dependency catalog.
 - Add a first-class Plex Home entry that launches or restores PM4K.
 - Add a first-class YouTube Home entry that opens the YouTube add-on.
-- Enable the Arctic Fuse 3 Next Aired, PVR, and Add-ons Home hubs.
+- Enable the Arctic Fuse 3 PVR and Add-ons Home hubs.
 - Keep Settings available in the native Home options tray.
 - Replace the default Home widgets with the approved local-library widgets.
 - Replace the Arctic Fuse 3 Power menu with the approved CoreELEC actions.
@@ -81,8 +80,30 @@ TMDb Helper bundles its own Trakt OAuth application client credentials. Trakt
 uses the application client ID as the `trakt-api-key` HTTP header, which
 explains the misleading "API key" terminology. User-specific Trakt endpoints
 also require an OAuth access token obtained through an authorization flow.
-Because this design selects `library_nextaired`, neither a personal Trakt
-application credential nor Trakt OAuth authorization is required.
+
+### Binding correction approved 2026-09-11
+
+Live acceptance disproved the original assumption about `library_nextaired`.
+TMDb Helper 6.17.1 implements that route through Trakt's public calendar but
+still enforces end-user Trakt OAuth. Without a user token, it raises
+`Unauthorised 401 Error TraktAPI Token`. The bundled Trakt client ID is valid;
+this is not a missing application API key.
+
+The `library_airingnext` route was disposable-live-tested as an alternative.
+It uses local Kodi/TMDb data, but on `coreelec-theater` it timed out against
+OMDb and TMDb Helper's per-library fanout failed with
+`ParallelThread: RUNTIME ERROR: UNABLE TO SPAWN 82 THREAD 460` and
+`can't start new thread`. This is a device-class reliability problem, not a
+configuration gap, and is not acceptable for automation.
+
+The approved, binding correction is therefore to drop Next Aired:
+
+- `HomeSwitcher.1106.Toggle=false`
+- `HomeSwitcher.1106.UpNextMode` is absent, including removal of stale
+  pre-existing values.
+- Managed navigation after Home is Plex, YouTube, PVR, then Add-ons.
+
+No Trakt OAuth workflow or replacement Next Aired route will be automated.
 
 ### Arctic Fuse 3 Supported Optional Dependencies
 
@@ -193,9 +214,8 @@ The following native Home features will be enabled:
   - `HomeSwitcher.1102.Icon=special://home/addons/plugin.video.youtube/resources/media/icon.png`
   - `HomeSwitcher.1102.Shortcut.Path=plugin://plugin.video.youtube/`
   - `HomeSwitcher.1102.Shortcut.Target=videos`
-- Next Aired: `HomeSwitcher.1106.Toggle=true`
-- Next Aired data mode:
-  `HomeSwitcher.1106.UpNextMode=library_nextaired`
+- Next Aired: `HomeSwitcher.1106.Toggle=false`
+- Next Aired data mode: `HomeSwitcher.1106.UpNextMode` is absent
 - PVR / Live TV: `HomeSwitcher.1107.Toggle=true`
 - Add-ons: `HomeSwitcher.1108.Toggle=true`
 - Settings options-tray tile:
@@ -209,10 +229,10 @@ PVR add-on and observable channel groups for full PVR acceptance.
 No custom top-level Settings hub will be created.
 
 The fixed Arctic Fuse Home control order places custom slots `1101` and `1102`
-immediately after Home and before the remaining enabled native hubs. Selecting
-Plex will launch PM4K directly rather than open an empty custom hub window.
-Selecting YouTube will open its root plugin directory in Kodi's Videos window.
-Neither custom entry will have widgets, spotlight content, or a submenu.
+immediately after Home, followed by PVR and Add-ons. Selecting Plex will
+launch PM4K directly rather than open an empty custom hub window. Selecting
+YouTube will open its root plugin directory in Kodi's Videos window. Neither
+custom entry will have widgets, spotlight content, or a submenu.
 
 ### Home Widget Order
 
@@ -425,8 +445,8 @@ The remote observation step will verify:
   empty target, and position after Home.
 - The YouTube custom entry has the exact approved label, icon, plugin path,
   Videos target, and position after Plex.
-- Next Aired, PVR, and Add-ons toggles are enabled.
-- Next Aired mode is `library_nextaired`.
+- Next Aired is disabled, and its mode setting is absent.
+- PVR and Add-ons toggles are enabled.
 - The Settings options-tray entry is enabled.
 - The Home widget node has the exact labels, paths, targets, order, and stable
   GUIDs.
@@ -479,6 +499,7 @@ Cover:
 - Exact Home and Power JSON.
 - Exact Plex custom-slot settings, including an empty shortcut target.
 - Exact YouTube custom-slot settings, including its Videos target.
+- Next Aired toggle disabled and stale mode setting removed.
 - Exact playlist XML.
 - Stable GUIDs and deterministic output.
 - Idempotent second runs.
@@ -520,11 +541,13 @@ Acceptance will:
    exposing an intermediate empty hub.
 9. Select the YouTube Home entry and confirm it opens the add-on's root
    directory in Kodi's Videos window.
-10. Open or query each playlist against the Emby-synced Kodi library and prove
+10. Confirm Next Aired is absent and navigation proceeds from YouTube to PVR
+    to Add-ons.
+11. Open or query each playlist against the Emby-synced Kodi library and prove
    that every returned item satisfies its type and date/progress rules.
-11. Capture and visually inspect the Home and Power screens for labels, order,
+12. Capture and visually inspect the Home and Power screens for labels, order,
    and availability.
-12. Run the provisioner a second time and prove idempotent convergence.
+13. Run the provisioner a second time and prove idempotent convergence.
 
 Acceptance will not select Power off, Suspend, Reboot, Restart Kodi, or the
 shutdown timer from the rendered menu. Their action strings will be verified
@@ -542,7 +565,9 @@ Update the directly related documentation to describe:
 - Required OMDb and MDbList environment variables.
 - The difference between Trakt's application client ID header and end-user
   OAuth authorization.
-- Why local-library Next Aired needs neither.
+- Why the installed TMDb Helper's `library_nextaired` route requires end-user
+  Trakt OAuth, why `library_airingnext` is unreliable on this device class,
+  and why Next Aired is disabled.
 - The installed optional supported dependencies.
 - The launch-only Plex Home entry and why PM4K widgets are not configured.
 - The direct YouTube Home entry and the decision not to manage YouTube widgets.

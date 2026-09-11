@@ -684,8 +684,8 @@ def main(argv):
                      "plugin://plugin.video.youtube/")
     set_skin_setting("HomeSwitcher.1102.Shortcut.Target", "videos")
 
-    set_skin_setting("HomeSwitcher.1106.Toggle", "true")
-    set_skin_setting("HomeSwitcher.1106.UpNextMode", "library_nextaired")
+    set_skin_setting("HomeSwitcher.1106.Toggle", "false")
+    remove_skin_setting("HomeSwitcher.1106.UpNextMode")
     set_skin_setting("HomeSwitcher.1107.Toggle", "true")
     set_skin_setting("HomeSwitcher.1108.Toggle", "true")
     set_skin_setting("optionstiles.02.include", "Settings")
@@ -2217,10 +2217,18 @@ def main(argv):
 
     skin_values = xml_setting_values(skin_settings_path)
 
-    # Hub toggles and UpNext mode
+    # Hub toggles. Next Aired is disabled, canonical, and has no mode.
+    next_aired_toggles = [
+        (key, value)
+        for key, value in skin_values.items()
+        if key.casefold() == "homeswitcher.1106.toggle"
+    ]
     hubs_ok = (
-        skin_values.get("HomeSwitcher.1106.Toggle") == "true"
-        and skin_values.get("HomeSwitcher.1106.UpNextMode") == "library_nextaired"
+        next_aired_toggles == [("HomeSwitcher.1106.Toggle", "false")]
+        and not any(
+            key.casefold() == "homeswitcher.1106.upnextmode"
+            for key in skin_values
+        )
         and skin_values.get("HomeSwitcher.1107.Toggle") == "true"
         and skin_values.get("HomeSwitcher.1108.Toggle") == "true"
     )
@@ -3240,7 +3248,7 @@ coreelec_report_manual_actions() {
   fi
   if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
     number=$((number + 1))
-    printf 'manual_action.%s=Optional: authorize a TMDb user account in TMDb Helper if desired; local-library Next Aired does not require Trakt authorization.\n' "${number}"
+    printf 'manual_action.%s=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class.\n' "${number}"
   fi
   printf 'manual_actions=%s\n' "${number}"
 }
