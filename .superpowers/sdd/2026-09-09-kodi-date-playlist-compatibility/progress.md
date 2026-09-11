@@ -211,3 +211,10 @@ applied-list rebuild, whose output still read "the device was restored to its
 pre-deployment state". GREEN: settings 34/34, report 95/95, artifacts 53/53;
 all five suites 243/243 with ratings keys present and again with both unset;
 keyless `--check-config` passed and `--check-artifacts` validated 42/42.
+Task 6: whole-branch review found no Critical defects and returned READY after
+one final fix wave; the scoped re-review passed with no new Critical or
+Important breakage.
+Task 6: fresh controller verification passed all five suites 243/243 with
+ratings keys present and again with both unset; `--check-config`, shell syntax,
+`git diff --check`, and all 42 checksum-inspected artifacts passed.
+Task 6: complete (commits 821abb8..3c710f1, final review clean).
