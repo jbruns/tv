@@ -103,16 +103,21 @@ assert_policy_precedence_fixture() {
 
 assert_ordered_policy_template() {
   local body="$1"
-  assert_contains "${body}" "{% set stop_when_display_off = true %}" "policy literal must be present"
+  if ! printf '%s\n' "${body}" | grep -Fq "{% set stop_when_display_off = true %}" \
+    && ! printf '%s\n' "${body}" | grep -Fq "stop_when_display_off: true"; then
+    printf 'policy literal must be present in Jinja or YAML variable form\n' >&2
+    return 1
+  fi
+  assert_contains "${body}" "{% set sony_off_seconds =" "Sony off duration must be computed"
   assert_contains "${body}" "{% if not stop_when_display_off %}" "policy opt-out condition"
   assert_contains "${body}" "{% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}" "keep-running condition"
-  assert_contains "${body}" "{% elif is_state('media_player.sony_xr_65a90j', 'off')" "Sony off condition"
+  assert_contains "${body}" "{% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}" "Sony off condition requires sixty continuous seconds"
   assert_contains "${body}" "{% else %}" "running fallback for unknown/unavailable/non-off Sony"
   assert_line_order "${body}" "{% if not stop_when_display_off %}" "{% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}" \
     "policy opt-out precedes keep-running"
-  assert_line_order "${body}" "{% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}" "{% elif is_state('media_player.sony_xr_65a90j', 'off')" \
+  assert_line_order "${body}" "{% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}" "{% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}" \
     "keep-running precedes Sony off"
-  assert_line_order "${body}" "{% elif is_state('media_player.sony_xr_65a90j', 'off')" "{% else %}" \
+  assert_line_order "${body}" "{% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}" "{% else %}" \
     "Sony off precedes running fallback"
 }
 
@@ -177,6 +182,16 @@ test_package_contains_only_static_start_stop_status_ssh_commands() {
   assert_eq "3" "${command_count}" "only start/stop/status lifecycle shell commands"
 }
 
+test_ssh_commands_have_total_fifteen_second_deadline() {
+  assert_file_exists "${PACKAGE_FILE}"
+  local shell_section
+  shell_section="$(section_text shell_command "${PACKAGE_FILE}")"
+  assert_occurrences "${shell_section}" "timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf" "3" \
+    "each restricted SSH command must have a total 15-second deadline"
+  assert_line_order "${shell_section}" "timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf" "ugoos-theater-lifecycle start" \
+    "start timeout wraps SSH before remote command"
+}
+
 test_ssh_commands_require_batch_mode_strict_host_key_and_persistent_paths() {
   assert_file_exists "${SSH_CONFIG_FILE}"
   local body
@@ -201,29 +216,56 @@ test_ssh_commands_require_batch_mode_strict_host_key_and_persistent_paths() {
 
 test_unknown_and_unavailable_sony_states_demand_running() {
   assert_policy_precedence_fixture
-  local body
+  local body sensor_section reconcile_script
   body="$(package_body)"
-  assert_ordered_policy_template "${body}"
+  sensor_section="$(section_text template "${PACKAGE_FILE}")"
+  reconcile_script="$(entity_block "${PACKAGE_FILE}" "ugoos_theater_reconcile_kodi")"
+  assert_ordered_policy_template "${sensor_section}"
+  assert_ordered_policy_template "${reconcile_script}"
   assert_contains "${body}" "not_to: \"off\"" "non-off, unknown, and unavailable Sony states trigger start/reconcile"
 }
 
 test_sony_off_requires_sixty_continuous_seconds() {
   assert_file_exists "${PACKAGE_FILE}"
   assert_policy_precedence_fixture
-  local body
+  local body sensor_section reconcile_script
   body="$(package_body)"
+  sensor_section="$(section_text template "${PACKAGE_FILE}")"
+  reconcile_script="$(entity_block "${PACKAGE_FILE}" "ugoos_theater_reconcile_kodi")"
   assert_contains "${body}" "to: \"off\"" "Sony off trigger exists"
   assert_occurrences "${body}" "for: \"00:01:00\"" "1" "state trigger uses exactly one continuous 60-second off interval"
   assert_contains "${body}" "delay: \"00:01:00\"" "startup off path waits a fresh 60 seconds"
-  assert_contains "${body}" "sony_off_seconds >= 60" "desired sensor exposes 60-second stop threshold"
+  assert_contains "${sensor_section}" "sony_off_seconds >= 60" "desired sensor exposes 60-second stop threshold"
+  assert_contains "${reconcile_script}" "sony_off_seconds >= 60" "reconciler enforces 60-second stop threshold"
 }
 
 test_keep_running_and_policy_opt_out_precede_sony_off() {
   assert_file_exists "${PACKAGE_FILE}"
-  local body
+  local sensor_section reconcile_script
+  sensor_section="$(section_text template "${PACKAGE_FILE}")"
+  reconcile_script="$(entity_block "${PACKAGE_FILE}" "ugoos_theater_reconcile_kodi")"
   body="$(package_body)"
   assert_policy_precedence_fixture
-  assert_ordered_policy_template "${body}"
+  assert_ordered_policy_template "${sensor_section}"
+  assert_ordered_policy_template "${reconcile_script}"
+}
+
+test_reconciler_policy_matches_desired_state_sensor() {
+  assert_file_exists "${PACKAGE_FILE}"
+  local sensor_section reconcile_script
+  sensor_section="$(section_text template "${PACKAGE_FILE}")"
+  reconcile_script="$(entity_block "${PACKAGE_FILE}" "ugoos_theater_reconcile_kodi")"
+  for expected in \
+    "{% set sony_off_seconds =" \
+    "{% if not stop_when_display_off %}" \
+    "{% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}" \
+    "{% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}" \
+    "{% else %}"; do
+    assert_contains "${sensor_section}" "${expected}" "sensor contains policy line ${expected}"
+    assert_contains "${reconcile_script}" "${expected}" "reconciler contains policy line ${expected}"
+  done
+  assert_contains "${sensor_section}" "{% set stop_when_display_off = true %}" "sensor contains policy literal"
+  assert_contains "${reconcile_script}" "stop_when_display_off: true" "reconciler contains policy literal"
 }
 
 test_idle_requires_kodi_idle_duration_and_fresh_input_idle() {
@@ -260,6 +302,14 @@ test_idle_probe_calls_exact_kodi_boolean() {
   assert_contains "${body}" "event_type: kodi_call_method_result" "Kodi call result event consumed"
   assert_contains "${body}" "trigger.event.data.method == 'XBMC.GetInfoBooleans'" "event method match required"
   assert_contains "${body}" "trigger.event.data.booleans == [expected_boolean]" "event boolean list exact match required"
+}
+
+test_start_readiness_rejects_unknown_kodi_state() {
+  assert_file_exists "${PACKAGE_FILE}"
+  local reconcile_script
+  reconcile_script="$(entity_block "${PACKAGE_FILE}" "ugoos_theater_reconcile_kodi")"
+  assert_contains "${reconcile_script}" "wait_template: \"{{ states('media_player.kodi_theater') not in ['off', 'unknown', 'unavailable'] }}\"" \
+    "start readiness must wait for Kodi to leave off, unknown, and unavailable"
 }
 
 test_idle_evidence_expires_after_thirty_seconds() {
@@ -329,13 +379,16 @@ run_all_tests \
   test_package_defaults_keep_running_override_to_off \
   test_package_defaults_idle_timeout_to_thirty_minutes \
   test_package_contains_only_static_start_stop_status_ssh_commands \
+  test_ssh_commands_have_total_fifteen_second_deadline \
   test_ssh_commands_require_batch_mode_strict_host_key_and_persistent_paths \
   test_unknown_and_unavailable_sony_states_demand_running \
   test_sony_off_requires_sixty_continuous_seconds \
   test_keep_running_and_policy_opt_out_precede_sony_off \
+  test_reconciler_policy_matches_desired_state_sensor \
   test_idle_requires_kodi_idle_duration_and_fresh_input_idle \
   test_playing_and_paused_do_not_trigger_idle_poweroff \
   test_idle_probe_calls_exact_kodi_boolean \
+  test_start_readiness_rejects_unknown_kodi_state \
   test_idle_evidence_expires_after_thirty_seconds \
   test_idle_powers_off_sony_before_normal_kodi_stop_flow \
   test_package_has_no_suspend_shutdown_reboot_wol_or_toggle_command \

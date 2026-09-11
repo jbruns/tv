@@ -50,13 +50,13 @@ input_text:
 
 shell_command:
   ugoos_theater_kodi_start: >-
-    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
     ugoos-theater-lifecycle start
   ugoos_theater_kodi_stop: >-
-    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
     ugoos-theater-lifecycle stop
   ugoos_theater_kodi_status: >-
-    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
     ugoos-theater-lifecycle status
 
 template:
@@ -85,11 +85,12 @@ script:
     variables:
       stop_when_display_off: true
       desired_state: >-
+        {% set sony_off_seconds = as_timestamp(now()) - as_timestamp(states.media_player.sony_xr_65a90j.last_changed, as_timestamp(now())) %}
         {% if not stop_when_display_off %}
           running
         {% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}
           running
-        {% elif is_state('media_player.sony_xr_65a90j', 'off') %}
+        {% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}
           stopped
         {% else %}
           running
@@ -238,7 +239,7 @@ script:
                           title: Theater Kodi lifecycle start invalid
                           message: "{{ ('Kodi lifecycle start returned ' ~ (start_stdout or 'empty output') ~ ': ' ~ (start_stderr or 'no stderr')) | truncate(255, True, '') }}"
                       - stop: start invalid
-              - wait_template: "{{ states('media_player.kodi_theater') not in ['off', 'unavailable'] }}"
+              - wait_template: "{{ states('media_player.kodi_theater') not in ['off', 'unknown', 'unavailable'] }}"
                 timeout: "00:01:30"
                 continue_on_timeout: true
               - choose:
