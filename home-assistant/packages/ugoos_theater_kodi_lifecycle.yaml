@@ -1,0 +1,674 @@
+# Theater Ugoos Kodi lifecycle package.
+# CoreELEC DNS name: ugoos-theater
+# Home Assistant SSH identity: /config/.ssh/ugoos_kodi_lifecycle_ed25519
+# Home Assistant known hosts: /config/.ssh/known_hosts
+
+input_boolean:
+  ugoos_theater_keep_kodi_running:
+    name: Theater - Keep Kodi running
+  ugoos_theater_host_reachable:
+    name: Theater - Ugoos host reachable
+    initial: false
+  ugoos_theater_idle_poweroff_sent:
+    name: Theater - Idle power-off sent
+    initial: false
+  ugoos_theater_input_idle:
+    name: Theater - Kodi input idle
+    initial: false
+
+input_number:
+  ugoos_theater_idle_timeout_minutes:
+    name: Theater - Kodi idle timeout
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: min
+    mode: box
+    initial: 30
+
+input_datetime:
+  ugoos_theater_idle_probe_updated:
+    name: Theater - Kodi idle probe updated
+    has_date: true
+    has_time: true
+  ugoos_theater_last_reconciliation:
+    name: Theater - Last Kodi reconciliation
+    has_date: true
+    has_time: true
+
+input_text:
+  ugoos_theater_kodi_lifecycle_state:
+    name: Theater - Kodi lifecycle state
+    initial: running
+    max: 16
+  ugoos_theater_last_lifecycle_command:
+    name: Theater - Last Kodi lifecycle command
+    max: 16
+  ugoos_theater_last_lifecycle_error:
+    name: Theater - Last Kodi lifecycle error
+    max: 255
+
+shell_command:
+  ugoos_theater_kodi_start: >-
+    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    ugoos-theater-lifecycle start
+  ugoos_theater_kodi_stop: >-
+    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    ugoos-theater-lifecycle stop
+  ugoos_theater_kodi_status: >-
+    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    ugoos-theater-lifecycle status
+
+template:
+  - sensor:
+      - name: Theater - Desired Kodi state
+        unique_id: ugoos_theater_desired_kodi_state
+        default_entity_id: sensor.ugoos_theater_desired_kodi_state
+        state: >-
+          {% set stop_when_display_off = true %}
+          {% set sony_off_seconds = as_timestamp(now()) - as_timestamp(states.media_player.sony_xr_65a90j.last_changed, as_timestamp(now())) %}
+          {% if not stop_when_display_off %}
+            running
+          {% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}
+            running
+          {% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}
+            stopped
+          {% else %}
+            running
+          {% endif %}
+
+script:
+  ugoos_theater_reconcile_kodi:
+    alias: Theater - Reconcile Kodi lifecycle
+    mode: queued
+    max_exceeded: silent
+    variables:
+      stop_when_display_off: true
+      desired_state: >-
+        {% if not stop_when_display_off %}
+          running
+        {% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}
+          running
+        {% elif is_state('media_player.sony_xr_65a90j', 'off') %}
+          stopped
+        {% else %}
+          running
+        {% endif %}
+    sequence:
+      - action: shell_command.ugoos_theater_kodi_status
+        response_variable: lifecycle_status
+      - variables:
+          status_stdout: "{{ lifecycle_status.stdout | default('') | trim }}"
+          status_stderr: "{{ lifecycle_status.stderr | default('') | regex_replace('/config/\\.ssh/[^[:space:]]+', '[ssh-path]') | truncate(220, True, '') }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ lifecycle_status.returncode | int(-1) != 0 }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.ugoos_theater_host_reachable
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_error
+                data:
+                  value: "{{ ('status transport failure: ' ~ (status_stderr or 'no stderr')) | truncate(255, True, '') }}"
+              - action: persistent_notification.create
+                data:
+                  notification_id: ugoos_theater_kodi_lifecycle_status
+                  title: Theater Kodi lifecycle status failed
+                  message: "{{ ('Kodi lifecycle status failed: ' ~ (status_stderr or 'no stderr')) | truncate(255, True, '') }}"
+              - stop: status transport failure
+          - conditions:
+              - condition: template
+                value_template: "{{ status_stdout not in ['running', 'stopped', 'failed'] }}"
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.ugoos_theater_host_reachable
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_command
+                data:
+                  value: status
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_error
+                data:
+                  value: "{{ ('status invalid state: ' ~ status_stdout) | truncate(255, True, '') }}"
+              - action: persistent_notification.create
+                data:
+                  notification_id: ugoos_theater_kodi_lifecycle_status
+                  title: Theater Kodi lifecycle status invalid
+                  message: "{{ ('Kodi lifecycle status returned ' ~ (status_stdout or 'empty output')) | truncate(255, True, '') }}"
+              - stop: status invalid
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.ugoos_theater_host_reachable
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.ugoos_theater_kodi_lifecycle_state
+        data:
+          value: "{{ status_stdout }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.ugoos_theater_last_lifecycle_command
+        data:
+          value: status
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.ugoos_theater_last_reconciliation
+        data:
+          datetime: "{{ now().isoformat() }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.ugoos_theater_last_lifecycle_error
+        data:
+          value: ""
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: ugoos_theater_kodi_lifecycle_status
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ status_stdout == 'failed' }}"
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_error
+                data:
+                  value: "{{ ('status returned failed: ' ~ (status_stderr or 'kodi.service failed')) | truncate(255, True, '') }}"
+              - action: persistent_notification.create
+                data:
+                  notification_id: ugoos_theater_kodi_lifecycle_status
+                  title: Theater Kodi lifecycle status failed
+                  message: "{{ ('Kodi lifecycle status returned failed: ' ~ (status_stderr or 'kodi.service failed')) | truncate(255, True, '') }}"
+              - stop: status failed
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ desired_state | trim == 'running' and status_stdout != 'running' }}"
+            sequence:
+              - action: shell_command.ugoos_theater_kodi_start
+                response_variable: lifecycle_start
+              - variables:
+                  start_stdout: "{{ lifecycle_start.stdout | default('') | trim }}"
+                  start_stderr: "{{ lifecycle_start.stderr | default('') | regex_replace('/config/\\.ssh/[^[:space:]]+', '[ssh-path]') | truncate(220, True, '') }}"
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ lifecycle_start.returncode | int(-1) != 0 }}"
+                    sequence:
+                      - action: input_boolean.turn_off
+                        target:
+                          entity_id: input_boolean.ugoos_theater_host_reachable
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.ugoos_theater_last_lifecycle_error
+                        data:
+                          value: "{{ ('start transport failure: ' ~ (start_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: ugoos_theater_kodi_lifecycle_start
+                          title: Theater Kodi lifecycle start failed
+                          message: "{{ ('Kodi lifecycle start failed: ' ~ (start_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - stop: start transport failure
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ start_stdout != 'running' }}"
+                    sequence:
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ start_stdout in ['running', 'stopped', 'failed'] }}"
+                            sequence:
+                              - action: input_text.set_value
+                                target:
+                                  entity_id: input_text.ugoos_theater_kodi_lifecycle_state
+                                data:
+                                  value: "{{ start_stdout }}"
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.ugoos_theater_last_lifecycle_error
+                        data:
+                          value: "{{ ('start invalid state: ' ~ (start_stdout or 'empty output') ~ ': ' ~ (start_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: ugoos_theater_kodi_lifecycle_start
+                          title: Theater Kodi lifecycle start invalid
+                          message: "{{ ('Kodi lifecycle start returned ' ~ (start_stdout or 'empty output') ~ ': ' ~ (start_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - stop: start invalid
+              - wait_template: "{{ states('media_player.kodi_theater') not in ['off', 'unavailable'] }}"
+                timeout: "00:01:30"
+                continue_on_timeout: true
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ not wait.completed }}"
+                    sequence:
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.ugoos_theater_last_lifecycle_error
+                        data:
+                          value: start timeout waiting for Kodi entity
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: ugoos_theater_kodi_lifecycle_start
+                          title: Theater Kodi lifecycle start timed out
+                          message: Kodi lifecycle start succeeded, but the Kodi entity did not become available within 90 seconds.
+                      - stop: start timeout
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.ugoos_theater_host_reachable
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_kodi_lifecycle_state
+                data:
+                  value: running
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_command
+                data:
+                  value: start
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.ugoos_theater_last_reconciliation
+                data:
+                  datetime: "{{ now().isoformat() }}"
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_error
+                data:
+                  value: ""
+              - action: persistent_notification.dismiss
+                data:
+                  notification_id: ugoos_theater_kodi_lifecycle_start
+          - conditions:
+              - condition: template
+                value_template: "{{ desired_state | trim == 'stopped' and status_stdout != 'stopped' }}"
+            sequence:
+              - action: shell_command.ugoos_theater_kodi_stop
+                response_variable: lifecycle_stop
+              - variables:
+                  stop_stdout: "{{ lifecycle_stop.stdout | default('') | trim }}"
+                  stop_stderr: "{{ lifecycle_stop.stderr | default('') | regex_replace('/config/\\.ssh/[^[:space:]]+', '[ssh-path]') | truncate(220, True, '') }}"
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ lifecycle_stop.returncode | int(-1) != 0 }}"
+                    sequence:
+                      - action: input_boolean.turn_off
+                        target:
+                          entity_id: input_boolean.ugoos_theater_host_reachable
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.ugoos_theater_last_lifecycle_error
+                        data:
+                          value: "{{ ('stop transport failure: ' ~ (stop_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: ugoos_theater_kodi_lifecycle_stop
+                          title: Theater Kodi lifecycle stop failed
+                          message: "{{ ('Kodi lifecycle stop failed: ' ~ (stop_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - stop: stop transport failure
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ stop_stdout != 'stopped' }}"
+                    sequence:
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: "{{ stop_stdout in ['running', 'stopped', 'failed'] }}"
+                            sequence:
+                              - action: input_text.set_value
+                                target:
+                                  entity_id: input_text.ugoos_theater_kodi_lifecycle_state
+                                data:
+                                  value: "{{ stop_stdout }}"
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.ugoos_theater_last_lifecycle_error
+                        data:
+                          value: "{{ ('stop invalid state: ' ~ (stop_stdout or 'empty output') ~ ': ' ~ (stop_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: ugoos_theater_kodi_lifecycle_stop
+                          title: Theater Kodi lifecycle stop invalid
+                          message: "{{ ('Kodi lifecycle stop returned ' ~ (stop_stdout or 'empty output') ~ ': ' ~ (stop_stderr or 'no stderr')) | truncate(255, True, '') }}"
+                      - stop: stop invalid
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.ugoos_theater_host_reachable
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_kodi_lifecycle_state
+                data:
+                  value: stopped
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_command
+                data:
+                  value: stop
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.ugoos_theater_last_reconciliation
+                data:
+                  datetime: "{{ now().isoformat() }}"
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_error
+                data:
+                  value: ""
+              - action: persistent_notification.dismiss
+                data:
+                  notification_id: ugoos_theater_kodi_lifecycle_stop
+
+  ugoos_theater_power_off_idle_sony:
+    alias: Theater - Power off idle Sony
+    mode: single
+    max_exceeded: silent
+    sequence:
+      - condition: template
+        value_template: >-
+          {% set idle_seconds =
+            states('input_number.ugoos_theater_idle_timeout_minutes') | int(30) * 60 %}
+          {{ is_state('media_player.kodi_theater', 'idle')
+          and as_timestamp(now()) - as_timestamp(
+                states.media_player.kodi_theater.last_changed
+              ) >= idle_seconds
+          and is_state('input_boolean.ugoos_theater_input_idle', 'on')
+          and as_timestamp(now()) - as_timestamp(
+                states('input_datetime.ugoos_theater_idle_probe_updated')
+              ) <= 30
+          and is_state('input_boolean.ugoos_theater_idle_poweroff_sent', 'off') }}
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.ugoos_theater_idle_poweroff_sent
+      - action: media_player.turn_off
+        target:
+          entity_id: media_player.sony_xr_65a90j
+      - wait_template: "{{ is_state('media_player.sony_xr_65a90j', 'off') }}"
+        timeout: "00:00:30"
+        continue_on_timeout: true
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ wait.completed }}"
+            sequence:
+              - action: persistent_notification.dismiss
+                data:
+                  notification_id: ugoos_theater_kodi_idle_poweroff
+        default:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.ugoos_theater_idle_poweroff_sent
+          - action: persistent_notification.create
+            data:
+              notification_id: ugoos_theater_kodi_idle_poweroff
+              title: Theater Sony idle power-off failed
+              message: Theater Sony did not report off within 30 seconds after an idle power-off request; Kodi was left running.
+
+automation:
+  - id: ugoos_theater_kodi_start_for_sony
+    alias: Theater - Start Kodi for Sony activity
+    triggers:
+      - trigger: state
+        entity_id: media_player.sony_xr_65a90j
+        not_to: "off"
+    actions:
+      - action: script.ugoos_theater_reconcile_kodi
+
+  - id: ugoos_theater_kodi_stop_for_sony
+    alias: Theater - Stop Kodi for Sony off
+    triggers:
+      - trigger: state
+        entity_id: media_player.sony_xr_65a90j
+        to: "off"
+        for: "00:01:00"
+    actions:
+      - action: script.ugoos_theater_reconcile_kodi
+
+  - id: ugoos_theater_kodi_reconcile_keep_running
+    alias: Theater - Reconcile Kodi for keep-running changes
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.ugoos_theater_keep_kodi_running
+    actions:
+      - action: script.ugoos_theater_reconcile_kodi
+
+  - id: ugoos_theater_kodi_reconcile_on_start
+    alias: Theater - Reconcile Kodi on Home Assistant start
+    triggers:
+      - trigger: homeassistant
+        event: start
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.ugoos_theater_input_idle
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: media_player.sony_xr_65a90j
+                state: "off"
+            sequence:
+              - delay: "00:01:00"
+              - condition: state
+                entity_id: media_player.sony_xr_65a90j
+                state: "off"
+              - action: script.ugoos_theater_reconcile_kodi
+        default:
+          - action: script.ugoos_theater_reconcile_kodi
+
+  - id: ugoos_theater_kodi_status_poll
+    alias: Theater - Poll Kodi lifecycle status
+    triggers:
+      - trigger: time_pattern
+        seconds: "/30"
+    actions:
+      - action: shell_command.ugoos_theater_kodi_status
+        response_variable: lifecycle_status_poll
+      - variables:
+          poll_stdout: "{{ lifecycle_status_poll.stdout | default('') | trim }}"
+          poll_stderr: "{{ lifecycle_status_poll.stderr | default('') | regex_replace('/config/\\.ssh/[^[:space:]]+', '[ssh-path]') | truncate(220, True, '') }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ lifecycle_status_poll.returncode | int(-1) == 0 and poll_stdout in ['running', 'stopped', 'failed'] }}"
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.ugoos_theater_host_reachable
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_kodi_lifecycle_state
+                data:
+                  value: "{{ poll_stdout }}"
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_command
+                data:
+                  value: status
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.ugoos_theater_last_reconciliation
+                data:
+                  datetime: "{{ now().isoformat() }}"
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.ugoos_theater_last_lifecycle_error
+                data:
+                  value: ""
+              - action: persistent_notification.dismiss
+                data:
+                  notification_id: ugoos_theater_kodi_lifecycle_status
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ poll_stdout == 'failed' }}"
+                    sequence:
+                      - action: input_text.set_value
+                        target:
+                          entity_id: input_text.ugoos_theater_last_lifecycle_error
+                        data:
+                          value: "{{ ('status poll returned failed: ' ~ (poll_stderr or 'kodi.service failed')) | truncate(255, True, '') }}"
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: ugoos_theater_kodi_lifecycle_status
+                          title: Theater Kodi lifecycle status poll failed
+                          message: "{{ ('Kodi lifecycle status poll returned failed: ' ~ (poll_stderr or 'kodi.service failed')) | truncate(255, True, '') }}"
+        default:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.ugoos_theater_host_reachable
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.ugoos_theater_last_lifecycle_error
+            data:
+              value: "{{ ('status poll failure: ' ~ (poll_stderr or poll_stdout or 'no stderr')) | truncate(255, True, '') }}"
+          - action: persistent_notification.create
+            data:
+              notification_id: ugoos_theater_kodi_lifecycle_status
+              title: Theater Kodi lifecycle status poll failed
+              message: "{{ ('Kodi lifecycle status poll failed: ' ~ (poll_stderr or poll_stdout or 'no stderr')) | truncate(255, True, '') }}"
+
+  - id: ugoos_theater_kodi_idle_probe
+    alias: Theater - Probe Kodi input idle
+    triggers:
+      - trigger: time_pattern
+        seconds: "/15"
+    conditions:
+      - condition: template
+        value_template: "{{ states('media_player.kodi_theater') not in ['off', 'unknown', 'unavailable'] }}"
+    actions:
+      - action: kodi.call_method
+        target:
+          entity_id: media_player.kodi_theater
+        data:
+          method: XBMC.GetInfoBooleans
+          booleans:
+            - >-
+              System.IdleTime({{
+                states('input_number.ugoos_theater_idle_timeout_minutes') | int(30)
+                * 60
+              }})
+
+  - id: ugoos_theater_kodi_idle_result
+    alias: Theater - Consume Kodi input idle result
+    triggers:
+      - trigger: event
+        event_type: kodi_call_method_result
+    variables:
+      expected_boolean: >-
+        System.IdleTime({{
+          states('input_number.ugoos_theater_idle_timeout_minutes') | int(30)
+          * 60
+        }})
+      result_value: >-
+        {% if trigger.event.data.result is mapping and expected_boolean in trigger.event.data.result %}
+          {{ trigger.event.data.result[expected_boolean] }}
+        {% else %}
+          malformed
+        {% endif %}
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.event.data.entity_id == 'media_player.kodi_theater' }}"
+      - condition: template
+        value_template: "{{ trigger.event.data.method == 'XBMC.GetInfoBooleans' }}"
+      - condition: template
+        value_template: "{{ trigger.event.data.booleans == [expected_boolean] }}"
+    actions:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ result_value | trim | lower == 'true' }}"
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.ugoos_theater_input_idle
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.ugoos_theater_idle_probe_updated
+                data:
+                  datetime: "{{ now().isoformat() }}"
+          - conditions:
+              - condition: template
+                value_template: "{{ result_value | trim | lower == 'false' }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.ugoos_theater_input_idle
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.ugoos_theater_idle_probe_updated
+                data:
+                  datetime: "{{ now().isoformat() }}"
+        default:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.ugoos_theater_input_idle
+          - action: persistent_notification.create
+            data:
+              notification_id: ugoos_theater_kodi_idle_probe
+              title: Theater Kodi idle probe invalid
+              message: Kodi idle probe returned malformed input-idle evidence and the cached idle flag was cleared.
+
+  - id: ugoos_theater_kodi_idle_clear_when_unavailable
+    alias: Theater - Clear stale Kodi input idle
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id: media_player.kodi_theater
+        to:
+          - "off"
+          - unknown
+          - unavailable
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.ugoos_theater_input_idle
+
+  - id: ugoos_theater_kodi_idle_freshness
+    alias: Theater - Expire stale Kodi input idle evidence
+    triggers:
+      - trigger: time_pattern
+        seconds: "/15"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ states('input_datetime.ugoos_theater_idle_probe_updated') in ['unknown', 'unavailable', '']
+          or as_timestamp(now()) - as_timestamp(states('input_datetime.ugoos_theater_idle_probe_updated'), 0) > 30 }}
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.ugoos_theater_input_idle
+
+  - id: ugoos_theater_idle_power_off_sony
+    alias: Theater - Power off Sony after Kodi idle
+    triggers:
+      - trigger: time_pattern
+        seconds: "/15"
+    actions:
+      - action: script.ugoos_theater_power_off_idle_sony
+
+  - id: ugoos_theater_idle_power_off_reset
+    alias: Theater - Reset idle Sony power-off episode
+    triggers:
+      - trigger: state
+        entity_id: media_player.kodi_theater
+        from: idle
+      - trigger: state
+        entity_id: input_boolean.ugoos_theater_input_idle
+        to: "off"
+      - trigger: time_pattern
+        seconds: "/15"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ not is_state('media_player.kodi_theater', 'idle')
+          or is_state('input_boolean.ugoos_theater_input_idle', 'off')
+          or as_timestamp(now()) - as_timestamp(states('input_datetime.ugoos_theater_idle_probe_updated'), 0) > 30 }}
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.ugoos_theater_idle_poweroff_sent

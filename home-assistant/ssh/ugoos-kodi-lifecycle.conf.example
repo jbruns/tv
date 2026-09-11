@@ -1,0 +1,13 @@
+Host ugoos-theater-lifecycle
+  HostName ugoos-theater
+  User root
+  Port 22
+  IdentityFile /config/.ssh/ugoos_kodi_lifecycle_ed25519
+  UserKnownHostsFile /config/.ssh/known_hosts
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking yes
+  ConnectTimeout 12
+  ConnectionAttempts 1
+  RequestTTY no
+  ClearAllForwardings yes
