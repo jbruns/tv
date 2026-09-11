@@ -33,9 +33,14 @@ The existing AVPro `T/R` hardware supports ARC, not eARC. It can be used tempora
 
 1. Prepare removable media with the [shared Ugoos guide](../../docs/devices/ugoos-am6b-plus/coreelec-21.3.md).
 2. Wire the room as above and apply the [Sony settings](devices/sony-xr-65a90j.md), [Denon connection](devices/denon-avr-x4700h.md), and [AVPro stage requirements](devices/avpro-ac-ex40-444-plus.md).
-3. Continue the shared Ugoos first boot and wizard, then apply the [theater Ugoos choices](devices/ugoos-am6b-plus.md).
-4. Complete the shared Ugoos checklist and the room checks below before considering eMMC migration.
-5. Back up and continue the shared runbook's service setup sequence.
+3. Complete the CoreELEC first-boot wizard with wired networking and SSH enabled.
+4. Create the DHCP reservation and DNS record for `ugoos-theater`; record the actual address below.
+5. Run shared baseline provisioning and confirm CEC Ignore in the audit report.
+6. Deploy the restricted lifecycle gateway with `configure-kodi-lifecycle.sh`.
+7. Add Sony and Kodi Home Assistant integrations with the package entity IDs, then install the theater HA package.
+8. Apply playback configuration.
+9. Complete lifecycle/idle acceptance below before room rollout or eMMC migration.
+10. Back up and continue any remaining service setup.
 
 ## Room validation
 
@@ -49,6 +54,47 @@ The existing AVPro `T/R` hardware supports ARC, not eARC. It can be used tempora
 - [ ] After T2/R2 installation, the Denon identifies a known TrueHD/Atmos test track as Dolby Atmos/TrueHD rather than Dolby Digital Plus or Dolby Surround.
 
 Lossless audio validation is blocked while the original T/R pair is installed. Keep that test pending until the T2/R2 replacement is installed; an ARC-only trial does not complete the final eARC validation.
+
+
+## Ugoos lifecycle acceptance record
+
+Do not mark results passed without a live device/Home Assistant test and date. Local repository tests only prove static package and CLI behavior.
+
+| Field/check | Recorded value / result |
+|---|---|
+| Sony entity ID | Pending live HA setup; package expects `media_player.sony_xr_65a90j`. |
+| Kodi entity ID | Pending live HA setup; package expects `media_player.kodi_theater`. |
+| Ugoos lifecycle DNS alias/address | Pending DHCP/DNS record; package expects `ugoos-theater`. |
+| Controller public-key marker installed date | Pending; marker is `homeassistant-ugoos-kodi-lifecycle`. |
+| CEC TV-off action observed value | Pending live baseline report; expected observed value `36028` and `cec.tv_off_action.status=ok`. |
+| Stop-policy enabled/opt-out | Pending; theater package default is enabled with no opt-out (`stop_when_display_off: true`). |
+| Idle timeout | Pending; package default is 30 minutes via `input_number.ugoos_theater_idle_timeout_minutes`. |
+| 24-hour display-off reachability result | Pending; record ping and SSH result/date while the Sony is off and Kodi may be stopped. |
+| Sony-off -> Kodi-stop result and elapsed time | Pending; expect stop only after a fresh continuous 60-second Sony-off interval. |
+| Sony-on -> Kodi-ready result and elapsed time | Pending; expect `start`, lifecycle `running`, and Kodi JSON-RPC/UI ready within 90 seconds. |
+| Idle -> Sony-off -> Kodi-stop result | Pending; expect 30 minutes idle, Sony off confirmation within 30 seconds, then normal 60-second Kodi stop path. |
+| Keep-running override result | Pending; expect idle-driven Sony power-off but Kodi remains running while `input_boolean.ugoos_theater_keep_kodi_running` is on. |
+| HA restart result | Pending; expect stale idle evidence cleared and fail-awake reconciliation. |
+| Ugoos reboot result | Pending; expect Kodi starts normally and HA applies a new post-restart 60-second off interval only if Sony is still off. |
+| Restricted-command denial result | Pending; expect nonzero failure for anything except `start`, `stop`, and `status`, with no shell, file transfer, PTY, forwarding, or non-Kodi control. |
+
+### Acceptance coverage against the design
+
+| Design acceptance item | Local automated coverage | Theater record status |
+|---|---|---|
+| 1. Sony off no longer removes Ugoos ping/SSH reachability | CEC Ignore and package no-suspend/no-WoL checks; hardware reachability requires live test | Pending 24-hour/display-off record |
+| 2. Repeated off/on cycles and 24-hour Sony-off reachability | Not automatable locally | Pending 24-hour/display-off record |
+| 3. Sony off stops Kodi only after fresh 60-second interval | `tests/test-home-assistant-ugoos-package.sh` covers 60-second trigger/startup delay | Pending elapsed-time record |
+| 4. Sony definite non-off starts Kodi and restores JSON-RPC/UI | Package tests cover desired running and 90-second readiness wait | Pending elapsed-time record |
+| 5. Sony unknown/unavailable starts or preserves Kodi | Package tests cover fail-awake desired running | Pending HA restart/network observations |
+| 6. Thirty minutes genuine Kodi inactivity powers off Sony then stops Kodi | Package tests cover HA idle state, `System.IdleTime`, freshness, and normal stop flow | Pending idle acceptance |
+| 7. Active menu input resets input-idle condition | Package clears false/stale input-idle evidence; live input behavior required | Pending idle acceptance |
+| 8. Playing and paused media inhibit idle power-off | Package tests require exact Kodi `idle` and reject playing/paused triggers | Pending media playback observation |
+| 9. Keep Kodi running allows idle Sony off but leaves Kodi running | Package tests cover precedence; live override required | Pending override record |
+| 10. Stop-policy opt-out leaves Kodi running while preserving idle Sony off | Package tests cover policy precedence in template fixtures; per-room opt-out package not deployed | Pending future opt-out room or fixture decision |
+| 11. HA restart, Ugoos reboot, command failure, network partition fail awake and notify | Package tests cover HA start, status failures, persistent notifications; reboot/network partition require live tests | Pending restart/reboot/failure injection |
+| 12. Repeated cycles do not create Sony/Kodi CEC power loops | Static docs/settings keep Sony auto power disabled and CEC TV-off Ignore; loop absence requires live cycles | Pending repeated cycle observation |
+| 13. Restricted SSH key cannot execute shell/transfer/PTY/forward/non-Kodi control | Lifecycle shell tests cover forced command/restrictions and arbitrary denial | Pending live restricted-command denial record |
 
 ## Installation record
 
