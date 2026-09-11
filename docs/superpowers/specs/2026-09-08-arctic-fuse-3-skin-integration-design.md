@@ -99,8 +99,12 @@ configuration gap, and is not acceptable for automation.
 The approved, binding correction is therefore to drop Next Aired:
 
 - `HomeSwitcher.1106.Toggle=false`
-- `HomeSwitcher.1106.UpNextMode` is absent, including removal of stale
-  pre-existing values.
+- Before Kodi starts, transformation removes every case-insensitive
+  `HomeSwitcher.1106.UpNextMode` node, including stale pre-existing values.
+- After Arctic Fuse starts, live verification accepts either no matching mode
+  node or only empty matching values. Arctic Fuse 3.2.16 recreates an empty
+  string-typed placeholder during runtime normalization; any non-empty
+  case-insensitive match remains a failure.
 - Managed navigation after Home is Plex, YouTube, PVR, then Add-ons.
 
 No Trakt OAuth workflow or replacement Next Aired route will be automated.
@@ -215,7 +219,8 @@ The following native Home features will be enabled:
   - `HomeSwitcher.1102.Shortcut.Path=plugin://plugin.video.youtube/`
   - `HomeSwitcher.1102.Shortcut.Target=videos`
 - Next Aired: `HomeSwitcher.1106.Toggle=false`
-- Next Aired data mode: `HomeSwitcher.1106.UpNextMode` is absent
+- Next Aired data mode: absent in transformed state; absent or empty-only
+  after Arctic Fuse runtime normalization
 - PVR / Live TV: `HomeSwitcher.1107.Toggle=true`
 - Add-ons: `HomeSwitcher.1108.Toggle=true`
 - Settings options-tray tile:
@@ -445,7 +450,8 @@ The remote observation step will verify:
   empty target, and position after Home.
 - The YouTube custom entry has the exact approved label, icon, plugin path,
   Videos target, and position after Plex.
-- Next Aired is disabled, and its mode setting is absent.
+- Next Aired is disabled. Its transformed mode setting is absent; its live
+  runtime state is absent or contains only empty case-insensitive placeholders.
 - PVR and Add-ons toggles are enabled.
 - The Settings options-tray entry is enabled.
 - The Home widget node has the exact labels, paths, targets, order, and stable
@@ -499,7 +505,8 @@ Cover:
 - Exact Home and Power JSON.
 - Exact Plex custom-slot settings, including an empty shortcut target.
 - Exact YouTube custom-slot settings, including its Videos target.
-- Next Aired toggle disabled and stale mode setting removed.
+- Next Aired toggle disabled and every stale mode setting removed before Kodi
+  startup.
 - Exact playlist XML.
 - Stable GUIDs and deterministic output.
 - Idempotent second runs.
@@ -519,6 +526,9 @@ Cover:
 - Failure for incorrect playlist rules or paths.
 - Failure for an incorrect Plex label, icon, action, target, or PM4K state.
 - Failure for an incorrect YouTube label, icon, path, target, or add-on state.
+- Success for absent or empty-only live `UpNextMode` matches; failure if any
+  case-insensitive match is non-empty, including when an empty placeholder
+  coexists with stale functional state.
 - Failure for missing, disabled, or wrong-version optional dependencies.
 - Presence-only metadata-key verification.
 - Literal secret redaction from reports and diagnostic output.
@@ -542,7 +552,8 @@ Acceptance will:
 9. Select the YouTube Home entry and confirm it opens the add-on's root
    directory in Kodi's Videos window.
 10. Confirm Next Aired is absent and navigation proceeds from YouTube to PVR
-    to Add-ons.
+    to Add-ons. Confirm the toggle is `false` and every case-insensitive live
+    `UpNextMode` value is empty if Arctic Fuse recreated a placeholder.
 11. Open or query each playlist against the Emby-synced Kodi library and prove
    that every returned item satisfies its type and date/progress rules.
 12. Capture and visually inspect the Home and Power screens for labels, order,

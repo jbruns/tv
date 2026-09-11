@@ -84,7 +84,18 @@ data but timed out against OMDb and exhausted TMDb Helper's per-library thread
 fanout (`UNABLE TO SPAWN 82 THREAD 460` / `can't start new thread`). It is not
 reliable enough for automation on this device class.
 Task 5: approved ruling — drop Next Aired. The bounded correction converges
-`HomeSwitcher.1106.Toggle=false`, removes
-`HomeSwitcher.1106.UpNextMode`, and leaves managed navigation after Home as
-Plex, YouTube, PVR, Add-ons. Live acceptance of this final state still
-requires redeployment after the code change.
+`HomeSwitcher.1106.Toggle=false`, removes every case-insensitive
+`HomeSwitcher.1106.UpNextMode` before Kodi starts, and leaves managed
+navigation after Home as Plex, YouTube, PVR, Add-ons.
+Task 5: the first deployment of commit `3b418af` generated
+`coreelec-theater-20260911T180528Z.txt` and automatically rolled back solely
+because `arctic_fuse.hubs.observed=0`. Controlled backup/restore reproduction
+proved Arctic Fuse recreates an empty string-typed `UpNextMode` placeholder
+after startup even though transformed state is absent.
+Ruling: transformed state must have no case-insensitive `UpNextMode` nodes,
+while acceptable live runtime state is either absent or all matching values
+empty; any non-empty match still fails — if wrong, the cost is falsely
+accepting functional stale Next Aired state, bounded by checking every
+case-insensitive match so an empty placeholder cannot mask a non-empty value.
+Task 5: two successful final deployments remain pending after the verifier
+correction.

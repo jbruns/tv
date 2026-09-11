@@ -1,13 +1,13 @@
 # Task 5 Report: Re-Accept on `coreelec-theater`
 
-**Status: CORRECTED PLAYLISTS ACCEPTED; NEXT AIRED REMOVAL APPROVED AND PENDING LIVE REDEPLOYMENT**
+**Status: CORRECTED PLAYLISTS ACCEPTED; NEXT AIRED REMOVAL FIRST DEPLOYMENT ROLLED BACK; TWO SUCCESSFUL DEPLOYMENTS PENDING**
 
 ## Environment
 
 | Field | Value |
 |---|---|
 | Branch | `agents/arctic-fuse-3-skin-integration` |
-| HEAD | `2cebddc` (`docs: explain Kodi playlist compatibility`) |
+| Deployment HEAD | `3b418af` (`fix: disable unreliable Next Aired hub`) |
 | Device | `CoreELEC-theater`, CoreELEC 21.3 Omega |
 | SSH | Strict host-key checking; `root@coreelec-theater`; dedicated admin key |
 | Kodi | `kodi.service` active; authenticated JSON-RPC through device localhost |
@@ -194,19 +194,53 @@ automation on this device class.
 The user approved dropping Next Aired. The bounded correction now:
 
 - converges `HomeSwitcher.1106.Toggle=false`;
-- removes any `HomeSwitcher.1106.UpNextMode` setting;
+- removes every case-insensitive `HomeSwitcher.1106.UpNextMode` setting before
+  Kodi starts;
+- accepts live runtime state only when the mode is absent or every
+  case-insensitive matching value is empty;
 - leaves managed navigation after Home as Plex, YouTube, PVR, Add-ons;
 - preserves the one-profile limitation; and
 - leaves all Power actions unexecuted.
 
-## Step 7: Final live acceptance — PENDING REDEPLOYMENT
+## Step 7: First Next Aired removal deployment — FAILED VERIFICATION; AUTOMATIC ROLLBACK PASS
+
+The first deployment of `3b418af` produced
+`coreelec-provision-reports/coreelec-theater-20260911T180528Z.txt`. Every
+reported verification surface passed except:
+
+```text
+arctic_fuse.hubs.expected=1
+arctic_fuse.hubs.observed=0
+arctic_fuse.hubs.status=mismatch
+verification_failures=1
+```
+
+The transaction recorded `deployment_state=rolled-back` and
+`verification_result=fail`; automatic rollback completed successfully.
+
+Controlled backup/restore reproduction isolated the false negative. Before
+Kodi startup, transformed XML had `HomeSwitcher.1106.Toggle=false` and no
+case-insensitive `UpNextMode`. After Kodi and Arctic Fuse startup, the toggle
+remained false and Arctic Fuse recreated exactly:
+
+```xml
+<setting id="homeswitcher.1106.upnextmode" type="string" />
+```
+
+This is deterministic Arctic Fuse runtime normalization, not missing
+credentials or incomplete transformation. The transformer contract remains
+strict absence before startup. The live verifier must accept absence or
+empty-only case-insensitive matches while rejecting every non-empty value.
+
+## Step 8: Final live acceptance — TWO SUCCESSFUL DEPLOYMENTS PENDING
 
 The corrected-playlist acceptance is successful and is now recorded in
-`rooms/theater/devices/ugoos-am6b-plus.md`. Final live acceptance of the Home
-order and exact Next Aired removal still requires redeploying the corrected
-provisioner, verifying `HomeSwitcher.1106.Toggle=false`, verifying
-`HomeSwitcher.1106.UpNextMode` absent, and confirming navigation proceeds
-Home → Plex → YouTube → PVR → Add-ons without the authorization dialog.
+`rooms/theater/devices/ugoos-am6b-plus.md`. Final live acceptance still
+requires two successful corrected deployments, verifying
+`HomeSwitcher.1106.Toggle=false`, verifying every case-insensitive live
+`UpNextMode` value is empty if a placeholder exists, and confirming navigation
+proceeds Home → Plex → YouTube → PVR → Add-ons without the authorization
+dialog.
 
 The device was left at Home with `kodi.service` active. No Power action was
 executed at any point.

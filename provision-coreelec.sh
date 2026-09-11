@@ -2185,6 +2185,20 @@ def main(argv):
     def xml_setting_values(path):
         return read_settings(path) or {}
 
+    def xml_setting_matches(path, setting_id):
+        try:
+            root = ET.parse(path).getroot()
+        except Exception:
+            return []
+        wanted = setting_id.casefold()
+        return [
+            node.get("value")
+            if node.get("value") is not None
+            else (node.text or "")
+            for node in root.iter("setting")
+            if (node.get("id") or "").casefold() == wanted
+        ]
+
     def smart_playlist_signature(path):
         try:
             root = ET.parse(path).getroot()
@@ -2217,18 +2231,17 @@ def main(argv):
 
     skin_values = xml_setting_values(skin_settings_path)
 
-    # Hub toggles. Next Aired is disabled, canonical, and has no mode.
+    # Hub toggles. Arctic Fuse may recreate an empty disabled-mode placeholder.
     next_aired_toggles = [
         (key, value)
         for key, value in skin_values.items()
         if key.casefold() == "homeswitcher.1106.toggle"
     ]
+    next_aired_modes = xml_setting_matches(
+        skin_settings_path, "HomeSwitcher.1106.UpNextMode")
     hubs_ok = (
         next_aired_toggles == [("HomeSwitcher.1106.Toggle", "false")]
-        and not any(
-            key.casefold() == "homeswitcher.1106.upnextmode"
-            for key in skin_values
-        )
+        and all(value == "" for value in next_aired_modes)
         and skin_values.get("HomeSwitcher.1107.Toggle") == "true"
         and skin_values.get("HomeSwitcher.1108.Toggle") == "true"
     )

@@ -95,10 +95,19 @@ disposable live test of `library_airingnext` then hit OMDb timeouts and TMDb
 Helper thread exhaustion (`can't start new thread`).
 
 The approved final resolution is to disable Next Aired and remove its stale
-mode setting. After redeployment, the managed order after Home is Plex →
-YouTube → PVR → Add-ons, with `HomeSwitcher.1106.Toggle=false` and no
-`HomeSwitcher.1106.UpNextMode`. Live confirmation of that final state remains
-pending redeployment of the corrected provisioner.
+mode setting before Kodi starts. After redeployment, the managed order after
+Home is Plex → YouTube → PVR → Add-ons, with
+`HomeSwitcher.1106.Toggle=false`. Live `UpNextMode` state may be absent or an
+empty placeholder recreated by Arctic Fuse; any non-empty case-insensitive
+match remains invalid.
+
+The first deployment of commit `3b418af` produced
+`coreelec-theater-20260911T180528Z.txt` and automatically rolled back because
+the verifier treated Arctic Fuse's empty runtime placeholder as stale state.
+Controlled backup/restore reproduction confirmed the transformer supplied no
+mode node and Arctic Fuse recreated exactly an empty string-typed node after
+startup. Two successful final deployments remain pending after the verifier
+correction.
 
 ### Idempotence and hashes
 
