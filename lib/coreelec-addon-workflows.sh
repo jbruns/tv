@@ -137,27 +137,6 @@ kodi_rpc_request_id() {
   esac
 }
 
-coreelec_postdeploy_ssh_batch() {
-  local identity_file="${IDENTITY_FILE:-${HOME}/.ssh/coreelec_admin_ed25519}"
-  [[ "$#" -eq 1 ]] || die "coreelec_postdeploy_ssh_batch requires one remote script argument"
-  [[ -n "${TARGET:-}" ]] || die "TARGET is required before calling coreelec_postdeploy_ssh_batch"
-  [[ -n "${SSH_PORT:-}" ]] || die "SSH_PORT is required before calling coreelec_postdeploy_ssh_batch"
-  ssh \
-    -p "${SSH_PORT}" \
-    -o ConnectTimeout=12 \
-    -o ServerAliveInterval=15 \
-    -o ServerAliveCountMax=3 \
-    -o StrictHostKeyChecking=accept-new \
-    -i "${identity_file}" \
-    -o IdentitiesOnly=yes \
-    -o PreferredAuthentications=publickey \
-    -o PasswordAuthentication=no \
-    -o KbdInteractiveAuthentication=no \
-    -o BatchMode=yes \
-    "root@${TARGET}" \
-    "$1"
-}
-
 kodi_rpc() {
   local method="$1" params_json="$2"
   local request_id request_json remote_command
@@ -219,7 +198,7 @@ EOF
 )"
 
   printf '%s\n%s\n%s\n' "${KODI_USER}" "${KODI_WEB_PASSWORD}" "${request_json}" \
-    | coreelec_postdeploy_ssh_batch "${remote_command}"
+    | coreelec_ssh_command "${remote_command}"
 }
 
 kodi_capabilities() {
@@ -402,7 +381,7 @@ fi
 EOF
 )"
   printf '%s\n%s\n' "${addon_id}" "${relative_path}" \
-    | coreelec_postdeploy_ssh_batch "${remote_command}"
+    | coreelec_ssh_command "${remote_command}"
 }
 
 coreelec_postdeploy_pm4k_account_token_present() {
@@ -761,7 +740,7 @@ PYEOF
 EOF
 )"
   printf '%s\n' "${EMBY_SERVER_URL}" \
-    | coreelec_postdeploy_ssh_batch "${remote_command}"
+    | coreelec_ssh_command "${remote_command}"
 }
 
 coreelec_postdeploy_emby_fail() {
@@ -1084,7 +1063,7 @@ PYEOF
 EOF
 )"
 
-  printf '%s\n' "${request_json}" | coreelec_postdeploy_ssh_batch "${remote_command}"
+  printf '%s\n' "${request_json}" | coreelec_ssh_command "${remote_command}"
 }
 
 coreelec_postdeploy_http_field() {

@@ -25,6 +25,8 @@ die() {
 
 # shellcheck source=lib/coreelec-config.sh
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
+# shellcheck source=lib/coreelec-ssh.sh
+source "${SCRIPT_DIR}/lib/coreelec-ssh.sh"
 # shellcheck source=lib/coreelec-addon-workflows.sh
 source "${SCRIPT_DIR}/lib/coreelec-addon-workflows.sh"
 

@@ -194,6 +194,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
 # shellcheck source=lib/coreelec-artifacts.sh
 source "${SCRIPT_DIR}/lib/coreelec-artifacts.sh"
+# shellcheck source=lib/coreelec-ssh.sh
+source "${SCRIPT_DIR}/lib/coreelec-ssh.sh"
 
 # --- Kodi and add-on settings transformer -----------------------------------
 #
@@ -2530,27 +2532,6 @@ REMOTE_VERIFY_PROLOGUE
   cat <<'REMOTE_VERIFY_EPILOGUE'
 PYTHON_VERIFY_PROBE
 REMOTE_VERIFY_EPILOGUE
-}
-
-# Reads the administrator public key file and prints exactly one normalized
-# key line. The grammar is enforced here, once, because the line is embedded
-# in a program the device runs: a validated line is a single line of a known
-# key type, a base64 blob, and an optional control-character-free comment, so
-# it can never contain a quote, a newline, or the here-document delimiter that
-# carries it. Carriage returns are stripped -- one inside authorized_keys
-# makes the key silently unusable.
-coreelec_public_key_line() {
-  local key_file="$1" normalized line_count line
-  [[ -f "${key_file}" ]] || die "The administrator public key file is missing: ${key_file}"
-  normalized="$(sed -e 's/\r$//' -e 's/[[:space:]]*$//' "${key_file}" | grep '[^[:space:]]' || true)"
-  line_count="$(printf '%s\n' "${normalized}" | grep -c '[^[:space:]]' || true)"
-  [[ "${line_count}" == "1" ]] \
-    || die "Expected exactly one public key line in ${key_file}, found ${line_count}"
-  line="$(printf '%s\n' "${normalized}" | head -1)"
-  printf '%s\n' "${line}" | grep -Eq \
-    '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}( [^[:cntrl:]]*)?$' \
-    || die "The administrator public key in ${key_file} is not a well-formed OpenSSH public key line"
-  printf '%s\n' "${line}"
 }
 
 # Appends the administrator public key to /storage/.ssh/authorized_keys.
