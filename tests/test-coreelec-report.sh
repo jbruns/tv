@@ -129,6 +129,7 @@ localtime_zoneinfo_match=1
 date_offset_expected=PDT-0700
 date_offset_observed=PDT-0700
 date_matches_timezone=1
+cec.tv_off_action=36028
 addon.skin.arctic.fuse.3.installed=1
 addon.skin.arctic.fuse.3.version=3.2.16
 addon.skin.arctic.fuse.3.enabled=1
@@ -636,6 +637,34 @@ test_timezone_cache_and_zoneinfo_are_verified() {
   assert_contains "${output}" "regional.date_offset.status=mismatch" "offset mismatch reported" || return 1
 }
 
+# The CEC "TV off action" is not user-configurable: the transformer always
+# requests Ignore (36028), so any other observed value is a fatal baseline
+# mismatch, not an advisory note.
+test_cec_ignore_mismatch_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "cec.tv_off_action" "13011"
+
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a CEC action other than Ignore must fail verification" || return 1
+  assert_contains "${output}" "cec.tv_off_action.expected=36028" \
+    "the comparator names the expected CEC action" || return 1
+  assert_contains "${output}" "cec.tv_off_action.observed=13011" \
+    "the comparator names the observed CEC action" || return 1
+  assert_contains "${output}" "cec.tv_off_action.status=mismatch" \
+    "the CEC action mismatch is reported" || return 1
+}
+
 # CoreELEC images ship /etc/localtime either as a symlink into the zoneinfo
 # tree or as a plain copy of the zone file. A copy resolves to /etc/localtime
 # and can never match the requested zone by path, so the device also reports
@@ -994,6 +1023,37 @@ test_report_lists_secret_presence_without_secret_values() {
   assert_eq "600" "$(file_mode "${report}")" "the report is private" || return 1
 }
 
+# The CEC peripheral file's name varies by adapter and is never part of the
+# observation contract, so the audit report must record the CEC baseline
+# result without ever naming the file it came from.
+test_audit_report_records_cec_ignore_without_adapter_filename() {
+  local dir config manifest observations report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  report="$(run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
+  [[ -f "${report}" ]] || {
+    printf 'no report was written\n' >&2
+    return 1
+  }
+  assert_eq "36028" "$(report_line "${report}" cec.tv_off_action.expected)" \
+    "the expected CEC action is recorded" || return 1
+  assert_eq "36028" "$(report_line "${report}" cec.tv_off_action.observed)" \
+    "the observed CEC action is recorded" || return 1
+  assert_eq "ok" "$(report_line "${report}" cec.tv_off_action.status)" \
+    "a matching CEC action verifies" || return 1
+  assert_not_contains "$(cat "${report}")" "cec_CEC_Adapter" \
+    "the report never names the dynamic CEC adapter file" || return 1
+  assert_not_contains "$(cat "${report}")" "peripheral_data" \
+    "the report never names the peripheral_data path" || return 1
+}
+
 test_report_redacts_all_supplied_secret_values() {
   local dir config manifest observations output rc remaining
   dir="$(make_scratch_dir)"
@@ -1307,6 +1367,30 @@ test_verification_mismatch_is_fatal() {
   assert_contains "${output}" "deployment_state=rolled-back" "the transaction is undone" || return 1
   assert_contains "$(cat "${log}")" "rollback" "rollback was invoked" || return 1
   assert_not_contains "$(cat "${log}")" "finalize" "a failed run must not commit" || return 1
+}
+
+test_cec_ignore_mismatch_triggers_rollback() {
+  local dir config manifest observations log output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/remote-calls.log"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "cec.tv_off_action" "13011"
+
+  set +e
+  output="$(run_conclude "${config}" "${observations}" "${manifest}" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a CEC action mismatch must be fatal" || return 1
+  assert_contains "${output}" "verification_result=fail" "the failure is reported" || return 1
+  assert_contains "${output}" "deployment_state=rolled-back" "the transaction is undone" || return 1
+  assert_contains "$(cat "${log}")" "rollback" "rollback was invoked, not finalize" || return 1
+  assert_not_contains "$(cat "${log}")" "finalize" "a CEC mismatch must not be committed" || return 1
 }
 
 test_incomplete_rollback_is_fatal_with_recovery_path() {
@@ -1662,10 +1746,16 @@ make_probe_fixture_root() {
   local dir="$1" layout="${2:-symlink}" root="$1/storage"
   local zoneinfo="${dir}/system/usr/share/zoneinfo/America/Los_Angeles"
   mkdir -p "${root}/.cache" "${root}/.kodi/userdata/addon_data/weather.ha"
+  mkdir -p "${root}/.kodi/userdata/peripheral_data"
   mkdir -p "${dir}/system/etc" "${dir}/system/usr/share/zoneinfo/America"
   mkdir -p "${dir}/stub"
   printf 'TIMEZONE=America/Los_Angeles\n' > "${root}/.cache/timezone"
   printf 'TZif2-fixture-America-Los_Angeles\n' > "${zoneinfo}"
+  # A passing CEC peripheral file, matching the transformer's fixed Ignore
+  # (36028) baseline. Tests that care about a different CEC state overwrite
+  # this file themselves.
+  printf '<settings><setting id="standby_pc_on_tv_standby">36028</setting></settings>\n' \
+    > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
   rm -f "${dir}/system/etc/localtime"
   case "${layout}" in
     symlink) ln -sf "/usr/share/zoneinfo/America/Los_Angeles" "${dir}/system/etc/localtime" ;;
@@ -1742,6 +1832,44 @@ ENTRIES
     "configured add-on files are checked on the device" || return 1
   assert_not_contains "${output}" "kodi-web-password-secret" "no Kodi password leaves the device" || return 1
   assert_not_contains "${output}" "home-assistant-token-secret" "no add-on token leaves the device" || return 1
+}
+
+# The CEC peripheral file's name varies by adapter, so the probe must locate
+# it by pattern, report only the setting value, and fail loudly rather than
+# guess when it is missing or ambiguous.
+test_remote_probe_reports_cec_ignore() {
+  local dir root bin_dir request output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "cec.tv_off_action=36028" \
+    "the CEC TV-off action is reported" || return 1
+  assert_not_contains "${output}" "cec_CEC_Adapter" \
+    "the dynamic adapter filename is never reported" || return 1
+
+  # A device with no CEC peripheral file at all cannot be verified.
+  rm -rf "${root}/.kodi/userdata/peripheral_data"
+  set +e
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing CEC peripheral file must fail the probe" || return 1
+  assert_contains "${output}" "peripheral_data" \
+    "the failure names the peripheral_data directory" || return 1
 }
 
 # The probe is what makes a copied /etc/localtime verifiable at all, so it
@@ -3334,6 +3462,7 @@ run_all_tests \
   test_active_skin_is_verified \
   test_weather_provider_is_verified_only_when_configured \
   test_timezone_cache_and_zoneinfo_are_verified \
+  test_cec_ignore_mismatch_fails_verification \
   test_regular_file_localtime_is_verified_by_content \
   test_unexpected_device_date_output_is_advisory_not_fatal \
   test_date_offset_reports_expected_and_observed_marks \
@@ -3345,6 +3474,7 @@ run_all_tests \
   test_configured_nextpvr_ha_and_pm4k_are_classified_configured \
   test_missing_optional_values_are_classified_unconfigured \
   test_report_lists_secret_presence_without_secret_values \
+  test_audit_report_records_cec_ignore_without_adapter_filename \
   test_report_redacts_all_supplied_secret_values \
   test_report_records_config_fingerprint_without_secrets \
   test_report_lists_manual_actions_in_order \
@@ -3356,11 +3486,13 @@ run_all_tests \
   test_report_fingerprint_tool_is_required_even_without_kodi \
   test_verification_success_finalizes_and_commits \
   test_verification_mismatch_is_fatal \
+  test_cec_ignore_mismatch_triggers_rollback \
   test_incomplete_rollback_is_fatal_with_recovery_path \
   test_an_unanswered_probe_is_a_verification_failure \
   test_failed_finalize_is_fatal \
   test_remote_verify_script_passes_shell_syntax_check \
   test_remote_verify_probe_reports_state_without_secrets \
+  test_remote_probe_reports_cec_ignore \
   test_remote_verify_probe_compares_a_copied_localtime_by_content \
   test_remote_verify_probe_judges_device_date_against_the_requested_zone \
   test_remote_verify_probe_fails_immediately_when_curl_is_missing \
