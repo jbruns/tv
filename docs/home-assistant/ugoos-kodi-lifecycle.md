@@ -32,7 +32,12 @@ The concrete theater package currently targets:
 | Idle timeout helper | `input_number.ugoos_theater_idle_timeout_minutes` |
 | Lifecycle state helper | `input_text.ugoos_theater_kodi_lifecycle_state` |
 | Last command helper | `input_text.ugoos_theater_last_lifecycle_command` |
-| Last error helper | `input_text.ugoos_theater_last_lifecycle_error` |
+| Last verified reconciliation | `input_datetime.ugoos_theater_last_reconciliation` |
+| Last status observation (not convergence) | `input_datetime.ugoos_theater_last_status_observation` |
+| Fresh observation epoch | `input_datetime.ugoos_theater_observation_started` |
+| Observation initialized | `input_boolean.ugoos_theater_observation_ready` |
+| Unresolved error summary | `input_text.ugoos_theater_last_lifecycle_error` |
+| Per-operation errors | `input_text.ugoos_theater_{status,start,stop,idle_probe,idle_poweroff,configuration}_error` (six helpers) |
 | Reconciler script | `script.ugoos_theater_reconcile_kodi` |
 | Idle Sony script | `script.ugoos_theater_power_off_idle_sony` |
 | Restricted commands | `shell_command.ugoos_theater_kodi_start`, `shell_command.ugoos_theater_kodi_stop`, `shell_command.ugoos_theater_kodi_status` |
@@ -53,24 +58,74 @@ cec.tv_off_action.observed=36028
 cec.tv_off_action.status=ok
 ```
 
-The Task 5 checklist phrase `cec.tv_off_action.status=match` means this same match condition; the implemented report value for a match is `ok`, while a nonmatching observed value reports `cec.tv_off_action.status=mismatch` and fails verification.
+The report uses `ok` for a match and `mismatch` for a failing comparison.
+Kodi peripheral XML must contain a direct child
+`<setting id="standby_pc_on_tv_standby" value="36028" />`.
+Unlike `guisettings.xml`, Kodi does **not** read element text here. The
+provisioner repairs earlier text-only settings and refuses to certify
+text-only, nested, empty, or duplicate observed values.
 
 ## 2. Create the Home Assistant controller identity
 
-In Home Assistant's Terminal & SSH app, create the controller key and known-hosts entry:
+In Home Assistant's Terminal & SSH app, create a dedicated unattended
+controller key. Do not overwrite an existing controller identity:
 
 ```bash
 mkdir -p /config/.ssh
 chmod 700 /config/.ssh
-ssh-keygen -t ed25519 \
+ssh-keygen -t ed25519 -N '' \
   -f /config/.ssh/ugoos_kodi_lifecycle_ed25519 \
   -C homeassistant-ugoos-kodi-lifecycle
-ssh-keyscan -H ugoos-theater >> /config/.ssh/known_hosts
-chmod 600 /config/.ssh/ugoos_kodi_lifecycle_ed25519 \
-  /config/.ssh/known_hosts
+chmod 600 /config/.ssh/ugoos_kodi_lifecycle_ed25519
 ```
 
 Keep both controller key files out of this repository. The private key stays on Home Assistant except for the brief deployment option below.
+
+### Authenticate the Ugoos server key before trusting it
+
+`ssh-keyscan` discovers keys; it does **not** authenticate the server.
+[OpenSSH explicitly warns](https://man.openbsd.org/ssh-keyscan) that trusting
+unverified scan output permits a man-in-the-middle attack. Strict checking
+afterward cannot repair an unauthenticated first connection.
+
+Obtain the Ugoos **server** Ed25519 fingerprint through its local console,
+an independently verified asset record, or an already fingerprint-verified
+administrator connection. On that trusted CoreELEC channel:
+
+```bash
+ssh-keygen -l -E sha256 -f /storage/.cache/ssh/ssh_host_ed25519_key.pub
+```
+
+Do not confuse this with the Home Assistant controller-key fingerprint.
+If no independent trust channel is available, stop here; do not install
+the controller authorization or accept an unknown host key.
+
+On Home Assistant, replace the placeholder below with that independently
+authenticated fingerprint. Only a matching candidate may enter `known_hosts`:
+
+```bash
+expected='SHA256:REPLACE_WITH_INDEPENDENTLY_VERIFIED_SERVER_FINGERPRINT'
+ssh-keyscan -T 5 -t ed25519 -H ugoos-theater > /config/.ssh/ugoos-theater.candidate
+observed="$(ssh-keygen -l -E sha256 -f /config/.ssh/ugoos-theater.candidate | awk '{print $2}' | sort -u)"
+if [ "${observed}" = "${expected}" ] && [ -n "${observed}" ]; then
+  cat /config/.ssh/ugoos-theater.candidate >> /config/.ssh/known_hosts
+  chmod 600 /config/.ssh/known_hosts
+  printf 'Verified server host key installed\n'
+else
+  printf 'REFUSED: independently verified host fingerprint did not match\n' >&2
+fi
+rm -f /config/.ssh/ugoos-theater.candidate
+```
+
+Proceed only after the comparison succeeds. Alternatively, install an
+already authenticated `known_hosts` entry through a trusted transfer.
+Before gateway deployment, install the same authenticated host entry in
+the deploying user's `$HOME/.ssh/known_hosts`, for the exact hostname or
+address passed to `--target`. The CLI uses that default file for controller
+verification; it does not offer a known-hosts-path override. With a nondefault
+SSH port, use the matching `[host]:port` entry and `ssh-keyscan -p PORT`.
+Investigate mismatches; do not delete an old trusted entry just to make a
+connection succeed.
 
 ## 3. Deploy the restricted lifecycle gateway
 
@@ -104,7 +159,12 @@ Run validation and reload/restart:
 ha core check
 ```
 
-Then reload shell commands if your Home Assistant version exposes that reload action, otherwise restart Home Assistant Core. Test all three restricted commands from Developer Tools -> Actions:
+Restart Home Assistant Core after installing/updating this package, so the
+new helpers, scripts, automations, and shell commands load together.
+For subsequent supported YAML reloads use `homeassistant.reload_all`, not
+only a shell-command or script reload. The package resets its observation
+epoch on HA start, `automation_reloaded`, and re-registration of its changed
+reconciler script. Test all three restricted commands from Developer Tools -> Actions:
 
 ```text
 shell_command.ugoos_theater_kodi_status
@@ -116,14 +176,21 @@ Each command has the static form `timeout 15s ssh -F /config/.ssh/ugoos-kodi-lif
 
 ## 5. Runtime policy
 
-- Stop Kodi while display is off is enabled by default for the theater package (`stop_when_display_off: true`). A future room package must make opt-out explicit; absence of an opt-out means enabled.
-- The Sony must be continuously `off` for 60 seconds before Home Assistant stops Kodi.
+- Stop Kodi while display is off is enabled by default. To opt out in a copied room package, set both the reconciler's `stop_when_display_off: true` and the desired-state sensor's `{% set stop_when_display_off = true %}` to `false`. Absence of an explicit opt-out means enabled.
+- The Sony must be continuously `off` for 60 seconds **within the current observation epoch** before Home Assistant stops Kodi. HA start/package reload, observed SSH recovery, unexpected stopped/failed-to-running service recovery, and Kodi availability recovery reset that epoch and clear old idle evidence. A single maturity trigger reconciles after the new minute even if Sony never changes state.
+- Queued reconciliations compute desired state after their status round trip and recheck stop eligibility immediately before sending `stop`.
 - The idle timeout defaults to 30 minutes through `input_number.ugoos_theater_idle_timeout_minutes`.
 - Kodi input-idle probing runs every 15 seconds while the Kodi entity is reachable and calls `XBMC.GetInfoBooleans` with `System.IdleTime(<timeout-seconds>)`.
 - Idle evidence expires after 30 seconds, so two missed 15-second probes cannot leave stale positive evidence.
+- Genuine `kodi_call_method_result` events identify the request under `input.method` and `input.params.booleans`; only `result_ok: true` with the matching boolean-valued result establishes evidence.
+- Sony idle power-off is latched once per episode, including on a 30-second confirmation timeout or action exception. The sent latch survives HA restart. Only genuine playback/input activity or an explicit operator retry rearms it; stale, failed, or unavailable evidence does not.
 - `input_boolean.ugoos_theater_keep_kodi_running` is a persistent operational override. Turning it on keeps Kodi running after Sony-off or idle-driven Sony power-off until an operator turns it off.
 - Explicit stop-policy opt-out and keep-running affect only Kodi stop. They do not suppress idle-driven Sony power-off.
-- Fail-awake rules are binding: Sony `unknown`/`unavailable`, missing/stale idle evidence, start/stop/status transport failures, malformed lifecycle status, or Sony power-off failure leave or request Kodi running and raise a persistent notification.
+- A configured Sony in `unknown`/`unavailable` demands running; those states alone are not configuration errors. Missing configured entities raise a configuration notification.
+- Missing/stale input-idle evidence inhibits Sony power-off. Staleness notifies only while SSH and Kodi are reachable, after the new epoch's 30-second grace period; a verified later probe clears that class of error.
+- Status polls observe host/service health; they do not certify desired-state convergence or Kodi JSON-RPC readiness. Only reconciliation that verifies readiness (when running), a post-operation status, and current desired state stamps “last reconciliation.”
+- Errors are retained per operation. A healthy status poll cannot clear a start/readiness, stop, Sony, or probe error. The summary helper joins unresolved errors (bounded to 255 characters); inspect the individual helpers and notifications for full per-class detail.
+- Lifecycle failures leave CoreELEC awake and notify; failed SSH cannot promise that Kodi was started. The reconciler never retries indefinitely. Repair the cause, then use a later relevant state transition or an explicit reconciliation retry. Sony power-off failure leaves Kodi running without repeated off requests.
 - The package never suspends, shuts down, reboots, power-cycles, or sends Wake-on-LAN to the Ugoos.
 
 ## 6. Diagnostics
@@ -131,7 +198,7 @@ Each command has the static form `timeout 15s ssh -F /config/.ssh/ugoos-kodi-lif
 Review lifecycle deployment reports on the Mac:
 
 ```bash
-grep -E '^(deployment_state|key_mode|transaction|restricted\.|restored_state|file_rollback_state|service_restore_state|wrapper_path)=' \
+grep -E '^(deployment_state|key_mode|transaction|restored_state|file_rollback_state|service_restore_state|wrapper_path)=|^restricted\.' \
   coreelec-lifecycle-reports/ugoos-theater-*.txt
 ```
 
@@ -142,11 +209,11 @@ ssh -i "$HOME/.ssh/coreelec_admin_ed25519" root@ugoos-theater \
   '/usr/bin/systemctl status kodi.service --no-pager'
 ```
 
-Confirm the marked authorized-key entry without editing the file:
+Confirm the marked authorized-key entry without printing key bytes:
 
 ```bash
 ssh -i "$HOME/.ssh/coreelec_admin_ed25519" root@ugoos-theater \
-  "grep -F 'homeassistant-ugoos-kodi-lifecycle' /storage/.ssh/authorized_keys"
+  "grep -Fq 'homeassistant-ugoos-kodi-lifecycle' /storage/.ssh/authorized_keys && printf 'marker-present\n'"
 ```
 
 From Home Assistant, inspect command behavior and logs:
@@ -156,7 +223,15 @@ timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf ugoos-theater-lifecycl
 ha core logs | grep -E 'ugoos_theater|Kodi lifecycle|Kodi idle|Sony idle' || true
 ```
 
-In the UI, check the package helpers listed above and persistent notifications with IDs beginning `ugoos_theater_kodi_lifecycle` or `ugoos_theater_kodi_idle_poweroff`.
+In the UI, check the package helpers and persistent notifications beginning
+`ugoos_theater_kodi_lifecycle`, plus `ugoos_theater_kodi_idle_probe`,
+`ugoos_theater_kodi_idle_poweroff`, and `ugoos_theater_kodi_configuration`.
+To retry lifecycle convergence, invoke `script.ugoos_theater_reconcile_kodi`.
+To explicitly retry a failed Sony idle episode, first turn off
+`input_boolean.ugoos_theater_idle_poweroff_sent`, then invoke
+`script.ugoos_theater_power_off_idle_sony`. It still requires current idle
+evidence; neither step dismisses the Sony error without verified off
+confirmation.
 
 ## 7. Recovery, rollback, and key rotation
 
@@ -168,12 +243,44 @@ Use lifecycle CLI recovery commands for an unresolved transaction; do not manual
 ./configure-kodi-lifecycle.sh --target ugoos-theater --finalize-transaction
 ```
 
-If the report names a transaction directory, pass that directory exactly, for example:
+If the report names a transaction directory, pass that directory **exactly**,
+including its unique suffix; do not reconstruct it from the timestamp:
 
 ```bash
-./configure-kodi-lifecycle.sh --target ugoos-theater --inspect-transaction /storage/backup/kodi-lifecycle/20260911T210000Z
-./configure-kodi-lifecycle.sh --target ugoos-theater --rollback-transaction /storage/backup/kodi-lifecycle/20260911T210000Z
+./configure-kodi-lifecycle.sh --target ugoos-theater --inspect-transaction /storage/backup/kodi-lifecycle/20260911T210000Z-EXACT_ID_FROM_REPORT
+./configure-kodi-lifecycle.sh --target ugoos-theater --rollback-transaction /storage/backup/kodi-lifecycle/20260911T210000Z-EXACT_ID_FROM_REPORT
 ```
+
+Recovery modes reject `--dry-run` before any SSH call. `--inspect-transaction`
+is read-only but does connect.
+
+The version-2 manifest persists the original `running`/`stopped` state and
+the transaction phase. Backups are published only after a successful,
+byte-verified copy. Rollback restores and verifies **both files and service
+state**, retaining the pointer and recovery material until all restoration
+succeeds. If restoring Kodi fails, repair that service problem over the
+administrator channel and retry the same rollback; a healthy file rollback
+alone is not completion. An incomplete backup is never restored. Inspect
+and independently verify untouched originals before any manual cleanup of
+an incomplete pre-install transaction. Old version-1 journals lack a
+recoverable original service state and are refused rather than guessed.
+
+Use `--finalize-transaction [EXACT_DIR]` only for an already-verified
+installation reported as `committed-cleanup-pending`. It retries cleanup,
+not verification or rollback. An identity-matched receipt outside the
+transaction directory makes partial removal, failed pointer unlink, and a
+lost finalize response retry-safe. A missing directory without such a
+receipt is **not** proof of a committed deployment.
+
+Verified rollback cleanup also has a durable receipt: if removing its
+pointer fails after files and service were restored, retrying rollback
+finishes cleanup without restoring missing pre-images. Inspection reports
+`cleanup-pending` with the verified completion kind for these states, or
+`completed` when the pointer is already gone.
+
+Controller denial verification requires exit `2`, empty stdout, and exactly
+`Allowed commands: start, stop, status` on stderr. Exit `255`, authentication
+failure, disconnect, timeout, or arbitrary other errors do not pass.
 
 For key revocation by rotation, create a new Home Assistant controller key, update `/config/.ssh/ugoos-kodi-lifecycle.conf` if the filename changes, then rerun `./configure-kodi-lifecycle.sh` with the new `--controller-public-key` and matching `--controller-identity`. The CLI replaces only the marked lifecycle authorized-key entry and preserves administrator and unrelated keys. Remove the old private/public key files from Home Assistant and any temporary Mac copy after the replacement report shows `deployment_state=committed`.
 
@@ -182,3 +289,10 @@ A complete committed-key removal with no replacement is not implemented by the l
 ## 8. Acceptance record
 
 Record live-device results in the room's acceptance table. Do not mark hardware-dependent behavior passed without a live device/HA test and date. Local shell tests prove syntax and contract behavior only; they do not prove the theater pair accepted the lifecycle.
+
+The HA shell suite executes real package Jinja templates, event envelopes,
+actions, and representative queue/recovery/failure scenarios using the
+environment's existing Python `PyYAML` and `Jinja2` libraries. This fixture
+is not HA's schema validator or a live scheduler/device test.
+`ha core check`, repeated theater cycles, failure injection, and the
+continuous 24-hour off-screen reachability test remain mandatory and pending.

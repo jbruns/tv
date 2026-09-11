@@ -47,7 +47,8 @@
 - Create `tests/test-coreelec-lifecycle.sh`: fixture-driven wrapper, authorization, deployment, verification, rollback, and redaction tests.
 - Create `home-assistant/packages/ugoos_theater_kodi_lifecycle.yaml`: concrete theater helpers, sensors, shell commands, scripts, and automations.
 - Create `home-assistant/ssh/ugoos-kodi-lifecycle.conf.example`: persistent key and known-host configuration used by the package.
-- Create `tests/test-home-assistant-ugoos-package.sh`: static package contract and policy-precedence fixture tests without a new YAML dependency.
+- Create `tests/test-home-assistant-ugoos-package.sh`: static transport checks and executable package fixtures using the environment's existing PyYAML/Jinja2 libraries, not a new HA validator.
+- Create `tests/home-assistant-ugoos-fixture.py`: render real package templates and actions against HA event, queued-run, restart, and failure boundaries.
 - Create `docs/home-assistant/ugoos-kodi-lifecycle.md`: package installation, entity naming, key placement, validation, operation, and recovery.
 - Modify `config/README.md`: document controller inputs, package layout, defaults, and per-device opt-out.
 - Modify `docs/runbook.md`: insert lifecycle deployment between baseline provisioning and room playback configuration.
@@ -91,7 +92,7 @@ cec_settings_path() {
 write_cec_settings() {
   local root="$1" value="$2"
   mkdir -p "${root}/.kodi/userdata/peripheral_data"
-  printf '<settings><setting id="standby_pc_on_tv_standby">%s</setting></settings>\n' \
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="%s" /></settings>\n' \
     "${value}" > "$(cec_settings_path "${root}")"
 }
 
@@ -106,7 +107,10 @@ test_remote_backup_includes_peripheral_data
 ```
 
 The first test must seed `13011` (Suspend), run `--transform-fixture`, and
-assert `standby_pc_on_tv_standby` equals `36028`. The preservation test must
+assert the direct child's `value` attribute equals `36028`, matching Kodi
+`CPeripheral::LoadPersistedSettings`, not a text-or-attribute fallback.
+Include repair of old text-only/nested settings and rejection of
+text-only/nested/empty/duplicate observations. The preservation test must
 seed an unrelated `activate_source` setting and assert it remains unchanged.
 The missing and multiple file tests must assert nonzero status and an error
 that names `peripheral_data`.
@@ -143,8 +147,16 @@ def set_cec_tv_off_action(storage_root, value):
         fail("expected exactly one Kodi CEC peripheral settings file in %s; found %d"
              % (peripheral_dir, len(paths)))
     tree = ET.parse(paths[0])
+    root = tree.getroot()
+    if root.tag != "settings":
+        fail("unexpected root element in %s" % paths[0])
+    for parent in root.iter():
+        if parent is not root:
+            for node in list(parent):
+                if node.tag == "setting" and node.get("id") == "standby_pc_on_tv_standby":
+                    parent.remove(node)
     _set_xml_setting(
-        tree.getroot(), "standby_pc_on_tv_standby", value, flat=False
+        root, "standby_pc_on_tv_standby", value, flat=True
     )
     write_xml_atomic(paths[0], tree)
 ```
@@ -214,7 +226,9 @@ Extend the remote observation script to:
 
 1. locate exactly one `*CEC*.xml` below
    `/storage/.kodi/userdata/peripheral_data`;
-2. parse `standby_pc_on_tv_standby` without reporting the dynamic filename;
+2. require exactly one direct `standby_pc_on_tv_standby` child with a
+   nonempty `value` attribute, rejecting text-only/nested/duplicate values
+   without reporting the dynamic filename;
 3. print `cec.tv_off_action=${value}`; and
 4. fail observation if the file or setting is missing or ambiguous.
 
@@ -584,14 +598,15 @@ ssh-keygen -y -f "${CONTROLLER_IDENTITY}"
 normalizes to the same key type/blob as
 `CONTROLLER_PUBLIC_KEY`. Reject mismatch before contacting the target. Dry
 run renders and validates the wrapper/key entry and writes a redacted plan
-without invoking SSH.
+without invoking SSH. Reject `--dry-run` combined with any recovery mode
+before dispatching recovery or making any SSH call.
 
 - [ ] **Step 4: Implement remote staging, backup, and atomic install**
 
 Use a dedicated namespace:
 
 ```text
-/storage/backup/kodi-lifecycle/<UTC timestamp>/
+/storage/backup/kodi-lifecycle/<UTC timestamp>-<unique transaction ID>/
 /storage/.cache/kodi-lifecycle/current-transaction
 ```
 
@@ -600,20 +615,28 @@ The streamed administrator program must:
 1. verify `/etc/os-release` reports CoreELEC 21.3 and the platform reports
    Amlogic-ng;
 2. create backup and cache parents at mode `0700`;
-3. copy the existing wrapper and authorized keys into `rollback/` at mode
-   `0600`, recording absence explicitly;
-4. write candidates with Python `os.open(..., O_CREAT | O_EXCL, 0o600)`,
+3. persist a version-2 manifest containing the original `running`/`stopped`
+   service state and unique transaction identity; journal phases from
+   backing-up through prepared, installing, pending-verification, and recovery;
+4. copy originals into unpublished `.pending` pre-images at mode `0600`,
+   compare bytes, publish only verified copies, and mark the complete backup
+   set before any install. Record absence explicitly; never restore a partial copy;
+5. write candidates with Python `os.open(..., O_CREAT | O_EXCL, 0o600)`,
    never
    following a planted symlink/hard link;
-5. replace only the line carrying marker
+6. replace only the line carrying marker
    `homeassistant-ugoos-kodi-lifecycle`;
-6. validate the preferred `restrict` candidate with the target's
-   `ssh-keygen -l -f`; if that parser rejects the option, render and validate
-   the explicit no-forwarding fallback instead;
-7. atomically rename candidates;
-8. set the wrapper to `0700`, `.ssh` to `0700`, and `authorized_keys` to
+7. verify installed OpenSSH capability before mutation: OpenSSH >= 7.2
+   supports `restrict`; a recognized older version uses the explicit
+   no-forwarding fallback. Fail closed on an absent/unparseable daemon
+   version. `ssh-keygen -l -f` validates key bytes, **not** authorized_keys
+   options, and must not be used as a `restrict` probe;
+8. atomically rename candidates;
+9. set the wrapper to `0700`, `.ssh` to `0700`, and `authorized_keys` to
    `0600`; and
-9. retain rollback material until restricted-key verification succeeds.
+10. retain rollback material until verification succeeds. On rollback,
+    retain it until both files **and original service state** have been
+    restored and verified. Failed service restoration must leave a usable retry.
 
 Do not copy transaction mechanics from the add-on deployment verbatim. Reuse
 its state names and safety invariants, but keep the lifecycle transaction
@@ -638,13 +661,22 @@ status
 ```
 
 Require exact stdout and empty unexpected output. Also attempt `id` and
-require nonzero status to prove arbitrary commands are denied. Use
+require exit `2`, empty stdout, and exactly
+`Allowed commands: start, stop, status\n` on stderr. Authentication failure,
+SSH exit `255`, disconnects, deadlines, and other errors do not prove denial. Use
 `StrictHostKeyChecking=yes`; never learn a new target host key during
 controller verification.
 
 Finalize only after the restored status matches the initial status. On any
 failure, run the administrator rollback program and verify both target files
-match their pre-run digest or absence.
+match their pre-run bytes or absence and the service matches its journaled
+initial state. Do not delete recovery material before service verification.
+
+Finalize must persist an identity-matched receipt outside the directory
+before removing recovery material. Retain the last finalized identity so
+partial removal, pointer-unlink failure, and a lost response are retry-safe.
+A missing directory alone is not proof of completion; arbitrary/mismatched
+transaction paths must still be refused.
 
 - [ ] **Step 6: Implement redacted reporting and recovery commands**
 
@@ -705,6 +737,7 @@ git commit -m "feat: deploy Home Assistant Kodi control"
 - Consumes Home Assistant entities `media_player.sony_xr_65a90j` and `media_player.kodi_theater`, DNS name `ugoos-theater`, key `/config/.ssh/ugoos_kodi_lifecycle_ed25519`, and known hosts `/config/.ssh/known_hosts`.
 - Produces helpers `input_boolean.ugoos_theater_keep_kodi_running`, `input_boolean.ugoos_theater_idle_poweroff_sent`, `input_boolean.ugoos_theater_input_idle`, `input_datetime.ugoos_theater_idle_probe_updated`, and `input_text.ugoos_theater_kodi_lifecycle_state`.
 - Produces configuration/health entities `input_number.ugoos_theater_idle_timeout_minutes`, `input_boolean.ugoos_theater_host_reachable`, `input_text.ugoos_theater_last_lifecycle_command`, `input_datetime.ugoos_theater_last_reconciliation`, `input_text.ugoos_theater_last_lifecycle_error`, and `sensor.ugoos_theater_desired_kodi_state`.
+- Tracks fresh observation with `input_boolean.ugoos_theater_observation_ready` and `input_datetime.ugoos_theater_observation_started`; status observation has its own `input_datetime.ugoos_theater_last_status_observation`.
 - Produces shell commands `ugoos_theater_kodi_start`, `ugoos_theater_kodi_stop`, and `ugoos_theater_kodi_status`.
 - Produces scripts `ugoos_theater_reconcile_kodi` and `ugoos_theater_power_off_idle_sony`.
 - Produces no suspend, shutdown, reboot, WoL, or arbitrary remote command.
@@ -732,25 +765,16 @@ test_package_has_no_suspend_shutdown_reboot_wol_or_toggle_command
 test_errors_create_persistent_notifications
 ```
 
-Use exact-text section extraction rather than a YAML parser. Add a local
-policy fixture function to the test file:
+Keep static checks for the literal SSH boundary. For policy and errors,
+execute the actual YAML/Jinja and action sequences with fixture states,
+clock, and service responses; a second handwritten policy or whole-file
+substring anchors cannot validate the package.
 
-```bash
-desired_kodi_state() {
-  local policy="$1" keep="$2" sony="$3" off_seconds="$4"
-  if [[ "${policy}" != "on" || "${keep}" == "on" ]]; then
-    printf 'running\n'
-  elif [[ "${sony}" == "off" && "${off_seconds}" -ge 60 ]]; then
-    printf 'stopped\n'
-  else
-    printf 'running\n'
-  fi
-}
-```
-
-Drive the full precedence matrix and require package templates to contain
-the same ordered conditions. This test is a static contract check; live Home
-Assistant `check_config` remains the YAML/Jinja authority.
+Drive the precedence matrix, genuine Kodi events, queued variables rendered
+before HA's lock, changes during status collection, fresh recovery epochs,
+and Sony/SSH action failures. Assert commands, helper transitions,
+notifications, and failure clearing. These fixtures are not HA itself;
+live Home Assistant `check_config` remains the schema authority.
 
 - [ ] **Step 2: Run package tests to verify they fail**
 
@@ -775,9 +799,11 @@ input_boolean:
     initial: false
   ugoos_theater_idle_poweroff_sent:
     name: Theater - Idle power-off sent
-    initial: false
   ugoos_theater_input_idle:
     name: Theater - Kodi input idle
+    initial: false
+  ugoos_theater_observation_ready:
+    name: Theater - Fresh lifecycle observation active
     initial: false
 
 input_number:
@@ -791,12 +817,20 @@ input_number:
     initial: 30
 
 input_datetime:
+  ugoos_theater_observation_started:
+    name: Theater - Lifecycle observation started
+    has_date: true
+    has_time: true
   ugoos_theater_idle_probe_updated:
     name: Theater - Kodi idle probe updated
     has_date: true
     has_time: true
   ugoos_theater_last_reconciliation:
     name: Theater - Last Kodi reconciliation
+    has_date: true
+    has_time: true
+  ugoos_theater_last_status_observation:
+    name: Theater - Last Kodi status observation
     has_date: true
     has_time: true
 
@@ -809,14 +843,18 @@ input_text:
     name: Theater - Last Kodi lifecycle command
     max: 16
   ugoos_theater_last_lifecycle_error:
-    name: Theater - Last Kodi lifecycle error
+    name: Theater - Unresolved lifecycle and idle errors
     max: 255
 ```
 
 Home Assistant restores helper state unless `initial` is present. Deliberately
-omit `initial` from `ugoos_theater_keep_kodi_running`: a newly created
+omit `initial` from both `ugoos_theater_keep_kodi_running` and the Sony sent
+latch: a newly created
 `input_boolean` defaults off, then its state persists across restart. The
-other internal helpers may reset and reconcile on startup. The idle timeout
+other internal helpers may reset and reconcile on startup. Add separate
+persisted `input_text.ugoos_theater_{status,start,stop,idle_probe,idle_poweroff,configuration}_error`
+helpers (six declarations, each max 255); never clear unrelated operation errors.
+The idle timeout
 is declarative per-device configuration: its `initial` value defaults to 30
 and is the one literal changed in a copied package to configure another
 timeout.
@@ -826,13 +864,13 @@ Define three non-templated command actions:
 ```yaml
 shell_command:
   ugoos_theater_kodi_start: >-
-    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
     ugoos-theater-lifecycle start
   ugoos_theater_kodi_stop: >-
-    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
     ugoos-theater-lifecycle stop
   ugoos_theater_kodi_status: >-
-    ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
     ugoos-theater-lifecycle status
 ```
 
@@ -864,14 +902,20 @@ variables:
   stop_when_display_off: true
 ```
 
-Compute desired state in this order:
+Compute desired state **inside the executing sequence, after the status
+round trip**, not in top-level script variables (HA renders those before
+acquiring the queued-run lock). Compute it in this order:
 
 ```jinja2
+{% set epoch = as_timestamp(states('input_datetime.ugoos_theater_observation_started'), as_timestamp(now()))
+  if is_state('input_boolean.ugoos_theater_observation_ready', 'on') else as_timestamp(now()) %}
+{% set sony_off_seconds = as_timestamp(now()) -
+  [epoch, as_timestamp(states.media_player.sony_xr_65a90j.last_changed, as_timestamp(now()))] | max %}
 {% if not stop_when_display_off %}
   running
 {% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}
   running
-{% elif is_state('media_player.sony_xr_65a90j', 'off') %}
+{% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}
   stopped
 {% else %}
   running
@@ -879,13 +923,19 @@ Compute desired state in this order:
 ```
 
 Set `stop_when_display_off` to literal `true` in the theater package. This is
-the concrete enabled-by-default package; a device opts out by changing only
-that literal to `false`.
+the concrete enabled-by-default package; a device opts out by changing
+that literal **and the desired-state sensor's corresponding literal** to
+`false`. Recheck current policy, keep-running, Sony-off duration, and epoch
+immediately before issuing `stop`, even after computing desired state.
 
-For each shell action, capture `response_variable`. Require `returncode == 0`
-and trimmed stdout exactly `running`, `stopped`, or `failed`. Start waits up
-to 90 seconds for `media_player.kodi_theater` to leave `off` and
-`unavailable`. Stop requires exact `stopped`; Kodi becoming unavailable is
+For each shell action, initialize a failure-shaped response, capture
+`response_variable`, and route handled action exceptions through error
+bookkeeping. Require `returncode == 0`, empty unexpected stderr,
+and trimmed stdout exactly `running`, `stopped`, or `failed`. Running
+convergence (even if Kodi was already running) waits up to 90 seconds for
+`media_player.kodi_theater` to leave `off`, `unknown`, and
+`unavailable`, then re-queries status. Stop requires exact `stopped` from a
+post-operation status query; Kodi becoming unavailable is
 expected. Store verified state in
 `input_text.ugoos_theater_kodi_lifecycle_state`.
 
@@ -893,17 +943,27 @@ On invalid output, nonzero return, `failed`, or timeout, create a namespaced
 `persistent_notification` with the operation and sanitized stderr. Do not
 include command lines or key paths in notification text.
 
-On every successful status/start/stop response:
+On a validated status response:
 
 - set `ugoos_theater_host_reachable` on;
 - update the lifecycle-state and last-command helpers;
-- stamp `ugoos_theater_last_reconciliation`;
-- clear `ugoos_theater_last_lifecycle_error`; and
-- dismiss the matching persistent notification.
+- stamp only `ugoos_theater_last_status_observation`;
+- report `failed` as a reachable service failure, not a healthy status; and
+- clear only a status error after a healthy status response.
+
+Stamp `ugoos_theater_last_reconciliation` only after current desired-state
+convergence, post-operation status, and running readiness have all been
+verified. Clear only that verified start/readiness or stop class. Store
+status/start/stop/probe/Sony/configuration errors independently, preserving
+other notifications; the summary helper joins unresolved errors. Sanitize
+diagnostics centrally with a correctly escaped Python regex such as the
+Jinja block-scalar expression `regex_replace('/config/\\.ssh/\\S+', '[ssh-path]')`.
 
 On transport failure, set host reachable off and store a bounded,
 credential-free error. Add a 30-second status poll so host reachability and
 actual lifecycle state remain observable even without a Sony transition.
+Detect observed host/service recovery and schedule bounded reconciliation;
+do not repeatedly retry failed start/stop operations on every poll.
 Expose a template sensor named **Theater - Desired Kodi state** using the
 same ordered policy conditions as the reconciler.
 
@@ -930,11 +990,16 @@ Add automations:
     - action: script.ugoos_theater_reconcile_kodi
 ```
 
-Add triggers for **Keep Kodi running** changes and Home Assistant start.
-Startup must call start/reconcile for non-off, unknown, and unavailable Sony
-states. A startup Sony `off` state must use a separate 60-second delay with a
-final `off` condition before reconciliation; do not reuse pre-restart state
-duration.
+Add triggers for **Keep Kodi running** changes, HA start, package
+`automation_reloaded`, and `service_registered` for a changed reconciler
+script. HA 2026.9.1 does not emit a `script_reloaded` event.
+
+On startup/reload, observed SSH recovery, unexpected stopped/failed-to-running
+service recovery, and Kodi unavailable-to-available recovery: clear old idle
+evidence, start a new observation epoch, and initiate one bounded
+reconciliation. Until a fresh minute of definite Sony off is observed, fail
+awake. A separate one-shot `observation_ready: on` state trigger with
+`for: "00:01:00"` reconciles at epoch maturity even without a Sony transition.
 
 - [ ] **Step 6: Add Kodi idle probe and fresh evidence handling**
 
@@ -955,15 +1020,32 @@ data:
       }})
 ```
 
-Consume only `kodi_call_method_result` events whose entity, method, and exact
-boolean list match the value generated from the current timeout helper. Set
-`input_boolean.ugoos_theater_input_idle` from the returned string value and stamp
+Consume the actual HA event envelope:
+
+```yaml
+entity_id: media_player.kodi_theater
+input:
+  method: XBMC.GetInfoBooleans
+  params:
+    booleans: [System.IdleTime(1800)]
+result_ok: true
+result:
+  System.IdleTime(1800): true
+```
+
+Match the entity, `input.method`, and exact `input.params.booleans` for the
+current timeout. Accept only `result_ok: true` and a JSON boolean value
+(not success-shaped strings/numbers). Set
+`input_boolean.ugoos_theater_input_idle` and stamp
 `input_datetime.ugoos_theater_idle_probe_updated`.
 
 A 15-second freshness automation turns the input-idle helper off when the
 timestamp is more than 30 seconds old. On Home Assistant start, Kodi
 unavailability, malformed result, or failed result, immediately clear the
-helper rather than retaining stale positive evidence.
+helper rather than retaining stale positive evidence. Report stale probes
+only for reachable/running Kodi after the new epoch's 30-second grace
+period. A verified positive **or negative** result dismisses only the probe
+error; unavailable Kodi does not silently clear a prior probe error.
 
 - [ ] **Step 7: Add idle Sony power-off and episode reset**
 
@@ -973,6 +1055,10 @@ Every 15 seconds, power off the Sony only when all are true:
 {% set idle_seconds =
   states('input_number.ugoos_theater_idle_timeout_minutes') | int(30) * 60 %}
 {{ is_state('media_player.kodi_theater', 'idle')
+and is_state('input_boolean.ugoos_theater_observation_ready', 'on')
+and as_timestamp(now()) - as_timestamp(
+      states('input_datetime.ugoos_theater_observation_started'), as_timestamp(now())
+    ) >= idle_seconds
 and as_timestamp(now()) - as_timestamp(
       states.media_player.kodi_theater.last_changed
     ) >= idle_seconds
@@ -985,12 +1071,17 @@ and is_state('input_boolean.ugoos_theater_idle_poweroff_sent', 'off') }}
 
 Set `ugoos_theater_idle_poweroff_sent` before issuing Sony power-off so
 parallel ticks cannot duplicate the command. Wait up to 30 seconds for Sony
-`off`. On failure, clear the sent helper, notify, and leave Kodi running. On
+`off`. Handle turn-off action exceptions through the same bounded
+confirmation/failure path. On failure, **retain** the sent latch, notify,
+and leave Kodi running; do not send another request every eligible tick. On
 success, do not stop Kodi directly; the normal 60-second Sony-off automation
 owns that transition.
 
-Reset the sent helper only after Kodi leaves `idle` or fresh input-idle
-evidence becomes false. **Keep Kodi running** and the static stop-policy
+Reset the persistent sent latch only after genuine Kodi playback activity
+or a fresh, successful input-idle result of false, or an explicit operator
+retry. Stale/malformed/failed/unavailable evidence is not activity. Clear a
+Sony failure only after verified Sony-off confirmation.
+**Keep Kodi running** and the static stop-policy
 literal must not appear in the Sony idle-power conditions.
 
 - [ ] **Step 8: Run package contract and shell tests**
@@ -1051,19 +1142,24 @@ Create `docs/home-assistant/ugoos-kodi-lifecycle.md` with these exact
 operator phases:
 
 1. Confirm CoreELEC baseline provisioning reports
-   `cec.tv_off_action.status=match`.
+   `cec.tv_off_action.status=ok`.
 2. In Home Assistant's Terminal & SSH app, create:
 
    ```bash
    mkdir -p /config/.ssh
    chmod 700 /config/.ssh
-   ssh-keygen -t ed25519 \
+   ssh-keygen -t ed25519 -N '' \
      -f /config/.ssh/ugoos_kodi_lifecycle_ed25519 \
      -C homeassistant-ugoos-kodi-lifecycle
-   ssh-keyscan -H ugoos-theater >> /config/.ssh/known_hosts
-   chmod 600 /config/.ssh/ugoos_kodi_lifecycle_ed25519 \
-     /config/.ssh/known_hosts
+   chmod 600 /config/.ssh/ugoos_kodi_lifecycle_ed25519
    ```
+
+   Authenticate the Ugoos server key through a trusted console/independent
+   fingerprint or an already authenticated host-key record **before**
+   installing it in HA's `/config/.ssh/known_hosts` and the deploying user's
+   `$HOME/.ssh/known_hosts`. Unverified `ssh-keyscan` output is not trust.
+   Use the guarded fingerprint comparison in the operations guide; refuse
+   missing/mismatched trust rather than accepting a new key.
 
 3. Securely make the controller identity available to the Mac only for
    gateway deployment, or run the repository deployment command from a
@@ -1083,7 +1179,8 @@ operator phases:
    `/config/.ssh/ugoos-kodi-lifecycle.conf`, copy the package under
    `/config/packages/`, enable `homeassistant: packages:`, and ensure the
    Sony/Kodi entities use the package's exact IDs.
-5. Run `ha core check`, reload shell commands or restart HA, and test all
+5. Run `ha core check`, restart HA after installing helpers (or subsequently
+   reload all package components with `homeassistant.reload_all`), and test all
    three restricted commands from Developer Tools.
 6. Describe the enabled stop policy, 60-second off interval, 30-minute idle,
    15-second probe, freshness, persistent override, explicit opt-out, and
@@ -1167,11 +1264,13 @@ for test_file in tests/test-coreelec-config.sh \
   bash "${test_file}"
 done
 
-bash -n provision-coreelec.sh configure-coreelec-addons.sh \
+for shell_file in provision-coreelec.sh configure-coreelec-addons.sh \
   configure-kodi-lifecycle.sh \
   lib/coreelec-config.sh lib/coreelec-artifacts.sh \
   lib/coreelec-addon-workflows.sh lib/coreelec-ssh.sh \
-  lib/coreelec-lifecycle.sh tests/test-*.sh
+  lib/coreelec-lifecycle.sh tests/test-*.sh; do
+  bash -n "${shell_file}" || exit
+done
 
 git diff --check
 ```

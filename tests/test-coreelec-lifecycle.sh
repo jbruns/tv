@@ -292,6 +292,19 @@ if [[ "${last}" == "sh -s" ]]; then
   exit "${rc}"
 fi
 
+if [[ "${last}" == "id" && -n "${LIFECYCLE_DENIAL_FAULT:-}" ]]; then
+  case "${LIFECYCLE_DENIAL_FAULT}" in
+    disconnect) printf 'ssh: connection reset\n' >&2; exit 255 ;;
+    authentication) printf 'Permission denied (publickey).\n' >&2; exit 255 ;;
+    deadline) exit 124 ;;
+    wrong-diagnostic) printf 'an unrelated command failed\n' >&2; exit 2 ;;
+    unexpected-stdout)
+      printf 'uid=0(root)\n'
+      printf 'Allowed commands: start, stop, status\n' >&2
+      exit 2
+      ;;
+  esac
+fi
 set +e
 SSH_ORIGINAL_COMMAND="${last}" sh "${fixture_root}/.config/kodi-lifecycle"
 rc=$?
@@ -633,6 +646,114 @@ STUB
   fi
   assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=dry-run" \
     "the dry-run report is labeled dry-run"
+}
+
+test_recovery_dry_run_is_rejected_before_any_ssh() {
+  local dir mode output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  mkdir -p "${dir}/bin"
+  cat > "${dir}/bin/ssh" <<STUB
+#!/bin/bash
+: > "${dir}/ssh-was-called"
+exit 0
+STUB
+  chmod +x "${dir}/bin/ssh"
+  for mode in rollback finalize inspect; do
+    set +e
+    output="$(PATH="${dir}/bin:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+      --target 127.0.0.1 --dry-run "--${mode}-transaction" 2>&1)"
+    rc=$?
+    set -e
+    [[ ! -e "${dir}/ssh-was-called" ]] || {
+      printf 'dry-run contacted target during %s recovery\n' "${mode}" >&2
+      return 1
+    }
+    assert_failure "${rc}" "conflicting recovery dry-run must be refused" || return 1
+    assert_contains "${output}" "--dry-run cannot be combined" || return 1
+  done
+}
+
+test_denial_verification_rejects_transport_and_wrong_denials() {
+  local dir fault root os_release systemctl_bin ssh_bin report_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "controller"
+  for fault in disconnect authentication deadline wrong-diagnostic unexpected-stdout; do
+    root="${dir}/${fault}/root"
+    os_release="${dir}/${fault}/os-release"
+    write_fixture_os_release "${os_release}"
+    systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}/${fault}")"
+    ssh_bin="$(install_lifecycle_ssh_stub "${dir}/${fault}")"
+    report_dir="${dir}/${fault}/reports"
+    set +e
+    output="$(LIFECYCLE_DENIAL_FAULT="${fault}" LIFECYCLE_FIXTURE_ROOT="${root}" \
+      LIFECYCLE_FIXTURE_OS_RELEASE="${os_release}" \
+      LIFECYCLE_FIXTURE_BIN_DIR="$(dirname "${systemctl_bin}")" \
+      FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/${fault}/systemctl-config" \
+      PATH="${ssh_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+      --target 127.0.0.1 --controller-public-key "${dir}/controller.pub" \
+      --controller-identity "${dir}/controller" --report-dir "${report_dir}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "${fault} is not proof that the forced command denied id" || return 1
+    assert_contains "$(cat "${report_dir}"/*.txt)" "restricted.arbitrary_command_denied=fail" || return 1
+    assert_contains "$(cat "${report_dir}"/*.txt)" "deployment_state=rolled-back" || return 1
+    [[ ! -e "${root}/.ssh/authorized_keys" ]] || return 1
+  done
+}
+
+test_documented_host_bootstrap_requires_independent_fingerprint() {
+  local dir guide script fingerprint output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  guide="${BOOTSTRAP_DOC_FIXTURE:-${SCRIPT_DIR}/../docs/home-assistant/ugoos-kodi-lifecycle.md}"
+  script="${dir}/bootstrap.sh"
+  mkdir -p "${dir}/bin" "${dir}/ha-ssh"
+  python3 - "${guide}" "${script}" "${dir}/ha-ssh" <<'PY'
+from pathlib import Path
+import re
+import sys
+guide, output, ssh_dir = sys.argv[1:]
+blocks = re.findall(r"```bash\n(.*?)\n```", Path(guide).read_text(), re.S)
+block = next(block for block in blocks if "ssh-keyscan" in block)
+block = block.replace("/config/.ssh", ssh_dir)
+block = block.replace("SHA256:REPLACE_WITH_INDEPENDENTLY_VERIFIED_SERVER_FINGERPRINT",
+                      "SHA256:trusted-server")
+Path(output).write_text(block + "\n")
+PY
+  cat > "${dir}/bin/ssh-keyscan" <<'STUB'
+#!/bin/bash
+printf 'ugoos-theater ssh-ed25519 fixture-server-key\n'
+STUB
+  cat > "${dir}/bin/ssh-keygen" <<'STUB'
+#!/bin/bash
+if [[ "${1:-}" == "-t" ]]; then
+  while [[ "$#" -gt 0 ]]; do
+    if [[ "$1" == "-f" ]]; then
+      printf 'fixture-identity\n' > "$2"
+      exit 0
+    fi
+    shift
+  done
+  exit 1
+fi
+printf '256 %s server-fixture (ED25519)\n' "${BOOTSTRAP_SCAN_FINGERPRINT:?}"
+STUB
+  chmod +x "${dir}/bin/ssh-keyscan" "${dir}/bin/ssh-keygen"
+  printf 'existing-host-key\n' > "${dir}/ha-ssh/known_hosts"
+  for fingerprint in SHA256:untrusted-server SHA256:trusted-server; do
+    output="$(BOOTSTRAP_SCAN_FINGERPRINT="${fingerprint}" PATH="${dir}/bin:${PATH}" \
+      bash "${script}" 2>&1)"
+    if [[ "${fingerprint}" == "SHA256:untrusted-server" ]]; then
+      assert_eq "existing-host-key" "$(cat "${dir}/ha-ssh/known_hosts")" \
+        "unauthenticated discovery must never modify trusted host keys" || return 1
+      assert_contains "${output}" "REFUSED:" || return 1
+    else
+      assert_eq $'existing-host-key\nugoos-theater ssh-ed25519 fixture-server-key' \
+        "$(cat "${dir}/ha-ssh/known_hosts")" "only the independently matched candidate is installed" || return 1
+    fi
+  done
 }
 
 test_target_and_key_arguments_are_required() {
@@ -1193,6 +1314,280 @@ deploy_to_pending_verification() {
   assert_success "${rc}" "the setup deploy must reach pending-verification: ${output}"
 }
 
+partial_backup_is_rejected() (
+  local copy_rc="$1" root os_release systemctl_bin sshd_bin script output rc transaction
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' EXIT
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
+  mkdir -p "${root}/.config" "${root}/.ssh" "${dir}/fault-bin"
+  printf 'HEALTHY_WRAPPER\n' > "${root}/.config/kodi-lifecycle"
+  printf 'ADMINISTRATOR_ACCESS_MUST_SURVIVE\n' > "${root}/.ssh/authorized_keys"
+  cat > "${dir}/fault-bin/cp" <<'STUB'
+#!/bin/bash
+if [[ "$#" -eq 3 && "$2" == */.ssh/authorized_keys && "$3" == */rollback/authorized_keys* ]]; then
+  printf 'partial\n' > "$3"
+  exit "${PARTIAL_BACKUP_RC:?}"
+fi
+exec /bin/cp "$@"
+STUB
+  chmod +x "${dir}/fault-bin/cp"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" \
+    "${os_release}" "${dir}/controller.pub" "${systemctl_bin}" "${sshd_bin}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | PARTIAL_BACKUP_RC="${copy_rc}" \
+    FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${dir}/fault-bin:$(dirname "${systemctl_bin}"):${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "partial backup must fail before installation" || return 1
+  assert_eq "ADMINISTRATOR_ACCESS_MUST_SURVIVE" "$(cat "${root}/.ssh/authorized_keys")" \
+    "a partial pre-image must never replace healthy administrator access" || return 1
+  assert_eq "HEALTHY_WRAPPER" "$(cat "${root}/.config/kodi-lifecycle")" || return 1
+  assert_contains "${output}" "DEPLOY_STATE:incomplete-rollback" || return 1
+  transaction="$(current_transaction_pointer "${root}")"
+  [[ ! -f "${transaction}/backups-complete" ]] || return 1
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "manual recovery must also refuse incomplete pre-images" || return 1
+  assert_eq "ADMINISTRATOR_ACCESS_MUST_SURVIVE" "$(cat "${root}/.ssh/authorized_keys")"
+)
+
+test_failed_partial_authorized_keys_backup_never_overwrites_live_keys() {
+  partial_backup_is_rejected 1
+}
+
+test_successful_short_backup_copy_is_rejected_before_install() {
+  partial_backup_is_rejected 0
+}
+
+interrupted_verification_restores_service() (
+  local initial="$1" changed="$2" root systemctl_bin os_release script output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' EXIT
+  generate_fixture_keypair "${dir}" "controller"
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  set_fixture_active_state "${dir}" "${initial}"
+  mkdir -p "${root}/.config" "${root}/.ssh"
+  printf 'ORIGINAL_WRAPPER\n' > "${root}/.config/kodi-lifecycle"
+  printf 'ORIGINAL_KEYS\n' > "${root}/.ssh/authorized_keys"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+
+  # The deploying client has disappeared after one verification command.
+  # Recovery has only the on-device journal, not that client's variables.
+  set_fixture_active_state "${dir}" "${changed}"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}")"
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="$(dirname "${systemctl_bin}"):${PATH}" sh -s 2>&1)"
+  assert_eq "${initial}" "$(cat "${dir}/systemctl-config/active-state")" \
+    "explicit rollback must recover the original service state after interrupted verification"
+  assert_eq "ORIGINAL_WRAPPER" "$(cat "${root}/.config/kodi-lifecycle")"
+  assert_eq "ORIGINAL_KEYS" "$(cat "${root}/.ssh/authorized_keys")"
+  assert_contains "${output}" "SERVICE_RESTORE_STATE:restored:"
+  [[ ! -e "${root}/.cache/kodi-lifecycle/current-transaction" ]]
+)
+
+test_interrupted_verification_rollback_restores_running_service() {
+  interrupted_verification_restores_service active inactive
+}
+
+test_interrupted_verification_rollback_restores_stopped_service() {
+  interrupted_verification_restores_service inactive active
+}
+
+test_finalize_retries_after_pointer_unlink_failure() {
+  local dir root os_release systemctl_bin transaction script inspect output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  transaction="$(current_transaction_pointer "${root}")"
+  mkdir -p "${dir}/fault-bin"
+  cat > "${dir}/fault-bin/rm" <<'STUB'
+#!/bin/bash
+for argument in "$@"; do
+  [[ "${argument}" == */current-transaction ]] && exit 1
+done
+exec /bin/rm "$@"
+STUB
+  chmod +x "${dir}/fault-bin/rm"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | PATH="${dir}/fault-bin:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "pointer unlink failure must not be success" || return 1
+  [[ ! -e "${transaction}" && -f "${root}/.cache/kodi-lifecycle/current-transaction" ]] || return 1
+  inspect="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script inspect "${root}")"
+  output="$(printf '%s\n' "${inspect}" | sh -s)"
+  assert_contains "${output}" "INSPECT_STATE:cleanup-pending" "inspection must recognize durable finalize evidence" || return 1
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "retry must finish the authenticated dangling-pointer cleanup: ${output}" || return 1
+  assert_contains "${output}" "FINALIZE_STATE:committed" || return 1
+  [[ ! -e "${root}/.cache/kodi-lifecycle/current-transaction" ]]
+}
+
+test_verified_rollback_cleanup_retries_after_pointer_unlink_failure() {
+  local dir root os_release systemctl_bin transaction script inspect output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  transaction="$(current_transaction_pointer "${root}")"
+  set_fixture_active_state "${dir}" "active"
+  mkdir -p "${dir}/fault-bin"
+  cat > "${dir}/fault-bin/rm" <<'STUB'
+#!/bin/bash
+for argument in "$@"; do
+  [[ "${argument}" == */current-transaction ]] && exit 1
+done
+exec /bin/rm "$@"
+STUB
+  chmod +x "${dir}/fault-bin/rm"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${dir}/fault-bin:$(dirname "${systemctl_bin}"):${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" || return 1
+  assert_eq "inactive" "$(cat "${dir}/systemctl-config/active-state")" || return 1
+  [[ ! -e "${transaction}" && -f "${root}/.cache/kodi-lifecycle/current-transaction" ]] || return 1
+  inspect="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script inspect "${root}")"
+  output="$(printf '%s\n' "${inspect}" | sh -s)"
+  assert_contains "${output}" "INSPECT_STATE:cleanup-pending" "inspection must recognize previously verified rollback" || return 1
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "previously verified rollback must not strand a dangling recovery pointer: ${output}" || return 1
+  assert_contains "${output}" "ROLLBACK_STATE:rolled-back" || return 1
+  [[ ! -e "${root}/.cache/kodi-lifecycle/current-transaction" ]]
+}
+
+test_finalize_lost_response_retry_is_identity_checked() {
+  local dir root os_release systemctl_bin transaction script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  transaction="$(current_transaction_pointer "${root}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${transaction}")"
+  printf '%s\n' "${script}" | sh -s >/dev/null
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a lost response must be retryable with its exact committed identity: ${output}" || return 1
+  assert_contains "${output}" "FINALIZE_STATE:committed" || return 1
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${transaction}-other")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a receipt must not certify a different transaction" || return 1
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}")"
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  assert_contains "${output}" "FINALIZE_STATE:committed"
+}
+
+test_finalize_without_pending_or_receipt_fails_closed() {
+  local dir script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  mkdir -p "${dir}/root/backup/kodi-lifecycle" "${dir}/root/.cache/kodi-lifecycle"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${dir}/root")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" || return 1
+  assert_contains "${output}" "FINALIZE_FAIL:no-pending-transaction"
+}
+
+test_finalize_missing_transaction_requires_cleanup_receipt() {
+  local dir root os_release systemctl_bin transaction script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  transaction="$(current_transaction_pointer "${root}")"
+  rm -rf "${transaction}"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "missing backups alone do not prove successful finalize" || return 1
+  assert_eq "${transaction}" "$(current_transaction_pointer "${root}")"
+}
+
+test_finalized_transaction_identity_is_not_reused_within_one_second() {
+  local dir root os_release systemctl_bin first second script
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  cat > "$(dirname "${systemctl_bin}")/date" <<'STUB'
+#!/bin/bash
+if [[ "${2:-}" == '+%Y%m%dT%H%M%SZ' ]]; then
+  printf '20260911T000000Z\n'
+else
+  exec /bin/date "$@"
+fi
+STUB
+  chmod +x "$(dirname "${systemctl_bin}")/date"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  first="$(current_transaction_pointer "${root}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${first}")"
+  printf '%s\n' "${script}" | sh -s >/dev/null
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  second="$(current_transaction_pointer "${root}")"
+  [[ "${first}" != "${second}" ]] || {
+    printf 'completed transaction identity was reused; stale finalize could commit a new deployment\n' >&2
+    return 1
+  }
+}
+
 # --- Finding C1: rollback/finalize must never accept an arbitrary path ---
 
 test_rollback_refuses_explicit_transaction_outside_backup_root() {
@@ -1595,7 +1990,7 @@ test_finalize_cleanup_failure_reports_committed_cleanup_pending_and_retries() {
 # --- Finding I4: a failed verification must also restore the service ------
 
 test_failed_verification_with_running_initial_state_reports_incomplete_rollback_on_service_restore_mismatch() {
-  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc
+  local dir root os_release systemctl_bin systemctl_dir ssh_bin report_dir output rc transaction script
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "controller"
@@ -1625,7 +2020,23 @@ test_failed_verification_with_running_initial_state_reports_incomplete_rollback_
   assert_contains "$(cat "${report_dir}"/*.txt)" "file_rollback_state=rolled-back" \
     "file rollback is independent of the broken start path and must still succeed" || return 1
   assert_contains "$(cat "${report_dir}"/*.txt)" "service_restore_state=mismatch" \
-    "the report must record the service-restore mismatch distinctly (finding I4)"
+    "the report must record the service-restore mismatch distinctly (finding I4)" || return 1
+  [[ -f "${root}/.cache/kodi-lifecycle/current-transaction" ]] || {
+    printf 'service restoration failed but its recovery pointer was deleted\n' >&2
+    return 1
+  }
+  transaction="$(current_transaction_pointer "${root}")"
+  [[ -f "${transaction}/manifest" && -f "${transaction}/backups-complete" ]] || return 1
+  assert_contains "$(cat "${transaction}/manifest")" "INITIAL_STATE=running" || return 1
+  assert_eq "rolling-back" "$(cat "${transaction}/phase")" || return 1
+
+  set_fixture_fault_on_start "${dir}" "0"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${transaction}")"
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
+  assert_eq "active" "$(cat "${dir}/systemctl-config/active-state")" || return 1
+  assert_contains "${output}" "ROLLBACK_STATE:rolled-back" || return 1
+  [[ ! -e "${transaction}" && ! -e "${root}/.cache/kodi-lifecycle/current-transaction" ]]
 }
 
 # --- Finding I5: fail closed on an unusable sshd version probe ------------
@@ -1705,7 +2116,8 @@ test_rollback_restoration_replaces_a_symlinked_target_without_following_it() {
 
   script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}")"
   set +e
-  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${systemctl_dir}:${PATH}" sh -s 2>&1)"
   rc=$?
   set -e
   assert_success "${rc}" "the rollback must succeed even with a symlinked target: ${output}" || return 1
@@ -1724,7 +2136,7 @@ test_rollback_restoration_replaces_a_symlinked_target_without_following_it() {
 # --- Finding I7: deploy's own self-rollback must verify before reporting --
 
 test_deploy_self_rollback_restores_and_verifies_before_reporting_rolled_back() {
-  local dir root os_release pubkey systemctl_bin systemctl_dir sshd_bin fake_python_dir script output rc
+  local dir root os_release pubkey systemctl_bin systemctl_dir sshd_bin fake_python_dir real_python script output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   generate_fixture_keypair "${dir}" "admin"
@@ -1742,15 +2154,14 @@ test_deploy_self_rollback_restores_and_verifies_before_reporting_rolled_back() {
   printf 'ORIGINAL_KEYS\n' > "${root}/.ssh/authorized_keys"
   chmod 600 "${root}/.ssh/authorized_keys"
 
-  # A `python3` that always fails stands in for the atomic candidate writer
-  # itself failing partway through the mutation phase, after backups have
-  # already been taken -- exactly the point at which `rollback_now` must
-  # engage.
+  # Fail only the atomic candidate writer, after validated backups exist.
   fake_python_dir="${dir}/fake-python-bin"
   mkdir -p "${fake_python_dir}"
-  cat > "${fake_python_dir}/python3" <<'FAKESTUB'
+  real_python="$(command -v python3)"
+  cat > "${fake_python_dir}/python3" <<FAKESTUB
 #!/bin/bash
-exit 1
+[[ "\${1:-}" == */atomic-write.py ]] && exit 1
+exec "${real_python}" "\$@"
 FAKESTUB
   chmod +x "${fake_python_dir}/python3"
 
@@ -1928,6 +2339,19 @@ test_kodi_service_failed_refuses_before_any_mutation() {
 }
 
 run_all_tests \
+  test_documented_host_bootstrap_requires_independent_fingerprint \
+  test_verified_rollback_cleanup_retries_after_pointer_unlink_failure \
+  test_recovery_dry_run_is_rejected_before_any_ssh \
+  test_denial_verification_rejects_transport_and_wrong_denials \
+  test_finalized_transaction_identity_is_not_reused_within_one_second \
+  test_finalize_retries_after_pointer_unlink_failure \
+  test_finalize_lost_response_retry_is_identity_checked \
+  test_finalize_without_pending_or_receipt_fails_closed \
+  test_finalize_missing_transaction_requires_cleanup_receipt \
+  test_interrupted_verification_rollback_restores_running_service \
+  test_interrupted_verification_rollback_restores_stopped_service \
+  test_failed_partial_authorized_keys_backup_never_overwrites_live_keys \
+  test_successful_short_backup_copy_is_rejected_before_install \
   test_lifecycle_library_sources_cleanly_on_its_own \
   test_public_key_validation_accepts_one_ed25519_key \
   test_public_key_validation_rejects_multiple_or_malformed_keys \

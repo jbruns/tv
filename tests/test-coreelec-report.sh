@@ -1754,7 +1754,7 @@ make_probe_fixture_root() {
   # A passing CEC peripheral file, matching the transformer's fixed Ignore
   # (36028) baseline. Tests that care about a different CEC state overwrite
   # this file themselves.
-  printf '<settings><setting id="standby_pc_on_tv_standby">36028</setting></settings>\n' \
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="36028" /></settings>\n' \
     > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
   rm -f "${dir}/system/etc/localtime"
   case "${layout}" in
@@ -1891,7 +1891,7 @@ ENTRIES
   install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
 
   # Well-formed XML, but the wrong document shape: not a <settings> root.
-  printf '<peripheral><setting id="standby_pc_on_tv_standby">36028</setting></peripheral>\n' \
+  printf '<peripheral><setting id="standby_pc_on_tv_standby" value="36028" /></peripheral>\n' \
     > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
 
   set +e
@@ -1901,6 +1901,38 @@ ENTRIES
   assert_failure "${rc}" "a structurally invalid CEC document must fail the probe" || return 1
   assert_contains "${output}" "unexpected root element" \
     "the failure names the shape defect, not just a parse failure" || return 1
+}
+
+test_remote_probe_rejects_unreadable_or_ambiguous_cec_values() {
+  local dir root bin_dir request output rc xml
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  for xml in \
+    '<settings><setting id="standby_pc_on_tv_standby">36028</setting></settings>' \
+    '<settings><category><setting id="standby_pc_on_tv_standby" value="36028" /></category></settings>' \
+    '<settings><setting id="standby_pc_on_tv_standby" value="" /></settings>' \
+    '<settings><setting id="standby_pc_on_tv_standby" value="13011" /><setting id="standby_pc_on_tv_standby" value="36028" /></settings>'; do
+    printf '%s\n' "${xml}" > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
+    set +e
+    output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "never certify text-only, nested, empty or duplicate CEC values" || return 1
+    assert_not_contains "${output}" "cec.tv_off_action=36028" "cannot emit a success-shaped observation" || return 1
+  done
 }
 
 # The probe is what makes a copied /etc/localtime verifiable at all, so it
@@ -3525,6 +3557,7 @@ run_all_tests \
   test_remote_verify_probe_reports_state_without_secrets \
   test_remote_probe_reports_cec_ignore \
   test_remote_probe_rejects_a_malformed_cec_document \
+  test_remote_probe_rejects_unreadable_or_ambiguous_cec_values \
   test_remote_verify_probe_compares_a_copied_localtime_by_content \
   test_remote_verify_probe_judges_device_date_against_the_requested_zone \
   test_remote_verify_probe_fails_immediately_when_curl_is_missing \

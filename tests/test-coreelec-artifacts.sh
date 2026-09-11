@@ -460,7 +460,7 @@ make_fake_storage() {
   # The settings transformer requires exactly one Kodi CEC peripheral file to
   # already exist, the same way a real device already has one once CoreELEC
   # has detected its CEC adapter.
-  printf '<settings><setting id="standby_pc_on_tv_standby">13011</setting></settings>\n' \
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="13011" /></settings>\n' \
     > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
   payload="${root}/.cache/coreelec-provision/settings-payload.conf"
   : > "${payload}"

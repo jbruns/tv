@@ -60,9 +60,16 @@ assert_failure() {
 # (never under a system temp directory) so fixture files never escape the
 # project and are always cleaned up by the caller.
 make_scratch_dir() {
-  local dir
-  dir="$(mktemp -d "${PWD}/.coreelec-test.XXXXXX")" || die "failed to create scratch directory"
-  printf '%s\n' "${dir}"
+  local dir attempt
+  for attempt in 1 2 3 4 5; do
+    dir="${PWD}/.coreelec-test.$$.${RANDOM}.${RANDOM}"
+    if mkdir -m 700 "${dir}" 2>/dev/null; then
+      printf '%s\n' "${dir}"
+      return 0
+    fi
+  done
+  printf 'failed to create project-local scratch directory\n' >&2
+  return 1
 }
 
 # Isolation from ambient operator secrets, without mutating the environment
@@ -125,8 +132,15 @@ run_test() {
 run_all_tests() {
   local test_name
   for test_name in "$@"; do
+    if [[ -n "${TEST_FILTER:-}" && ! "${test_name}" =~ ${TEST_FILTER} ]]; then
+      continue
+    fi
     run_test "${test_name}"
   done
+  if (( TESTS_TOTAL == 0 )); then
+    printf 'No tests selected (TEST_FILTER=%s)\n' "${TEST_FILTER:-}" >&2
+    return 1
+  fi
   printf '\n%d/%d tests passed\n' "${TESTS_PASSED}" "${TESTS_TOTAL}"
   if (( ${#FAILED_TEST_NAMES[@]} > 0 )); then
     printf 'Failed: %s\n' "${FAILED_TEST_NAMES[*]}"

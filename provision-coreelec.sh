@@ -480,8 +480,15 @@ def set_cec_tv_off_action(storage_root, value):
     root = tree.getroot()
     if root.tag != "settings":
         fail("unexpected root element in %s" % paths[0])
+    # Peripheral::LoadPersistedSettings reads direct children and value
+    # attributes, unlike guisettings.xml. Repair previously nested settings.
+    for parent in root.iter():
+        if parent is not root:
+            for node in list(parent):
+                if node.tag == "setting" and node.get("id") == "standby_pc_on_tv_standby":
+                    parent.remove(node)
     _set_xml_setting(
-        root, "standby_pc_on_tv_standby", value, flat=False
+        root, "standby_pc_on_tv_standby", value, flat=True
     )
     write_xml_atomic(paths[0], tree)
 
@@ -1958,11 +1965,13 @@ def cec_tv_off_action_value(storage_root):
     root = ET.parse(paths[0]).getroot()
     if root.tag != "settings":
         fail("unexpected root element in %s" % paths[0])
-    values = read_settings(paths[0])
-    if not values or "standby_pc_on_tv_standby" not in values:
-        fail("the Kodi CEC peripheral settings file has no "
-             "standby_pc_on_tv_standby setting")
-    return values["standby_pc_on_tv_standby"]
+    nodes = [node for node in root.iter("setting")
+             if node.get("id") == "standby_pc_on_tv_standby"]
+    if (len(nodes) != 1 or nodes[0] not in root.findall("setting")
+            or not nodes[0].get("value")):
+        fail("the Kodi CEC peripheral settings file requires exactly one "
+             "direct standby_pc_on_tv_standby setting with a value attribute")
+    return nodes[0].get("value")
 
 
 def localtime_target(system_root):

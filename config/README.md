@@ -163,6 +163,12 @@ The controller key files are operational secrets/identities, not repository conf
 
 The theater package intentionally hard-codes `media_player.sony_xr_65a90j`, `media_player.kodi_theater`, `ugoos-theater`, and `stop_when_display_off: true`. Future room-specific package copies must set their own entity IDs and reserved Ugoos address/name explicitly; no `config/rooms/` file is read or merged into Home Assistant today.
 
+An explicit stop-policy opt-out changes both the reconciler's
+`stop_when_display_off` literal and the desired-state sensor's matching
+Jinja literal to `false`. Follow the operations guide's independently
+authenticated server-fingerprint bootstrap for both HA and the deploying
+user; unverified `ssh-keyscan` output must not become trusted host state.
+
 ## Grammar (strict, never shell)
 
 The parser reads the file line by line and dispatches every line through an

@@ -224,8 +224,9 @@ KEY_MODE_CHECK
 # the finalize program). No caller-supplied path -- whether the operator's
 # own `--rollback-transaction`/`--finalize-transaction` argument, or the
 # device's own pointer file -- is ever restored from, deleted, or reported
-# on until its canonical path has been proven to be an existing,
-# non-symlinked, immediate child of the lifecycle backup root: never the
+# on until its canonical path has been proven to be a non-symlinked,
+# immediate child of the lifecycle backup root. Cleanup/inspection may
+# resolve a missing leaf only with a matching durable completion receipt. Never the
 # root itself, a parent, a sibling namespace such as `/storage`, or an
 # arbitrary operator-supplied path (see finding C1).
 _coreelec_lifecycle_remote_shared_lib() {
@@ -247,8 +248,8 @@ _lifecycle_canon() {
 # Resolves $1 as a transaction directory that must canonically be an
 # existing, non-symlinked, immediate child of the canonical backup root
 # passed as $2. Prints the canonical transaction path on success; prints
-# nothing and returns 1 on any failure (missing, malformed, the backup root
-# itself, a parent, or not an immediate child).
+# nothing and returns 1 on failure. The optional allow-missing mode resolves
+# a missing leaf for receipt checks only, never as a source of pre-images.
 _lifecycle_resolve_transaction() {
   _lrt_candidate="$1"
   _lrt_backup_root_canon="$2"
@@ -256,9 +257,12 @@ _lifecycle_resolve_transaction() {
     '') return 1 ;;
     *..*) return 1 ;;
   esac
-  [ -e "${_lrt_candidate}" ] || return 1
   [ -L "${_lrt_candidate}" ] && return 1
-  [ -d "${_lrt_candidate}" ] || return 1
+  if [ -e "${_lrt_candidate}" ]; then
+    [ -d "${_lrt_candidate}" ] || return 1
+  else
+    [ "${3:-}" = "allow-missing" ] || return 1
+  fi
   _lrt_canon="$(_lifecycle_canon "${_lrt_candidate}")" || return 1
   [ -n "${_lrt_canon}" ] || return 1
   [ "${_lrt_canon}" != "${_lrt_backup_root_canon}" ] || return 1
@@ -267,11 +271,23 @@ _lifecycle_resolve_transaction() {
   printf '%s\n' "${_lrt_canon}"
 }
 
-# True only when $1 carries a manifest file and exactly one of the
-# {present, .absent} markers for each of wrapper and authorized_keys.
+# True only for a versioned, state-bearing journal and a published backup
+# set with exactly one {present, .absent} marker for each target.
 _lifecycle_manifest_complete() {
   _lmc_t="$1"
   [ -f "${_lmc_t}/manifest" ] || return 1
+  [ -f "${_lmc_t}/backups-complete" ] || return 1
+  for _lmc_item in manifest phase backups-complete rollback rollback/wrapper \
+    rollback/wrapper.absent rollback/authorized_keys rollback/authorized_keys.absent; do
+    [ ! -L "${_lmc_t}/${_lmc_item}" ] || return 1
+  done
+  [ "$(sed -n 's/^MANIFEST_VERSION=//p' "${_lmc_t}/manifest")" = "2" ] || return 1
+  [ "$(sed -n 's/^TRANSACTION=//p' "${_lmc_t}/manifest")" = "${_lmc_t}" ] || return 1
+  _lifecycle_initial_state "${_lmc_t}" >/dev/null || return 1
+  case "$(cat "${_lmc_t}/phase" 2>/dev/null)" in
+    prepared|installing|pending-verification|rolling-back|rollback-complete|finalizing) ;;
+    *) return 1 ;;
+  esac
   _lmc_wp=0
   _lmc_wa=0
   [ -f "${_lmc_t}/rollback/wrapper" ] && _lmc_wp=1
@@ -283,6 +299,87 @@ _lifecycle_manifest_complete() {
   [ -f "${_lmc_t}/rollback/authorized_keys.absent" ] && _lmc_aa=1
   [ $((_lmc_ap + _lmc_aa)) -eq 1 ] || return 1
   return 0
+}
+
+_lifecycle_initial_state() {
+  _lis_state="$(sed -n 's/^INITIAL_STATE=//p' "$1/manifest")" || return 1
+  case "${_lis_state}" in
+    running|stopped) printf '%s\n' "${_lis_state}" ;;
+    *) return 1 ;;
+  esac
+}
+
+_lifecycle_record_phase() {
+  printf '%s\n' "$2" > "$1/phase.new" || return 1
+  chmod 600 "$1/phase.new" || return 1
+  mv -f "$1/phase.new" "$1/phase"
+}
+
+_lifecycle_receipt_matches() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(cat "$1")" = "$2" ]
+}
+
+_lifecycle_record_receipt() {
+  rm -f "$1.new" || return 1
+  (umask 077; set -C; printf '%s\n' "$2" > "$1.new") || return 1
+  mv -f "$1.new" "$1"
+}
+
+_lifecycle_cleanup_verified_rollback() {
+  _lifecycle_record_receipt "${cache_root}/last-rolled-back-transaction" "${transaction}" || return 1
+  rm -rf "${transaction}" || return 1
+  rm -f "${pointer_file}"
+}
+
+_lifecycle_restore_service() {
+  _lrs_initial="$1"
+  case "${_lrs_initial}" in
+    running)
+      if ! systemctl is-active --quiet kodi.service; then
+        systemctl start kodi.service || true
+      fi
+      ;;
+    stopped)
+      if systemctl is-active --quiet kodi.service; then
+        systemctl stop kodi.service || true
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  _lrs_state="$(systemctl is-active kodi.service 2>/dev/null || true)"
+  case "${_lrs_state}" in
+    active) _lrs_result="running" ;;
+    inactive)
+      if systemctl is-failed --quiet kodi.service; then
+        _lrs_result="failed"
+      else
+        _lrs_result="stopped"
+      fi
+      ;;
+    *) _lrs_result="failed" ;;
+  esac
+  if [ "${_lrs_result}" = "${_lrs_initial}" ]; then
+    printf 'SERVICE_RESTORE_STATE:restored:%s\n' "${_lrs_result}"
+    return 0
+  fi
+  printf 'SERVICE_RESTORE_STATE:mismatch:%s\n' "${_lrs_result}" >&2
+  return 1
+}
+
+# Publish only byte-verified pre-images. A failed/short copy remains a
+# .pending file and can never satisfy the restoration manifest.
+_lifecycle_backup_one() {
+  _lbo_source="$1"
+  _lbo_item="$2"
+  if [ -e "${_lbo_source}" ]; then
+    cp -p "${_lbo_source}" "${_lbo_item}.pending" || return 1
+    cmp -s "${_lbo_source}" "${_lbo_item}.pending" || return 1
+    chmod 600 "${_lbo_item}.pending" || return 1
+    mv "${_lbo_item}.pending" "${_lbo_item}" || return 1
+  else
+    [ ! -L "${_lbo_source}" ] || return 1
+    : > "${_lbo_item}.absent" || return 1
+  fi
 }
 
 # Atomically restores one target file from its recorded pre-image at
@@ -334,9 +431,8 @@ LIFECYCLE_SHARED_LIB
 # `'...'` remote shell literal is safe: that grammar can never contain a
 # single quote. `wrapper_content` is entirely our own generated text.
 # `sshd_path` defaults to its real production location and is only ever
-# overridden by tests. Note that this program never itself invokes the
-# wrapper's own `systemctl` reference -- that path is baked into
-# `wrapper_content` by the caller -- so it is not a parameter here.
+# overridden by tests. Administrator state observation/restoration resolves
+# systemctl through PATH; the wrapper's fixed path is baked in separately.
 coreelec_lifecycle_remote_deploy_script() {
   local root="${1:-/storage}" os_release_path="${2:-/etc/os-release}"
   local wrapper_content="$3" restrict_entry="$4" fallback_entry="$5"
@@ -389,6 +485,10 @@ if [ "${initial_state}" = "failed" ]; then
   printf 'DEPLOY_REFUSED:kodi-service-failed\n' >&2
   exit 13
 fi
+transaction_id="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')" || {
+  printf 'DEPLOY_REFUSED:transaction-id-unavailable\n' >&2
+  exit 16
+}
 printf 'INITIAL_STATE:%s\n' "${initial_state}"
 
 # No mutation happens above this point: both refusals (an already-pending
@@ -400,11 +500,11 @@ chmod 700 "${cache_root}"
 mkdir -p "${backup_root}"
 chmod 700 "${backup_root}"
 stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
-transaction="${backup_root}/${stamp}"
+transaction="${backup_root}/${stamp}-${transaction_id}"
 collision=0
 while [ -d "${transaction}" ]; do
   collision=$((collision + 1))
-  transaction="${backup_root}/${stamp}-${collision}"
+  transaction="${backup_root}/${stamp}-${transaction_id}-${collision}"
 done
 mkdir -p "${transaction}/rollback"
 chmod 700 "${transaction}" "${transaction}/rollback"
@@ -421,7 +521,8 @@ printf '%s\n' "${transaction}" > "${pointer_file}"
 rollback_now() {
   reason="$1"
   ok=1
-  if _lifecycle_manifest_complete "${transaction}"; then
+  if _lifecycle_manifest_complete "${transaction}" \
+      && _lifecycle_record_phase "${transaction}" rolling-back; then
     _lifecycle_restore_one "${transaction}/rollback/wrapper" "${wrapper_path}" 700 || ok=0
     _lifecycle_restore_one "${transaction}/rollback/authorized_keys" "${authorized}" 600 || ok=0
   else
@@ -438,9 +539,13 @@ rollback_now() {
     _lifecycle_verify_one "${transaction}/rollback/authorized_keys" "${authorized}" || verified=0
   fi
 
-  if [ "${ok}" -eq 1 ] && [ "${verified}" -eq 1 ]; then
-    rm -rf "${transaction}"
-    rm -f "${pointer_file}"
+  service_ok=0
+  if _lifecycle_manifest_complete "${transaction}"; then
+    _lifecycle_restore_service "$(_lifecycle_initial_state "${transaction}")" && service_ok=1
+  fi
+  if [ "${ok}" -eq 1 ] && [ "${verified}" -eq 1 ] && [ "${service_ok}" -eq 1 ] \
+      && _lifecycle_record_phase "${transaction}" rollback-complete \
+      && _lifecycle_cleanup_verified_rollback; then
     printf 'DEPLOY_STATE:rolled-back:%s\n' "${reason}" >&2
   else
     # Recovery material is retained, on purpose, whenever restoration cannot
@@ -456,24 +561,20 @@ rollback_now() {
 }
 
 {
-  printf 'MANIFEST_VERSION=1\n'
+  printf 'MANIFEST_VERSION=2\n'
   printf 'TRANSACTION=%s\n' "${transaction}"
+  printf 'INITIAL_STATE=%s\n' "${initial_state}"
   printf 'CREATED_UTC=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
 } > "${transaction}/manifest" || rollback_now "write-manifest-failed"
 chmod 600 "${transaction}/manifest" 2>/dev/null || true
+_lifecycle_record_phase "${transaction}" backing-up || rollback_now "record-phase-failed"
 
-if [ -e "${wrapper_path}" ]; then
-  cp -p "${wrapper_path}" "${transaction}/rollback/wrapper" || rollback_now "backup-wrapper-failed"
-  chmod 600 "${transaction}/rollback/wrapper" || rollback_now "backup-wrapper-chmod-failed"
-else
-  : > "${transaction}/rollback/wrapper.absent"
-fi
-if [ -e "${authorized}" ]; then
-  cp -p "${authorized}" "${transaction}/rollback/authorized_keys" || rollback_now "backup-authorized-keys-failed"
-  chmod 600 "${transaction}/rollback/authorized_keys" || rollback_now "backup-authorized-keys-chmod-failed"
-else
-  : > "${transaction}/rollback/authorized_keys.absent"
-fi
+_lifecycle_backup_one "${wrapper_path}" "${transaction}/rollback/wrapper" \
+  || rollback_now "backup-wrapper-failed"
+_lifecycle_backup_one "${authorized}" "${transaction}/rollback/authorized_keys" \
+  || rollback_now "backup-authorized-keys-failed"
+: > "${transaction}/backups-complete" || rollback_now "complete-backups-failed"
+_lifecycle_record_phase "${transaction}" prepared || rollback_now "record-phase-failed"
 
 mkdir -p "${config_dir}" "${ssh_dir}"
 chmod 700 "${config_dir}" "${ssh_dir}"
@@ -539,12 +640,14 @@ python3 "${atomic_writer}" "${authorized_candidate}" 600 < "${candidate_source}"
   || rollback_now "write-authorized-keys-candidate-failed"
 rm -f "${candidate_source}"
 
+_lifecycle_record_phase "${transaction}" installing || rollback_now "record-phase-failed"
 mv "${wrapper_candidate}" "${wrapper_path}" || rollback_now "rename-wrapper-failed"
 mv "${authorized_candidate}" "${authorized}" || rollback_now "rename-authorized-keys-failed"
 chmod 700 "${wrapper_path}" || rollback_now "chmod-wrapper-failed"
 chmod 700 "${ssh_dir}" || rollback_now "chmod-ssh-dir-failed"
 chmod 600 "${authorized}" || rollback_now "chmod-authorized-keys-failed"
 rm -f "${atomic_writer}"
+_lifecycle_record_phase "${transaction}" pending-verification || rollback_now "record-phase-failed"
 
 # The transaction directory and pointer are deliberately left in place: this
 # deployment is only "pending-verification" until the restricted key has
@@ -594,13 +697,13 @@ backup_root_canon="$(_lifecycle_canon "${backup_root}")" || {
 }
 
 pointer_raw="$(cat "${pointer_file}")"
-pointer_transaction="$(_lifecycle_resolve_transaction "${pointer_raw}" "${backup_root_canon}")" || {
+pointer_transaction="$(_lifecycle_resolve_transaction "${pointer_raw}" "${backup_root_canon}" allow-missing)" || {
   printf 'ROLLBACK_FAIL:invalid-transaction-path:pointer\n' >&2
   exit 21
 }
 
 if [ -n "${explicit_transaction}" ]; then
-  candidate_transaction="$(_lifecycle_resolve_transaction "${explicit_transaction}" "${backup_root_canon}")" || {
+  candidate_transaction="$(_lifecycle_resolve_transaction "${explicit_transaction}" "${backup_root_canon}" allow-missing)" || {
     printf 'ROLLBACK_FAIL:invalid-transaction-path:explicit\n' >&2
     exit 21
   }
@@ -613,12 +716,27 @@ else
   transaction="${pointer_transaction}"
 fi
 
+if _lifecycle_receipt_matches "${cache_root}/last-rolled-back-transaction" "${transaction}"; then
+  if _lifecycle_cleanup_verified_rollback; then
+    printf 'ROLLBACK_RECOVERY:cleanup-only-after-verified-restoration\n'
+    printf 'ROLLBACK_STATE:rolled-back\n'
+    exit 0
+  fi
+  printf 'ROLLBACK_STATE:incomplete-rollback\n' >&2
+  printf 'TRANSACTION:%s\n' "${transaction}" >&2
+  exit 22
+fi
+
 if ! _lifecycle_manifest_complete "${transaction}"; then
   printf 'ROLLBACK_FAIL:incomplete-manifest:%s\n' "${transaction}" >&2
   printf 'TRANSACTION:%s\n' "${transaction}" >&2
   exit 24
 fi
 
+_lifecycle_record_phase "${transaction}" rolling-back || {
+  printf 'ROLLBACK_STATE:incomplete-rollback\n' >&2
+  exit 22
+}
 ok=1
 _lifecycle_restore_one "${transaction}/rollback/wrapper" "${wrapper_path}" 700 || ok=0
 _lifecycle_restore_one "${transaction}/rollback/authorized_keys" "${authorized}" 600 || ok=0
@@ -632,8 +750,15 @@ if [ "${ok}" -eq 1 ]; then
 fi
 
 if [ "${ok}" -eq 1 ] && [ "${verified}" -eq 1 ]; then
-  rm -rf "${transaction}"
-  rm -f "${pointer_file}"
+  printf 'FILE_ROLLBACK_STATE:rolled-back\n'
+else
+  printf 'FILE_ROLLBACK_STATE:incomplete-rollback\n' >&2
+fi
+service_ok=0
+_lifecycle_restore_service "$(_lifecycle_initial_state "${transaction}")" && service_ok=1
+if [ "${ok}" -eq 1 ] && [ "${verified}" -eq 1 ] && [ "${service_ok}" -eq 1 ] \
+    && _lifecycle_record_phase "${transaction}" rollback-complete \
+    && _lifecycle_cleanup_verified_rollback; then
   printf 'ROLLBACK_STATE:rolled-back\n'
   exit 0
 fi
@@ -654,15 +779,13 @@ ROLLBACK_BODY
 # restores the device to its initial state. It never touches the wrapper or
 # authorized_keys themselves. A cleanup failure (the transaction directory
 # could not be removed) is reported as its own distinct `cleanup-failed`
-# state, never as a rollback: the installation itself is already verified
-# good at this point, so telling an operator to roll it back would be wrong
-# (finding I3). Finalize is naturally idempotent: a cleanup failure leaves
-# the pointer and transaction directory in place, so simply re-running it
-# (optionally via `--finalize-transaction`) retries the same cleanup.
+# state, never as a rollback. Identity-matched receipts survive directory
+# deletion and pointer-unlink failure, including a lost success response.
 coreelec_lifecycle_remote_finalize_script() {
   local root="${1:-/storage}" explicit_transaction="${2:-}"
   cat <<FINALIZE_HEADER
 set -eu
+umask 077
 root='${root}'
 explicit_transaction='${explicit_transaction}'
 FINALIZE_HEADER
@@ -671,8 +794,16 @@ FINALIZE_HEADER
 cache_root="${root}/.cache/kodi-lifecycle"
 pointer_file="${cache_root}/current-transaction"
 backup_root="${root}/backup/kodi-lifecycle"
+finalizing_receipt="${cache_root}/finalizing-transaction"
+finalized_receipt="${cache_root}/last-finalized-transaction"
 
-if [ ! -d "${backup_root}" ] || [ ! -f "${pointer_file}" ]; then
+cleanup_failed() {
+  printf 'FINALIZE_STATE:cleanup-failed\n' >&2
+  printf 'TRANSACTION:%s\n' "${transaction}" >&2
+  exit 32
+}
+
+if [ ! -d "${backup_root}" ]; then
   printf 'FINALIZE_FAIL:no-pending-transaction\n' >&2
   exit 30
 fi
@@ -680,14 +811,22 @@ backup_root_canon="$(_lifecycle_canon "${backup_root}")" || {
   printf 'FINALIZE_FAIL:no-pending-transaction\n' >&2
   exit 30
 }
-pointer_raw="$(cat "${pointer_file}")"
-pointer_transaction="$(_lifecycle_resolve_transaction "${pointer_raw}" "${backup_root_canon}")" || {
+if [ -f "${pointer_file}" ] && [ ! -L "${pointer_file}" ]; then
+  pointer_raw="$(cat "${pointer_file}")"
+elif [ ! -e "${pointer_file}" ] && [ ! -L "${pointer_file}" ] \
+    && [ -f "${finalized_receipt}" ] && [ ! -L "${finalized_receipt}" ]; then
+  pointer_raw="$(cat "${finalized_receipt}")"
+else
+  printf 'FINALIZE_FAIL:no-pending-transaction\n' >&2
+  exit 30
+fi
+pointer_transaction="$(_lifecycle_resolve_transaction "${pointer_raw}" "${backup_root_canon}" allow-missing)" || {
   printf 'FINALIZE_FAIL:invalid-transaction-path:pointer\n' >&2
   exit 31
 }
 
 if [ -n "${explicit_transaction}" ]; then
-  candidate_transaction="$(_lifecycle_resolve_transaction "${explicit_transaction}" "${backup_root_canon}")" || {
+  candidate_transaction="$(_lifecycle_resolve_transaction "${explicit_transaction}" "${backup_root_canon}" allow-missing)" || {
     printf 'FINALIZE_FAIL:invalid-transaction-path:explicit\n' >&2
     exit 31
   }
@@ -700,12 +839,38 @@ else
   transaction="${pointer_transaction}"
 fi
 
-if ! rm -rf "${transaction}"; then
-  printf 'FINALIZE_STATE:cleanup-failed\n' >&2
-  printf 'TRANSACTION:%s\n' "${transaction}" >&2
-  exit 32
+# A receipt outside the directory survives partial rm, a failed pointer
+# unlink, and a lost response. Missing backups alone are never proof of
+# successful cleanup. Both receipts name one validated transaction only.
+if _lifecycle_receipt_matches "${finalizing_receipt}" "${transaction}"; then
+  :
+elif [ -e "${finalizing_receipt}" ] || [ -L "${finalizing_receipt}" ]; then
+  printf 'FINALIZE_FAIL:transaction-receipt-mismatch\n' >&2
+  exit 33
+elif [ ! -e "${transaction}" ] \
+    && _lifecycle_receipt_matches "${finalized_receipt}" "${transaction}"; then
+  :
+else
+  if ! _lifecycle_manifest_complete "${transaction}"; then
+    printf 'FINALIZE_FAIL:incomplete-manifest:%s\n' "${transaction}" >&2
+    exit 34
+  fi
+  case "$(cat "${transaction}/phase")" in
+    pending-verification|finalizing) ;;
+    *)
+      printf 'FINALIZE_FAIL:transaction-not-verified\n' >&2
+      exit 34
+      ;;
+  esac
+  _lifecycle_record_phase "${transaction}" finalizing || cleanup_failed
+  _lifecycle_record_receipt "${finalizing_receipt}" "${transaction}" || cleanup_failed
 fi
-rm -f "${pointer_file}"
+
+rm -rf "${transaction}" || cleanup_failed
+if _lifecycle_receipt_matches "${finalizing_receipt}" "${transaction}"; then
+  mv -f "${finalizing_receipt}" "${finalized_receipt}" || cleanup_failed
+fi
+rm -f "${pointer_file}" || cleanup_failed
 printf 'FINALIZE_STATE:committed\n'
 FINALIZE_BODY
 }
@@ -747,15 +912,45 @@ backup_root_canon="$(_lifecycle_canon "${backup_root}")" || {
   printf 'INSPECT_STATE:missing\n'
   exit 0
 }
-transaction="$(_lifecycle_resolve_transaction "${candidate}" "${backup_root_canon}")" || {
+transaction="$(_lifecycle_resolve_transaction "${candidate}" "${backup_root_canon}" allow-missing)" || {
   printf 'INSPECT_STATE:invalid\n'
   exit 0
 }
+
+for receipt in finalizing-transaction last-finalized-transaction last-rolled-back-transaction; do
+  if _lifecycle_receipt_matches "${cache_root}/${receipt}" "${transaction}"; then
+    if _lifecycle_receipt_matches "${pointer_file}" "${transaction}"; then
+      printf 'INSPECT_STATE:cleanup-pending\n'
+    else
+      printf 'INSPECT_STATE:completed\n'
+    fi
+    printf 'TRANSACTION:%s\n' "${transaction}"
+    case "${receipt}" in
+      last-rolled-back-transaction) printf 'COMPLETION:rolled-back\n' ;;
+      *) printf 'COMPLETION:committed\n' ;;
+    esac
+    exit 0
+  fi
+done
+if [ ! -d "${transaction}" ]; then
+  printf 'INSPECT_STATE:invalid\n'
+  exit 0
+fi
 
 printf 'INSPECT_STATE:present\n'
 printf 'TRANSACTION:%s\n' "${transaction}"
 if [ -f "${transaction}/manifest" ]; then
   printf 'MANIFEST:present\n'
+  if initial_state="$(_lifecycle_initial_state "${transaction}")"; then
+    printf 'INITIAL_STATE:%s\n' "${initial_state}"
+  else
+    printf 'INITIAL_STATE:unknown\n'
+  fi
+  case "$(cat "${transaction}/phase" 2>/dev/null)" in
+    backing-up|prepared|installing|pending-verification|rolling-back|rollback-complete|finalizing)
+      printf 'PHASE:%s\n' "$(cat "${transaction}/phase")" ;;
+    *) printf 'PHASE:unknown\n' ;;
+  esac
 else
   printf 'MANIFEST:absent\n'
 fi
@@ -769,13 +964,12 @@ done
 INSPECT_BODY
 }
 
-# Renders the administrator service-state-restoration program. Independent
-# of the file rollback above, this forces `kodi.service` back to
+# Renders the standalone administrator service-state-restoration program,
+# sharing the exact restoration check used by transaction rollback. It forces
+# `kodi.service` back to
 # `initial_state` ("running" or "stopped") over the *administrator*
 # transport and verifies the resulting state, so a restricted-verification
-# failure can never leave the service itself in the wrong state merely
-# because the file rollback above only ever touches the wrapper and
-# authorized_keys (finding I4). Every mutating call is guarded so a failure
+# failure can be diagnosed independently. Every mutating call is guarded so a failure
 # never aborts the script before the final state check runs: whatever
 # actually happened is always reported, never assumed. Uses the bare
 # `systemctl` command, resolved via PATH, matching the deploy script's own
@@ -789,43 +983,9 @@ coreelec_lifecycle_remote_service_restore_script() {
 set -eu
 initial_state='${initial_state}'
 SERVICE_RESTORE_HEADER
+  _coreelec_lifecycle_remote_shared_lib
   cat <<'SERVICE_RESTORE_BODY'
-UNIT="kodi.service"
-case "${initial_state}" in
-  running)
-    if ! systemctl is-active --quiet "${UNIT}"; then
-      systemctl start "${UNIT}" || true
-    fi
-    ;;
-  stopped)
-    if systemctl is-active --quiet "${UNIT}"; then
-      systemctl stop "${UNIT}" || true
-    fi
-    ;;
-  *)
-    printf 'SERVICE_RESTORE_FAIL:unsupported-initial-state:%s\n' "${initial_state}" >&2
-    exit 40
-    ;;
-esac
-state="$(systemctl is-active "${UNIT}" 2>/dev/null || true)"
-case "${state}" in
-  active) resulting="running" ;;
-  inactive)
-    if systemctl is-failed --quiet "${UNIT}"; then
-      resulting="failed"
-    else
-      resulting="stopped"
-    fi
-    ;;
-  failed) resulting="failed" ;;
-  *) resulting="failed" ;;
-esac
-if [ "${resulting}" = "${initial_state}" ]; then
-  printf 'SERVICE_RESTORE_STATE:restored:%s\n' "${resulting}"
-  exit 0
-fi
-printf 'SERVICE_RESTORE_STATE:mismatch:%s\n' "${resulting}" >&2
-exit 41
+_lifecycle_restore_service "${initial_state}" || exit 41
 SERVICE_RESTORE_BODY
 }
 

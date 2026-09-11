@@ -58,7 +58,7 @@ Lossless audio validation is blocked while the original T/R pair is installed. K
 
 ## Ugoos lifecycle acceptance record
 
-Do not mark results passed without a live device/Home Assistant test and date. Local repository tests only prove static package and CLI behavior.
+Do not mark results passed without a live device/Home Assistant test and date. Local repository tests exercise package/CLI fixtures and syntax, not the live HA scheduler or theater devices.
 
 | Field/check | Recorded value / result |
 |---|---|
@@ -66,6 +66,7 @@ Do not mark results passed without a live device/Home Assistant test and date. L
 | Kodi entity ID | Pending live HA setup; package expects `media_player.kodi_theater`. |
 | Ugoos lifecycle DNS alias/address | Pending DHCP/DNS record; package expects `ugoos-theater`. |
 | Controller public-key marker installed date | Pending; marker is `homeassistant-ugoos-kodi-lifecycle`. |
+| Server host-key authentication | Pending; record independent fingerprint provenance and date before controller authorization or known-host bootstrap. |
 | CEC TV-off action observed value | Pending live baseline report; expected observed value `36028` and `cec.tv_off_action.status=ok`. |
 | Stop-policy enabled/opt-out | Pending; theater package default is enabled with no opt-out (`stop_when_display_off: true`). |
 | Idle timeout | Pending; package default is 30 minutes via `input_number.ugoos_theater_idle_timeout_minutes`. |
@@ -75,8 +76,11 @@ Do not mark results passed without a live device/Home Assistant test and date. L
 | Idle -> Sony-off -> Kodi-stop result | Pending; expect 30 minutes idle, Sony off confirmation within 30 seconds, then normal 60-second Kodi stop path. |
 | Keep-running override result | Pending; expect idle-driven Sony power-off but Kodi remains running while `input_boolean.ugoos_theater_keep_kodi_running` is on. |
 | HA restart result | Pending; expect stale idle evidence cleared and fail-awake reconciliation. |
+| Package reload result | Pending; reload all package components, observe a fresh epoch, and confirm no queued stop reuses the old off interval. |
 | Ugoos reboot result | Pending; expect Kodi starts normally and HA applies a new post-restart 60-second off interval only if Sony is still off. |
-| Restricted-command denial result | Pending; expect nonzero failure for anything except `start`, `stop`, and `status`, with no shell, file transfer, PTY, forwarding, or non-Kodi control. |
+| Restricted-command denial result | Pending; `id` must exit `2`, emit no stdout, and print exactly `Allowed commands: start, stop, status` on stderr. Separately verify no shell, file transfer, PTY, forwarding, or non-Kodi control; disconnect/authentication/deadline failures do not pass this check. |
+| Sony failure episode | Pending; inject turn-off failure and confirmation timeout, verify one request and a retained notification/latch until genuine activity or explicit retry. |
+| Health and stale-probe recovery | Pending; healthy status polls must not clear start/readiness or Sony failures. Reachable stale probes notify; valid probes clear only their own error. |
 
 ### Acceptance coverage against the design
 
@@ -84,15 +88,15 @@ Do not mark results passed without a live device/Home Assistant test and date. L
 |---|---|---|
 | 1. Sony off no longer removes Ugoos ping/SSH reachability | CEC Ignore and package no-suspend/no-WoL checks; hardware reachability requires live test | Pending 24-hour/display-off record |
 | 2. Repeated off/on cycles and 24-hour Sony-off reachability | Not automatable locally | Pending 24-hour/display-off record |
-| 3. Sony off stops Kodi only after fresh 60-second interval | `tests/test-home-assistant-ugoos-package.sh` covers 60-second trigger/startup delay | Pending elapsed-time record |
+| 3. Sony off stops Kodi only after fresh 60-second interval | Package fixtures exercise continuous-off cancellation, queued state changes, fresh epochs, and one-shot maturity | Pending elapsed-time record |
 | 4. Sony definite non-off starts Kodi and restores JSON-RPC/UI | Package tests cover desired running and 90-second readiness wait | Pending elapsed-time record |
 | 5. Sony unknown/unavailable starts or preserves Kodi | Package tests cover fail-awake desired running | Pending HA restart/network observations |
 | 6. Thirty minutes genuine Kodi inactivity powers off Sony then stops Kodi | Package tests cover HA idle state, `System.IdleTime`, freshness, and normal stop flow | Pending idle acceptance |
-| 7. Active menu input resets input-idle condition | Package clears false/stale input-idle evidence; live input behavior required | Pending idle acceptance |
+| 7. Active menu input resets input-idle condition | Genuine false Kodi results clear evidence/rearm episodes; stale/failed results cannot rearm a failed Sony episode | Pending idle acceptance |
 | 8. Playing and paused media inhibit idle power-off | Package tests require exact Kodi `idle` and reject playing/paused triggers | Pending media playback observation |
 | 9. Keep Kodi running allows idle Sony off but leaves Kodi running | Package tests cover precedence; live override required | Pending override record |
 | 10. Stop-policy opt-out leaves Kodi running while preserving idle Sony off | Package tests cover policy precedence in template fixtures; per-room opt-out package not deployed | Pending future opt-out room or fixture decision |
-| 11. HA restart, Ugoos reboot, command failure, network partition fail awake and notify | Package tests cover HA start, status failures, persistent notifications; reboot/network partition require live tests | Pending restart/reboot/failure injection |
+| 11. HA restart, Ugoos reboot, command failure, network partition fail awake and notify | Fixtures exercise startup/reload, observed host/service/Kodi recovery, scoped failures and notifications; real reboot/network timing still requires live tests | Pending restart/reboot/failure injection |
 | 12. Repeated cycles do not create Sony/Kodi CEC power loops | Static docs/settings keep Sony auto power disabled and CEC TV-off Ignore; loop absence requires live cycles | Pending repeated cycle observation |
 | 13. Restricted SSH key cannot execute shell/transfer/PTY/forward/non-Kodi control | Lifecycle shell tests cover forced command/restrictions and arbitrary denial | Pending live restricted-command denial record |
 

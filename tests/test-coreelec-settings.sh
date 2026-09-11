@@ -27,7 +27,7 @@ cec_settings_path() {
 write_cec_settings() {
   local root="$1" value="$2"
   mkdir -p "${root}/.kodi/userdata/peripheral_data"
-  printf '<settings><setting id="standby_pc_on_tv_standby">%s</setting></settings>\n' \
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="%s" /></settings>\n' \
     "${value}" > "$(cec_settings_path "${root}")"
 }
 
@@ -376,6 +376,47 @@ test_cec_tv_off_action_is_changed_to_ignore() {
 
   assert_eq "36028" "$(xml_setting "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)" \
     "the CEC TV-off action is forced to Ignore"
+  assert_eq "yes" "$(xml_setting_uses_value_attribute "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)" \
+    "Kodi peripheral LoadPersistedSettings reads only the value attribute"
+}
+
+test_cec_text_only_setting_is_repaired_to_kodi_attribute() {
+  local dir root payload
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_cec_settings "${root}" "13011"
+  printf '<settings><setting id="standby_pc_on_tv_standby">36028</setting></settings>\n' \
+    > "$(cec_settings_path "${root}")"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "yes" "$(xml_setting_uses_value_attribute "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)" \
+    "repair the earlier text-only deployment rather than certifying it"
+  assert_eq "36028" "$(xml_setting "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)"
+}
+
+test_cec_nested_setting_is_repaired_to_direct_child() {
+  local dir root payload value
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_cec_settings "${root}" "13011"
+  printf '<settings><category><setting id="standby_pc_on_tv_standby" value="13011" /></category></settings>\n' \
+    > "$(cec_settings_path "${root}")"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  value="$(python3 - "$(cec_settings_path "${root}")" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+node = root.find("./setting[@id='standby_pc_on_tv_standby']")
+print(node.get("value", "") if node is not None else "")
+PY
+)"
+  assert_eq "36028" "${value}" "Kodi reads direct child peripheral settings only"
 }
 
 test_cec_transform_preserves_unmanaged_peripheral_settings() {
@@ -387,7 +428,7 @@ test_cec_transform_preserves_unmanaged_peripheral_settings() {
   mkdir -p "${root}/.kodi/userdata/peripheral_data"
   cec_path="$(cec_settings_path "${root}")"
   cat > "${cec_path}" <<'XML'
-<settings><setting id="activate_source">0</setting><setting id="standby_pc_on_tv_standby">13011</setting></settings>
+<settings><setting id="activate_source" value="0" /><setting id="standby_pc_on_tv_standby" value="13011" /></settings>
 XML
   write_base_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
@@ -407,7 +448,7 @@ test_duplicate_cec_tv_off_actions_are_collapsed() {
   mkdir -p "${root}/.kodi/userdata/peripheral_data"
   cec_path="$(cec_settings_path "${root}")"
   cat > "${cec_path}" <<'XML'
-<settings><setting id="standby_pc_on_tv_standby">13011</setting><setting id="standby_pc_on_tv_standby">10000</setting></settings>
+<settings><setting id="standby_pc_on_tv_standby" value="13011" /><setting id="standby_pc_on_tv_standby" value="10000" /></settings>
 XML
   write_base_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
@@ -463,7 +504,7 @@ test_multiple_cec_adapter_files_fail_loudly() {
   write_base_payload "${payload}"
   write_cec_settings "${root}" "13011"
   peripheral_dir="${root}/.kodi/userdata/peripheral_data"
-  printf '<settings><setting id="standby_pc_on_tv_standby">13011</setting></settings>\n' \
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="13011" /></settings>\n' \
     > "${peripheral_dir}/cec_CEC_Adapter_2.xml"
 
   set +e
@@ -485,7 +526,7 @@ test_malformed_cec_adapter_file_fails_loudly() {
   cec_path="$(cec_settings_path "${root}")"
   mkdir -p "$(dirname "${cec_path}")"
   # Well-formed XML, but the wrong document shape: not a <settings> root.
-  printf '<peripheral><setting id="standby_pc_on_tv_standby">13011</setting></peripheral>\n' \
+  printf '<peripheral><setting id="standby_pc_on_tv_standby" value="13011" /></peripheral>\n' \
     > "${cec_path}"
 
   set +e
@@ -1508,6 +1549,8 @@ run_all_tests \
   test_existing_unmanaged_settings_are_preserved \
   test_second_run_is_byte_identical \
   test_cec_tv_off_action_is_changed_to_ignore \
+  test_cec_text_only_setting_is_repaired_to_kodi_attribute \
+  test_cec_nested_setting_is_repaired_to_direct_child \
   test_cec_transform_preserves_unmanaged_peripheral_settings \
   test_duplicate_cec_tv_off_actions_are_collapsed \
   test_second_cec_transform_is_byte_identical \

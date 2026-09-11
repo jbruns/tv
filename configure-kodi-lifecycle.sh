@@ -75,7 +75,8 @@ Options:
   --ssh-port PORT              SSH port for both connections (default: 22)
   --dry-run                    Render and validate the wrapper and key
                                 entries and write a redacted plan without
-                                making any SSH connection
+                                making any SSH connection; cannot be
+                                combined with transaction recovery modes
   --report-dir DIR             Local report directory (default:
                                 ${PWD}/coreelec-lifecycle-reports)
   --rollback-transaction [DIR] Recovery: roll back the transaction on
@@ -340,16 +341,20 @@ _controller_call() {
   [[ "${CONTROLLER_LAST_RC}" -eq 0 && "${actual}" == "${expected}" && ! -s "${err_file}" ]]
 }
 
-# Attempts an arbitrary (disallowed) command and requires the connection to
-# fail: proof that the forced-command restriction, not merely the wrapper's
-# own goodwill, is what confines this identity.
+# A transport/authentication/deadline failure is not an authorization denial.
+# Require the wrapper's exact denial response, not merely a nonzero exit.
 _controller_denied() {
-  local scratch="$1"
+  local scratch="$1" out_file err_file expected_file
+  out_file="${scratch}/denial-stdout.tmp"
+  err_file="${scratch}/denial-stderr.tmp"
+  expected_file="${scratch}/denial-expected.tmp"
+  printf 'Allowed commands: start, stop, status\n' > "${expected_file}"
   set +e
-  coreelec_lifecycle_ssh_controller "id" >/dev/null 2>/dev/null
+  coreelec_lifecycle_ssh_controller "id" >"${out_file}" 2>"${err_file}"
   CONTROLLER_LAST_RC=$?
   set -e
-  [[ "${CONTROLLER_LAST_RC}" -ne 0 ]]
+  [[ "${CONTROLLER_LAST_RC}" -eq 2 && ! -s "${out_file}" ]] \
+    && cmp -s "${expected_file}" "${err_file}"
 }
 
 # Runs the full 7-call restore sequence plus the arbitrary-command denial
@@ -490,6 +495,7 @@ main() {
   if [[ "${ROLLBACK_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
         "${INSPECT_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
         "${FINALIZE_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
+    [[ "${DRY_RUN}" != "1" ]] || die "--dry-run cannot be combined with transaction recovery modes"
     run_recovery_mode
     return 0
   fi
@@ -611,30 +617,24 @@ main() {
     rollback_output="$(coreelec_ssh_batch "${rollback_script}" 2>&1)"
     rollback_rc=$?
     set -e
-    if [[ "${rollback_rc}" -eq 0 ]] && grep -q '^ROLLBACK_STATE:rolled-back$' <<<"${rollback_output}"; then
+    if grep -q '^FILE_ROLLBACK_STATE:rolled-back$' <<<"${rollback_output}"; then
       FILE_ROLLBACK_STATE="rolled-back"
     else
       FILE_ROLLBACK_STATE="incomplete-rollback"
     fi
 
-    # Independent of the file rollback above: a failed restricted-identity
-    # verification must never leave kodi.service in the wrong state merely
-    # because file rollback only ever touches the wrapper and
-    # authorized_keys (finding I4). Both outcomes are reported distinctly.
-    local service_restore_script service_restore_output service_restore_rc
-    service_restore_script="$(coreelec_lifecycle_remote_service_restore_script "${INITIAL_STATE}")"
-    set +e
-    service_restore_output="$(coreelec_ssh_batch "${service_restore_script}" 2>&1)"
-    service_restore_rc=$?
-    set -e
-    if [[ "${service_restore_rc}" -eq 0 ]] \
-        && grep -q '^SERVICE_RESTORE_STATE:restored:' <<<"${service_restore_output}"; then
+    # The remote journal owns file AND service recovery, including retries
+    # after this client disappears. It retains both until both are verified.
+    if grep -q "^SERVICE_RESTORE_STATE:restored:${INITIAL_STATE}$" <<<"${rollback_output}"; then
       SERVICE_RESTORE_STATE="restored"
+      RESTORED_STATE="${INITIAL_STATE}"
     else
       SERVICE_RESTORE_STATE="mismatch"
     fi
 
-    if [[ "${FILE_ROLLBACK_STATE}" == "rolled-back" && "${SERVICE_RESTORE_STATE}" == "restored" ]]; then
+    if [[ "${rollback_rc}" -eq 0 && "${FILE_ROLLBACK_STATE}" == "rolled-back" \
+        && "${SERVICE_RESTORE_STATE}" == "restored" ]] \
+        && grep -q '^ROLLBACK_STATE:rolled-back$' <<<"${rollback_output}"; then
       DEPLOYMENT_STATE="rolled-back"
     else
       DEPLOYMENT_STATE="incomplete-rollback"
