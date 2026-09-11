@@ -316,8 +316,11 @@ with its widget and metadata sources. They are not operator actions.
   `Skin.String(HomeSwitcher.1106.Toggle)` is non-empty, so provisioning removes
   every case-insensitive `HomeSwitcher.1106.Toggle` and
   `HomeSwitcher.1106.UpNextMode` node before Kodi starts. Arctic Fuse 3.2.16
-  may recreate empty string-typed placeholders after startup; the live verifier
-  accepts absence or empty-only matches and rejects any non-empty match.
+  may recreate an empty string-typed toggle placeholder or a bool-typed toggle
+  with value `false` after startup. The live verifier accepts no toggle matches,
+  or matches that are each one of those two disabled representations.
+  `UpNextMode` remains valid only when absent or represented by empty
+  string-typed placeholders; every other type/value combination fails.
   TMDb Helper 6.17.1's
   `library_nextaired` route uses Trakt's public calendar but still requires an
   end-user Trakt OAuth token, producing `Unauthorised 401 Error TraktAPI Token`

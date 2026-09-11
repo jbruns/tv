@@ -263,9 +263,11 @@ result for the other configured services.
 uses `Skin.Reset(...)` to disable a hub — so provisioning removes every
 case-insensitive `HomeSwitcher.1106.Toggle` and `HomeSwitcher.1106.UpNextMode`
 node before Kodi starts. After startup, Arctic Fuse
-3.2.16 may normalize settings by recreating empty string-typed placeholders.
-That live state is acceptable only when every matching value is empty; any
-non-empty case-insensitive value fails verification. TMDb Helper 6.17.1's
+3.2.16 may normalize the toggle as an empty string-typed placeholder or a
+bool-typed node with value `false`. The live verifier accepts no toggle matches,
+or matches that are each one of those disabled representations. `UpNextMode`
+remains valid only when absent or represented by empty string-typed
+placeholders; every other type/value combination fails. TMDb Helper 6.17.1's
 `library_nextaired` route still requires end-user Trakt OAuth despite using
 Trakt's public calendar. The alternative `library_airingnext` route was
 disposable-live-tested but suffered OMDb timeouts and per-library thread

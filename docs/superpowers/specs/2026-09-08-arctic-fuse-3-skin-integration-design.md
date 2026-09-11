@@ -220,10 +220,11 @@ The following native Home features will be enabled:
   - `HomeSwitcher.1102.Icon=special://home/addons/plugin.video.youtube/resources/media/icon.png`
   - `HomeSwitcher.1102.Shortcut.Path=plugin://plugin.video.youtube/`
   - `HomeSwitcher.1102.Shortcut.Target=videos`
-- Next Aired: `HomeSwitcher.1106.Toggle` absent in transformed state; absent or
-  empty-only after Arctic Fuse runtime normalization
-- Next Aired data mode: absent in transformed state; absent or empty-only
-  after Arctic Fuse runtime normalization
+- Next Aired: `HomeSwitcher.1106.Toggle` absent in transformed state; after
+  Arctic Fuse runtime normalization, absent or every match either an empty
+  string-typed placeholder or a bool-typed `false` node
+- Next Aired data mode: absent in transformed state; after Arctic Fuse runtime
+  normalization, absent or empty string-typed placeholders only
 - PVR / Live TV: `HomeSwitcher.1107.Toggle=true`
 - Add-ons: `HomeSwitcher.1108.Toggle=true`
 - Settings options-tray tile:
@@ -529,9 +530,13 @@ Cover:
 - Failure for incorrect playlist rules or paths.
 - Failure for an incorrect Plex label, icon, action, target, or PM4K state.
 - Failure for an incorrect YouTube label, icon, path, target, or add-on state.
-- Success for absent or empty-only live `UpNextMode` matches; failure if any
-  case-insensitive match is non-empty, including when an empty placeholder
-  coexists with stale functional state.
+- Success when live Next Aired toggle matches are absent or each is either an
+  empty string-typed placeholder or bool-typed `false`; failure for string
+  `false`, bool `true`, arbitrary non-empty strings, or mixed valid/invalid
+  matches.
+- Success for absent or empty string-typed live `UpNextMode` placeholders;
+  failure for every other type/value combination, including when an empty
+  placeholder coexists with stale functional state.
 - Failure for missing, disabled, or wrong-version optional dependencies.
 - Presence-only metadata-key verification.
 - Literal secret redaction from reports and diagnostic output.
@@ -555,8 +560,9 @@ Acceptance will:
 9. Select the YouTube Home entry and confirm it opens the add-on's root
    directory in Kodi's Videos window.
 10. Confirm Next Aired is absent and navigation proceeds from YouTube to PVR
-    to Add-ons. Confirm the toggle is `false` and every case-insensitive live
-    `UpNextMode` value is empty if Arctic Fuse recreated a placeholder.
+    to Add-ons. Confirm every case-insensitive live toggle match is either an
+    empty string-typed placeholder or bool-typed `false`, and every live
+    `UpNextMode` match is an empty string-typed placeholder.
 11. Open or query each playlist against the Emby-synced Kodi library and prove
    that every returned item satisfies its type and date/progress rules.
 12. Capture and visually inspect the Home and Power screens for labels, order,

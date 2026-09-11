@@ -372,3 +372,32 @@ Screenshots: `screenshot-home-final-accepted-20260911.png`,
 
 The device was left at Home with `kodi.service` active, no active player, and
 no Power action executed. Multiple profiles remain out of scope.
+
+## Step 11: Review fix round 3 — type-aware runtime normalization
+
+Review identified that the live verifier was type-blind: it reduced every
+case-insensitive Next Aired XML match to a value string. Kodi may persist a
+disabled `HomeSwitcher.1106.Toggle` as a `type="bool"` node with value
+`false`, which the previous empty-only check rejected even though
+`Skin.String` has no functional non-empty toggle.
+
+Ruling: transformation remains strict and removes every matching toggle and
+mode before Kodi starts. Live verification preserves every matching node's id,
+type, and value. Toggle matches are valid only when each is either an empty
+string-typed placeholder or bool-typed `false`; `UpNextMode` matches remain
+valid only as empty string-typed placeholders. No matches remain valid for
+both IDs. If wrong, the cost is either rolling back a correctly disabled
+runtime state or accepting stale functional Next Aired state; per-node
+type/value checks prevent valid placeholders from masking invalid siblings.
+
+TDD RED was captured at 83/84 report tests for a mixed-case bool-false toggle
+plus an empty string placeholder. Adding an empty bool-typed `UpNextMode`
+rejection fixture produced 83/85 before production changed. The focused report
+suite then passed 85/85. Existing fixtures continue rejecting string-typed
+`false`; the bool-true fixture, arbitrary-string mixed fixture, and true
+duplicate/case-variant fixture all fail closed.
+
+Targeted verification passed: settings 33/33, report 85/85, and artifacts
+52/52. The complete five-suite run passed 231/231 with both ratings keys
+present and again with both keys unset. Keyless `--check-config` passed, and
+`--check-artifacts` validated all 42 artifacts.

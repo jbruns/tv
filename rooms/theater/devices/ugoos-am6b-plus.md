@@ -61,9 +61,9 @@ The corrected playlists passed live acceptance on `coreelec-theater`:
 - `RecentlyReleasedMovies90Days.xsp` was absent.
 
 Reports `coreelec-theater-20260911T164651Z.txt` and
-`coreelec-theater-20260911T165411Z.txt` both recorded committed, passing
-transactions. The second deployment confirmed the corrected playlist files
-were byte-identical.
+`coreelec-theater-20260911T165411Z.txt` both recorded
+`deployment_state=committed` and `verification_result=pass`. The second
+deployment confirmed the corrected playlist files were byte-identical.
 
 ### Application launch results
 
@@ -98,8 +98,10 @@ The approved final resolution is to disable Next Aired by removing its managed
 state before Kodi starts. After redeployment, the managed order after Home is
 Plex → YouTube → PVR → Add-ons, with no case-insensitive
 `HomeSwitcher.1106.Toggle` or `HomeSwitcher.1106.UpNextMode` node. Live state may
-be absent or an empty placeholder recreated by Arctic Fuse; any non-empty
-case-insensitive match remains invalid.
+contain no toggle match, empty string-typed toggle placeholders, or bool-typed
+toggle nodes with value `false`; `UpNextMode` may be absent or represented only
+by empty string-typed placeholders. Every other type/value combination remains
+invalid.
 
 The first deployment of commit `3b418af` produced
 `coreelec-theater-20260911T180528Z.txt` and automatically rolled back because
@@ -110,8 +112,9 @@ startup.
 
 Commit `8390d42` then deployed twice successfully
 (`coreelec-theater-20260911T200447Z.txt`,
-`coreelec-theater-20260911T200808Z.txt`; both committed, both passing, 8/8
-managed files byte-identical), but those runs were **not accepted**. Live
+`coreelec-theater-20260911T200808Z.txt`; both recorded
+`deployment_state=committed` and `verification_result=pass`, with 8/8 managed
+files byte-identical), but those runs were **not accepted**. Live
 inspection showed `Container(399)` — the control that drives Left/Right hub
 movement — still listed `Next Aired → ReplaceWindow(1106)` between YouTube and
 PVR, because Arctic Fuse renders a hub whenever

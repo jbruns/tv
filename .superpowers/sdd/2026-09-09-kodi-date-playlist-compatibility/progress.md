@@ -70,8 +70,8 @@ rollback.
 Task 4: complete (commits 2cebddc..2cebddc, review clean)
 Task 5: corrected-playlist acceptance passed on 2026-09-11. Both corrected
 playlists returned valid live results, the obsolete playlist was absent, and
-two committed provisioning runs passed verification and playlist
-idempotence.
+two provisioning reports recorded `deployment_state=committed`,
+`verification_result=pass`, and playlist idempotence.
 Task 5: unaffected Plex, YouTube, PVR, Add-ons, and Power-menu surfaces were
 verified. The Power menu was inspected and closed without executing any
 Power action.
@@ -100,7 +100,8 @@ case-insensitive match so an empty placeholder cannot mask a non-empty value.
 Task 5: two successful final deployments remain pending after the verifier
 correction.
 Task 5: the two `8390d42` deployments `coreelec-theater-20260911T200447Z.txt`
-and `coreelec-theater-20260911T200808Z.txt` both committed with
+and `coreelec-theater-20260911T200808Z.txt` both recorded
+`deployment_state=committed` with
 `verification_result=pass`, `verification_failures=0`, all `metadata.*` and
 `arctic_fuse.*` statuses `ok`, and 8/8 byte-identical managed files, but final
 live acceptance rejected them: `Container(399)` still listed
@@ -126,8 +127,9 @@ four report failures (79/83), GREEN 33/33 settings and 83/83 report, and
 unset; `--check-config` and 42/42 `--check-artifacts` also passed.
 Task 5: final live acceptance of `09c784e` PASSED on 2026-09-11. Reports
 `coreelec-theater-20260911T202453Z.txt` and
-`coreelec-theater-20260911T202711Z.txt` are both committed and passing with all
-statuses `ok` and `arctic_fuse.playlist_migration.observed=1`; 8/8 managed files
+`coreelec-theater-20260911T202711Z.txt` both record
+`deployment_state=committed`, `verification_result=pass`, all statuses `ok`,
+and `arctic_fuse.playlist_migration.observed=1`; 8/8 managed files
 byte-identical; live state `next_aired_toggle_count=1 all_empty=True`
 (`homeswitcher.1106.toggle` empty string-typed placeholder),
 `upnext_mode_count=0`, `managed_skin_settings=12 exact=1 string_typed=1
@@ -146,8 +148,22 @@ originally invisible to the dict-based check; fix round 2 replaced it with the
 list-based `xml_setting_matches()` helper, so duplicates of any case are now
 evaluated, but the verifier still does not assert a node *count*, so two
 identical empty placeholders would pass.
-Task 5: minor (deferred): the runtime verifier does not assert the Next Aired
-toggle's `type` attribute; it only evaluates values.
+Task 5: review finding resolved in fix round 3: the runtime verifier now
+evaluates the id, type, and value of every case-insensitive Next Aired match.
 Task 5: minor (deferred): the transformer's setting lookup searches the root
 element and its direct `category` children only, not arbitrary nesting depth.
 Task 5: complete (commits 2cebddc..09c784e, live acceptance passed).
+Task 5: review fix round 3 corrects a type-blind live verifier. Arctic Fuse/Kodi
+may persist a disabled `HomeSwitcher.1106.Toggle` as a bool-typed `false` node,
+which is functionally empty to `Skin.String` but was rejected by the prior
+value-only check. Ruling: transformed state still removes every matching
+toggle/mode node; live toggle matches are accepted only when each is an empty
+string-typed placeholder or bool-typed `false`, while `UpNextMode` remains
+absent or empty string-typed only. If wrong, the cost is either rolling back a
+correct disabled runtime normalization or accepting functional stale Next
+Aired state; evaluating id, type, and value for every case-insensitive match
+bounds both risks.
+Task 5: fix round 3 verification passed: targeted settings/report/artifact
+suites were 33/33, 85/85, and 52/52; all five suites passed 231/231 with
+ratings keys present and again with both keys unset; keyless `--check-config`
+passed and `--check-artifacts` validated 42/42 artifacts.

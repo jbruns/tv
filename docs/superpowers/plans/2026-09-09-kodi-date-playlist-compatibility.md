@@ -487,12 +487,12 @@ Record the nine current managed-file digests, rerun the same provisioning comman
 Confirm:
 
 - all standalone managed files are byte-identical;
-- all 14 managed skin settings remain exact, string-typed, and duplicate-free;
+- all 12 managed skin settings remain exact, string-typed, and duplicate-free;
 - the obsolete movie playlist remains absent.
 
 - [ ] **Step 6: Recheck unaffected live surfaces without executing Power**
 
-Confirm Plex launches PM4K, YouTube opens its Videos root, PVR remains populated, all six top-level hubs remain ordered, and the five-item Power menu remains exact. Open and close the Power menu without selecting an action.
+Confirm Plex launches PM4K, YouTube opens its Videos root, PVR remains populated, all five visible Home hubs remain ordered (Home, Plex, YouTube, PVR, Add-ons), and the five-item Power menu remains exact. Open and close the Power menu without selecting an action.
 
 - [ ] **Step 7: Update and commit the final acceptance record**
 

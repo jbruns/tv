@@ -2194,12 +2194,28 @@ def main(argv):
             return []
         wanted = setting_id.casefold()
         return [
-            node.get("value")
-            if node.get("value") is not None
-            else (node.text or "")
+            (
+                node.get("id") or "",
+                node.get("type") or "",
+                node.get("value")
+                if node.get("value") is not None
+                else (node.text or ""),
+            )
             for node in root.iter("setting")
             if (node.get("id") or "").casefold() == wanted
         ]
+
+    def is_empty_string_placeholder(match):
+        _, setting_type, value = match
+        return setting_type.casefold() == "string" and value == ""
+
+    def is_disabled_toggle(match):
+        _, setting_type, value = match
+        setting_type = setting_type.casefold()
+        return (
+            (setting_type == "string" and value == "")
+            or (setting_type == "bool" and value.casefold() == "false")
+        )
 
     def smart_playlist_signature(path):
         try:
@@ -2240,8 +2256,9 @@ def main(argv):
     next_aired_modes = xml_setting_matches(
         skin_settings_path, "HomeSwitcher.1106.UpNextMode")
     hubs_ok = (
-        all(value == "" for value in next_aired_toggles)
-        and all(value == "" for value in next_aired_modes)
+        all(is_disabled_toggle(match) for match in next_aired_toggles)
+        and all(is_empty_string_placeholder(match)
+                for match in next_aired_modes)
         and skin_values.get("HomeSwitcher.1107.Toggle") == "true"
         and skin_values.get("HomeSwitcher.1108.Toggle") == "true"
     )
