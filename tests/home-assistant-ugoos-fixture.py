@@ -493,6 +493,103 @@ def recovery_starts_fresh_observation(path):
         p.drain()
         assert len(p.commands()) == before, "epoch maturity must not retry forever"
 
+def reconciler_first_recovery_starts_fresh_observation(path):
+    for previous_host, previous_service in (("on", "stopped"), ("on", "failed"), ("off", "running")):
+        p = Package(path)
+        established_pair(p)
+        p.auto_events = True
+        p.set_state(SONY, "off", age=7200)
+        p.set_state(HOST, previous_host)
+        p.set_state(ACTUAL, previous_service)
+        p.set_state(IDLE, "on")
+        recovered_at = p.now.timestamp()
+        p.run_script(RECONCILE)
+        assert p.timestamp(States(p)(EPOCH)) == recovered_at, \
+            f"reconciler reused the old recovery epoch at 0s: {p.commands()}"
+        assert p.service == "running" and "stop" not in p.commands()
+        assert States(p)(IDLE) == "off"
+        assert not p.queued, "an executing reconciler must not recursively enqueue itself on recovery"
+        p.advance(29)
+        p.automation("ugoos_theater_kodi_status_poll")
+        p.drain()
+        p.advance(30)
+        p.run_script(RECONCILE)
+        assert p.timestamp(States(p)(EPOCH)) == recovered_at, "ordinary observations restarted the recovery epoch"
+        assert "stop" not in p.commands(), "recovered service stopped before sixty fresh seconds"
+        p.advance(1)
+        p.drain()
+        assert p.service == "stopped" and p.commands().count("stop") == 1
+
+def healthy_polls_do_not_retry_failed_command(path, command):
+    for failure in (9, 255, "exception"):
+        p = Package(path)
+        established_pair(p)
+        p.auto_events = True
+        p.service = "stopped" if command == "start" else "running"
+        p.set_state(ACTUAL, p.service)
+        if command == "stop":
+            p.set_state(SONY, "off", age=7200)
+        epoch = States(p)(EPOCH)
+        reconciliation = States(p)(RECONCILE_TIME)
+        if failure == "exception":
+            p.fail_actions.add(f"shell_command.ugoos_theater_kodi_{command}")
+        else:
+            p.responses[command] = deque(
+                {"returncode": failure, "stdout": "", "stderr": f"{command} failed"}
+                for _ in range(20)
+            )
+        p.run_script(RECONCILE)
+        attempts = [p.commands().count(command)]
+        for _ in range(8):
+            p.advance(30)
+            p.automation("ugoos_theater_kodi_status_poll")
+            p.drain()
+            attempts.append(p.commands().count(command))
+        assert attempts == [1] * 9, \
+            f"healthy status polls retried persistent {command} failure at 0/30/.../240s: {attempts}"
+        assert States(p)(EPOCH) == epoch, "a command error fabricated a host recovery epoch"
+        assert States(p)(RECONCILE_TIME) == reconciliation, "failed command was certified by a status poll"
+        notification = f"ugoos_theater_kodi_lifecycle_{command}"
+        assert notification in p.notifications
+        p.responses.pop(command, None)
+        p.fail_actions.clear()
+        p.run_script(RECONCILE)
+        assert p.commands().count(command) == 2, "explicit operator retry must remain available"
+        assert p.service == ("running" if command == "start" else "stopped")
+        assert notification not in p.notifications
+
+
+def healthy_polls_do_not_retry_start(path):
+    healthy_polls_do_not_retry_failed_command(path, "start")
+
+
+def healthy_polls_do_not_retry_stop(path):
+    healthy_polls_do_not_retry_failed_command(path, "stop")
+
+
+def actual_status_outage_allows_recovery_after_command_failure(path):
+    p = Package(path)
+    established_pair(p)
+    p.auto_events = True
+    p.service = "stopped"
+    p.set_state(ACTUAL, "stopped")
+    p.responses["start"] = deque([{"returncode": 9, "stdout": "", "stderr": "start failed"}])
+    p.run_script(RECONCILE)
+    assert p.commands().count("start") == 1
+    p.responses["status"] = deque([{"returncode": 255, "stdout": "", "stderr": "connection lost"}])
+    p.automation("ugoos_theater_kodi_status_poll")
+    assert States(p)(HOST) == "off" and States(p)(OBSERVING) == "off"
+    p.advance(30)
+    p.automation("ugoos_theater_kodi_status_poll")
+    assert p.timestamp(States(p)(EPOCH)) == p.now.timestamp()
+    p.drain()
+    assert p.commands().count("start") == 2 and p.service == "running"
+    for _ in range(8):
+        p.advance(30)
+        p.automation("ugoos_theater_kodi_status_poll")
+        p.drain()
+    assert p.commands().count("start") == 2, "actual recovery must not disable command idempotency"
+
 
 def reload_starts_fresh_observation(path):
     for kind in ("start", "automation_reloaded", "service_registered"):
@@ -735,7 +832,8 @@ def shell_action_exception_is_reported(path):
             pass
         assert f"ugoos_theater_kodi_lifecycle_{command}" in p.notifications, \
             f"{operation}: shell action exception bypassed lifecycle error handling"
-        assert States(p)(HOST) == "off"
+        expected_host = "on" if operation in ("start", "stop") else "off"
+        assert States(p)(HOST) == expected_host, "only status observations determine host reachability"
 
 
 def malformed_poll_preserves_reachable_host(path):

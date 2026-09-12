@@ -174,6 +174,8 @@ script:
       - action: input_boolean.turn_on
         target:
           entity_id: input_boolean.ugoos_theater_observation_ready
+      - condition: template
+        value_template: "{{ reconcile_after_observation | default(true) }}"
       - action: script.turn_on
         target:
           entity_id: script.ugoos_theater_reconcile_kodi
@@ -186,6 +188,8 @@ script:
       stop_when_display_off: true
     sequence:
       - variables:
+          previous_host_reachable: "{{ is_state('input_boolean.ugoos_theater_host_reachable', 'on') }}"
+          previous_lifecycle_state: "{{ states('input_text.ugoos_theater_kodi_lifecycle_state') }}"
           lifecycle_status:
             returncode: -1
             stdout: ""
@@ -196,19 +200,6 @@ script:
       - variables:
           status_stdout: "{{ lifecycle_status.stdout | default('') | trim }}"
           status_stderr: "{{ lifecycle_status.stderr | default('') | trim }}"
-          desired_state: >-
-            {% set epoch = as_timestamp(states('input_datetime.ugoos_theater_observation_started'), as_timestamp(now()))
-              if is_state('input_boolean.ugoos_theater_observation_ready', 'on') else as_timestamp(now()) %}
-            {% set sony_off_seconds = as_timestamp(now()) - [epoch, as_timestamp(states.media_player.sony_xr_65a90j.last_changed, as_timestamp(now()))] | max %}
-            {% if not stop_when_display_off %}
-              running
-            {% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}
-              running
-            {% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}
-              stopped
-            {% else %}
-              running
-            {% endif %}
       - choose:
           - conditions:
               - condition: template
@@ -275,10 +266,37 @@ script:
                   operation: status
                   message: status returned failed for kodi.service
               - stop: status failed
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ not previous_host_reachable
+                  or not is_state('input_boolean.ugoos_theater_observation_ready', 'on')
+                  or (previous_lifecycle_state in ['stopped', 'failed'] and status_stdout == 'running') }}
+            sequence:
+              - action: script.ugoos_theater_begin_observation
+                data:
+                  reconcile_after_observation: false
+      - variables:
+          desired_state: >-
+            {% set epoch = as_timestamp(states('input_datetime.ugoos_theater_observation_started'), as_timestamp(now()))
+              if is_state('input_boolean.ugoos_theater_observation_ready', 'on') else as_timestamp(now()) %}
+            {% set sony_off_seconds = as_timestamp(now()) - [epoch, as_timestamp(states.media_player.sony_xr_65a90j.last_changed, as_timestamp(now()))] | max %}
+            {% if not stop_when_display_off %}
+              running
+            {% elif is_state('input_boolean.ugoos_theater_keep_kodi_running', 'on') %}
+              running
+            {% elif is_state('media_player.sony_xr_65a90j', 'off') and sony_off_seconds >= 60 %}
+              stopped
+            {% else %}
+              running
+            {% endif %}
       - action: script.ugoos_theater_record_error
         data:
           operation: status
           message: ""
+      # A command error cannot turn a healthy status observation into a
+      # host outage/recovery cycle. Keep its error scoped to that command.
       - choose:
           - conditions:
               - condition: template
@@ -302,20 +320,12 @@ script:
                     sequence:
                       - action: input_boolean.turn_off
                         target:
-                          entity_id:
-                            - input_boolean.ugoos_theater_host_reachable
-                            - input_boolean.ugoos_theater_observation_ready
-                            - input_boolean.ugoos_theater_input_idle
-                      - action: input_text.set_value
-                        target:
-                          entity_id: input_text.ugoos_theater_kodi_lifecycle_state
-                        data:
-                          value: unknown
+                          entity_id: input_boolean.ugoos_theater_input_idle
                       - action: script.ugoos_theater_record_error
                         data:
                           operation: start
-                          message: "{{ 'start transport failure: ' ~ (start_stderr or 'no stderr') }}"
-                      - stop: start transport failure
+                          message: "{{ 'start command failure: ' ~ (start_stderr or 'no stderr') }}"
+                      - stop: start command failure
                   - conditions:
                       - condition: template
                         value_template: "{{ start_stdout != 'running' or start_stderr != '' }}"
@@ -378,20 +388,12 @@ script:
                     sequence:
                       - action: input_boolean.turn_off
                         target:
-                          entity_id:
-                            - input_boolean.ugoos_theater_host_reachable
-                            - input_boolean.ugoos_theater_observation_ready
-                            - input_boolean.ugoos_theater_input_idle
-                      - action: input_text.set_value
-                        target:
-                          entity_id: input_text.ugoos_theater_kodi_lifecycle_state
-                        data:
-                          value: unknown
+                          entity_id: input_boolean.ugoos_theater_input_idle
                       - action: script.ugoos_theater_record_error
                         data:
                           operation: stop
-                          message: "{{ 'stop transport failure: ' ~ (stop_stderr or 'no stderr') }}"
-                      - stop: stop transport failure
+                          message: "{{ 'stop command failure: ' ~ (stop_stderr or 'no stderr') }}"
+                      - stop: stop command failure
                   - conditions:
                       - condition: template
                         value_template: "{{ stop_stdout != 'stopped' or stop_stderr != '' }}"

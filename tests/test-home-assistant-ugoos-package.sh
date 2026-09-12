@@ -38,6 +38,22 @@ test_host_and_service_recovery_start_fresh_off_observation() {
   package_fixture recovery_starts_fresh_observation
 }
 
+test_reconciler_first_recovery_starts_fresh_off_observation() {
+  package_fixture reconciler_first_recovery_starts_fresh_observation
+}
+
+test_persistent_start_failure_is_not_retried_by_healthy_status_polls() {
+  package_fixture healthy_polls_do_not_retry_start
+}
+
+test_persistent_stop_failure_is_not_retried_by_healthy_status_polls() {
+  package_fixture healthy_polls_do_not_retry_stop
+}
+
+test_actual_status_outage_still_reconciles_after_command_failure() {
+  package_fixture actual_status_outage_allows_recovery_after_command_failure
+}
+
 test_start_and_reload_invalidate_queued_off_intervals() {
   package_fixture reload_starts_fresh_observation
 }
@@ -300,6 +316,10 @@ test_failed_lifecycle_state_is_recorded_without_marking_host_unreachable() {
 }
 
 run_all_tests \
+  test_persistent_start_failure_is_not_retried_by_healthy_status_polls \
+  test_persistent_stop_failure_is_not_retried_by_healthy_status_polls \
+  test_actual_status_outage_still_reconciles_after_command_failure \
+  test_reconciler_first_recovery_starts_fresh_off_observation \
   test_shell_action_exceptions_reach_lifecycle_error_handling \
   test_malformed_poll_preserves_host_reachability_without_inventing_service_state \
   test_missing_entities_notify_and_configured_unknown_sony_fails_awake \

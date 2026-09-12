@@ -325,7 +325,19 @@ _lifecycle_record_receipt() {
   mv -f "$1.new" "$1"
 }
 
+_lifecycle_retire_finalizing_receipt() {
+  # Rollback supersedes only this transaction's in-progress finalize.
+  if [ -e "${cache_root}/finalizing-transaction" ] || [ -L "${cache_root}/finalizing-transaction" ]; then
+    _lifecycle_receipt_matches "${cache_root}/finalizing-transaction" "${transaction}" || {
+      printf 'ROLLBACK_FAIL:transaction-receipt-mismatch\n' >&2
+      return 1
+    }
+    rm -f "${cache_root}/finalizing-transaction" || return 1
+  fi
+}
+
 _lifecycle_cleanup_verified_rollback() {
+  _lifecycle_retire_finalizing_receipt || return 1
   _lifecycle_record_receipt "${cache_root}/last-rolled-back-transaction" "${transaction}" || return 1
   rm -rf "${transaction}" || return 1
   rm -f "${pointer_file}"
@@ -733,6 +745,11 @@ if ! _lifecycle_manifest_complete "${transaction}"; then
   exit 24
 fi
 
+if ! _lifecycle_retire_finalizing_receipt; then
+  printf 'ROLLBACK_STATE:incomplete-rollback\n' >&2
+  printf 'TRANSACTION:%s\n' "${transaction}" >&2
+  exit 22
+fi
 _lifecycle_record_phase "${transaction}" rolling-back || {
   printf 'ROLLBACK_STATE:incomplete-rollback\n' >&2
   exit 22

@@ -1489,6 +1489,133 @@ STUB
   [[ ! -e "${root}/.cache/kodi-lifecycle/current-transaction" ]]
 }
 
+install_lifecycle_exact_rm_fault() {
+  local dir="$1"
+  mkdir -p "${dir}/rm-fault-bin"
+  cat > "${dir}/rm-fault-bin/rm" <<'STUB'
+#!/bin/bash
+for argument in "$@"; do
+  [[ "${argument}" == "${FIXTURE_RM_BLOCKED_PATH:?}" ]] && exit 1
+done
+exec /bin/rm "$@"
+STUB
+  chmod +x "${dir}/rm-fault-bin/rm"
+  printf '%s\n' "${dir}/rm-fault-bin"
+}
+
+test_rollback_after_failed_finalize_retires_matching_receipt() {
+  local dir root os_release systemctl_bin transaction next_transaction fault_bin script output rc retained
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  mkdir -p "${root}/.config" "${root}/.ssh"
+  printf 'ORIGINAL_WRAPPER\n' > "${root}/.config/kodi-lifecycle"
+  printf 'ORIGINAL_KEYS\n' > "${root}/.ssh/authorized_keys"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  transaction="$(current_transaction_pointer "${root}")"
+  fault_bin="$(install_lifecycle_exact_rm_fault "${dir}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_RM_BLOCKED_PATH="${transaction}" \
+    PATH="${fault_bin}:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_eq "32" "${rc}" "finalize must fail before deleting backup material" || return 1
+  [[ -f "${transaction}/manifest" && -f "${transaction}/rollback/authorized_keys" ]] || return 1
+  assert_eq "${transaction}" "$(cat "${root}/.cache/kodi-lifecycle/finalizing-transaction")" || return 1
+  set_fixture_active_state "${dir}" active
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${transaction}")"
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="$(dirname "${systemctl_bin}"):${PATH}" sh -s 2>&1)"
+  assert_contains "${output}" "ROLLBACK_STATE:rolled-back" || return 1
+  assert_eq "inactive" "$(cat "${dir}/systemctl-config/active-state")" || return 1
+  assert_eq "ORIGINAL_WRAPPER" "$(cat "${root}/.config/kodi-lifecycle")" || return 1
+  assert_eq "ORIGINAL_KEYS" "$(cat "${root}/.ssh/authorized_keys")" || return 1
+  retained=0
+  [[ ! -e "${root}/.cache/kodi-lifecycle/finalizing-transaction" ]] || retained=1
+
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  next_transaction="$(current_transaction_pointer "${root}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script finalize "${root}" "${next_transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "rollback must not strand a receipt that poisons the next finalize: ${output}" || return 1
+  assert_contains "${output}" "FINALIZE_STATE:committed" || return 1
+  assert_eq "0" "${retained}" "the matching finalizing receipt must retire during rollback, not be ignored later"
+}
+
+test_rollback_refuses_to_retire_foreign_finalizing_receipt() {
+  local dir root os_release systemctl_bin transaction foreign script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  transaction="$(current_transaction_pointer "${root}")"
+  foreign="${root}/backup/kodi-lifecycle/foreign-transaction"
+  printf '%s\n' "${foreign}" > "${root}/.cache/kodi-lifecycle/finalizing-transaction"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="$(dirname "${systemctl_bin}"):${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "foreign finalizing evidence must block destructive cleanup" || return 1
+  assert_contains "${output}" "ROLLBACK_FAIL:transaction-receipt-mismatch" || return 1
+  assert_eq "${foreign}" "$(cat "${root}/.cache/kodi-lifecycle/finalizing-transaction")" || return 1
+  assert_eq "${transaction}" "$(current_transaction_pointer "${root}")" || return 1
+  [[ -d "${transaction}" ]]
+}
+
+test_rollback_finalizing_receipt_unlink_failure_retains_recovery() {
+  local dir root os_release systemctl_bin transaction receipt fault_bin script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  os_release="${dir}/os-release"
+  generate_fixture_keypair "${dir}" "controller"
+  write_fixture_os_release "${os_release}"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  deploy_to_pending_verification "${dir}" "${root}" "${os_release}" \
+    "${dir}/controller.pub" "$(dirname "${systemctl_bin}")"
+  transaction="$(current_transaction_pointer "${root}")"
+  receipt="${root}/.cache/kodi-lifecycle/finalizing-transaction"
+  printf '%s\n' "${transaction}" > "${receipt}"
+  printf 'finalizing\n' > "${transaction}/phase"
+  fault_bin="$(install_lifecycle_exact_rm_fault "${dir}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_RM_BLOCKED_PATH="${receipt}" \
+    FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${fault_bin}:$(dirname "${systemctl_bin}"):${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "failed finalizing-receipt unlink must not be a completed rollback" || return 1
+  assert_eq "${transaction}" "$(current_transaction_pointer "${root}")" || return 1
+  [[ -f "${receipt}" && -f "${transaction}/manifest" ]] || return 1
+  [[ -f "${root}/.config/kodi-lifecycle" && -f "${root}/.ssh/authorized_keys" ]] || {
+    printf 'rollback modified the verified installation while its finalize receipt was still active\n' >&2
+    return 1
+  }
+  assert_eq "finalizing" "$(cat "${transaction}/phase")" || return 1
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="$(dirname "${systemctl_bin}"):${PATH}" sh -s 2>&1)"
+  assert_contains "${output}" "ROLLBACK_STATE:rolled-back" || return 1
+  [[ ! -e "${receipt}" && ! -e "${transaction}" && ! -e "${root}/.cache/kodi-lifecycle/current-transaction" ]]
+}
+
 test_finalize_lost_response_retry_is_identity_checked() {
   local dir root os_release systemctl_bin transaction script output rc
   dir="$(make_scratch_dir)"
@@ -2339,6 +2466,9 @@ test_kodi_service_failed_refuses_before_any_mutation() {
 }
 
 run_all_tests \
+  test_rollback_after_failed_finalize_retires_matching_receipt \
+  test_rollback_refuses_to_retire_foreign_finalizing_receipt \
+  test_rollback_finalizing_receipt_unlink_failure_retains_recovery \
   test_documented_host_bootstrap_requires_independent_fingerprint \
   test_verified_rollback_cleanup_retries_after_pointer_unlink_failure \
   test_recovery_dry_run_is_rejected_before_any_ssh \
