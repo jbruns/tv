@@ -1,200 +1,22 @@
 # Theater: Ugoos AM6B+
 
-Install using the [shared CoreELEC 21.3 guide](../../../docs/devices/ugoos-am6b-plus/coreelec-21.3.md). Apply the following room-specific choices alongside that procedure.
+Apply these room-specific values with the shared Ugoos procedures.
 
-## Connections and identity
+## Theater-specific values
 
-- HDMI output connects directly to **Sony HDMI IN 4**; video does not pass through the receiver or extender.
-- Use wired Ethernet and the supplied power adapter.
-- Proposed hostname: `ugoos-theater`. Confirm and record the actual hostname, wired MAC, and DHCP reservation in the [room record](../README.md#installation-record).
-- Onboard through [pfSense Plus 26.07](../../../docs/network/pfsense-plus-26.07-onboarding.md), leaving CoreELEC on DHCP. Add the guide's device network record here once this unit's MAC and mapping are known. For lifecycle control, permit only the actual Home Assistant host address to this reserved Ugoos address on TCP/22 and log the rule during pilot validation.
-- Network: LAN, `172.16.0.0/16` and `2001:db8:1::/64`; individual addresses remain to be recorded.
-- Remote model and use of Bluetooth remain to be confirmed. Use the shared guide's matching `remote.conf` or UR-01 Bluetooth steps where applicable.
+- **Hostname:** `ugoos-theater`
+- **Network:** connect the wired NIC to **LAN**, leave IP configuration on **DHCP**, and create a pfSense DHCP reservation plus local DNS record.
+- **HDMI:** connect the HDMI output directly to **Sony HDMI IN 4**.
+- **Power:** use the supplied power adapter.
+- **Dolby Vision:** set Dolby Vision mode to **TV-led / display-led**.
+- **Kodi resolution whitelist:** enable all 2160p modes actually reported by the Sony.
+- **Startup overrides:** leave custom EDID and Dolby Vision colorimetry startup overrides unset.
+- **Audio:** enable HDMI passthrough for Dolby Digital, Dolby Digital Plus, DTS, Dolby TrueHD, DTS-HD, and Dolby Atmos, and keep `Sync playback to display: Off`.
+- **Kodi entity:** `media_player.kodi_theater`
+- **Lifecycle SSH alias:** `ugoos-theater-lifecycle`
 
-## Video
+## Shared guides
 
-Set Dolby Vision mode to **TV-led / display-led** after applying the [Sony settings](sony-xr-65a90j.md). Add all available 2160p modes reported by the Sony to Kodi's resolution whitelist; do not add unreported modes.
-
-Keep custom EDID overrides and Dolby Vision colorimetry startup scripts unset. They are unnecessary for the baseline with the Ugoos directly connected to a correctly configured A90J.
-
-## Audio during the ARC-only interim
-
-While the original AVPro T/R pair remains installed, do not treat a failed TrueHD/Atmos test as a CoreELEC defect. ARC is the limiting link.
-
-After the T2/R2 extender is installed and the television reports an active eARC audio system, configure Kodi for HDMI passthrough and enable the codecs supported by the Denon, including Dolby Digital, Dolby Digital Plus, DTS, Dolby TrueHD, DTS-HD, and Atmos carried within the source bitstream. Keep `Sync playback to display` off because it conflicts with passthrough.
-
-## Arctic Fuse live acceptance — 2026-09-08
-
-- **Hostname**: CoreELEC-theater
-- **Platform**: Amlogic-ng.arm-21.3-Omega (Kodi 21.3, JSON-RPC 13.5.0)
-- **Provisioner HEAD**: 844d4fe (`fix: persist Arctic Fuse shortcut settings`)
-
-### Deployments
-
-| Run | Report | State | Verification |
-|-----|--------|-------|--------------|
-| 1st | `coreelec-theater-20260909T044223Z.txt` | committed | pass — all `arctic_fuse.*` and `metadata.*` statuses ok |
-| 2nd | `coreelec-theater-20260909T045435Z.txt` | committed | pass — all statuses ok (idempotence) |
-
-### Playlist validation (JSON-RPC Files.GetDirectory)
-
-| Playlist | Type | Items | Status |
-|----------|------|-------|--------|
-| InProgressMovies90Days | movies | 2 | OK |
-| InProgressShows90Days | tvshows | 14 | OK |
-| RecentlyAiredEpisodes30Days | episodes | 0 | **DEFECT** — Kodi 21.3 SQL syntax error on `inthelast`/`before`+`tomorrow` rules |
-| RecentlyReleasedMovies90Days | movies | 0 | **DEFECT** — same SQL generation bug |
-| NewShows | tvshows | 50 | OK |
-| NewMovies | movies | 50 | OK |
-
-**Date-relative XSP defect**: Library contains 79 qualifying episodes (30-day) and 3 qualifying movies (90-day), but Kodi 21.3's `CSmartPlaylistDirectory` generates invalid SQL: `WHERE (()) AND (())`. Both JSON-RPC and internal `CGUIMediaWindow::GetDirectory` fail. Home widget tabs 503/504 hidden due to 0 items. Requires provisioner XSP rule fix.
-
-### Corrected playlist acceptance — 2026-09-11
-
-The corrected playlists passed live acceptance on `coreelec-theater`:
-
-- `RecentlyAiredEpisodes30Days.xsp` returned 50 episodes dated 2026-08-23
-  through 2026-09-09, all within the rolling 30-day window with no future
-  dates.
-- `RecentlyReleasedMoviesCurrentYear.xsp` returned 36 movies, all with year
-  2026, matching the device year.
-- `RecentlyReleasedMovies90Days.xsp` was absent.
-
-Reports `coreelec-theater-20260911T164651Z.txt` and
-`coreelec-theater-20260911T165411Z.txt` both recorded
-`deployment_state=committed` and `verification_result=pass`. The second
-deployment confirmed the corrected playlist files were byte-identical.
-
-### Application launch results
-
-- **Plex (script.plexmod)**: PM4K started, loaded user-select screen (no PLEX_TOKEN configured). Not an empty hub — expected sign-in flow without credentials.
-- **YouTube (plugin.video.youtube)**: Opened in Videos window (id=10025) with full 20-item root menu including Sign In, Subscriptions, Trending, Search, etc.
-
-### Screenshots
-
-| Artifact | Description |
-|----------|-------------|
-| `screenshot-home.png` | Home screen with movie metadata, widget tabs (In-Progress Movies, In-Progress Shows, New Shows, New Movies), Play/More Information buttons |
-| `screenshot-power.png` | Options overlay with Settings tile, Weather, and five Power items |
-| `screenshot-home-evidence.png` | Home confirming 4 visible tabs (503/504 hidden due to XSP defect) |
-| `screenshot-hub-home-v2.png` | Home/Videos hub |
-| `screenshot-hub-plex-v2.png` | Plex hub (11101) |
-| `screenshot-hub-youtube-v2.png` | YouTube hub (11102) |
-| `screenshot-hub-nextaired-v2.png` | Historical Next Aired hub (11106); entering it exposed the Trakt OAuth defect |
-| `screenshot-hub-pvr-v2.png` | PVR hub (11107) |
-| `screenshot-hub-addons-v2.png` | Addons hub (11108) |
-
-### Historical pre-correction hub navigation
-
-All 6 HomeSwitcher hubs verified via Right-navigation: Home (10000) → Plex (11101) → YouTube (11102) → Next Aired (11106) → PVR (11107) → Addons (11108). `Skin.String()` toggle mechanism works correctly with `type="string"` settings.
-
-Entering Next Aired during the 2026-09-11 re-acceptance raised
-`Unauthorised 401 Error TraktAPI Token`. Investigation confirmed TMDb Helper
-6.17.1's `library_nextaired` route still requires end-user Trakt OAuth. A
-disposable live test of `library_airingnext` then hit OMDb timeouts and TMDb
-Helper thread exhaustion (`can't start new thread`).
-
-The approved final resolution is to disable Next Aired by removing its managed
-state before Kodi starts. After redeployment, the managed order after Home is
-Plex → YouTube → PVR → Add-ons, with no case-insensitive
-`HomeSwitcher.1106.Toggle` or `HomeSwitcher.1106.UpNextMode` node. Live state may
-contain no toggle match, empty string-typed toggle placeholders, or bool-typed
-toggle nodes with value `false`; `UpNextMode` may be absent or represented only
-by empty string-typed placeholders. Every other type/value combination remains
-invalid.
-
-The first deployment of commit `3b418af` produced
-`coreelec-theater-20260911T180528Z.txt` and automatically rolled back because
-the verifier treated Arctic Fuse's empty runtime placeholder as stale state.
-Controlled backup/restore reproduction confirmed the transformer supplied no
-mode node and Arctic Fuse recreated exactly an empty string-typed node after
-startup.
-
-Commit `8390d42` then deployed twice successfully
-(`coreelec-theater-20260911T200447Z.txt`,
-`coreelec-theater-20260911T200808Z.txt`; both recorded
-`deployment_state=committed` and `verification_result=pass`, with 8/8 managed
-files byte-identical), but those runs were **not accepted**. Live
-inspection showed `Container(399)` — the control that drives Left/Right hub
-movement — still listed `Next Aired → ReplaceWindow(1106)` between YouTube and
-PVR, because Arctic Fuse renders a hub whenever
-`!String.IsEmpty(Skin.String(HomeSwitcher.1106.Toggle))` and its own dialog
-disables a hub with `Skin.Reset(...)`. The literal value `false` is non-empty.
-
-## Arctic Fuse final live acceptance — 2026-09-11 — ACCEPTED
-
-- **Accepted HEAD**: `09c784e` (`fix: remove Next Aired hub toggle entirely`)
-- **Reports**: `coreelec-theater-20260911T202453Z.txt` and
-  `coreelec-theater-20260911T202711Z.txt` — both `deployment_state=committed`,
-  `verification_result=pass`, `verification_failures=0`, every `metadata.*` and
-  `arctic_fuse.*` status `ok`, `arctic_fuse.playlist_migration.observed=1`
-- **Idempotence**: all 8 standalone managed files byte-identical between the two
-  runs; obsolete `RecentlyReleasedMovies90Days.xsp` absent
-- **Live skin settings**: `managed_skin_settings=12 exact=1 string_typed=1
-  duplicate_free=1`; one empty string-typed `homeswitcher.1106.toggle`
-  placeholder recreated by Arctic Fuse; no `UpNextMode` node;
-  `HomeSwitcher.1107.Toggle=true`, `HomeSwitcher.1108.Toggle=true`
-- **Home navigation**: `10000 → 11101 (Plex) → 11102 (YouTube) → 11107 (PVR) →
-  11108 (Add-ons)`; no Next Aired entry; no Trakt/OAuth dialog and zero
-  `Unauthorised`/`TraktAPI`/`library_nextaired` log matches
-- **Applications**: Plex started `script.plexmod` 1.14.1-beta1 at its `doogie`
-  user select; YouTube opened Videos `10025` with 20 root items; PVR opened TV
-  channels `10700` with 589 channels across 21 groups; Add-ons opened browser
-  `10040`
-- **Home widgets**: In-Progress Movies 1, In-Progress Shows 15, Recently Aired
-  Shows 50, Recently Released Movies 36, New Shows 50, New Movies 50
-- **Corrected playlists**: 50 episodes air-dated 2026-08-23 through 2026-09-09
-  (inside the inclusive 2026-08-12 through 2026-09-11 window, no future date);
-  36 movies, all year 2026, premiered 2026-01-05 through 2026-08-05
-- **Power menu**: the same five actions in order were focus-walked in overlay
-  `11170` and the overlay was closed with `Input.Back` — **no Power action was
-  selected or executed**
-- **Screenshots**: `screenshot-home-final-accepted-20260911.png`,
-  `screenshot-power-final-accepted-20260911.png`,
-  `screenshot-power-overlay-final-20260911.png`,
-  `screenshot-plex-pm4k-final-20260911.png`,
-  `screenshot-youtube-final-20260911.png`,
-  `screenshot-pvr-channels-final-20260911.png`,
-  `screenshot-hub-addons-final-20260911.png`,
-  `screenshot-addonbrowser-final-20260911.png`
-
-Multiple profiles remain out of scope; the managed settings apply to the
-primary profile only.
-
-### Commits since the accepted deployment
-
-Live acceptance was performed against `09c784e`, not against any later commit.
-Everything committed since then changes verification and documentation only —
-the live verifier's accepted runtime representations, the split hub
-observations, case-insensitive managed-setting comparison, the transformer's
-root-node canonicalization, the failure-path applied-list handling, and the
-report's informational Next Aired field. Each of those still accepts the exact
-state recorded above, so no redeployment or reacceptance is required. No later
-commit has been deployed to `coreelec-theater`, and none is claimed to have
-been.
-
-### Idempotence and hashes
-
-8 of 9 managed files byte-identical across deployments. The sole difference is `skin.arctic.fuse.3/settings.xml`, which Kodi modifies at runtime (non-managed settings). In the 2026-09-08 acceptance all 14 managed skin settings then in scope remained correct (`type="string"`, expected values) with no case-insensitive duplicate IDs (224 total settings). After the Next Aired removal the managed subset is 12 settings, verified exact, string-typed, and duplicate-free in the final acceptance (245 total settings).
-
-### Power menu — five items, correct order, no execution
-
-1. Power off system — `Powerdown()`
-2. Custom shutdown timer — `AlarmClock(shutdowntimer,Shutdown())`
-3. Suspend — `Suspend()`
-4. Reboot — `Reset()`
-5. Restart Kodi — `RestartApp()`
-
-No Hibernate, Quit, Log off, or Exit entries. The Power menu was opened and closed via `Input.Back` — **no Power action was executed** at any point during acceptance.
-
-### PVR
-
-589 TV channels present; PVR hub toggle (`HomeSwitcher.1107.Toggle`) enabled.
-
-## Lifecycle, validation, and follow-on setup
-
-After DHCP/DNS and shared provisioning, follow the [Ugoos Kodi lifecycle guide](../../../docs/home-assistant/ugoos-kodi-lifecycle.md) for the restricted gateway and Home Assistant package. The theater package expects `ugoos-theater`, `media_player.sony_xr_65a90j`, and `media_player.kodi_theater`; record different live values before enabling it.
-
-Wake-on-LAN is optional experimental work, not lifecycle keep-alive. If testing Home Assistant wake control from IoT, follow the [shared WoL procedure](../../../docs/network/wake-on-lan.md) using destination `172.16.99.99` and this unit's real wired MAC. Record the tested power state and UDP port here; wake support has not yet been validated for this unit.
-
-Complete both the shared guide's validation checklist and the [theater checklist](../README.md#room-validation) before eMMC migration. After a backup, follow the [remaining room-specific service work](../../../docs/runbook.md#8-remaining-room-specific-service-work); the shared add-ons are already installed and configured by [`provision-coreelec.sh`](../../../docs/runbook.md#3-provision-the-shared-coreelec-baseline). Home Assistant lifecycle acceptance remains pending until the room record is filled from live device tests.
+- [Shared installation guide](../../../docs/devices/ugoos-am6b-plus/coreelec-21.3.md)
+- [Shared provisioning operations](../../../docs/operations/provision-ugoos.md)
+- [Shared lifecycle guide](../../../docs/home-assistant/ugoos-kodi-lifecycle.md)

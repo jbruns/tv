@@ -1,14 +1,30 @@
 # Theater: Sony XR-65A90J
 
-Use the [theater topology](../README.md#hdmi-topology) with the [shared Ugoos installation guide](../../../docs/devices/ugoos-am6b-plus/coreelec-21.3.md). These settings apply to this television and room wiring.
+Use the [theater signal topology](../README.md#signal-topology). These settings apply to this television and room wiring.
 
 ## Physical connections
 
 1. Connect the Ugoos HDMI output directly to **Sony HDMI IN 4**.
-2. Reserve **Sony HDMI IN 3** for eARC to the AVPro receiver.
-3. Use the supplied Ugoos power adapter.
-4. Connect wired Ethernet to the Ugoos.
-5. The Sony does not need a network connection for Dolby Vision, eARC, or CEC. Leave it offline for now unless network-based Home Assistant monitoring is later selected.
+2. Connect **Sony HDMI IN 3 (eARC)** to the [OREI EARC-EX165-K TV-side unit](orei-earc-ex165-k.md).
+3. Connect the Sony wired NIC to **IoT**.
+
+## Network and Home Assistant
+
+- Leave the Sony IP configuration on **DHCP**.
+- Create a pfSense reservation and local DNS record for the wired IoT connection.
+- Open:
+
+  ```text
+  Settings
+  -> Network
+  -> Home Network Setup
+  -> IP Control
+  ```
+
+- Set authentication to the PSK-capable mode and configure a unique pre-shared key stored outside the repository.
+- Set **Remote start: On** so Home Assistant can control the television from standby.
+- In Home Assistant, add the **Sony Bravia TV** integration under **Settings > Devices & services** using the reserved address and PSK.
+- Rename the integration entity to `media_player.sony_xr_65a90j` so the lifecycle package contract is satisfied.
 
 ## HDMI signal formats
 
@@ -27,7 +43,7 @@ Set:
 | Input | Setting | Reason |
 |---|---|---|
 | HDMI 4 | **Enhanced format (Dolby Vision)** | Ugoos input; enables the required Dolby Vision signaling and 18 Gbit/s formats. |
-| HDMI 3 | **Enhanced format (Dolby Vision)** | eARC/Denon path; also retains Dolby Vision compatibility for any video sent forward from the Denon. |
+| HDMI 3 | **Enhanced format (Dolby Vision)** | OREI/Denon eARC path; retains Dolby Vision compatibility for any video forwarded from the receiver. |
 
 Do not select `Enhanced format (VRR)` for the Ugoos input. VRR provides no benefit for Kodi movie playback and may make Dolby Vision unavailable on this television generation.
 
@@ -60,8 +76,6 @@ Apply these settings:
 
 Do not set `Digital audio out` to `PCM`; doing so would prevent bitstream transport of TrueHD/Atmos. `Digital audio out volume` applies to PCM and is not material to this bitstream configuration.
 
-The Sony's `eARC mode: Auto` setting can remain enabled with the existing ARC-only AVPro `T/R` pair. The connection will fall back to ARC, but TrueHD/Atmos will not pass until the `T2/R2` extender is installed.
-
 ## BRAVIA Sync / HDMI-CEC
 
 Open:
@@ -74,15 +88,15 @@ Quick Settings
 -> BRAVIA Sync settings
 ```
 
-Use this pilot configuration:
+Use this configuration:
 
-| Setting | Pilot value | Reason |
+| Setting | Value | Reason |
 |---|---|---|
 | BRAVIA Sync control | **On** | Enables HDMI-CEC discovery, Sony-remote navigation, and audio-system coordination. |
 | Device auto power off | **Off** | Keeps Home Assistant, not the television, in charge of display idle power-off and Kodi lifecycle. |
 | TV auto power on | **Off** | Prevents Kodi, HDMI input, or CEC activity from unexpectedly turning on the television during lifecycle automation. |
 
-Keep **Device auto power off** and **TV auto power on** disabled for the Ugoos lifecycle. Home Assistant owns display idle power-off and Kodi start/stop; BRAVIA Sync remains enabled only for discovery, Sony-remote navigation, and audio coordination. After connecting the new AVPro T2/R2 hardware, refresh the BRAVIA Sync device list and verify that the Denon appears.
+Keep **Device auto power off** and **TV auto power on** disabled for the Ugoos lifecycle. Home Assistant owns display idle power-off and Kodi start/stop; BRAVIA Sync remains enabled only for discovery, Sony-remote navigation, and audio coordination.
 
 ## Picture settings
 
@@ -97,3 +111,4 @@ When Dolby Vision is first detected, select `Dolby Vision Dark` or `Dolby Vision
 - [Sony A90J Help Guide: HDMI input picture settings](https://helpguide.sony.net/tv/iusltn1/v1/en-003/04-09_02.html)
 - [Sony A90J Help Guide: audio output, eARC, and pass-through](https://helpguide.sony.net/tv/iusltn1/v1/en-003/01-03-09_02.html)
 - [Sony BRAVIA Sync overview](https://www.sony.com/electronics/support/articles/00161073)
+- [Home Assistant Sony Bravia TV integration](https://www.home-assistant.io/integrations/braviatv/)
