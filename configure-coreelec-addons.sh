@@ -25,6 +25,8 @@ die() {
 
 # shellcheck source=lib/coreelec-config.sh
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
+# shellcheck source=lib/coreelec-env.sh
+source "${SCRIPT_DIR}/lib/coreelec-env.sh"
 # shellcheck source=lib/coreelec-ssh.sh
 source "${SCRIPT_DIR}/lib/coreelec-ssh.sh"
 # shellcheck source=lib/coreelec-addon-workflows.sh
@@ -65,7 +67,8 @@ Supported post-deployment add-ons:
 
 The default run performs non-interactive checks only. Use --interactive
 before any PM4K account, YouTube, or Emby GUI workflow.
-This command does not write Home Assistant, NextPVR, or PM4K local-mode
+This command sources shared secrets from the repository-root .env file.
+It does not write Home Assistant, NextPVR, or PM4K local-mode
 settings. Supply those values to provision-coreelec.sh first, then use this
 command to validate them. See config/README.md for the complete input matrix.
 Dry-run makes zero SSH/device calls and transmits no secrets, including when
@@ -267,6 +270,7 @@ main() {
   preparse_config_path "$@"
   coreelec_config_load "${CONFIG_FILE}"
   parse_args "$@"
+  coreelec_env_load "${UGOOS_ENV_FILE:-${SCRIPT_DIR}/.env}"
   [[ -n "${TARGET}" ]] || die "--target is required"
   coreelec_config_validate
   validate_selected_addons

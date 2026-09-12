@@ -249,9 +249,9 @@ tree_digest() {
   (
     cd "${root}"
     find . -type f | LC_ALL=C sort | while IFS= read -r file; do
-      shasum -a 256 "${file}"
+      sha256sum "${file}"
     done
-  ) | shasum -a 256
+  ) | sha256sum
 }
 
 # Permission bits as an octal string. BSD and GNU `stat` take different
@@ -470,9 +470,9 @@ test_second_cec_transform_is_byte_identical() {
   cec_path="$(cec_settings_path "${root}")"
 
   run_transform "${root}" "${payload}" >/dev/null
-  first="$(shasum -a 256 "${cec_path}")"
+  first="$(sha256sum "${cec_path}")"
   run_transform "${root}" "${payload}" >/dev/null
-  second="$(shasum -a 256 "${cec_path}")"
+  second="$(sha256sum "${cec_path}")"
   assert_eq "${first}" "${second}" "a second CEC transform rewrites nothing"
 }
 

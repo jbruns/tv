@@ -170,7 +170,7 @@ test_matching_checksum_id_and_version_pass() {
   trap 'rm -rf -- "${dir}"' RETURN
   zip="${dir}/fixture.zip"
   build_valid_fixture_zip "${dir}" "${zip}" "plugin.video.fixture" "1.2.3"
-  sha256="$(shasum -a 256 "${zip}" | awk '{print $1}')"
+  sha256="$(sha256sum "${zip}" | awk '{print $1}')"
   record="plugin.video.fixture|1.2.3|https://example.test/fixture.zip|${sha256}"
 
   ADDON_ARTIFACTS=("${record}")
@@ -210,7 +210,7 @@ test_addon_id_mismatch_fails() {
   trap 'rm -rf -- "${dir}"' RETURN
   zip="${dir}/fixture.zip"
   build_valid_fixture_zip "${dir}" "${zip}" "plugin.video.other" "1.2.3"
-  sha256="$(shasum -a 256 "${zip}" | awk '{print $1}')"
+  sha256="$(sha256sum "${zip}" | awk '{print $1}')"
   record="plugin.video.fixture|1.2.3|https://example.test/fixture.zip|${sha256}"
 
   ADDON_ARTIFACTS=("${record}")
@@ -230,7 +230,7 @@ test_addon_version_mismatch_fails() {
   trap 'rm -rf -- "${dir}"' RETURN
   zip="${dir}/fixture.zip"
   build_valid_fixture_zip "${dir}" "${zip}" "plugin.video.fixture" "9.9.9"
-  sha256="$(shasum -a 256 "${zip}" | awk '{print $1}')"
+  sha256="$(sha256sum "${zip}" | awk '{print $1}')"
   record="plugin.video.fixture|1.2.3|https://example.test/fixture.zip|${sha256}"
 
   ADDON_ARTIFACTS=("${record}")
@@ -260,7 +260,7 @@ test_multiple_top_level_directories_fail() {
     printf 'another-top-level-dir/extra.txt\t%s\n' "${extra_file}"
   } > "${manifest_file}"
   build_zip_from_manifest "${zip}" "${manifest_file}"
-  sha256="$(shasum -a 256 "${zip}" | awk '{print $1}')"
+  sha256="$(sha256sum "${zip}" | awk '{print $1}')"
   record="plugin.video.fixture|1.2.3|https://example.test/fixture.zip|${sha256}"
 
   ADDON_ARTIFACTS=("${record}")
@@ -290,7 +290,7 @@ test_parent_traversal_entry_fails() {
     printf 'plugin.video.fixture/../evil.txt\t%s\n' "${evil_file}"
   } > "${manifest_file}"
   build_zip_from_manifest "${zip}" "${manifest_file}"
-  sha256="$(shasum -a 256 "${zip}" | awk '{print $1}')"
+  sha256="$(sha256sum "${zip}" | awk '{print $1}')"
   record="plugin.video.fixture|1.2.3|https://example.test/fixture.zip|${sha256}"
 
   ADDON_ARTIFACTS=("${record}")
@@ -320,7 +320,7 @@ test_absolute_path_entry_fails() {
     printf '/etc/evil.txt\t%s\n' "${evil_file}"
   } > "${manifest_file}"
   build_zip_from_manifest "${zip}" "${manifest_file}"
-  sha256="$(shasum -a 256 "${zip}" | awk '{print $1}')"
+  sha256="$(sha256sum "${zip}" | awk '{print $1}')"
   record="plugin.video.fixture|1.2.3|https://example.test/fixture.zip|${sha256}"
 
   ADDON_ARTIFACTS=("${record}")
@@ -340,7 +340,7 @@ test_duplicate_artifact_id_fails() {
   trap 'rm -rf -- "${dir}"' RETURN
   zip="${dir}/fixture.zip"
   build_valid_fixture_zip "${dir}" "${zip}" "plugin.video.fixture" "1.2.3"
-  sha256="$(shasum -a 256 "${zip}" | awk '{print $1}')"
+  sha256="$(sha256sum "${zip}" | awk '{print $1}')"
   record_one="plugin.video.fixture|1.2.3|https://example.test/fixture.zip|${sha256}"
   record_two="plugin.video.fixture|1.2.3|https://example.test/fixture-again.zip|${sha256}"
 
@@ -391,9 +391,8 @@ extract_transaction_prologue() {
     | awk '/^resolve_pending_transaction/ { reached = 1 } !reached { print }'
 }
 
-# macOS ships Bash 3.2 as /bin/bash, and the provisioner must run there. Tests
-# that care about 3.2 semantics (an empty array expanded under `set -u`) use
-# this shell explicitly rather than whichever bash happens to be first on PATH.
+# Tests that cover Bash 3.2 semantics use /bin/bash when available rather than
+# whichever newer shell happens to be first on PATH.
 legacy_bash() {
   if [[ -x /bin/bash ]]; then
     printf '/bin/bash\n'
@@ -420,13 +419,13 @@ load_provisioner_function() {
   eval "${body}"
 }
 
-# Replaces every command the provisioner could reach the device (or the
-# Keychain) with a logging stub that always fails, so a test can assert that a
-# run refused before it touched anything remote. Prints the stub directory.
+# Replaces every command the provisioner could use to reach the device with a
+# logging stub that always fails, so a test can assert that a run refused
+# before it touched anything remote. Prints the stub directory.
 install_network_stubs() {
   local dir="$1" bin_dir="$1/network-bin" name
   mkdir -p "${bin_dir}"
-  for name in ssh scp rsync ssh-keygen ssh-add security curl; do
+  for name in ssh scp rsync ssh-keygen ssh-add curl; do
     cat > "${bin_dir}/${name}" <<STUB
 #!/bin/bash
 printf '${name} %s\n' "\$*" >> "${dir}/network-calls.log"
@@ -442,13 +441,70 @@ STUB
 # everything on PATH, the repository configuration, and scratch paths for the
 # administrator key and the report directory.
 run_provisioner_offline() {
-  local dir="$1" bin_dir="$2"
+  local dir="$1" bin_dir="$2" env_file="$1/.env" name
   shift 2
-  printf 'n\n' | PATH="${bin_dir}:${PATH}" "$(legacy_bash)" "${PROVISIONER}" \
+  printf '%s\n' "KODI_WEB_PASSWORD='test-kodi-password'" > "${env_file}"
+  for name in OMDB_API_KEY MDBLIST_API_KEY; do
+    if [[ -n "${!name:-}" ]]; then
+      printf '%s=%q\n' "${name}" "${!name}" >> "${env_file}"
+    fi
+  done
+  printf 'n\n' | UGOOS_ENV_FILE="${env_file}" PATH="${bin_dir}:${PATH}" "$(legacy_bash)" "${PROVISIONER}" \
     --config "${SCRIPT_DIR}/../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf" \
     --identity "${dir}/scratch_admin_key" \
     --report-dir "${dir}/reports" \
     "$@"
+}
+
+test_non_darwin_host_reaches_remote_validation() {
+  local dir bin_dir output rc calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+  cat > "${bin_dir}/uname" <<'STUB'
+#!/bin/bash
+printf 'Linux\n'
+STUB
+  chmod +x "${bin_dir}/uname"
+  printf 'scratch administrator key\n' > "${dir}/scratch_admin_key"
+  printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
+
+  set +e
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+
+  assert_failure "${rc}" "the offline target remains unreachable" || return 1
+  calls="$(cat "${dir}/network-calls.log")"
+  assert_contains "${calls}" "ssh " \
+    "a Linux host proceeds to the first remote validation call" || return 1
+  assert_contains "${output}" "Nothing on the device has been changed." \
+    "the normal remote validation error is reported"
+}
+
+test_admin_key_setup_uses_portable_ssh_add_arguments() {
+  local dir bin_dir calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="${dir}/bin"
+  mkdir -p "${bin_dir}"
+  cat > "${bin_dir}/ssh-add" <<STUB
+#!/bin/bash
+printf 'ssh-add %s\n' "\$*" >> "${dir}/ssh-add.log"
+STUB
+  chmod +x "${bin_dir}/ssh-add"
+  : > "${dir}/ssh-add.log"
+  printf 'scratch administrator key\n' > "${dir}/admin_key"
+  printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/admin_key.pub"
+
+  load_provisioner_function create_or_load_admin_key
+  IDENTITY_FILE="${dir}/admin_key"
+  PATH="${bin_dir}:${PATH}" create_or_load_admin_key
+
+  calls="$(cat "${dir}/ssh-add.log")"
+  assert_eq "ssh-add ${IDENTITY_FILE}" "${calls}" \
+    "administrator key setup uses the portable ssh-add interface"
 }
 
 # Builds the storage root the transaction operates on: a Kodi tree, the
@@ -1191,7 +1247,7 @@ test_rendered_remote_scripts_are_posix_clean() {
 
 # Emulates what the device actually receives: the ssh client joins the
 # remote-command argv into one string with single spaces, and sshd hands that
-# whole string to the login shell as `-c`. Every quote the Mac writes into
+# whole string to the login shell as `-c`. Every quote the host writes into
 # that argv is therefore parsed a second time on the device, which is exactly
 # how a nested single-quoted program loses its quoting in transit.
 run_through_ssh_transport() {
@@ -1268,7 +1324,7 @@ test_the_public_key_program_installs_the_key_through_the_device_login_shell() {
     "authorized_keys is still private after the second run"
 
   # The key line is embedded in the program the device runs, so a file that is
-  # not one well-formed key line has to be refused on the Mac, before anything
+  # not one well-formed key line has to be refused on the host, before anything
   # is sent and before it can close the here-document that carries it.
   printf "evil' \$(touch %s/pwned) key\n" "${dir}" > "${key_file}"
   set +e
@@ -1716,8 +1772,8 @@ test_an_unlocked_addon_is_refused_before_any_remote_call() {
   fi
 }
 
-# macOS ships Bash 3.2, where "${array[@]}" on an empty array is an unbound
-# variable under `set -u`. The default run selects every locked add-on and
+# Bash 3.2 treats "${array[@]}" on an empty array as an unbound variable under
+# `set -u`. The default run selects every locked add-on and
 # therefore leaves ADDONS empty, so this is the ordinary path, not an edge case.
 test_a_default_run_survives_the_empty_addon_array_under_bash_3_2() {
   local dir bin_dir output rc
@@ -2108,6 +2164,8 @@ run_all_tests \
   test_a_failed_deployment_discards_the_remote_secret_payload \
   test_an_unlocked_addon_is_refused_before_any_remote_call \
   test_a_default_run_survives_the_empty_addon_array_under_bash_3_2 \
+  test_non_darwin_host_reaches_remote_validation \
+  test_admin_key_setup_uses_portable_ssh_add_arguments \
   test_an_unreachable_target_fails_with_an_actionable_error \
   test_a_keyed_but_failing_identity_read_fails_with_an_actionable_error \
   test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact \

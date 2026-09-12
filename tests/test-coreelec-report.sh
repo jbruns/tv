@@ -7,7 +7,7 @@
 # localhost JSON-RPC and inspects configured add-on files with a remote Python
 # probe that returns booleans and non-secret values only. These tests exercise
 # that probe directly (with a stubbed `curl` serving fixture JSON-RPC
-# responses) and exercise the Mac-side comparator, classifier, report
+# responses) and exercise the host-side comparator, classifier, report
 # renderer, redaction guard, and the verify -> finalize/rollback decision
 # through provision-coreelec.sh's internal fixture entry points. No test
 # contacts a device.
@@ -337,7 +337,7 @@ set_observation() {
   mv "${temporary}" "${file}"
 }
 
-# Runs the Mac-side comparator over a fixture observation set.
+# Runs the host-side comparator over a fixture observation set.
 run_verify() {
   local config="$1" observations="$2" manifest="$3"
   bash "${PROVISIONER}" --config "${config}" \
@@ -1269,7 +1269,7 @@ test_report_is_strict_key_value() {
   assert_eq "0" "${offenders}" "every report line is key=value" || return 1
 }
 
-test_local_jsonrpc_unreachability_is_environmental_only() {
+test_host_jsonrpc_unreachability_is_environmental_only() {
   local dir config manifest observations report
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
@@ -1281,8 +1281,8 @@ test_local_jsonrpc_unreachability_is_environmental_only() {
   write_pass_observations "${observations}"
 
   report="$(run_report "${config}" "${dir}/out" "${observations}" "${manifest}" 0)"
-  assert_eq "0" "$(report_line "${report}" kodi_jsonrpc_reachable_from_mac)" \
-    "the Mac-side probe result is recorded" || return 1
+  assert_eq "0" "$(report_line "${report}" kodi_jsonrpc_reachable_from_host)" \
+    "the host-side probe result is recorded" || return 1
   assert_eq "pass" "$(report_line "${report}" verification_result)" \
     "device verification stays authoritative" || return 1
   assert_eq "device-localhost-jsonrpc" "$(report_line "${report}" verification_source)" \
@@ -1290,17 +1290,19 @@ test_local_jsonrpc_unreachability_is_environmental_only() {
 }
 
 # Every run writes the audit report, and its configuration fingerprint is a
-# `shasum` call, so a Mac without it must be refused before the device is
+# `sha256sum` call, so a host without it must be refused before the device is
 # touched -- including the run that applies no Kodi baseline at all.
 test_report_fingerprint_tool_is_required_even_without_kodi() {
-  local dir config bin_dir tool resolved output rc
+  local dir config env_file bin_dir tool resolved output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
   config="${dir}/provision.conf"
+  env_file="${dir}/.env"
   write_base_config "${config}"
+  : > "${env_file}"
   bin_dir="${dir}/bin"
   mkdir -p "${bin_dir}"
-  for tool in bash sh ssh ssh-keygen ssh-add openssl curl security grep sed tr awk \
+  for tool in bash sh ssh ssh-keygen ssh-add openssl curl grep sed tr awk \
     date uname mktemp dirname basename cat chmod mkdir rm cp mv ln sleep head tail \
     sort wc id stat python3 xmllint unzip tar; do
     resolved="$(command -v "${tool}" 2>/dev/null || true)"
@@ -1310,12 +1312,12 @@ test_report_fingerprint_tool_is_required_even_without_kodi() {
   done
 
   set +e
-  output="$(PATH="${bin_dir}" /bin/bash "${PROVISIONER}" --config "${config}" \
+  output="$(UGOOS_ENV_FILE="${env_file}" PATH="${bin_dir}" /bin/bash "${PROVISIONER}" --config "${config}" \
     --target 192.0.2.1 --no-kodi --report-dir "${dir}/reports" 2>&1)"
   rc=$?
   set -e
   assert_failure "${rc}" "a run that cannot fingerprint its configuration must be refused" || return 1
-  assert_contains "${output}" "shasum" "the missing tool is named" || return 1
+  assert_contains "${output}" "sha256sum" "the missing tool is named" || return 1
 }
 
 # --- Verification outcome: finalize, rollback, fatality ---------------------
@@ -1936,7 +1938,7 @@ ENTRIES
 }
 
 # The probe is what makes a copied /etc/localtime verifiable at all, so it
-# answers the content question the Mac cannot ask.
+# answers the content question the host cannot ask.
 test_remote_verify_probe_compares_a_copied_localtime_by_content() {
   local dir root bin_dir request output
   dir="$(make_scratch_dir)"
@@ -3545,7 +3547,7 @@ run_all_tests \
   test_report_states_addon_status_and_verification_per_addon \
   test_report_keeps_subset_dependency_warning_explicit \
   test_report_is_strict_key_value \
-  test_local_jsonrpc_unreachability_is_environmental_only \
+  test_host_jsonrpc_unreachability_is_environmental_only \
   test_report_fingerprint_tool_is_required_even_without_kodi \
   test_verification_success_finalizes_and_commits \
   test_verification_mismatch_is_fatal \

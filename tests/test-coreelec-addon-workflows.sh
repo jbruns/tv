@@ -374,6 +374,22 @@ test_help_lists_supported_addons_and_interaction_levels() {
   assert_contains "${output}" "plugin.service.emby-next-gen guided (--interactive)" "Emby interaction level" || return 1
 }
 
+test_kodi_password_must_come_from_shared_environment() {
+  local output rc
+  set +e
+  output="$({
+    unset KODI_WEB_PASSWORD
+    coreelec_prepare_kodi_web_password
+  } 2>&1)"
+  rc=$?
+  set -e
+
+  assert_failure "${rc}" "a missing shared Kodi password must be refused" || return 1
+  assert_contains "${output}" "KODI_WEB_PASSWORD" "the error names the missing variable" || return 1
+  assert_contains "${output}" ".env" "the error points to the shared environment file" || return 1
+  assert_not_contains "${output}" "macOS" "the error is platform-neutral"
+}
+
 assert_dry_run_makes_no_ssh_calls() (
   local interactive="$1" dir config bin_dir output rc report report_body addon_id
   dir="$(make_scratch_dir)"
@@ -1477,14 +1493,17 @@ test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
 }
 
 test_emby_password_never_appears_in_argv_log_or_report() {
-  local dir bin_dir python_bin_dir config report_dir report output argv_logs secret
+  local dir bin_dir python_bin_dir config env_file report_dir report output argv_logs secret
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   python_bin_dir="$(install_python3_argv_stub "${dir}")"
   config="${dir}/provision.conf"
+  env_file="${dir}/.env"
   report_dir="${dir}/reports"
   secret="emby-password-secret"
+  printf 'KODI_WEB_PASSWORD=%q\nEMBY_PASSWORD=%q\n' \
+    "kodi-web-password-secret" "${secret}" > "${env_file}"
   write_config "${config}" plugin.service.emby-next-gen
   cat >> "${config}" <<'CONFIG'
 EMBY_SERVER_URL=https://emby.example.test
@@ -1518,8 +1537,7 @@ CONFIG
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
     COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0" \
-    KODI_WEB_PASSWORD="kodi-web-password-secret" \
-    EMBY_PASSWORD="${secret}" \
+    UGOOS_ENV_FILE="${env_file}" \
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
         --target coreelec-theater \
@@ -1646,6 +1664,7 @@ EOF
 
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
+  test_kodi_password_must_come_from_shared_environment \
   test_dry_run_makes_zero_ssh_calls \
   test_interactive_dry_run_makes_zero_ssh_calls \
   test_report_creation_uses_private_umask_before_chmod \

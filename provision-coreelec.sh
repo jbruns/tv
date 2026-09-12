@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# macOS-side bootstrap for a freshly installed CoreELEC device.
+# Host-side bootstrap for a freshly installed CoreELEC device.
 #
 # The first-boot wizard must already have completed, with wired networking and
 # SSH enabled. This script then installs a dedicated administrator key, verifies
@@ -9,7 +9,7 @@
 # Assistant baseline as one remote transaction, verifies the result over the
 # device's own localhost JSON-RPC, automatically finalizes or rolls back, and
 # writes a redacted, non-secret audit report. See config/README.md for every
-# configuration key, the strict KEY=value grammar, and the secret environment
+# configuration key, the strict KEY=value grammar, and the shared .env
 # variables; see docs/runbook.md for the full operator workflow.
 
 set -Eeuo pipefail
@@ -40,7 +40,7 @@ DEPLOYMENT_STATE="not-started"
 VERIFICATION_RESULT="not-run"
 VERIFICATION_REPORT_FILE=""
 RECOVERY_INSTRUCTIONS=""
-# Reachability of the device's JSON-RPC port *from this Mac*. It is recorded
+# Reachability of the device's JSON-RPC port from the provisioning host. It is recorded
 # for the operator, never used as a verification verdict: the device checks
 # itself over its own localhost endpoint.
 KODI_JSONRPC_LOCAL_REACHABLE="unknown"
@@ -124,8 +124,8 @@ SSH enabled and a unique root password. The first run may prompt for that root
 password and for the passphrase of the dedicated administrator key.
 
 Configuration precedence is: built-in defaults, then the selected --config
-file, then explicit CLI options, then secret environment variables (read only
-for the fields that require them: OMDB_API_KEY, MDBLIST_API_KEY,
+file, then explicit CLI options, then secrets sourced from the repository
+.env file (KODI_WEB_PASSWORD, OMDB_API_KEY, MDBLIST_API_KEY,
 YOUTUBE_API_KEY, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET,
 HOME_ASSISTANT_TOKEN, NEXTPVR_PIN, PLEX_TOKEN, and EMBY_PASSWORD). None may appear
 in the config file, and TARGET is never a config-file key. See
@@ -190,6 +190,8 @@ require_command() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/coreelec-env.sh
+source "${SCRIPT_DIR}/lib/coreelec-env.sh"
 # shellcheck source=lib/coreelec-config.sh
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
 # shellcheck source=lib/coreelec-artifacts.sh
@@ -1544,7 +1546,7 @@ done < "${transaction}/APPLIED.txt"
 
 transaction_state="restarting services"
 systemctl restart tz-data.service >/dev/null 2>&1 || true
-# stdout is the transaction path and nothing else, because the Mac captures it
+# stdout is the transaction path and nothing else, because the host captures it
 # through a command substitution; systemctl diagnostics stay on stderr.
 systemctl start kodi.service >/dev/null || fail "Kodi did not start after deployment"
 
@@ -1605,7 +1607,7 @@ REMOTE_FINALIZE
 # a mode-0600 curl config and never echoes. Every other secret is represented
 # by a `HAVE_<KEY>` presence flag: the probe compares the *device's* files
 # locally and returns booleans, so no token, key, or PIN ever travels back to
-# the Mac.
+# the provisioning host.
 coreelec_remote_verify_probe_source() {
   cat <<'PYTHON_VERIFY_PROBE_SOURCE'
 """CoreELEC remote verification probe.
@@ -1669,7 +1671,7 @@ def fail(message):
 
 
 def observe(key, value):
-    """Records one observation. Newlines are folded because the Mac parses
+    """Records one observation. Newlines are folded because the host parses
     this output as one key=value pair per line."""
     text = "%s" % (value,)
     text = text.replace("\r", " ").replace("\n", " ")
@@ -2086,7 +2088,7 @@ def parse_zone_marks(text):
 
 def sanitize_marks(text):
     """Keeps an unexpected answer readable in the report without letting it
-    break the `key=value` grammar the Mac parses."""
+    break the `key=value` grammar the host parses."""
     if not text:
         return ""
     kept = [character for character in text
@@ -2508,7 +2510,7 @@ main(sys.argv)
 PYTHON_VERIFY_PROBE_SOURCE
 }
 
-# The `sh` program the device runs. It reads the request the Mac uploaded into
+# The `sh` program the device runs. It reads the request the host uploaded into
 # the private provisioning cache, runs the probe, and removes both the request
 # and the curl config by trap on every exit path.
 coreelec_remote_verify_script() {
@@ -2618,7 +2620,7 @@ coreelec_emit_remote_script() {
 }
 
 # Precedence: built-in safe defaults, then the selected configuration file,
-# then explicit CLI options, then secret environment variables (checked by
+# then explicit CLI options, then shared .env secrets (checked by
 # coreelec_config_validate). --config is parsed here in a lightweight,
 # non-consuming pre-scan so the file loads before the full CLI pass below
 # applies any explicit overrides. --help/--version are honored immediately in
@@ -2814,8 +2816,8 @@ while (( $# > 0 )); do
   esac
 done
 
-# macOS ships Bash 3.2, where expanding "${array[@]}" of an *empty* array
-# under `set -u` is an unbound-variable error rather than an empty list. Every
+# Bash 3.2 treats expanding "${array[@]}" of an *empty* array under `set -u`
+# as an unbound-variable error rather than an empty list. Every
 # optional array in this script is therefore iterated through the `${a[@]+...}`
 # form, which is defined for an empty array in every Bash version and still
 # keeps elements that contain spaces intact. ADDONS is empty on the ordinary
@@ -3374,7 +3376,7 @@ coreelec_config_fingerprint() {
     for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
       printf 'ADDON_ARTIFACT=%s\n' "${record}"
     done
-  } | shasum -a 256 | awk '{print $1}')"
+  } | sha256sum | awk '{print $1}')"
   printf 'sha256:%s\n' "${digest}"
 }
 
@@ -3434,12 +3436,12 @@ coreelec_report_render() {
   if [[ "${APPLY_KODI}" == "1" ]]; then
     printf 'kodi_jsonrpc=http://%s:%s/jsonrpc\n' "${TARGET}" "${KODI_PORT}"
     printf 'kodi_username=%s\n' "${KODI_USER}"
-    printf 'kodi_password=stored-in-macos-keychain\n'
+    printf 'kodi_password=stored-in-shared-env\n'
   fi
-  # Reachability from this Mac is environmental: the device verified itself
+  # Reachability from this host is environmental: the device verified itself
   # over its own localhost JSON-RPC, so a blocked port cannot demote a
   # successful verification to a warning.
-  printf 'kodi_jsonrpc_reachable_from_mac=%s\n' "${KODI_JSONRPC_LOCAL_REACHABLE}"
+  printf 'kodi_jsonrpc_reachable_from_host=%s\n' "${KODI_JSONRPC_LOCAL_REACHABLE}"
   if [[ -n "${REMOTE_BACKUP_PATH}" ]]; then
     printf 'remote_backup_path=%s\n' "${REMOTE_BACKUP_PATH}"
   fi
@@ -3680,12 +3682,14 @@ if [[ -n "${PRINT_ADDON_SELECTION}" ]]; then
   exit 0
 fi
 
+coreelec_env_load "${UGOOS_ENV_FILE:-${SCRIPT_DIR}/.env}"
+
 if [[ "${CHECK_CONFIG}" == "1" || "${CHECK_ARTIFACTS}" == "1" ]]; then
   coreelec_config_validate
   info "Configuration OK: ${CONFIG_FILE}"
   if [[ "${CHECK_ARTIFACTS}" == "1" ]]; then
     require_command curl
-    require_command shasum
+    require_command sha256sum
     require_command unzip
     require_command xmllint
     TASK_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/coreelec-provision.XXXXXX")"
@@ -3700,8 +3704,6 @@ fi
   usage >&2
   exit 2
 }
-
-[[ "$(uname -s)" == "Darwin" ]] || die "This edition of the provisioner is intended to run on macOS"
 
 validate_host "${TARGET}"
 validate_port "SSH port" "${SSH_PORT}"
@@ -3722,13 +3724,12 @@ require_command ssh-keygen
 require_command ssh-add
 require_command openssl
 require_command curl
-require_command security
 require_command grep
 require_command sed
 require_command tr
 # Every run ends by writing the audit report, whose configuration fingerprint
-# is a shasum call -- including the --no-kodi run that deploys no add-ons.
-require_command shasum
+# is a sha256sum call -- including the --no-kodi run that deploys no add-ons.
+require_command sha256sum
 
 SSH_COMMON=(
   -p "${SSH_PORT}"
@@ -3770,7 +3771,7 @@ create_or_load_admin_key() {
 
   if [[ ! -f "${IDENTITY_FILE}" ]]; then
     info "Creating dedicated Ed25519 administrator key: ${IDENTITY_FILE}"
-    info "Choose a key passphrase when prompted; macOS Keychain can retain it."
+    info "Choose a key passphrase when prompted."
     ssh-keygen -t ed25519 -a 64 -C "coreelec-admin@$(hostname -s)" -f "${IDENTITY_FILE}"
   fi
 
@@ -3781,10 +3782,8 @@ create_or_load_admin_key() {
   fi
   chmod 644 "${IDENTITY_FILE}.pub"
 
-  if ! ssh-add --apple-use-keychain "${IDENTITY_FILE}" >/dev/null 2>&1; then
-    warn "The key was not added to macOS Keychain; SSH may ask for its passphrase during this run"
-    ssh-add "${IDENTITY_FILE}" >/dev/null 2>&1 || true
-  fi
+  ssh-add "${IDENTITY_FILE}" >/dev/null 2>&1 \
+    || warn "The key was not added to the SSH agent; SSH may ask for its passphrase during this run"
 }
 
 install_public_key_if_needed() {
@@ -3902,31 +3901,6 @@ REMOTE_SSH_CONFIG
     || die "SSH did not recover cleanly. Use the local console to inspect /storage/.cache/services/sshd.conf."
 }
 
-keychain_service_name() {
-  local sanitized
-  sanitized="$(printf '%s' "${TARGET}" | tr -c 'A-Za-z0-9._-' '_')"
-  printf 'coreelec-kodi-ha-%s' "${sanitized}"
-}
-
-prepare_kodi_password() {
-  local service_name="$1"
-  KODI_WEB_PASSWORD="$(security find-generic-password -a "${KODI_USER}" -s "${service_name}" -w 2>/dev/null || true)"
-  if [[ -n "${KODI_WEB_PASSWORD}" ]]; then
-    info "Reusing the Kodi/Home Assistant credential stored in macOS Keychain"
-    return
-  fi
-
-  KODI_WEB_PASSWORD="$(openssl rand -hex 24)"
-  [[ -n "${KODI_WEB_PASSWORD}" ]] || die "Could not generate the Kodi web password"
-  security add-generic-password \
-    -U \
-    -a "${KODI_USER}" \
-    -s "${service_name}" \
-    -l "Kodi Home Assistant access for ${TARGET}" \
-    -w "${KODI_WEB_PASSWORD}" >/dev/null
-  info "Generated the Kodi/Home Assistant password and stored it in macOS Keychain"
-}
-
 coreelec_settings_payload_entry() {
   # Values are encoded by a shell builtin piped into openssl, so no secret is
   # ever visible in a process argument list or in the shell's history.
@@ -4024,11 +3998,8 @@ upload_artifact_bundle() {
     || die "Internal error: the remote staging script must not contain a single quote"
 
   info "Uploading $(( ${#bundle_files[@]} - 1 )) pinned add-on artifact(s) to the device"
-  # COPYFILE_DISABLE stops macOS tar from adding AppleDouble (._*) members for
-  # the quarantine attribute curl puts on every download, and ustar keeps the
-  # stream free of the pax headers BSD tar would otherwise emit for BusyBox
-  # tar to interpret on the device.
-  COPYFILE_DISABLE=1 tar -C "${validated_dir}" --format ustar -cf - "${bundle_files[@]}" \
+  # ustar keeps the stream free of extended headers that BusyBox tar may reject.
+  tar -C "${validated_dir}" --format ustar -cf - "${bundle_files[@]}" \
     | ssh_keyed "sh -c '${script}'"
 }
 
@@ -4063,7 +4034,7 @@ deploy_artifacts_and_settings() {
     die "Remote deployment failed. The device rolled itself back unless a ROLLBACK INCOMPLETE line above names retained paths."
   fi
   # The remote program prints exactly one line, the transaction path; anything
-  # else means the channel carried output this Mac must not treat as a path.
+  # else means the channel carried output the host must not treat as a path.
   [[ -n "${transaction}" ]] \
     || die "The remote deployment did not report a transaction directory"
   [[ "${transaction}" != *$'\n'* ]] \
@@ -4096,7 +4067,7 @@ apply_kodi_baseline() {
   info "Applying the reversible Kodi and Home Assistant baseline"
 
   # Only the names of the configured integrations are logged; a value that
-  # came from a secret environment variable is never printed.
+  # came from the shared secret environment is never printed.
   [[ -n "${YOUTUBE_API_KEY:-}" ]] && info "YouTube API credentials will be configured"
   [[ -n "${OMDB_API_KEY:-}" || -n "${MDBLIST_API_KEY:-}" ]] && info "TMDb Helper metadata keys will be configured"
   [[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && info "Home Assistant weather will be configured"
@@ -4133,9 +4104,9 @@ wait_for_kodi_jsonrpc() {
 
   # This probe is a convenience check of the operator's own network path. The
   # verification that decides the run's outcome happens on the device against
-  # Kodi's localhost endpoint, so a firewall between this Mac and the device
+  # Kodi's localhost endpoint, so a firewall between this host and the device
   # is recorded here and nowhere else.
-  info "Checking whether Kodi JSON-RPC is reachable from this Mac on TCP ${KODI_PORT}"
+  info "Checking whether Kodi JSON-RPC is reachable from this host on TCP ${KODI_PORT}"
   while (( attempt <= 5 )); do
     if curl --config "${CURL_CONFIG_FILE}" \
       -H 'Content-Type: application/json' \
@@ -4143,7 +4114,7 @@ wait_for_kodi_jsonrpc() {
       "http://${TARGET}:${KODI_PORT}/jsonrpc" > "${response_file}" 2>/dev/null; then
       if grep -q '"result"' "${response_file}"; then
         KODI_JSONRPC_LOCAL_REACHABLE="1"
-        info "Kodi JSON-RPC is reachable from this Mac"
+        info "Kodi JSON-RPC is reachable from this host"
         return
       fi
     fi
@@ -4152,7 +4123,7 @@ wait_for_kodi_jsonrpc() {
   done
 
   KODI_JSONRPC_LOCAL_REACHABLE="0"
-  warn "Kodi JSON-RPC is not reachable from this Mac on TCP ${KODI_PORT}; check pfSense. Verification is unaffected: the device checks itself over its own localhost endpoint."
+  warn "Kodi JSON-RPC is not reachable from this host on TCP ${KODI_PORT}; check pfSense. Verification is unaffected: the device checks itself over its own localhost endpoint."
 }
 
 # The verification request. Only the Kodi web password crosses to the device
@@ -4362,11 +4333,8 @@ info "Remote backup created: ${REMOTE_BACKUP_PATH}"
 
 harden_remote_ssh
 
-KEYCHAIN_SERVICE=""
 CONCLUDE_STATUS=0
 if [[ "${APPLY_KODI}" == "1" ]]; then
-  KEYCHAIN_SERVICE="$(keychain_service_name)"
-  prepare_kodi_password "${KEYCHAIN_SERVICE}"
   apply_kodi_baseline
   # Verify before committing: a deployment that cannot be confirmed on the
   # device is undone rather than finalized, and the report is written either
@@ -4405,8 +4373,7 @@ printf 'SSH command:  ssh -i %q -p %q root@%q\n' "${IDENTITY_FILE}" "${SSH_PORT}
 if [[ "${APPLY_KODI}" == "1" ]]; then
   printf 'Kodi JSON-RPC: http://%s:%s/jsonrpc\n' "${TARGET}" "${KODI_PORT}"
   printf 'Kodi username: %s\n' "${KODI_USER}"
-  printf 'Retrieve the Kodi password from Keychain with:\n'
-  printf '  security find-generic-password -a %q -s %q -w\n' "${KODI_USER}" "${KEYCHAIN_SERVICE}"
+  printf 'Kodi password: configured in %s\n' "${UGOOS_ENV_FILE:-${SCRIPT_DIR}/.env}"
 fi
 if [[ -n "${REMOTE_TRANSACTION}" ]]; then
   printf '\nDeployment transaction: %s\n' "${REMOTE_TRANSACTION}"

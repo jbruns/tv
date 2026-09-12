@@ -129,15 +129,15 @@ coreelec_artifacts_download_and_validate() {
   local addon_xml declared_id declared_version
 
   require_command curl
-  require_command shasum
+  require_command sha256sum
   require_command unzip
   require_command xmllint
 
   mkdir -p "${destination}"
   : > "${manifest}"
 
-  # `${array[@]+...}` because macOS Bash 3.2 treats "${empty[@]}" as unbound
-  # under `set -u`; the caller may legitimately have configured no artifacts.
+  # `${array[@]+...}` because Bash 3.2 treats "${empty[@]}" as unbound under
+  # `set -u`; the caller may legitimately have configured no artifacts.
   for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
 
     index=$((index + 1))
@@ -158,7 +158,7 @@ coreelec_artifacts_download_and_validate() {
       --output "${zip_path}" "${ARTIFACT_URL}" \
       || die "Failed to download artifact ${ARTIFACT_ID}: ${ARTIFACT_URL}"
 
-    computed_sha256="$(shasum -a 256 "${zip_path}" | awk '{print $1}' | tr 'A-F' 'a-f')"
+    computed_sha256="$(sha256sum "${zip_path}" | awk '{print $1}' | tr 'A-F' 'a-f')"
     wanted_sha256="$(printf '%s' "${ARTIFACT_SHA256}" | tr 'A-F' 'a-f')"
     if [[ "${computed_sha256}" != "${wanted_sha256}" ]]; then
       die "Checksum mismatch for artifact ${ARTIFACT_ID}: expected ${ARTIFACT_SHA256}, got ${computed_sha256}"

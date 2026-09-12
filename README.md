@@ -14,6 +14,7 @@ Streaming devices are on LAN; Home Assistant is on IoT. The [Ugoos Kodi lifecycl
 | Master | [Room overview](rooms/master/README.md) | To be documented |
 
 ```text
+.env.example                   Shared Ugoos secret template; copy to .env
 docs/                          Shared procedures for all rooms
   runbook.md                   Overall setup and validation order
   home-assistant/              Ugoos Kodi lifecycle deployment and operations
@@ -31,6 +32,9 @@ config/                        Shared configuration and future room overrides
 ```
 
 Shared instructions belong in `docs/`; room device documents link to them and record only room-specific choices. Reusable code and configuration have separate homes so multiple Ugoos units can use the same assets. See the [code conventions](code/README.md) and [configuration conventions](config/README.md).
+
+Before running a Ugoos provisioning or configuration script, copy
+`.env.example` to the gitignored `.env` and set the required secrets.
 
 The original Ugoos/Sony pilot guide has been split across these documents. Its recorded verification date was **2026-09-05**; this reorganization does not establish new hardware test results. The existing pilot is assigned to `theater` based on the workspace context. Other rooms remain unconfigured in this documentation.
 

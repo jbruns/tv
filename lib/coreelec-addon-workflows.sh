@@ -86,23 +86,9 @@ coreelec_postdeploy_secret_value() {
   esac
 }
 
-coreelec_postdeploy_keychain_service_name() {
-  local sanitized
-  sanitized="$(printf '%s' "${TARGET}" | tr -c 'A-Za-z0-9._-' '_')"
-  printf 'coreelec-kodi-ha-%s' "${sanitized}"
-}
-
 coreelec_prepare_kodi_web_password() {
-  local service_name
-  if [[ -n "${KODI_WEB_PASSWORD:-}" ]]; then
-    return 0
-  fi
-  command -v security >/dev/null 2>&1 \
-    || die "KODI_WEB_PASSWORD is unset and the macOS security command is unavailable"
-  service_name="$(coreelec_postdeploy_keychain_service_name)"
-  KODI_WEB_PASSWORD="$(security find-generic-password -a "${KODI_USER}" -s "${service_name}" -w 2>/dev/null || true)"
-  [[ -n "${KODI_WEB_PASSWORD}" ]] \
-    || die "Could not load the Kodi web password from macOS Keychain service ${service_name}; export KODI_WEB_PASSWORD or re-run the provisioner first"
+  [[ -n "${KODI_WEB_PASSWORD:-}" ]] \
+    || die "KODI_WEB_PASSWORD must be set in the shared .env file"
 }
 
 coreelec_prepare_emby_password() {

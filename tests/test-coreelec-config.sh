@@ -9,6 +9,8 @@ source "${SCRIPT_DIR}/test-helper.sh"
 # shellcheck source=lib/coreelec-config.sh
 source "${SCRIPT_DIR}/../lib/coreelec-config.sh"
 
+KODI_WEB_PASSWORD="test-kodi-password"
+
 test_defaults_are_pacific_english_us() {
   coreelec_config_defaults
   assert_eq "America/Los_Angeles" "${TIMEZONE}" "default timezone"
@@ -141,6 +143,23 @@ test_secret_key_in_config_is_rejected() {
   assert_not_contains "${output}" "super-secret-value" "error must not leak the value"
 }
 
+test_kodi_password_in_config_is_rejected_as_a_secret() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+  printf 'KODI_WEB_PASSWORD=super-secret-value\n' > "${file}"
+  coreelec_config_defaults
+  set +e
+  output="$(coreelec_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "KODI_WEB_PASSWORD in config must be rejected" || return 1
+  assert_contains "${output}" "KODI_WEB_PASSWORD" "error names the offending key" || return 1
+  assert_contains "${output}" "secret" "error identifies the shared secret boundary" || return 1
+  assert_not_contains "${output}" "super-secret-value" "error must not leak the password"
+}
+
 test_cli_value_overrides_config_value() {
   local dir file
   dir="$(make_scratch_dir)"
@@ -200,11 +219,28 @@ test_missing_optional_secrets_are_allowed() {
     unset OMDB_API_KEY MDBLIST_API_KEY YOUTUBE_API_KEY YOUTUBE_CLIENT_ID \
       YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN \
       EMBY_PASSWORD 2>/dev/null
+    KODI_WEB_PASSWORD="configured-kodi-password"
     coreelec_config_validate
   )
   rc=$?
   set -e
   assert_success "${rc}" "missing optional secrets must be allowed"
+}
+
+test_kodi_baseline_requires_password_from_shared_environment() {
+  coreelec_config_defaults
+  local rc output
+  set +e
+  output="$({
+    unset KODI_WEB_PASSWORD
+    coreelec_config_validate
+  } 2>&1)"
+  rc=$?
+  set -e
+
+  assert_failure "${rc}" "Kodi configuration must require the shared web password" || return 1
+  assert_contains "${output}" "KODI_WEB_PASSWORD" "the missing variable is named" || return 1
+  assert_contains "${output}" ".env" "the error identifies the shared environment source"
 }
 
 test_emby_url_requires_https_unless_local_http_is_explicitly_allowed() {
@@ -401,7 +437,7 @@ test_production_config_carries_no_secret_values() {
   )
   rc=$?
   set -e
-  assert_success "${rc}" "production config validates with no secrets present"
+  assert_success "${rc}" "production config validates with only the required Kodi password present"
 }
 
 # Every primary add-on named in the task brief must be locked; none may be
@@ -584,11 +620,13 @@ run_all_tests \
   test_malformed_line_is_rejected \
   test_shell_syntax_is_data_not_executed \
   test_secret_key_in_config_is_rejected \
+  test_kodi_password_in_config_is_rejected_as_a_secret \
   test_cli_value_overrides_config_value \
   test_target_is_not_loaded_from_shared_config \
   test_partial_youtube_credentials_are_rejected \
   test_service_secret_without_endpoint_is_rejected \
   test_missing_optional_secrets_are_allowed \
+  test_kodi_baseline_requires_password_from_shared_environment \
   test_emby_url_requires_https_unless_local_http_is_explicitly_allowed \
   test_private_ipv4_validation_does_not_expand_pathnames \
   test_emby_password_requires_server_and_username \

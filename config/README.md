@@ -1,8 +1,8 @@
 # Deployable configuration
 
 `provision-coreelec.sh` reads exactly one strict `KEY=value` configuration
-file plus a fixed set of secret environment variables. This directory holds
-that file for the validated platform; see
+file plus the shared repository-root `.env` file. This directory holds the
+non-secret file for the validated platform; see
 [`../provision-coreelec.sh --help`](../provision-coreelec.sh) for the full CLI.
 
 ```text
@@ -42,6 +42,17 @@ wired MAC. Preserve the existing LAN static ARP entry and record the verified
 UDP port before deployment.
 
 ## Running it
+
+Copy the shared secret template before running any Ugoos operation:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+Set `KODI_WEB_PASSWORD` in `.env` and add any optional credentials needed by
+the selected integrations. All three entry-point scripts load this same file.
+They fail before an operation starts if it is missing or unreadable.
 
 ### Two-phase operator workflow
 
@@ -159,7 +170,7 @@ The Kodi lifecycle gateway is separate from the shared provisioning config. `con
   --controller-identity "$HOME/.ssh/ugoos_kodi_lifecycle_ed25519"
 ```
 
-The controller key files are operational secrets/identities, not repository configuration. Keep them outside this repository, remove any temporary Mac copy after deployment, and use the Home Assistant runtime paths documented in [`../docs/home-assistant/ugoos-kodi-lifecycle.md`](../docs/home-assistant/ugoos-kodi-lifecycle.md): `/config/.ssh/ugoos_kodi_lifecycle_ed25519`, `/config/.ssh/known_hosts`, `/config/.ssh/ugoos-kodi-lifecycle.conf`, and `/config/packages/ugoos_theater_kodi_lifecycle.yaml`.
+The controller key files are operational secrets/identities, not repository configuration. Keep them outside this repository, remove any temporary administration-host copy after deployment, and use the Home Assistant runtime paths documented in [`../docs/home-assistant/ugoos-kodi-lifecycle.md`](../docs/home-assistant/ugoos-kodi-lifecycle.md): `/config/.ssh/ugoos_kodi_lifecycle_ed25519`, `/config/.ssh/known_hosts`, `/config/.ssh/ugoos-kodi-lifecycle.conf`, and `/config/packages/ugoos_theater_kodi_lifecycle.yaml`.
 
 The theater package intentionally hard-codes `media_player.sony_xr_65a90j`, `media_player.kodi_theater`, `ugoos-theater`, and `stop_when_display_off: true`. Future room-specific package copies must set their own entity IDs and reserved Ugoos address/name explicitly; no `config/rooms/` file is read or merged into Home Assistant today.
 
@@ -245,20 +256,23 @@ verifies all 42 over HTTPS.
    `--report-dir`, `--expected-release`, `--no-kodi`, `--no-harden`,
    `--force-unsupported`, `--yes`, `--addon`/`--with-youtube`) always win over
    the config file.
-4. Secret environment variables are read only at validation time and are
+4. Secret variables are sourced from the repository-root `.env` file and are
    never assignable from the config file or the CLI.
 
 `--target HOST` is always required (except with `--check-config` /
 `--check-artifacts`) and is supplied only on the command line; it is never a
 config-file key.
 
-## Secret environment variables
+## Shared `.env` secrets
 
-None of the ten reserved keys below may appear in the configuration file
-(each is rejected outright, naming the key, never its value); the nine
-listed here as usable are read directly from the process environment and
-are never echoed, logged, or written into the audit report:
+The real `.env` is gitignored. `.env.example` documents every supported value
+and safe shell quoting. None of the eleven reserved keys below may appear in
+the configuration file; each is rejected naming the key, never its value.
+The ten usable variables are never echoed, logged, or written into the audit
+report:
 
+- `KODI_WEB_PASSWORD` — required when `APPLY_KODI=1` and by live
+  post-deployment add-on checks.
 - `OMDB_API_KEY` and `MDBLIST_API_KEY` — required together for real
   `APPLY_KODI=1` deployments; optional for `--check-config` and
   `--check-artifacts`. No config-file or CLI secret form exists for either key.
@@ -273,32 +287,20 @@ are never echoed, logged, or written into the audit report:
   by `configure-coreelec-addons.sh --interactive`, never by the transactional
   provisioner)
 
-`TMDB_API_KEY` is the tenth reserved key: it is rejected from the
-configuration file exactly like the nine above, but it is not a usable
-exported secret — current TMDb Helper has no user-configurable TMDb
+`TMDB_API_KEY` is the eleventh reserved key: it is rejected from the
+configuration file exactly like the ten above, but it is not a usable
+`.env` secret — current TMDb Helper has no user-configurable TMDb
 API-key setting. TMDb Helper metadata keys are populated only by
 `OMDB_API_KEY` and `MDBLIST_API_KEY` (see below); never export
 `TMDB_API_KEY` expecting it to do anything.
 
-Safe example — placeholder names only, never a usable credential:
-
-```bash
-export YOUTUBE_API_KEY="REPLACE_ME"
-export YOUTUBE_CLIENT_ID="REPLACE_ME"
-export YOUTUBE_CLIENT_SECRET="REPLACE_ME"
-export HOME_ASSISTANT_TOKEN="REPLACE_ME"
-export NEXTPVR_PIN="REPLACE_ME"
-export PLEX_TOKEN="REPLACE_ME"
-export OMDB_API_KEY="REPLACE_ME"
-export MDBLIST_API_KEY="REPLACE_ME"
-./provision-coreelec.sh --target 172.16.99.50
-```
+Edit `.env`, then run `./provision-coreelec.sh --target 172.16.99.50`.
 
 If you plan to use guided Emby sign-in, also configure `EMBY_SERVER_URL` and
-`EMBY_USERNAME` in the selected config file, then run:
+`EMBY_USERNAME` in the selected config file, set `EMBY_PASSWORD` in `.env`,
+then run:
 
 ```bash
-export EMBY_PASSWORD="REPLACE_ME"
 ./configure-coreelec-addons.sh --target <host> --interactive \
   --addon plugin.service.emby-next-gen
 ```
@@ -316,8 +318,7 @@ differs per installation stays outside it and out of the repository:
   `NEXTPVR_HOST`, `PLEX_SERVER_HOST`, `EMBY_SERVER_URL`, `EMBY_USERNAME`, ...)
   are commented out by default in the shipped file; set them per deployment,
   or point `--config` at a separate file.
-- All API keys, tokens, and PINs — environment variables only, supplied at
-  run time, never committed.
+- All API keys, passwords, tokens, and PINs — `.env` only, never committed.
 - Room video/audio settings, hardware validation, and network reservations
   (see the [network onboarding guide](../docs/network/pfsense-plus-26.07-onboarding.md))
   remain manual and room-specific; `provision-coreelec.sh` does not touch

@@ -32,7 +32,7 @@ Once a device can join its intended network, complete network onboarding through
 
 ## 3. Provision the shared CoreELEC baseline
 
-Once the device has completed the CoreELEC wizard with wired networking and SSH enabled (end of step 2), and **before** any room-specific playback configuration (step 6), run [`provision-coreelec.sh`](../provision-coreelec.sh) from a Mac. It applies the room-independent baseline: the pinned add-on set, Pacific/English-US regional settings, and any optional service values supplied through configuration or secret environment variables. See [`config/README.md`](../config/README.md) for every configuration key, the strict `KEY=value` grammar, and the secret environment variables.
+Once the device has completed the CoreELEC wizard with wired networking and SSH enabled (end of step 2), and **before** any room-specific playback configuration (step 6), run [`provision-coreelec.sh`](../provision-coreelec.sh) from the administration host. It applies the room-independent baseline: the pinned add-on set, Pacific/English-US regional settings, and any optional service values supplied through configuration or the shared `.env`. See [`config/README.md`](../config/README.md) for every configuration key and secret variable.
 
 ### Two-phase workflow
 
@@ -63,6 +63,17 @@ Run the shared baseline first, then the separate post-deployment checks:
 
 ### Validate first, without touching the device
 
+Create the shared local secret file once:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+Set `KODI_WEB_PASSWORD` and any optional integration credentials in `.env`.
+All Ugoos provisioning and configuration commands source this file and fail
+clearly when it is missing.
+
 ```bash
 ./provision-coreelec.sh --check-config
 ./provision-coreelec.sh --check-artifacts
@@ -76,11 +87,11 @@ Both exit 0 without `--target`. `--check-artifacts` downloads all 42 pinned add-
 ./provision-coreelec.sh --target <hostname-or-IP>
 ```
 
-- **Interactive prompts on first use:** SSH will prompt for the device's temporary CoreELEC root password while installing the administrator key; if no key exists yet at `~/.ssh/coreelec_admin_ed25519`, `ssh-keygen` also prompts for a new passphrase (macOS Keychain can retain it so later runs don't re-prompt).
+- **Interactive prompts on first use:** SSH will prompt for the device's temporary CoreELEC root password while installing the administrator key; if no key exists yet at `~/.ssh/coreelec_admin_ed25519`, `ssh-keygen` also prompts for a new passphrase. A running SSH agent can retain the unlocked key for later runs.
 - **If the run stops at *"Could not complete the read-only platform check"***, no administrator key was accepted yet, so this is the password branch: either the device never answered the read-only SSH call, or it answered but the temporary root password entered at the prompt was wrong. Nothing on it was changed either way. Confirm the device is powered on and booted into CoreELEC, that its wired address still matches the hostname or IP passed to `--target`, that **Settings → CoreELEC → Services → Enable SSH** is on, and that the temporary root password shown in CoreELEC's first-boot wizard (or set under **Settings → CoreELEC → System**) is what was typed; then re-run the same command.
 - **If the run stops at *"Could not install the SSH public key"***, the device answered but the key install did not complete — most often the temporary root password was wrong, or SSH is not enabled. Nothing on the device was changed: the key is written to a candidate file first and appended to `/storage/.ssh/authorized_keys` only after it validates. Re-run the same command. If instead the run stops at *"Could not build the SSH public key installation program"*, the failure is local: `~/.ssh/coreelec_admin_ed25519.pub` is missing, empty, holds more than one key, or is not a well-formed OpenSSH public key line — regenerate it with `ssh-keygen -y -f ~/.ssh/coreelec_admin_ed25519 > ~/.ssh/coreelec_admin_ed25519.pub` and re-run.
 - **If the run stops at *"Could not read the platform from ... using `<identity-file>`"***, the administrator key was already accepted (no password prompt appears in this branch), but the read-only identity call still failed — the device most likely went offline or the key was removed from `authorized_keys` between the key check and the read. Nothing on it was changed. Confirm the device is still reachable and that the named key file is still listed in the device's `/storage/.ssh/authorized_keys`; then re-run the same command.
-- The run stages and installs the pinned add-ons and settings as one remote transaction, verifies the result over the device's own localhost JSON-RPC (never over the LAN from the Mac), and then automatically finalizes or rolls back depending on what it observes — nothing is left half-applied.
+- The run stages and installs the pinned add-ons and settings as one remote transaction, verifies the result over the device's own localhost JSON-RPC (never over the LAN from the administration host), and then automatically finalizes or rolls back depending on what it observes — nothing is left half-applied.
 
 ### Backup and rollback locations on the device
 
@@ -100,16 +111,14 @@ Each run writes a redacted, `key=value` report to `<REPORT_DIR>/<target>-<UTC-ti
 
 ### Post-deployment unattended service validation
 
-After step 3 has finalized, validate the shared add-ons from the Mac without rewriting any add-on settings:
+After step 3 has finalized, validate the shared add-ons from the administration host without rewriting any add-on settings:
 
 ```bash
 ./configure-coreelec-addons.sh --target <hostname-or-IP>
 ```
 
-The helper authenticates to Kodi with the web password that
-`provision-coreelec.sh` stored in the macOS Keychain service
-`coreelec-kodi-ha-<target>`; export `KODI_WEB_PASSWORD` first if you need to
-override that value or if provisioning did not run on this Mac.
+The helper authenticates to Kodi with `KODI_WEB_PASSWORD` from the same
+repository-root `.env` used by the provisioner.
 
 The command still writes a redacted `key=value` report, but for the fully
 unattended add-ons it now also performs read-only service checks from the
@@ -358,13 +367,11 @@ without a `--target`:
 ./provision-coreelec.sh --check-artifacts
 ```
 
-Export the required secrets into the process environment only — never paste
-real values into tracked files, command arguments, shell history, reports, or
-issue text. Use an OS credential store or a no-echo prompt:
+Set the required secrets in the gitignored repository-root `.env` only —
+never paste real values into tracked files, command arguments, shell history,
+reports, or issue text:
 
 ```bash
-: "${OMDB_API_KEY:?export OMDB_API_KEY in the secure operator environment}"
-: "${MDBLIST_API_KEY:?export MDBLIST_API_KEY in the secure operator environment}"
 ./provision-coreelec.sh --target coreelec-theater --yes
 ```
 

@@ -1011,9 +1011,8 @@ SERVICE_RESTORE_BODY
 # Runs "$@" under a hard wall-clock deadline. Uses GNU coreutils `timeout`
 # when the platform provides it; otherwise runs the command in the
 # background and races it against a `sleep` watchdog, terminating the
-# command if the watchdog wins. This keeps the deadline identical on macOS
-# (which ships no `timeout` by default) and on Linux without depending on
-# GNU coreutils, and is the "portable background/wait helper" referenced by
+# command if the watchdog wins. This keeps the deadline identical without
+# depending on GNU coreutils and is the "portable background/wait helper" referenced by
 # `coreelec_lifecycle_ssh_controller` below.
 coreelec_lifecycle_run_with_deadline() {
   local deadline_seconds="$1"

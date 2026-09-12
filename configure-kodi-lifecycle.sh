@@ -26,6 +26,8 @@ die() {
 
 # shellcheck source=lib/coreelec-config.sh
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
+# shellcheck source=lib/coreelec-env.sh
+source "${SCRIPT_DIR}/lib/coreelec-env.sh"
 # shellcheck source=lib/coreelec-ssh.sh
 source "${SCRIPT_DIR}/lib/coreelec-ssh.sh"
 # shellcheck source=lib/coreelec-lifecycle.sh
@@ -97,7 +99,8 @@ This command installs a restricted, forced-command SSH identity on the
 CoreELEC target that can only run \`start\`, \`stop\`, or \`status\` against
 kodi.service, verifies it end to end over that restricted identity, and
 either commits or rolls back the change. Reports never contain public or
-private key material.
+private key material. It sources the shared repository-root .env file used by
+the other Ugoos configuration commands.
 USAGE
 }
 
@@ -491,6 +494,7 @@ main() {
   scratch=""
   local report_file
   parse_args "$@"
+  coreelec_env_load "${UGOOS_ENV_FILE:-${SCRIPT_DIR}/.env}"
 
   if [[ "${ROLLBACK_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
         "${INSPECT_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
@@ -553,9 +557,7 @@ main() {
     # exit code was nonzero (finding C2). An unparseable, empty, or
     # otherwise unrecognized response is reported as "unknown" so an
     # operator investigates rather than trusts an assumed outcome.
-    # Two separate sed passes, not one with a `\|` alternation: BSD/macOS
-    # sed's basic regular expressions do not support GNU's `\|` extension,
-    # and this repository must remain portable to both.
+    # Two separate sed passes avoid non-portable basic-expression alternation.
     local refusal_marker deploy_refused
     refusal_marker="$(printf '%s\n' "${deploy_output}" \
       | sed -n 's/^\(PLATFORM_CHECK_FAIL:.*\)$/\1/p' | tail -1)"

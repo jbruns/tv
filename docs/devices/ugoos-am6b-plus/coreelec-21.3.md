@@ -77,16 +77,8 @@ device_trees/g12b_s922x_ugoos_am6b.dtb
 
 ## Verify the CoreELEC download
 
-Linux:
-
 ```bash
 sha256sum CoreELEC-Amlogic-ng.arm-21.3-Omega-Generic.img.gz
-```
-
-macOS:
-
-```bash
-shasum -a 256 CoreELEC-Amlogic-ng.arm-21.3-Omega-Generic.img.gz
 ```
 
 Windows PowerShell:
@@ -166,7 +158,7 @@ If using the UR-01 over Bluetooth:
 
 ## Provision the shared CoreELEC baseline
 
-With wired networking and SSH enabled, and **before** the room-specific Dolby Vision/audio choices below, run the shared provisioner from a Mac:
+With wired networking and SSH enabled, and **before** the room-specific Dolby Vision/audio choices below, run the shared provisioner from the administration host:
 
 ```bash
 ./provision-coreelec.sh --target <hostname-or-IP>
