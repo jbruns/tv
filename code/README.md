@@ -1,9 +1,24 @@
 # Reusable code
 
-Reserved for deployment and maintenance code shared across rooms. No scripts are implemented yet.
+Executable Ugoos automation entry points live at the repository root, and
+reusable shell libraries live under [`../lib/`](../lib/).
 
-Use device/platform directories as code is added, for example `code/ugoos-am6b-plus/` for tools used by multiple Ugoos units. Keep room names, network addresses, and other per-device values in [configuration](../config/README.md), supplied as inputs rather than hard-coded in scripts.
+## Entry points
 
-Future deployment tools should select targets explicitly, support reviewing intended changes, and document prerequisites, invocation, backup, and recovery behavior. Keep firmware flashing and eMMC migration separate from routine configuration deployment.
+- [`../provision-coreelec.sh`](../provision-coreelec.sh) — transactional
+  shared CoreELEC baseline deployment. See
+  [docs/operations/provision-ugoos.md](../docs/operations/provision-ugoos.md)
+  and [config/README.md](../config/README.md).
+- [`../configure-coreelec-addons.sh`](../configure-coreelec-addons.sh) —
+  post-deployment add-on validation plus guarded interactive workflows. See
+  [docs/operations/provision-ugoos.md](../docs/operations/provision-ugoos.md)
+  and [config/README.md](../config/README.md).
+- [`../configure-kodi-lifecycle.sh`](../configure-kodi-lifecycle.sh) —
+  restricted Kodi lifecycle SSH gateway deployment. See
+  [docs/home-assistant/ugoos-kodi-lifecycle.md](../docs/home-assistant/ugoos-kodi-lifecycle.md).
 
-Manual setup remains documented in the [shared runbook](../docs/runbook.md).
+## Libraries
+
+The `lib/` directory contains the reusable shell modules sourced by those
+entry points for configuration parsing, environment loading, SSH transport,
+artifact verification, add-on workflows, and lifecycle deployment.
