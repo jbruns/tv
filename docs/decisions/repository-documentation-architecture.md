@@ -99,8 +99,8 @@ the Denon Home Assistant integration used to manage and monitor receiver
 state. Documentation will not claim that the Ugoos lifecycle package controls
 the Denon unless the package does so.
 
-The obsolete AVPro device guide and all rollout-stage terminology for
-ARC-to-eARC replacement will be removed.
+The obsolete device guide and all rollout-stage terminology for
+the retired theater wiring migration will be removed.
 
 ## Unconfigured Rooms
 
@@ -141,8 +141,8 @@ The documentation change is complete when:
 1. every Markdown link resolves after file additions, replacements, and
    deletions;
 2. remaining operator documentation contains no rollout-stage terminology,
-   dated-status, stale AVPro, acceptance-result, or superseded-equipment
-   prose;
+   dated-status, obsolete equipment references, acceptance-result, or
+   superseded-equipment prose;
 3. documented Ugoos commands and options match the script interfaces;
 4. documented configuration inputs match the shipped configuration contract;
 5. documented Home Assistant entities and lifecycle behavior match the
