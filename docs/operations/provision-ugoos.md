@@ -75,11 +75,15 @@ For unique settings, use the selected room's Ugoos guide, such as the current
     Use the
     [Ugoos Kodi lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md)
     for key installation, verification, rollback, and recovery steps.
-12. Install the SSH alias and room package in Home Assistant, following the
-    file locations in the
+12. Add the room's native Home Assistant integrations and set the stable
+    entity IDs required by the selected package before enabling that package.
+    For theater this includes Sony BRAVIA and Kodi, with the exact IDs
+    documented in the
     [lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md).
-13. Add the Kodi integration, use the room's required entity ID, restart Home
-    Assistant, and verify package state.
+13. Install the SSH alias and room package in Home Assistant, following the
+    file locations in the
+    [lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md). Then restart
+    Home Assistant and verify package state.
 
     ```bash
     ha core check

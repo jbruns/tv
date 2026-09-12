@@ -41,8 +41,9 @@ for DHCP reservations, local DNS, and the required firewall rules.
 For Ugoos/CoreELEC rooms, follow
 [Provision a Ugoos CoreELEC system](operations/provision-ugoos.md). That guide
 covers the shared order: CoreELEC wizard, DHCP reservation and DNS, `.env`
-preparation, baseline provisioning, post-deployment add-on checks, restricted
-lifecycle gateway deployment, and package installation.
+preparation, baseline provisioning, post-deployment add-on checks, and
+restricted lifecycle gateway deployment before Home Assistant integrations and
+package installation.
 
 ## 5. Configure native Home Assistant integrations
 
