@@ -194,6 +194,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
 # shellcheck source=lib/coreelec-artifacts.sh
 source "${SCRIPT_DIR}/lib/coreelec-artifacts.sh"
+# shellcheck source=lib/coreelec-ssh.sh
+source "${SCRIPT_DIR}/lib/coreelec-ssh.sh"
 
 # --- Kodi and add-on settings transformer -----------------------------------
 #
@@ -227,6 +229,7 @@ unchanged payload produces byte-identical files.
 
 import base64
 import datetime
+import glob
 import json
 import os
 import sys
@@ -461,6 +464,35 @@ def commit_addon_settings():
         write_xml_atomic(path, ADDON_DOCUMENTS[path][0])
 
 
+def set_cec_tv_off_action(storage_root, value):
+    """Forces Kodi's CEC peripheral setting for what a TV standby broadcast
+    makes the box do. There is exactly one such file once CoreELEC has
+    detected the CEC adapter; zero or more than one is ambiguous, and an
+    always-awake box must never guess which peripheral file to edit."""
+    peripheral_dir = os.path.join(
+        storage_root, ".kodi", "userdata", "peripheral_data"
+    )
+    paths = sorted(glob.glob(os.path.join(peripheral_dir, "*CEC*.xml")))
+    if len(paths) != 1:
+        fail("expected exactly one Kodi CEC peripheral settings file in %s; found %d"
+             % (peripheral_dir, len(paths)))
+    tree = ET.parse(paths[0])
+    root = tree.getroot()
+    if root.tag != "settings":
+        fail("unexpected root element in %s" % paths[0])
+    # Peripheral::LoadPersistedSettings reads direct children and value
+    # attributes, unlike guisettings.xml. Repair previously nested settings.
+    for parent in root.iter():
+        if parent is not root:
+            for node in list(parent):
+                if node.tag == "setting" and node.get("id") == "standby_pc_on_tv_standby":
+                    parent.remove(node)
+    _set_xml_setting(
+        root, "standby_pc_on_tv_standby", value, flat=True
+    )
+    write_xml_atomic(paths[0], tree)
+
+
 def load_kodi_settings(path):
     if os.path.exists(path):
         tree = ET.parse(path)
@@ -541,6 +573,15 @@ def main(argv):
     for setting_id in sorted(kodi_values):
         set_kodi_setting(guisettings_root, setting_id, kodi_values[setting_id])
     write_xml_atomic(guisettings_path, guisettings_tree)
+
+    # --- HDMI-CEC TV standby behavior ---------------------------------------
+    # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
+    # not user-configurable, so any other value is a caller defect.
+    cec_tv_off_action = config("CEC_TV_OFF_ACTION")
+    if cec_tv_off_action != "36028":
+        fail("CEC_TV_OFF_ACTION must be 36028 (Ignore); got %r"
+             % (cec_tv_off_action,))
+    set_cec_tv_off_action(storage_root, cec_tv_off_action)
 
     # --- YouTube ------------------------------------------------------------
     youtube_settings = addon_file("plugin.video.youtube", "settings.xml")
@@ -912,6 +953,15 @@ copy_one "${storage_root}/.kodi/userdata/addon_data/service.coreelec.settings/oe
 managed_settings_paths | while IFS= read -r managed_relative; do
   [ -n "${managed_relative}" ] || continue
   copy_one "${storage_root}/${managed_relative}"
+done
+
+# The CEC peripheral file's name varies by adapter, so every candidate is
+# backed up before the transformer enforces its exactly-one rule. This also
+# preserves any unrelated peripheral file without copying an unbounded
+# directory tree.
+for cec_path in "${storage_root}"/.kodi/userdata/peripheral_data/*CEC*.xml; do
+  [ -f "${cec_path}" ] || continue
+  copy_one "${cec_path}"
 done
 
 {
@@ -1569,6 +1619,7 @@ compared on the device and reported as booleans.
 import base64
 import datetime
 import errno
+import glob
 import json
 import os
 import re
@@ -1897,6 +1948,32 @@ def timezone_cache_value(storage_root):
     return ""
 
 
+def cec_tv_off_action_value(storage_root):
+    """Locates the one Kodi CEC peripheral settings file and returns its
+    standby_pc_on_tv_standby value. Never reports the file's own name: the
+    adapter file name varies and is not part of the observation contract. A
+    missing or ambiguous file, or a file with no such setting, is fatal for
+    the same reason it is fatal for the transformer -- guessing which
+    peripheral file governs TV standby is worse than refusing to answer."""
+    peripheral_dir = os.path.join(
+        storage_root, ".kodi", "userdata", "peripheral_data"
+    )
+    paths = sorted(glob.glob(os.path.join(peripheral_dir, "*CEC*.xml")))
+    if len(paths) != 1:
+        fail("expected exactly one Kodi CEC peripheral settings file in %s; found %d"
+             % (peripheral_dir, len(paths)))
+    root = ET.parse(paths[0]).getroot()
+    if root.tag != "settings":
+        fail("unexpected root element in %s" % paths[0])
+    nodes = [node for node in root.iter("setting")
+             if node.get("id") == "standby_pc_on_tv_standby"]
+    if (len(nodes) != 1 or nodes[0] not in root.findall("setting")
+            or not nodes[0].get("value")):
+        fail("the Kodi CEC peripheral settings file requires exactly one "
+             "direct standby_pc_on_tv_standby setting with a value attribute")
+    return nodes[0].get("value")
+
+
 def localtime_target(system_root):
     path = os.path.join(system_root, "etc", "localtime")
     try:
@@ -2115,6 +2192,7 @@ def main(argv):
     observe("date_offset_expected", expected_marks)
     observe("date_offset_observed", observed_marks)
     observe("date_matches_timezone", verdict)
+    observe("cec.tv_off_action", cec_tv_off_action_value(storage_root))
 
     for addon_id in addon_ids:
         installed, version, enabled = addon_state(entries.get("addon:" + addon_id))
@@ -2463,27 +2541,6 @@ REMOTE_VERIFY_PROLOGUE
   cat <<'REMOTE_VERIFY_EPILOGUE'
 PYTHON_VERIFY_PROBE
 REMOTE_VERIFY_EPILOGUE
-}
-
-# Reads the administrator public key file and prints exactly one normalized
-# key line. The grammar is enforced here, once, because the line is embedded
-# in a program the device runs: a validated line is a single line of a known
-# key type, a base64 blob, and an optional control-character-free comment, so
-# it can never contain a quote, a newline, or the here-document delimiter that
-# carries it. Carriage returns are stripped -- one inside authorized_keys
-# makes the key silently unusable.
-coreelec_public_key_line() {
-  local key_file="$1" normalized line_count line
-  [[ -f "${key_file}" ]] || die "The administrator public key file is missing: ${key_file}"
-  normalized="$(sed -e 's/\r$//' -e 's/[[:space:]]*$//' "${key_file}" | grep '[^[:space:]]' || true)"
-  line_count="$(printf '%s\n' "${normalized}" | grep -c '[^[:space:]]' || true)"
-  [[ "${line_count}" == "1" ]] \
-    || die "Expected exactly one public key line in ${key_file}, found ${line_count}"
-  line="$(printf '%s\n' "${normalized}" | head -1)"
-  printf '%s\n' "${line}" | grep -Eq \
-    '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}( [^[:cntrl:]]*)?$' \
-    || die "The administrator public key in ${key_file} is not a well-formed OpenSSH public key line"
-  printf '%s\n' "${line}"
 }
 
 # Appends the administrator public key to /storage/.ssh/authorized_keys.
@@ -3027,6 +3084,13 @@ verify_remote_baseline() {
     || failures=$((failures + 1))
   coreelec_report_comparison "regional.timezone_cache" "${TIMEZONE}" \
     "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
+    || failures=$((failures + 1))
+
+  # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
+  # not user-configurable, so the expected side is a literal rather than a
+  # configuration variable.
+  coreelec_report_comparison "cec.tv_off_action" "36028" \
+    "$(coreelec_observation_value cec.tv_off_action "${observations}" || true)" \
     || failures=$((failures + 1))
 
   # CoreELEC images differ both in where the zoneinfo tree lives and in how
@@ -3902,6 +3966,10 @@ coreelec_settings_payload() {
   coreelec_settings_payload_entry PLEX_SERVER_PORT "${PLEX_SERVER_PORT}"
   coreelec_settings_payload_entry PLEX_SERVER_NAME "${PLEX_SERVER_NAME}"
   coreelec_settings_payload_entry PLEX_PROFILE_IDS "${PLEX_PROFILE_IDS}"
+  # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; there is
+  # no configuration knob for it, so the value is a literal rather than a
+  # variable.
+  coreelec_settings_payload_entry CEC_TV_OFF_ACTION "36028"
 
   coreelec_settings_payload_secret KODI_WEB_PASSWORD "${KODI_WEB_PASSWORD}"
   coreelec_settings_payload_secret OMDB_API_KEY "${OMDB_API_KEY:-}"

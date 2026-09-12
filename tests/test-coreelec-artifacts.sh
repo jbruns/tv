@@ -456,7 +456,12 @@ run_provisioner_offline() {
 make_fake_storage() {
   local dir="$1" root="$1/storage" line key value payload
   mkdir -p "${root}/.kodi/addons" "${root}/.kodi/userdata/addon_data" \
-    "${root}/.cache/coreelec-provision"
+    "${root}/.kodi/userdata/peripheral_data" "${root}/.cache/coreelec-provision"
+  # The settings transformer requires exactly one Kodi CEC peripheral file to
+  # already exist, the same way a real device already has one once CoreELEC
+  # has detected its CEC adapter.
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="13011" /></settings>\n' \
+    > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
   payload="${root}/.cache/coreelec-provision/settings-payload.conf"
   : > "${payload}"
   chmod 600 "${payload}"
@@ -472,6 +477,7 @@ LOCALE_LANGUAGE=resource.language.en_us
 LOCALE_COUNTRY=USA (12h)
 KEYBOARD_LAYOUT=English QWERTY
 ADDON_UPDATE_MODE=notify
+CEC_TV_OFF_ACTION=36028
 ENTRIES
   printf '%s\n' "${root}"
 }

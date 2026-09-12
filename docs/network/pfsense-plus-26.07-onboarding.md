@@ -6,7 +6,7 @@
 
 Use DHCP on room devices and assign a fixed IPv4 address centrally with a pfSense DHCP static mapping. This is our default for devices used by Home Assistant, including playback devices and network-controlled receivers or displays. Reserve the Home Assistant host's address too if it uses DHCP. Devices intentionally kept offline, such as the theater Sony during the pilot, do not need onboarding until network control is selected.
 
-Complete this procedure before configuring an integration with the device's address. Return to the [shared setup runbook](../runbook.md) afterward.
+Complete this procedure before configuring an integration with the device's address. For the Ugoos lifecycle, finish reservation and DNS before restricted lifecycle gateway deployment. Return to the [shared setup runbook](../runbook.md) afterward.
 
 ## Shared network record
 
@@ -96,7 +96,9 @@ Test the actual integration from Home Assistant, including a state update and a 
 
 Home Assistant on IoT and streaming devices on LAN occupy different subnets. Record and permit the specific integration traffic required between them, including any device-to-Home-Assistant callbacks. Address reservations alone do not establish firewall access or discovery across networks. Home Assistant's Zeroconf discovery uses mDNS and depends on its selected network interfaces; test discovery separately from direct address access. The existing WoL path does not forward mDNS. [Home Assistant Zeroconf documentation](https://www.home-assistant.io/integrations/zeroconf/)
 
-Do not add broad inter-VLAN access or WAN port forwards as an onboarding shortcut. Record any needed discovery forwarding and protocol/port rules in the room device guide once the integration and network design are known.
+For the Ugoos Kodi lifecycle, add a dedicated pfSense IoT ingress rule permitting only the actual Home Assistant host address to each managed Ugoos reserved LAN address on TCP/22. Enable logging during pilot validation so failed connection attempts and unexpected sources are visible, then decide whether to keep logging according to the site's normal firewall-noise policy. This SSH rule is separate from administrator SSH and from the `172.16.99.99` Wake-on-LAN destination.
+
+Do not add broad inter-VLAN access or WAN port forwards as an onboarding shortcut, and prohibit a broad IoT-to-LAN SSH rule. Record any needed discovery forwarding and protocol/port rules in the room device guide once the integration and network design are known.
 
 ## 7. Record and accept the installation
 
@@ -110,15 +112,16 @@ Copy this record into the relevant `rooms/<room>/devices/<device>.md`. Keep the 
 | MAC / reserved IPv4 | Observed MAC and assigned address |
 | pfSense interface / VLAN / subnet | Actual client network |
 | Home Assistant integration / endpoint | Configured integration and IP or name; pending if deferred |
-| Required traffic / discovery handling | Rules and behavior verified for this integration |
+| Required traffic / discovery handling | Rules and behavior verified for this integration; for Ugoos lifecycle, HA-host-only TCP/22 to the reserved Ugoos address with pilot logging |
 | Wake-on-LAN | Device's real wired MAC, shared destination `172.16.99.99`, actual UDP port, tested power state |
 | Validation date / backup location | Results and external backup location |
 
 - [ ] The device uses DHCP and receives the recorded address after renewal and reboot.
 - [ ] Its name resolves to that address through the DNS service Home Assistant uses, if DNS is part of the setup.
 - [ ] Home Assistant can read state and issue the selected control action after the device restarts.
-- [ ] Suspend/wake reconnects successfully where supported and selected.
-- [ ] For WoL-capable devices, the [IoT-to-LAN wake tests](wake-on-lan.md#validation) pass and Home Assistant reconnects at the reserved device address.
+- [ ] For managed Ugoos lifecycle devices, pfSense logs show only the actual Home Assistant host using TCP/22 to the reserved Ugoos address; no broad IoT-to-LAN SSH rule exists.
+- [ ] Optional suspend/wake reconnects successfully only where explicitly supported and selected.
+- [ ] For WoL-capable devices, the [IoT-to-LAN wake tests](wake-on-lan.md#optional-experimental-validation) pass and Home Assistant reconnects at the reserved device address.
 - [ ] Any deferred integration or wake tests are recorded as pending, with a reason.
 - [ ] The room record matches pfSense, and the updated firewall configuration is backed up outside the repository.
 

@@ -79,10 +79,10 @@ Use this pilot configuration:
 | Setting | Pilot value | Reason |
 |---|---|---|
 | BRAVIA Sync control | **On** | Enables HDMI-CEC discovery, Sony-remote navigation, and audio-system coordination. |
-| Device auto power off | **Off** | Avoids the television independently suspending equipment while Home Assistant power behavior is being designed. |
-| TV auto power on | **Off** | Avoids an input or CEC event unexpectedly turning on the television during automation testing. |
+| Device auto power off | **Off** | Keeps Home Assistant, not the television, in charge of display idle power-off and Kodi lifecycle. |
+| TV auto power on | **Off** | Prevents Kodi, HDMI input, or CEC activity from unexpectedly turning on the television during lifecycle automation. |
 
-After connecting the new AVPro T2/R2 hardware, refresh the BRAVIA Sync device list and verify that the Denon appears. Automatic power actions can be revisited when the Home Assistant state model is implemented.
+Keep **Device auto power off** and **TV auto power on** disabled for the Ugoos lifecycle. Home Assistant owns display idle power-off and Kodi start/stop; BRAVIA Sync remains enabled only for discovery, Sony-remote navigation, and audio coordination. After connecting the new AVPro T2/R2 hardware, refresh the BRAVIA Sync device list and verify that the Denon appears.
 
 ## Picture settings
 

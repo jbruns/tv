@@ -7,9 +7,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tests/test-helper.sh
 source "${SCRIPT_DIR}/test-helper.sh"
 
+SSH_LIB="${SCRIPT_DIR}/../lib/coreelec-ssh.sh"
 WORKFLOW_LIB="${SCRIPT_DIR}/../lib/coreelec-addon-workflows.sh"
 CLI_SCRIPT="${SCRIPT_DIR}/../configure-coreelec-addons.sh"
 
+# shellcheck source=lib/coreelec-ssh.sh
+source "${SSH_LIB}"
 # shellcheck source=lib/coreelec-addon-workflows.sh
 source "${WORKFLOW_LIB}"
 
@@ -157,10 +160,38 @@ assert_single_remote_script_argument() {
     "the single remote argument must contain the complete strict-mode script"
 }
 
+ssh_identity_argument() {
+  local dir="$1" call="$2" argc index argument
+  argc="$(ssh_argc "${dir}" "${call}")"
+  for ((index = 1; index <= argc; index++)); do
+    argument="$(ssh_argv_element "${dir}" "${call}" "${index}")"
+    if [[ "${argument}" == "-i" ]]; then
+      ssh_argv_element "${dir}" "${call}" "$((index + 1))"
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_failing_ssh_stub() {
+  local dir bin_dir
+  dir="$1"
+  bin_dir="${dir}/failing-ssh-bin"
+  mkdir -p "${bin_dir}"
+  cat > "${bin_dir}/ssh" <<'STUB'
+#!/bin/bash
+cat >/dev/null
+exit 17
+STUB
+  chmod +x "${bin_dir}/ssh"
+  printf '%s\n' "${bin_dir}"
+}
+
 assert_hardened_ssh_options() {
   local dir="$1" call="$2" identity_file="$3" target="$4" argc index
   local expected=(
     -p 22
+    -o BatchMode=yes
     -o ConnectTimeout=12
     -o ServerAliveInterval=15
     -o ServerAliveCountMax=3
@@ -170,7 +201,6 @@ assert_hardened_ssh_options() {
     -o PreferredAuthentications=publickey
     -o PasswordAuthentication=no
     -o KbdInteractiveAuthentication=no
-    -o BatchMode=yes
     "root@${target}"
   )
   argc="$(ssh_argc "${dir}" "${call}")"
@@ -664,6 +694,126 @@ test_addon_data_reader_keeps_path_values_out_of_remote_command() {
     "add-on path values are passed as quoted stdin data"
 }
 
+test_shared_ssh_command_preserves_one_remote_argv_word() {
+  local dir bin_dir argc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  IDENTITY_FILE="${dir}/admin-key"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_ssh_command "$(printf 'set -eu\necho hello')" >/dev/null </dev/null
+
+  assert_eq "1" "$(ssh_call_count "${dir}")" "coreelec_ssh_command makes exactly one SSH call" || return 1
+  argc="$(ssh_argc "${dir}" "1")"
+  assert_eq "root@coreelec-theater" "$(ssh_argv_element "${dir}" "1" "$((argc - 1))")" \
+    "the target is the second-to-last argv element" || return 1
+  assert_eq "$(printf 'set -eu\necho hello')" "$(ssh_argv_element "${dir}" "1" "${argc}")" \
+    "the remote command is passed as exactly one argv word, matching the current add-on transport"
+}
+
+test_shared_ssh_batch_streams_the_remote_program_on_stdin() {
+  local dir bin_dir argc stdin_body
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  IDENTITY_FILE="${dir}/admin-key"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_ssh_batch "$(printf 'set -eu\necho hello')" >/dev/null
+
+  assert_eq "1" "$(ssh_call_count "${dir}")" "coreelec_ssh_batch makes exactly one SSH call" || return 1
+  argc="$(ssh_argc "${dir}" "1")"
+  assert_eq "root@coreelec-theater" "$(ssh_argv_element "${dir}" "1" "$((argc - 1))")" \
+    "the target is the second-to-last argv element" || return 1
+  assert_eq "sh -s" "$(ssh_argv_element "${dir}" "1" "${argc}")" \
+    "the remote program travels as the literal 'sh -s' argv word, not split across two argv words" || return 1
+  stdin_body="$(cat "${dir}/stub/stdin-1.log")"
+  assert_eq "$(printf 'set -eu\necho hello\n')" "${stdin_body}" \
+    "the remote program is streamed on stdin instead of embedded in argv"
+}
+
+test_shared_ssh_helpers_use_only_the_selected_identity() {
+  local dir bin_dir identity_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  identity_file="${dir}/coreelec admin key"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  IDENTITY_FILE="${identity_file}"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_ssh_command 'true' >/dev/null </dev/null
+  assert_eq "${identity_file}" "$(ssh_identity_argument "${dir}" "1")" \
+    "coreelec_ssh_command must use only the selected identity file" || return 1
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_ssh_batch 'true' >/dev/null
+  assert_eq "${identity_file}" "$(ssh_identity_argument "${dir}" "2")" \
+    "coreelec_ssh_batch must use only the selected identity file"
+}
+
+test_shared_ssh_helpers_disable_password_and_interactive_auth() {
+  local dir bin_dir argv_log option
+  local required=(
+    'BatchMode=yes'
+    'StrictHostKeyChecking=accept-new'
+    'IdentitiesOnly=yes'
+    'PreferredAuthentications=publickey'
+    'PasswordAuthentication=no'
+    'KbdInteractiveAuthentication=no'
+  )
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  IDENTITY_FILE="${dir}/admin-key"
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_ssh_command 'true' >/dev/null </dev/null
+  argv_log="$(cat "${dir}/stub/argv-1.log")"
+  for option in "${required[@]}"; do
+    assert_contains "${argv_log}" "${option}" \
+      "coreelec_ssh_command must disable password/interactive auth via ${option}" || return 1
+  done
+
+  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    coreelec_ssh_batch 'true' >/dev/null
+  argv_log="$(cat "${dir}/stub/argv-2.log")"
+  for option in "${required[@]}"; do
+    assert_contains "${argv_log}" "${option}" \
+      "coreelec_ssh_batch must disable password/interactive auth via ${option}" || return 1
+  done
+}
+
+test_shared_ssh_helpers_preserve_remote_failure_status() {
+  local dir bin_dir rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_failing_ssh_stub "${dir}")"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  IDENTITY_FILE="${dir}/admin-key"
+
+  set +e
+  PATH="${bin_dir}:${PATH}" coreelec_ssh_command 'true' >/dev/null 2>&1 </dev/null
+  rc=$?
+  set -e
+  assert_eq "17" "${rc}" "coreelec_ssh_command must preserve the remote SSH exit status" || return 1
+
+  set +e
+  PATH="${bin_dir}:${PATH}" coreelec_ssh_batch 'true' >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_eq "17" "${rc}" "coreelec_ssh_batch must preserve the remote SSH exit status"
+}
+
 test_gui_guard_accepts_expected_window_and_control() {
   kodi_gui_state() {
     printf '%s\n' '{"jsonrpc":"2.0","id":"gui-state","result":{"currentwindow":{"label":"  Expected Window  "},"currentcontrol":{"label":" Expected Control "}}}'
@@ -686,6 +836,7 @@ test_gui_guard_rejects_an_unexpected_window_without_sending_input() {
   set +e
   output="$(
     COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" bash -c '
+      source "'"${SSH_LIB}"'"
       source "'"${WORKFLOW_LIB}"'"
       TARGET="coreelec-theater"
       SSH_PORT="22"
@@ -1504,6 +1655,11 @@ run_all_tests \
   test_introspection_requires_addons_getaddondetails \
   test_every_remote_script_is_one_ssh_argument \
   test_ssh_transport_matches_provisioner_hardening \
+  test_shared_ssh_command_preserves_one_remote_argv_word \
+  test_shared_ssh_batch_streams_the_remote_program_on_stdin \
+  test_shared_ssh_helpers_use_only_the_selected_identity \
+  test_shared_ssh_helpers_disable_password_and_interactive_auth \
+  test_shared_ssh_helpers_preserve_remote_failure_status \
   test_kodi_rpc_curl_config_does_not_quote_the_at_file_path \
   test_addon_data_reader_keeps_path_values_out_of_remote_command \
   test_gui_guard_accepts_expected_window_and_control \

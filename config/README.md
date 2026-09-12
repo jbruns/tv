@@ -147,6 +147,28 @@ Do not replace the shared file with a short override fragment. Because
 `--config` performs replacement rather than merging, the private file must
 retain the complete `ADDON_ARTIFACT` lock.
 
+
+## Lifecycle and Home Assistant package inputs
+
+The Kodi lifecycle gateway is separate from the shared provisioning config. `configure-kodi-lifecycle.sh` reads controller key paths only from CLI flags:
+
+```bash
+./configure-kodi-lifecycle.sh \
+  --target ugoos-theater \
+  --controller-public-key "$HOME/.ssh/ugoos_kodi_lifecycle_ed25519.pub" \
+  --controller-identity "$HOME/.ssh/ugoos_kodi_lifecycle_ed25519"
+```
+
+The controller key files are operational secrets/identities, not repository configuration. Keep them outside this repository, remove any temporary Mac copy after deployment, and use the Home Assistant runtime paths documented in [`../docs/home-assistant/ugoos-kodi-lifecycle.md`](../docs/home-assistant/ugoos-kodi-lifecycle.md): `/config/.ssh/ugoos_kodi_lifecycle_ed25519`, `/config/.ssh/known_hosts`, `/config/.ssh/ugoos-kodi-lifecycle.conf`, and `/config/packages/ugoos_theater_kodi_lifecycle.yaml`.
+
+The theater package intentionally hard-codes `media_player.sony_xr_65a90j`, `media_player.kodi_theater`, `ugoos-theater`, and `stop_when_display_off: true`. Future room-specific package copies must set their own entity IDs and reserved Ugoos address/name explicitly; no `config/rooms/` file is read or merged into Home Assistant today.
+
+An explicit stop-policy opt-out changes both the reconciler's
+`stop_when_display_off` literal and the desired-state sensor's matching
+Jinja literal to `false`. Follow the operations guide's independently
+authenticated server-fingerprint bootstrap for both HA and the deploying
+user; unverified `ssh-keyscan` output must not become trusted host state.
+
 ## Grammar (strict, never shell)
 
 The parser reads the file line by line and dispatches every line through an

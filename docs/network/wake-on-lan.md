@@ -1,6 +1,6 @@
 # Wake-on-LAN from Home Assistant on IoT to LAN
 
-Use this alongside [device network onboarding](pfsense-plus-26.07-onboarding.md). The owner reports an existing pfSense static ARP entry for **`172.16.99.99`** to deliver wake traffic from Home Assistant's IoT network to streaming devices on LAN. This document records that design; live configuration and device wake behavior have not been inspected.
+Use this alongside [device network onboarding](pfsense-plus-26.07-onboarding.md) only for optional wake experiments. The owner reports an existing pfSense static ARP entry for **`172.16.99.99`** to deliver wake traffic from Home Assistant's IoT network to streaming devices on LAN. This document records that design; live configuration and device wake behavior have not been inspected. WoL is not invoked by the lifecycle package and does not satisfy keep-alive acceptance for the always-awake Ugoos Kodi lifecycle.
 
 ## Networks and address roles
 
@@ -35,7 +35,7 @@ This wake path uses IPv4. The recorded IPv6 prefixes apply to normal dual-stack 
 3. Inspect the rule permitting **IPv4 UDP** from the **actual Home Assistant host address** on IoT to **`172.16.99.99/32`**, with the configured destination port. The example below uses UDP **9**; the existing port and rule still need confirmation. pfSense interface rules normally evaluate incoming traffic, so this flow enters on IoT. [Netgate firewall rule methodology](https://docs.netgate.com/pfsense/en/latest/firewall/rule-methodology.html)
 4. Preserve this shared entry when adding ordinary DHCP mappings. It is not a reason to enable interface-wide static ARP restrictions or add a broadcast-MAC mapping for every device.
 
-Normal Kodi/receiver control and callbacks use separate rules to the devices' own addresses. Success sending a wake packet does not establish that those services are reachable.
+Normal Kodi/receiver control and callbacks use separate rules to the devices' own addresses. Success sending a wake packet does not establish that those services are reachable. The lifecycle package keeps CoreELEC reachable over Ethernet/SSH instead of sending WoL; its acceptance is the 24-hour display-off ping/SSH reachability check, not a wake result.
 
 ## Home Assistant action
 
@@ -53,9 +53,9 @@ Home Assistant supports an explicit destination and port. This is an action exam
 
 Reuse the destination across LAN devices and vary the target MAC. If using a WoL switch's `host` field for availability, supply the device's reserved IP or verified hostname, not `172.16.99.99`. Confirm recovery through the actual media/control integration as well.
 
-## Validation
+## Optional experimental validation
 
-- [ ] The device supports WoL from the selected power state, and its wired interface remains powered and connected. Test suspend and shutdown separately if both are intended; neither is assumed for an untested Ugoos installation.
+- [ ] The device supports WoL from the selected power state, and its wired interface remains powered and connected. Test suspend and shutdown separately if both are intended; neither is assumed for an untested Ugoos installation and neither is required by lifecycle keep-alive acceptance.
 - [ ] Trigger the wake action from Home Assistant on IoT while the target sleeps. Confirm it wakes, then responds through its integration at its reserved LAN address.
 - [ ] Repeat after the target has remained asleep long enough for ordinary dynamic ARP state to expire. Success must not depend on a recently awake device's ARP entry.
 - [ ] During the next planned firewall restart, verify the shared static ARP entry returns and repeat the wake test.

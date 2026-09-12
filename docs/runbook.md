@@ -16,7 +16,9 @@ Place the room overview in `rooms/<room>/README.md` and device-specific instruct
 
 All rooms use **pfSense Plus 26.07** for edge routing. Use the [shared network onboarding guide](network/pfsense-plus-26.07-onboarding.md) to record the existing subnet, DHCP pools, DNS, and Home Assistant network before assigning addresses.
 
-Streaming devices join LAN (`172.16.0.0/16`); Home Assistant is on IoT (`192.168.10.0/24`). Follow the [shared Wake-on-LAN guide](network/wake-on-lan.md) for the existing static ARP wake destination `172.16.99.99`. The network guide records both IPv6 prefixes.
+Streaming devices join LAN (`172.16.0.0/16`); Home Assistant is on IoT (`192.168.10.0/24`). Follow the [shared Wake-on-LAN guide](network/wake-on-lan.md) only for optional experimental wake validation through the existing static ARP destination `172.16.99.99`. WoL is not part of the Ugoos Kodi lifecycle acceptance. The network guide records both IPv6 prefixes.
+
+Binding Ugoos lifecycle order: CoreELEC wizard -> DHCP reservation and DNS -> shared baseline provisioning (CEC Ignore) -> restricted lifecycle gateway deployment -> Sony and Kodi Home Assistant integrations -> theater HA package -> playback configuration -> lifecycle/idle acceptance.
 
 ## 2. Prepare the playback device
 
@@ -26,11 +28,11 @@ Follow the shared guide matching the installed device:
 
 For the Ugoos pilot, preserve Android and internal eMMC during initial testing. Keep a known working removable installation available before migrating to internal storage.
 
-Once a device can join its intended network, complete network onboarding through address and DNS validation. Keep the client on DHCP and create its static mapping in pfSense before configuring any address-based integrations. Record deferred Home Assistant checks for the service setup stage.
+Once a device can join its intended network, complete network onboarding through address and DNS validation. Keep the client on DHCP and create its static mapping in pfSense before configuring any address-based integrations. For managed Ugoos units, add the narrow pfSense IoT ingress rule that permits only the actual Home Assistant host address to the Ugoos reserved address on TCP/22, with logging enabled during pilot validation. Record deferred Home Assistant checks for the service setup stage.
 
 ## 3. Provision the shared CoreELEC baseline
 
-Once the device has completed the CoreELEC wizard with wired networking and SSH enabled (end of step 2), and **before** any room-specific playback configuration (step 4), run [`provision-coreelec.sh`](../provision-coreelec.sh) from a Mac. It applies the room-independent baseline: the pinned add-on set, Pacific/English-US regional settings, and any optional service values supplied through configuration or secret environment variables. See [`config/README.md`](../config/README.md) for every configuration key, the strict `KEY=value` grammar, and the secret environment variables.
+Once the device has completed the CoreELEC wizard with wired networking and SSH enabled (end of step 2), and **before** any room-specific playback configuration (step 6), run [`provision-coreelec.sh`](../provision-coreelec.sh) from a Mac. It applies the room-independent baseline: the pinned add-on set, Pacific/English-US regional settings, and any optional service values supplied through configuration or secret environment variables. See [`config/README.md`](../config/README.md) for every configuration key, the strict `KEY=value` grammar, and the secret environment variables.
 
 ### Two-phase workflow
 
@@ -422,32 +424,37 @@ Add-ons are unzipped while Kodi is stopped, so Kodi decides on its own start whi
 - `deployment_state=incomplete-rollback` is fatal and has no automated recovery: the report's `recovery.*` lines name the retained transaction and staging paths and the exact `--rollback-deployment` command; inspect the device over SSH at `recovery.inspect` before retrying.
 - A device that cannot answer the local verification probe (for example, because `curl` is missing on the device) is treated as a verification failure and rolled back automatically, not left half-committed.
 
-## 4. Apply room-specific connections and settings
+## 4. Deploy the restricted Ugoos lifecycle gateway
 
-Follow the room's device documents before the first playback tests. Configure the display inputs, audio return path, receiver, and remote/control behavior for that installation. Select playback-device video and audio options according to the actual display and complete signal path.
+After the shared baseline report confirms CEC Ignore, deploy the restricted Home Assistant controller gateway before enabling the Home Assistant package. Follow the [Ugoos Kodi lifecycle operations guide](home-assistant/ugoos-kodi-lifecycle.md): create the Home Assistant controller identity, keep key files outside the repository, and run `./configure-kodi-lifecycle.sh --target <hostname-or-IP> --controller-public-key <file> --controller-identity <file>`. The controller identity can run only `start`, `stop`, and `status` against `kodi.service`; it is not an administrator shell.
 
-## 5. Validate and record results
+Review the lifecycle report for `deployment_state`, `restricted.status`, `restricted.start`, `restricted.stop`, `restricted.arbitrary_command_denied`, and `restored_state` before proceeding. Use the CLI's `--inspect-transaction`, `--rollback-transaction`, or `--finalize-transaction` recovery modes for unresolved transactions; never fix the lifecycle key by broad manual deletion of `/storage/.ssh/authorized_keys`.
 
-Complete both the shared device checklist and the room checklist. Record the date, installed versions, test titles/tracks, observed display and receiver modes, and any blocked checks in the room documentation. An unchecked item is not evidence of a pass.
+## 5. Add Sony and Kodi to Home Assistant, then install the package
 
-Keep removable media in use while applicable tests remain unresolved. A temporary transport limitation must be recorded and retested after the limiting hardware is replaced.
+Complete the network guide's [reachability checks](network/pfsense-plus-26.07-onboarding.md#6-validate-home-assistant-reachability) using each device's recorded endpoint. Add the Sony BRAVIA and Kodi integrations and confirm the exact entity IDs expected by the selected package. For the theater package those IDs are `media_player.sony_xr_65a90j` and `media_player.kodi_theater`.
 
-## 6. Back up and optionally migrate
+Install the Home Assistant SSH config under `/config/.ssh/ugoos-kodi-lifecycle.conf`, copy the package under `/config/packages/`, enable `homeassistant: packages:`, run `ha core check`, then reload/restart Home Assistant before testing `shell_command.ugoos_theater_kodi_status`, `shell_command.ugoos_theater_kodi_start`, and `shell_command.ugoos_theater_kodi_stop` from Developer Tools.
 
-After validation, create a backup and copy it to another system. If using an Ugoos, follow the shared guide's optional eMMC migration procedure only after the applicable shared and room checks pass. Preserve the proven microSD card as recovery media.
+## 6. Apply playback configuration
 
-## 7. Remaining room-specific service work
+Follow the room's device documents before the first playback tests. Configure the display inputs, audio return path, receiver, Kodi Dolby Vision mode, whitelist, passthrough, and remote/control behavior for that installation. Sony **Device auto power off** and **TV auto power on** remain disabled; Home Assistant owns display idle power-off and Kodi lifecycle while BRAVIA Sync remains enabled only for discovery, remote navigation, and audio coordination.
+
+## 7. Validate lifecycle/idle behavior and record results
+
+Complete both the shared device checklist and the room checklist. Record the date, installed versions, test titles/tracks, observed display and receiver modes, and any blocked checks in the room documentation. An unchecked item is not evidence of a pass. Do not mark lifecycle results passed until the live theater pair demonstrates the 24-hour display-off reachability, Sony-off/Kodi-stop, Sony-on/Kodi-ready, idle, override, restart, reboot, and restricted-command denial checks in the room acceptance table.
+
+Keep removable media in use while applicable tests remain unresolved. A temporary transport limitation must be recorded and retested after the limiting hardware is replaced. After validation, create a backup and copy it to another system. If using an Ugoos, follow the shared guide's optional eMMC migration procedure only after the applicable shared and room checks pass. Preserve the proven microSD card as recovery media.
+
+## 8. Remaining room-specific service work
 
 Step 3 already installed and, where values were supplied, configured every shared add-on. What remains is room-specific:
 
-1. Final Kodi video and room audio settings.
-2. Home Assistant network reachability, monitoring, suspend, and wake.
-3. Complete any Emby, PM4K account-mode, or YouTube items that still report `authorization-required` or `manual-required`; the helper above can assist, but you may still need to finish on the TV or in another browser.
-4. Complete any PM4K/NextPVR/HA Weather/TMDb Helper items still listed as `installed-unconfigured` in the provisioning audit report, or `skipped`/`failed` in the post-deployment report, by supplying the missing values and re-running the appropriate command.
+1. Complete any Emby, PM4K account-mode, or YouTube items that still report `authorization-required` or `manual-required`; the helper above can assist, but you may still need to finish on the TV or in another browser.
+2. Complete any PM4K/NextPVR/HA Weather/TMDb Helper items still listed as `installed-unconfigured` in the provisioning audit report, or `skipped`/`failed` in the post-deployment report, by supplying the missing values and re-running the appropriate command.
+3. For devices outside the normal always-awake lifecycle, record optional experimental suspend or Wake-on-LAN results separately.
 
 Record room-specific integration choices alongside the relevant device.
-
-During Home Assistant setup, finish the network guide's [reachability checks](network/pfsense-plus-26.07-onboarding.md#6-validate-home-assistant-reachability) using each device's recorded endpoint.
 
 ## Reuse across rooms
 

@@ -20,8 +20,35 @@ PROVISIONER="${SCRIPT_DIR}/../provision-coreelec.sh"
 
 # --- Fixture helpers -------------------------------------------------------
 
+cec_settings_path() {
+  printf '%s/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml' "$1"
+}
+
+write_cec_settings() {
+  local root="$1" value="$2"
+  mkdir -p "${root}/.kodi/userdata/peripheral_data"
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="%s" /></settings>\n' \
+    "${value}" > "$(cec_settings_path "${root}")"
+}
+
+# Seeds a default (untouched-device) CEC peripheral file when a test's root
+# does not already provide one. The transformer requires exactly one such
+# file to exist, the same way a real CoreELEC device already has one once its
+# CEC adapter has been detected; tests exercising unrelated transformer
+# behavior should not each have to know that contract. Tests that exercise the
+# missing/ambiguous file behavior itself call the provisioner directly instead
+# of going through run_transform, so this default never masks their fixture.
+ensure_default_cec_settings() {
+  local root="$1"
+  if ! find "${root}/.kodi/userdata/peripheral_data" -maxdepth 1 -name '*CEC*.xml' \
+      2>/dev/null | grep -q .; then
+    write_cec_settings "${root}" "13011"
+  fi
+}
+
 run_transform() {
   local root="$1" payload="$2"
+  ensure_default_cec_settings "${root}"
   bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}"
 }
 
@@ -54,10 +81,14 @@ LOCALE_LANGUAGE=resource.language.en_us
 LOCALE_COUNTRY=USA (12h)
 KEYBOARD_LAYOUT=English QWERTY
 ADDON_UPDATE_MODE=notify
+CEC_TV_OFF_ACTION=36028
 ENTRIES
 }
 
 # Every managed value present, so each optional branch of the transformer runs.
+# CEC_TV_OFF_ACTION is included here too (not just in write_base_payload)
+# because the transformer requires it on every run, and this fixture must
+# stay a superset of the base payload rather than a divergent one.
 write_full_payload() {
   write_payload "$1" <<'ENTRIES'
 TIMEZONE=America/Los_Angeles
@@ -66,6 +97,7 @@ LOCALE_LANGUAGE=resource.language.en_us
 LOCALE_COUNTRY=USA (12h)
 KEYBOARD_LAYOUT=English QWERTY
 ADDON_UPDATE_MODE=notify
+CEC_TV_OFF_ACTION=36028
 KODI_WEB_USER=homeassistant
 KODI_WEB_PORT=8080
 KODI_WEB_PASSWORD=kodi-web-password-secret
@@ -321,6 +353,223 @@ test_second_run_is_byte_identical() {
   run_transform "${root}" "${payload}" >/dev/null
   second="$(tree_digest "${root}")"
   assert_eq "${first}" "${second}" "a second run rewrites nothing"
+}
+
+# --- HDMI-CEC TV standby behavior --------------------------------------------
+#
+# Kodi's CEC peripheral file, not guisettings.xml, decides what a CEC-capable
+# TV's standby broadcast makes the box do. The transformer always forces this
+# to 36028 (Ignore), so a sleeping TV never puts an always-awake box to sleep
+# with it, and it is fatal (not silently skipped) when the file is missing or
+# ambiguous, because guessing which peripheral file to edit is worse than
+# refusing to run.
+
+test_cec_tv_off_action_is_changed_to_ignore() {
+  local dir root payload
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_cec_settings "${root}" "13011"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "36028" "$(xml_setting "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)" \
+    "the CEC TV-off action is forced to Ignore"
+  assert_eq "yes" "$(xml_setting_uses_value_attribute "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)" \
+    "Kodi peripheral LoadPersistedSettings reads only the value attribute"
+}
+
+test_cec_text_only_setting_is_repaired_to_kodi_attribute() {
+  local dir root payload
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_cec_settings "${root}" "13011"
+  printf '<settings><setting id="standby_pc_on_tv_standby">36028</setting></settings>\n' \
+    > "$(cec_settings_path "${root}")"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "yes" "$(xml_setting_uses_value_attribute "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)" \
+    "repair the earlier text-only deployment rather than certifying it"
+  assert_eq "36028" "$(xml_setting "$(cec_settings_path "${root}")" standby_pc_on_tv_standby)"
+}
+
+test_cec_nested_setting_is_repaired_to_direct_child() {
+  local dir root payload value
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_cec_settings "${root}" "13011"
+  printf '<settings><category><setting id="standby_pc_on_tv_standby" value="13011" /></category></settings>\n' \
+    > "$(cec_settings_path "${root}")"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  value="$(python3 - "$(cec_settings_path "${root}")" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+node = root.find("./setting[@id='standby_pc_on_tv_standby']")
+print(node.get("value", "") if node is not None else "")
+PY
+)"
+  assert_eq "36028" "${value}" "Kodi reads direct child peripheral settings only"
+}
+
+test_cec_transform_preserves_unmanaged_peripheral_settings() {
+  local dir root payload cec_path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  mkdir -p "${root}/.kodi/userdata/peripheral_data"
+  cec_path="$(cec_settings_path "${root}")"
+  cat > "${cec_path}" <<'XML'
+<settings><setting id="activate_source" value="0" /><setting id="standby_pc_on_tv_standby" value="13011" /></settings>
+XML
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "36028" "$(xml_setting "${cec_path}" standby_pc_on_tv_standby)" \
+    "the managed CEC setting is changed"
+  assert_eq "0" "$(xml_setting "${cec_path}" activate_source)" \
+    "an unrelated CEC peripheral setting is untouched"
+}
+
+test_duplicate_cec_tv_off_actions_are_collapsed() {
+  local dir root payload cec_path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  mkdir -p "${root}/.kodi/userdata/peripheral_data"
+  cec_path="$(cec_settings_path "${root}")"
+  cat > "${cec_path}" <<'XML'
+<settings><setting id="standby_pc_on_tv_standby" value="13011" /><setting id="standby_pc_on_tv_standby" value="10000" /></settings>
+XML
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "1" "$(xml_setting_count "${cec_path}" standby_pc_on_tv_standby)" \
+    "one standby_pc_on_tv_standby node remains"
+  assert_eq "36028" "$(xml_setting "${cec_path}" standby_pc_on_tv_standby)" \
+    "the surviving node carries the Ignore value"
+}
+
+test_second_cec_transform_is_byte_identical() {
+  local dir root payload cec_path first second
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_cec_settings "${root}" "13011"
+  write_base_payload "${payload}"
+  cec_path="$(cec_settings_path "${root}")"
+
+  run_transform "${root}" "${payload}" >/dev/null
+  first="$(shasum -a 256 "${cec_path}")"
+  run_transform "${root}" "${payload}" >/dev/null
+  second="$(shasum -a 256 "${cec_path}")"
+  assert_eq "${first}" "${second}" "a second CEC transform rewrites nothing"
+}
+
+test_missing_cec_adapter_file_fails_loudly() {
+  local dir root payload output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+
+  # No peripheral file at all: call the provisioner directly, bypassing
+  # run_transform's default CEC seeding, which exists for unrelated tests only.
+  set +e
+  output="$(bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "a missing CEC peripheral file must fail loudly"
+  assert_contains "${output}" "peripheral_data" "the error names the peripheral_data directory"
+}
+
+test_multiple_cec_adapter_files_fail_loudly() {
+  local dir root payload output status peripheral_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  write_cec_settings "${root}" "13011"
+  peripheral_dir="${root}/.kodi/userdata/peripheral_data"
+  printf '<settings><setting id="standby_pc_on_tv_standby" value="13011" /></settings>\n' \
+    > "${peripheral_dir}/cec_CEC_Adapter_2.xml"
+
+  set +e
+  output="$(bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "an ambiguous CEC peripheral file set must fail loudly"
+  assert_contains "${output}" "peripheral_data" "the error names the peripheral_data directory"
+}
+
+test_malformed_cec_adapter_file_fails_loudly() {
+  local dir root payload cec_path output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  cec_path="$(cec_settings_path "${root}")"
+  mkdir -p "$(dirname "${cec_path}")"
+  # Well-formed XML, but the wrong document shape: not a <settings> root.
+  printf '<peripheral><setting id="standby_pc_on_tv_standby" value="13011" /></peripheral>\n' \
+    > "${cec_path}"
+
+  set +e
+  output="$(bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "a structurally invalid CEC document must fail loudly"
+  assert_contains "${output}" "unexpected root element" \
+    "the error names the shape defect, not just a parse failure"
+}
+
+test_cec_settings_file_mode_is_private() {
+  local dir root payload
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_cec_settings "${root}" "13011"
+  chmod 644 "$(cec_settings_path "${root}")"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "600" "$(file_mode "$(cec_settings_path "${root}")")" \
+    "the CEC settings file is private after being rewritten"
+}
+
+test_remote_backup_includes_peripheral_data() {
+  local dir root script backup
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  write_cec_settings "${root}" "36028"
+
+  script="$(bash "${PROVISIONER}" --emit-remote-script backup "${root}")"
+  backup="$(umask 022; printf '%s\n' "${script}" | sh -s)"
+
+  if [[ ! -f "${backup}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml" ]]; then
+    printf 'the backup must copy the CEC peripheral settings file\n' >&2
+    return 1
+  fi
+  assert_eq "600" "$(file_mode "${backup}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml")" \
+    "the CEC peripheral backup copy is private"
 }
 
 # --- Add-on specific behavior -----------------------------------------------
@@ -1299,6 +1548,17 @@ run_all_tests \
   test_duplicate_settings_are_collapsed \
   test_existing_unmanaged_settings_are_preserved \
   test_second_run_is_byte_identical \
+  test_cec_tv_off_action_is_changed_to_ignore \
+  test_cec_text_only_setting_is_repaired_to_kodi_attribute \
+  test_cec_nested_setting_is_repaired_to_direct_child \
+  test_cec_transform_preserves_unmanaged_peripheral_settings \
+  test_duplicate_cec_tv_off_actions_are_collapsed \
+  test_second_cec_transform_is_byte_identical \
+  test_missing_cec_adapter_file_fails_loudly \
+  test_multiple_cec_adapter_files_fail_loudly \
+  test_malformed_cec_adapter_file_fails_loudly \
+  test_cec_settings_file_mode_is_private \
+  test_remote_backup_includes_peripheral_data \
   test_tmdb_helper_keys_go_to_tmdb_helper_only \
   test_youtube_credentials_require_all_three_values \
   test_youtube_api_keys_json_has_expected_shape \

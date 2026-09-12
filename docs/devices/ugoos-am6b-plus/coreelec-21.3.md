@@ -156,7 +156,7 @@ Use the following baseline:
 
 Follow the [pfSense Plus 26.07 network onboarding guide](../../network/pfsense-plus-26.07-onboarding.md) to create a DHCP static mapping using the Ugoos wired interface's real MAC address. Keep CoreELEC on DHCP, choose an address outside the dynamic pools, renew the lease, and verify the assigned address before configuring Home Assistant. Do not use `ff:ff:ff:ff:ff:ff`; that is the Ethernet broadcast address and is not a valid host reservation.
 
-Keep `172.16.99.99` reserved for the shared [IoT-to-LAN Wake-on-LAN path](../../network/wake-on-lan.md). Each Ugoos has its own DHCP address and real wired MAC; validate its supported wake states before adding wake automation.
+Keep `172.16.99.99` reserved for the shared [IoT-to-LAN Wake-on-LAN path](../../network/wake-on-lan.md). Each Ugoos has its own DHCP address and real wired MAC. The normal Kodi lifecycle does not use WoL; validate wake states only in the optional experimental section below.
 
 If using the UR-01 over Bluetooth:
 
@@ -193,10 +193,12 @@ authorization for only the listed add-ons; provisioning itself still cannot
 sign Emby in. Neither post-deployment command extends or rolls back the valid
 baseline transaction.
 
-The baseline also applies `Adjust display refresh rate: On start/stop` and
-`Sync playback to display: Off` below — the only baseline table row it does
-not set is Dolby Vision mode, which stays room-specific. See the [shared
-runbook's provisioning
+The baseline also applies `Adjust display refresh rate: On start/stop`,
+`Sync playback to display: Off`, and Kodi's CEC TV-off action **Ignore**
+(`cec.tv_off_action.expected=36028`, `cec.tv_off_action.observed=36028`,
+`cec.tv_off_action.status=ok` in a matching audit report). The only baseline
+table row it does not set is Dolby Vision mode, which stays room-specific.
+See the [shared runbook's provisioning
 step](../../runbook.md#3-provision-the-shared-coreelec-baseline) for
 validation-only commands, the interactive password/passphrase prompts,
 backup/rollback locations, post-deployment statuses, guided authorization,
@@ -226,7 +228,7 @@ Keep CoreELEC on the microSD card until all applicable shared and room-specific 
 
 - [ ] CoreELEC reports version 21.3 Omega and the `Amlogic-ng` platform.
 - [ ] Cold boot and reboot are reliable.
-- [ ] Suspend and wake work repeatedly.
+- [ ] CoreELEC remains pingable and reachable over SSH for 24 hours while the display is off; Kodi may be intentionally stopped.
 - [ ] The wired interface receives the intended DHCP reservation.
 - [ ] The selected remote/control method works as intended.
 - [ ] For an HDR-capable display, a known HDR10 title triggers its HDR picture mode.
@@ -239,6 +241,17 @@ Keep CoreELEC on the microSD card until all applicable shared and room-specific 
 Mark unsupported formats as not applicable with the room's documented reason; record temporary limitations as blocked tests to repeat after the hardware change.
 
 Purple/green Dolby Vision output usually indicates a missing or incorrect `dovi.ko`, or that the connected display path is not reporting TV-led Dolby Vision support.
+
+
+## Optional experimental suspend and Wake-on-LAN checks
+
+Suspend, shutdown, CEC wake, and Wake-on-LAN are outside the normal always-awake lifecycle. Run these only when a room explicitly needs power-state experiments, and record them separately from keep-alive acceptance:
+
+- [ ] Suspend and wake work repeatedly from the selected control path.
+- [ ] Wake-on-LAN from Home Assistant on IoT reaches the device through the shared `172.16.99.99` destination and the device's real wired MAC.
+- [ ] Home Assistant reconnects to the device's own reserved address after wake.
+
+A WoL pass does not satisfy the lifecycle keep-alive requirement. The lifecycle acceptance remains continuous ping and SSH reachability while the display is off.
 
 ## Post-deployment add-on acceptance status (2026-09-06)
 
@@ -279,7 +292,7 @@ Installing to eMMC alters the internal partition layout. The external-media pilo
 
 ## Stop point
 
-After validation and a backup, continue with the [remaining room-specific service work](../../runbook.md#7-remaining-room-specific-service-work) — the shared add-ons were already installed and configured by the [provisioning step](#provision-the-shared-coreelec-baseline) above.
+After validation and a backup, continue with the [remaining room-specific service work](../../runbook.md#8-remaining-room-specific-service-work) — the shared add-ons were already installed and configured by the [provisioning step](#provision-the-shared-coreelec-baseline) above.
 
 ## Sources
 
