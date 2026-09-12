@@ -18,6 +18,7 @@ Sony BRAVIA setup and the theater integration prerequisites, follow the
 CoreELEC wizard
 -> DHCP reservation and DNS
 -> shared baseline provisioning (CEC Ignore)
+-> post-deployment add-on checks
 -> restricted lifecycle gateway deployment
 -> Sony BRAVIA and Kodi integrations
 -> theater Home Assistant package

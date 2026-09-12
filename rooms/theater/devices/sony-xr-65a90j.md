@@ -43,7 +43,7 @@ Set:
 | Input | Setting | Reason |
 |---|---|---|
 | HDMI 4 | **Enhanced format (Dolby Vision)** | Ugoos input; enables the required Dolby Vision signaling and 18 Gbit/s formats. |
-| HDMI 3 | **Enhanced format (Dolby Vision)** | OREI/Denon eARC path; retains Dolby Vision compatibility for any video forwarded from the receiver. |
+| HDMI 3 | **No video-format requirement** | The OREI connection carries return audio and CEC only; receiver video is not forwarded through this path. |
 
 Do not select `Enhanced format (VRR)` for the Ugoos input. VRR provides no benefit for Kodi movie playback and may make Dolby Vision unavailable on this television generation.
 

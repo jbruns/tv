@@ -31,7 +31,19 @@ IoT: Sony XR-65A90J, Denon AVR-X4700H, Home Assistant
 
 ## Setup order
 
-1. Follow the [shared Ugoos operations guide](../../docs/operations/provision-ugoos.md), then apply the [Theater Ugoos values](devices/ugoos-am6b-plus.md).
-2. Wire and configure the [Sony XR-65A90J](devices/sony-xr-65a90j.md).
-3. Install the [OREI EARC-EX165-K](devices/orei-earc-ex165-k.md).
-4. Connect and configure the [Denon AVR-X4700H](devices/denon-avr-x4700h.md).
+1. Wire the installed topology and configure device and network prerequisites
+   using the [Sony](devices/sony-xr-65a90j.md),
+   [OREI](devices/orei-earc-ex165-k.md), [Denon](devices/denon-avr-x4700h.md),
+   and [shared network](../../docs/network/pfsense-plus-26.07-onboarding.md)
+   guides.
+2. Provision the Ugoos shared baseline, add-ons, and restricted lifecycle
+   gateway with the
+   [shared Ugoos operations guide](../../docs/operations/provision-ugoos.md).
+3. Configure the native Sony BRAVIA, Kodi, and Denon Home Assistant
+   integrations and their documented stable entity IDs.
+4. Install the Theater Home Assistant package by following the
+   [shared lifecycle guide](../../docs/home-assistant/ugoos-kodi-lifecycle.md).
+5. Apply the room playback settings in the [Ugoos](devices/ugoos-am6b-plus.md),
+   [Sony](devices/sony-xr-65a90j.md), and
+   [Denon](devices/denon-avr-x4700h.md) guides, then verify playback, device
+   control, network reachability, and automations.

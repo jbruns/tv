@@ -90,4 +90,6 @@ For unique settings, use the selected room's Ugoos guide, such as the current
     ```
 
 14. Apply only the room-specific Dolby Vision, whitelist, and audio settings.
-15. Create a CoreELEC backup before optional eMMC migration.
+15. Verify room playback, device control, network reachability, and Home
+    Assistant automations.
+16. Create a CoreELEC backup before optional eMMC migration.

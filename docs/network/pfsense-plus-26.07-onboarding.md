@@ -168,7 +168,8 @@ room documentation, DNS, firewall rules, and integration endpoints. If a new
 mapping fails, restore the prior mapping or remove the new entry, return the
 client to DHCP, renew, and locate its current lease before reconnecting.
 
-pfSense is the live configuration. Record the chosen hostname, MAC, reserved
-address, DNS name, and required firewall flows in the relevant room device
-documentation, and back up the updated firewall configuration outside this
-repository.
+pfSense is the live configuration. Keep each real MAC, reserved host address,
+DNS mapping, and required firewall flow in pfSense or a private inventory.
+Repository room documentation may record symbolic hostnames and network roles,
+but must not contain real MACs or reserved host addresses. Back up the updated
+firewall configuration outside this repository.
