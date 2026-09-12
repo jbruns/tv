@@ -8,7 +8,7 @@ Approved.
 
 The repository documentation describes the installed home media systems and
 the supported procedures for configuring them. It must represent current
-operational truth rather than preserve rollout history, acceptance logs, or
+operational truth rather than preserve deployment history, acceptance logs, or
 temporary implementation notes.
 
 The Theater is the first fully documented room and defines the documentation
@@ -43,7 +43,7 @@ artifacts, not operator documentation. They will be removed.
 
 Remaining documentation will not contain:
 
-- pilot, interim, or staged-rollout terminology;
+- rollout-stage terminology;
 - "as of" dates or dated verification status;
 - live acceptance results, report filenames, commit hashes, or screenshots;
 - pending-result tables or descriptions of superseded equipment;
@@ -99,8 +99,8 @@ the Denon Home Assistant integration used to manage and monitor receiver
 state. Documentation will not claim that the Ugoos lifecycle package controls
 the Denon unless the package does so.
 
-The obsolete AVPro device guide and all staged ARC-to-eARC replacement
-language will be removed.
+The obsolete AVPro device guide and all rollout-stage terminology for
+ARC-to-eARC replacement will be removed.
 
 ## Unconfigured Rooms
 
@@ -140,8 +140,9 @@ The documentation change is complete when:
 
 1. every Markdown link resolves after file additions, replacements, and
    deletions;
-2. remaining operator documentation contains no pilot, interim, dated-status,
-   stale AVPro, acceptance-result, or superseded-equipment prose;
+2. remaining operator documentation contains no rollout-stage terminology,
+   dated-status, stale AVPro, acceptance-result, or superseded-equipment
+   prose;
 3. documented Ugoos commands and options match the script interfaces;
 4. documented configuration inputs match the shipped configuration contract;
 5. documented Home Assistant entities and lifecycle behavior match the

@@ -1,41 +1,59 @@
 # Home media systems
 
-Start with the [shared room setup runbook](docs/runbook.md), follow the shared guide for each device, then apply the selected room's wiring, settings, and validation requirements.
+Use this README as the stable repository index. Shared procedures belong under
+[`docs/`](docs/); room documents under `rooms/<room>/` record only installed
+hardware, room-specific connections, network placement, and Home Assistant
+integrations.
 
-All rooms use **pfSense Plus 26.07** for edge routing. Follow the [shared network onboarding guide](docs/network/pfsense-plus-26.07-onboarding.md) to assign stable DHCP addresses, DNS names, and the narrow Home Assistant control rules.
+## Shared guides
 
-Streaming devices are on LAN; Home Assistant is on IoT. The [Ugoos Kodi lifecycle guide](docs/home-assistant/ugoos-kodi-lifecycle.md) documents the always-awake CoreELEC/SSH path and Home Assistant/Sony orchestration. The [Wake-on-LAN guide](docs/network/wake-on-lan.md) records the separate experimental cross-network wake path through `172.16.99.99`; WoL is not lifecycle acceptance.
+- [Shared room setup runbook](docs/runbook.md)
+- [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)
+- [Shared Ugoos setup guide](docs/devices/ugoos-am6b-plus/coreelec-21.3.md)
+- [Ugoos provisioning operations guide](docs/operations/provision-ugoos.md)
+- [Network onboarding guide](docs/network/pfsense-plus-26.07-onboarding.md)
+- [Ugoos Kodi lifecycle guide](docs/home-assistant/ugoos-kodi-lifecycle.md)
+- [Theater overview](rooms/theater/README.md)
 
-| Room | Guide | Equipment recorded |
-|---|---|---|
-| Theater | [Room overview](rooms/theater/README.md) | Ugoos AM6B+, Sony XR-65A90J, Denon AVR-X4700H, AVPro extender |
-| Living | [Room overview](rooms/living/README.md) | To be documented |
-| Guest | [Room overview](rooms/guest/README.md) | To be documented |
-| Master | [Room overview](rooms/master/README.md) | To be documented |
+## Room index
+
+| Room | Status | Guide | Installed hardware record |
+|---|---|---|---|
+| Theater | Configured | [Theater overview](rooms/theater/README.md) | Ugoos AM6B+, Sony XR-65A90J, Denon AVR-X4700H, OREI EARC-EX165-K |
+| Living | Awaiting hardware record | [Living overview](rooms/living/README.md) | None recorded |
+| Guest | Awaiting hardware record | [Guest overview](rooms/guest/README.md) | None recorded |
+| Master | Awaiting hardware record | [Master overview](rooms/master/README.md) | None recorded |
+
+## LAN and IoT placement
+
+- Streaming devices such as Ugoos stay on LAN.
+- Home Assistant, network-controlled displays, and receivers stay on IoT.
+- Only the documented cross-network rules needed for Home Assistant to reach
+  Ugoos lifecycle SSH and Kodi endpoints should cross that boundary.
+
+## Repository layout
 
 ```text
-.env.example                   Shared Ugoos secret template; copy to .env
-docs/                          Shared procedures for all rooms
-  runbook.md                   Overall setup and validation order
-  home-assistant/              Ugoos Kodi lifecycle deployment and operations
-  network/                     Shared pfSense onboarding and address plan
-  devices/ugoos-am6b-plus/      Reusable Ugoos/CoreELEC installation guide
+README.md                     Stable repository index
+.env.example                 Shared secret template; copy to .env locally
+provision-coreelec.sh        Shared CoreELEC baseline deployment
+configure-coreelec-addons.sh Shared add-on validation and workflows
+configure-kodi-lifecycle.sh  Shared lifecycle gateway deployment
+docs/
+  decisions/                  Durable system decisions
+  devices/                    Shared device setup guides
+  home-assistant/             Shared Home Assistant and lifecycle guides
+  network/                    Shared network onboarding and control rules
+  operations/                 Shared provisioning procedures
+  runbook.md                  Shared room setup workflow
 rooms/
-  theater/
-    README.md                  Inventory, topology, and room validation
-    devices/                   Instructions specific to each installed device
-  living/devices/              Reserved for living-room device guides
-  guest/devices/               Reserved for guest-room device guides
-  master/devices/              Reserved for master-room device guides
-code/                          Reusable deployment and maintenance code
-config/                        Shared configuration and future room overrides
+  theater/                    Installed Theater inventory and device guides
+  living/                     Living room template and device-guide index
+  guest/                      Guest room template and device-guide index
+  master/                     Master room template and device-guide index
+code/                         Reusable automation documentation
+config/                       Shared non-secret provisioning contract
+home-assistant/               Deployed Home Assistant assets
+lib/                          Reusable shell libraries
+tests/                        Existing validation coverage
 ```
-
-Shared instructions belong in `docs/`; room device documents link to them and record only room-specific choices. Reusable code and configuration have separate homes so multiple Ugoos units can use the same assets. See the [code conventions](code/README.md) and [configuration conventions](config/README.md).
-
-Before running a Ugoos provisioning or configuration script, copy
-`.env.example` to the gitignored `.env` and set the required secrets.
-
-The original Ugoos/Sony pilot guide has been split across these documents. Its recorded verification date was **2026-09-05**; this reorganization does not establish new hardware test results. The existing pilot is assigned to `theater` based on the workspace context. Other rooms remain unconfigured in this documentation.
-
-Shared Ugoos rollout order: CoreELEC wizard -> DHCP reservation and DNS -> shared baseline provisioning (CEC Ignore) -> restricted lifecycle gateway deployment -> Sony and Kodi Home Assistant integrations -> theater HA package -> playback configuration -> lifecycle/idle acceptance.
