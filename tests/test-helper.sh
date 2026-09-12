@@ -65,6 +65,38 @@ make_scratch_dir() {
   printf '%s\n' "${dir}"
 }
 
+# Isolation from ambient operator secrets, without mutating the environment
+# the rest of the test file runs in. `stash_unset_env` removes the named
+# variables and records whether each one was set; `restore_stashed_env` puts
+# them back exactly, including leaving an unset variable unset.
+ENV_STASH=()
+
+stash_unset_env() {
+  local name
+  ENV_STASH=()
+  for name in "$@"; do
+    if [[ -n "${!name+set}" ]]; then
+      ENV_STASH+=("${name}=${!name}")
+    else
+      ENV_STASH+=("${name}")
+    fi
+    unset "${name}"
+  done
+}
+
+restore_stashed_env() {
+  local entry name
+  for entry in ${ENV_STASH[@]+"${ENV_STASH[@]}"}; do
+    name="${entry%%=*}"
+    if [[ "${entry}" == *=* ]]; then
+      export "${name}=${entry#*=}"
+    else
+      unset "${name}"
+    fi
+  done
+  ENV_STASH=()
+}
+
 # Runs one named test function in a subshell (via command substitution) so
 # test state, `set -e` failures, and stray `exit` calls never affect the
 # runner or other tests. Captures combined stdout/stderr for failure reports.

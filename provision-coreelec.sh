@@ -226,6 +226,7 @@ unchanged payload produces byte-identical files.
 """
 
 import base64
+import datetime
 import json
 import os
 import sys
@@ -631,6 +632,179 @@ def main(argv):
 
     commit_addon_settings()
 
+    # --- Arctic Fuse skin settings ------------------------------------------
+    skin_settings_path = addon_file(SKIN_ID, "settings.xml")
+    if os.path.exists(skin_settings_path):
+        skin_tree = ET.parse(skin_settings_path)
+        skin_root = skin_tree.getroot()
+    else:
+        skin_root = ET.Element("settings")
+        skin_tree = ET.ElementTree(skin_root)
+
+    def _skin_setting_nodes(root, setting_id):
+        wanted = setting_id.casefold()
+        return [
+            (parent, node)
+            for parent in [root] + list(root.findall("category"))
+            for node in parent.findall("setting")
+            if (node.get("id") or "").casefold() == wanted
+        ]
+
+    def set_skin_setting(setting_id, value):
+        # Kodi reads only the direct `<setting>` children of the settings
+        # root, while a recursive reader also sees the legacy `<category>`
+        # nesting an old settings file can carry. Reusing a nested node would
+        # write a value the skin never resolves and still look converged, so
+        # the managed node is always the canonical root child and every other
+        # case-insensitive match is removed.
+        node = None
+        for parent, candidate in _skin_setting_nodes(skin_root, setting_id):
+            if parent is skin_root and node is None:
+                node = candidate
+                continue
+            parent.remove(candidate)
+        if node is None:
+            node = ET.SubElement(skin_root, "setting", {"id": setting_id})
+        node.set("id", setting_id)
+        node.set("type", "string")
+        node.attrib.pop("value", None)
+        node.attrib.pop("default", None)
+        node.text = value
+
+    def remove_skin_setting(setting_id):
+        for parent, node in _skin_setting_nodes(skin_root, setting_id):
+            parent.remove(node)
+
+    # Hub toggles and shortcuts
+    set_skin_setting("HomeSwitcher.1101.Name", "Plex")
+    set_skin_setting("HomeSwitcher.1101.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1101.Icon",
+                     "special://home/addons/script.plexmod/icon2.png")
+    set_skin_setting("HomeSwitcher.1101.Shortcut.Path",
+                     "RunAddon(script.plexmod)")
+
+    set_skin_setting("HomeSwitcher.1102.Name", "YouTube")
+    set_skin_setting("HomeSwitcher.1102.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1102.Icon",
+                     "special://home/addons/plugin.video.youtube/resources/media/icon.png")
+    set_skin_setting("HomeSwitcher.1102.Shortcut.Path",
+                     "plugin://plugin.video.youtube/")
+    set_skin_setting("HomeSwitcher.1102.Shortcut.Target", "videos")
+
+    # Arctic Fuse renders a hub whenever its toggle string is non-empty, so
+    # the disabled state is the absence of every case-insensitive toggle node.
+    remove_skin_setting("HomeSwitcher.1106.Toggle")
+    remove_skin_setting("HomeSwitcher.1106.UpNextMode")
+    set_skin_setting("HomeSwitcher.1107.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1108.Toggle", "true")
+    set_skin_setting("optionstiles.02.include", "Settings")
+
+    # Remove stale direct-hub state
+    remove_skin_setting("HomeSwitcher.1101.Shortcut.Target")
+    remove_skin_setting("HomeSwitcher.1101.Spotlight.Path")
+    remove_skin_setting("HomeSwitcher.1102.Spotlight.Path")
+
+    write_xml_atomic(skin_settings_path, skin_tree)
+
+    # --- Arctic Fuse skinvariables nodes -----------------------------------
+    nodes_dir = os.path.join(addon_data, "script.skinvariables",
+                             "nodes", SKIN_ID)
+    register_managed_directory(os.path.join(addon_data, "script.skinvariables"))
+    register_managed_directory(os.path.join(addon_data, "script.skinvariables",
+                                            "nodes"))
+    register_managed_directory(nodes_dir)
+
+    home_widgets = [
+        {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
+    ]
+    write_json_atomic(os.path.join(nodes_dir,
+                                   "skinvariables-shortcut-homewidgets.json"),
+                      home_widgets)
+
+    power_menu = [
+        {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""},
+        {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""},
+        {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""},
+        {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""},
+        {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""},
+    ]
+    write_json_atomic(os.path.join(nodes_dir,
+                                   "skinvariables-shortcut-powermenu.json"),
+                      power_menu)
+
+    # --- Arctic Fuse smart playlists ----------------------------------------
+    playlists_dir = os.path.join(userdata, "playlists", "video")
+    register_managed_directory(os.path.join(userdata, "playlists"))
+    register_managed_directory(playlists_dir)
+
+    def write_smart_playlist(path, name, media_type, rules, order, limit=50):
+        root = ET.Element("smartplaylist", {"type": media_type})
+        ET.SubElement(root, "name").text = name
+        ET.SubElement(root, "match").text = "all"
+        for field, operator, value in rules:
+            rule_el = ET.SubElement(root, "rule", {
+                "field": field,
+                "operator": operator,
+            })
+            if value:
+                ET.SubElement(rule_el, "value").text = value
+        ET.SubElement(root, "limit").text = str(limit)
+        order_node = ET.SubElement(root, "order", {"direction": order[1]})
+        order_node.text = order[0]
+        write_xml_atomic(path, ET.ElementTree(root))
+
+    def remove_managed_file(path):
+        if not os.path.lexists(path):
+            return
+        if not os.path.isfile(path) or os.path.islink(path):
+            fail("refusing to remove a non-regular managed file: %s" % path)
+        os.unlink(path)
+        WRITTEN_PATHS.append(path)
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "InProgressMovies90Days.xsp"),
+        "In-Progress Movies", "movies",
+        [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+        ("lastplayed", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "InProgressShows90Days.xsp"),
+        "In-Progress Shows", "tvshows",
+        [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+        ("lastplayed", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "RecentlyAiredEpisodes30Days.xsp"),
+        "Recently Aired Shows", "episodes",
+        [("airdate", "inthelast", "30 days"),
+         ("airdate", "notinthelast", "-1 days")],
+        ("year", "descending"))
+
+    remove_managed_file(
+        os.path.join(playlists_dir, "RecentlyReleasedMovies90Days.xsp"))
+    write_smart_playlist(
+        os.path.join(playlists_dir, "RecentlyReleasedMoviesCurrentYear.xsp"),
+        "Recently Released Movies", "movies",
+        [("year", "is", str(datetime.date.today().year))],
+        ("year", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "NewShows.xsp"),
+        "New Shows", "tvshows",
+        [("playcount", "is", "0")],
+        ("dateadded", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "NewMovies.xsp"),
+        "New Movies", "movies",
+        [("playcount", "is", "0")],
+        ("dateadded", "descending"))
+
     # --- CoreELEC timezone cache -------------------------------------------
     # Kodi's CoreELEC patch writes this file when the timezone changes through
     # the UI; offline edits must write it explicitly. It holds no secret.
@@ -638,13 +812,14 @@ def main(argv):
         write_text_atomic(os.path.join(storage_root, ".cache", "timezone"),
                           "TIMEZONE=%s\n" % config("TIMEZONE"), mode=0o644)
 
-    for path in WRITTEN_PATHS:
-        sys.stdout.write("settings applied: %s\n" % path)
-
 
 try:
     main(sys.argv)
 finally:
+    # Report every path written so far, even on a partial failure: the
+    # rollback needs this list to remove newly created managed files.
+    for path in WRITTEN_PATHS:
+       sys.stdout.write("settings applied: %s\n" % path)
     # Sweeps temp files an interrupted earlier run may have orphaned, on both
     # the success and the failure path.
     sweep_orphan_temporaries()
@@ -676,6 +851,16 @@ managed_settings_paths() {
 .kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
 .kodi/userdata/addon_data/script.plexmod/settings.xml
 .kodi/userdata/addon_data/weather.ha/settings.xml
+.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
+.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json
+.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json
+.kodi/userdata/playlists/video/InProgressMovies90Days.xsp
+.kodi/userdata/playlists/video/InProgressShows90Days.xsp
+.kodi/userdata/playlists/video/RecentlyAiredEpisodes30Days.xsp
+.kodi/userdata/playlists/video/RecentlyReleasedMovies90Days.xsp
+.kodi/userdata/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp
+.kodi/userdata/playlists/video/NewShows.xsp
+.kodi/userdata/playlists/video/NewMovies.xsp
 MANAGED_SETTINGS_PATHS
 }
 MANAGED_SETTINGS_FUNCTION
@@ -815,6 +1000,10 @@ addons_dir="${storage_root}/.kodi/addons"
 backup_root="${storage_root}/backup/coreelec-provision"
 tab="$(printf '\t')"
 transaction=""
+# Set when the list of paths the transformer applied could not be rebuilt, so
+# rollback can neither remove what this run created nor claim it restored the
+# device.
+applied_list_unusable=0
 
 fail() {
   printf 'remote transaction: %s\n' "$1" >&2
@@ -912,7 +1101,7 @@ resolve_pending_transaction() {
 # not exist before. Kodi is stopped first because it rewrites guisettings.xml
 # from memory when it exits.
 rollback_transaction() {
-  rollback_failed=0
+  rollback_failed="${applied_list_unusable}"
   rollback_marker="${transaction}/.rollback-failed"
   rm -f "${rollback_marker}"
   systemctl stop kodi.service >/dev/null 2>&1 || true
@@ -1024,6 +1213,25 @@ finish_transaction() {
     exit "${exit_status}"
   fi
   if [ -n "${transaction}" ]; then
+    # The transformer reports written paths to stdout even on failure, but the
+    # sed that normally populates APPLIED.txt only runs on the success path.
+    # Processing applied.raw here ensures rollback can remove newly created
+    # managed files that had no previous backup copy. The rewrite lands on a
+    # separate file first: a rebuild that fails must never truncate the list
+    # rollback reads, and it makes this rollback an incomplete one rather
+    # than a silent partial restoration.
+    if [ -f "${transaction}/applied.raw" ]; then
+      if sed -n 's/^settings applied: //p' "${transaction}/applied.raw" \
+        > "${transaction}/applied.rebuilt"; then
+        mv "${transaction}/applied.rebuilt" "${transaction}/APPLIED.txt"
+        rm -f "${transaction}/applied.raw"
+      else
+        rm -f "${transaction}/applied.rebuilt"
+        applied_list_unusable=1
+        printf 'the list of applied settings paths could not be rebuilt from %s; rollback cannot remove the managed files this run created\n' \
+          "${transaction}/applied.raw" >&2
+      fi
+    fi
     printf 'deployment failed while %s; rolling back\n' "${transaction_state}" >&2
     if rollback_transaction; then
       printf 'the device was restored to its pre-deployment state\n' >&2
@@ -1359,6 +1567,7 @@ compared on the device and reported as booleans.
 """
 
 import base64
+import datetime
 import errno
 import json
 import os
@@ -1980,13 +2189,238 @@ def main(argv):
     if have("OMDB_API_KEY") or have("MDBLIST_API_KEY"):
         values = read_settings(
             addon_data("plugin.video.themoviedb.helper", "settings.xml")) or {}
-        matched = True
         if have("OMDB_API_KEY"):
-            matched = matched and bool(values.get("omdb_apikey"))
+            observe("addon_settings.plugin.video.themoviedb.helper.omdb_configured",
+                    1 if bool(values.get("omdb_apikey")) else 0)
         if have("MDBLIST_API_KEY"):
-            matched = matched and bool(values.get("mdblist_apikey"))
-        observe("addon_settings.plugin.video.themoviedb.helper.configured",
-                1 if matched else 0)
+            observe("addon_settings.plugin.video.themoviedb.helper.mdblist_configured",
+                    1 if bool(values.get("mdblist_apikey")) else 0)
+
+    # --- Arctic Fuse skin state -------------------------------------------
+
+    def read_json(path):
+        try:
+            with open(path, "r") as handle:
+                return json.load(handle)
+        except Exception:
+            return None
+
+    def xml_setting_matches(path, setting_id):
+        """Every case-insensitively matching node, as
+        (id, type, value, at_root). Kodi resolves `Skin.String` without
+        regard to case, so a dictionary keyed by the exact id would let a
+        lowercase or mixed-case duplicate mask the managed value. `at_root`
+        marks the direct children of the settings root, which are the only
+        nodes Kodi reads: a value that survives only inside a `<category>`
+        is invisible to the skin and must never read as configured."""
+        try:
+            root = ET.parse(path).getroot()
+        except Exception:
+            return []
+        wanted = setting_id.casefold()
+        # The list is kept alive for the whole call so the identities in
+        # `at_root` cannot be reused by a later object.
+        root_children = root.findall("setting")
+        at_root = set(id(node) for node in root_children)
+        return [
+            (
+                node.get("id") or "",
+                node.get("type") or "",
+                node.get("value")
+                if node.get("value") is not None
+                else (node.text or ""),
+                id(node) in at_root,
+            )
+            for node in root.iter("setting")
+            if (node.get("id") or "").casefold() == wanted
+        ]
+
+    def is_empty_string_placeholder(match):
+        _, setting_type, value, _ = match
+        return setting_type.casefold() == "string" and value == ""
+
+    def is_disabled_toggle(match):
+        _, setting_type, value, _ = match
+        setting_type = setting_type.casefold()
+        return (
+            (setting_type == "string" and value == "")
+            or (setting_type == "bool" and value.casefold() == "false")
+        )
+
+    def managed_setting_is(setting_id, expected):
+        """The managed value is present exactly, on a node Kodi reads, and no
+        case variant anywhere in the file disagrees with it."""
+        matches = xml_setting_matches(skin_settings_path, setting_id)
+        return (
+            any(at_root and value == expected
+                for _, _, value, at_root in matches)
+            and all(value == expected for _, _, value, _ in matches)
+        )
+
+    def managed_setting_is_unset(setting_id):
+        """Kodi treats an empty skin string as unset, so a removed managed
+        setting may exist only as empty nodes -- in any case variant."""
+        return all(value == "" for _, _, value, _
+                   in xml_setting_matches(skin_settings_path, setting_id))
+
+    def smart_playlist_signature(path):
+        try:
+            root = ET.parse(path).getroot()
+        except Exception:
+            return None
+        return {
+            "type": root.get("type"),
+            "name": root.findtext("name") or "",
+            "match": root.findtext("match") or "",
+            "limit": root.findtext("limit") or "",
+            "rules": [
+                (node.get("field"), node.get("operator"),
+                 node.findtext("value") or "")
+                for node in root.findall("rule")
+            ],
+            "order": (
+                root.findtext("order") or "",
+                (root.find("order").get("direction")
+                 if root.find("order") is not None else ""),
+            ),
+        }
+
+    SKIN_ID = "skin.arctic.fuse.3"
+    userdata = os.path.join(storage_root, ".kodi", "userdata")
+    skin_settings_path = os.path.join(
+        userdata, "addon_data", SKIN_ID, "settings.xml")
+    nodes_dir = os.path.join(
+        userdata, "addon_data", "script.skinvariables", "nodes", SKIN_ID)
+    playlists_dir = os.path.join(userdata, "playlists", "video")
+
+    # Hub toggles. Arctic Fuse renders a hub whenever its toggle string is
+    # non-empty and may recreate empty disabled placeholders after startup.
+    # Each hub is observed on its own line: the aggregate says only that
+    # something is wrong, these say which hub.
+    next_aired_toggles = xml_setting_matches(
+        skin_settings_path, "HomeSwitcher.1106.Toggle")
+    next_aired_modes = xml_setting_matches(
+        skin_settings_path, "HomeSwitcher.1106.UpNextMode")
+    next_aired_disabled = (
+        all(is_disabled_toggle(match) for match in next_aired_toggles)
+        and all(is_empty_string_placeholder(match)
+                for match in next_aired_modes)
+    )
+    pvr_hub_ok = managed_setting_is("HomeSwitcher.1107.Toggle", "true")
+    addons_hub_ok = managed_setting_is("HomeSwitcher.1108.Toggle", "true")
+    observe("arctic_fuse.next_aired_disabled", 1 if next_aired_disabled else 0)
+    observe("arctic_fuse.pvr_hub_configured", 1 if pvr_hub_ok else 0)
+    observe("arctic_fuse.addons_hub_configured", 1 if addons_hub_ok else 0)
+    observe("arctic_fuse.hubs_configured",
+            1 if (next_aired_disabled and pvr_hub_ok and addons_hub_ok) else 0)
+
+    # Plex entry (1101)
+    plex_ok = (
+        managed_setting_is("HomeSwitcher.1101.Name", "Plex")
+        and managed_setting_is(
+            "HomeSwitcher.1101.Icon",
+            "special://home/addons/script.plexmod/icon2.png")
+        and managed_setting_is(
+            "HomeSwitcher.1101.Shortcut.Path", "RunAddon(script.plexmod)")
+        and managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Target")
+    )
+    observe("arctic_fuse.plex_entry_configured", 1 if plex_ok else 0)
+
+    # YouTube entry (1102)
+    youtube_ok = (
+        managed_setting_is("HomeSwitcher.1102.Name", "YouTube")
+        and managed_setting_is(
+            "HomeSwitcher.1102.Icon",
+            "special://home/addons/plugin.video.youtube/resources/media/icon.png")
+        and managed_setting_is(
+            "HomeSwitcher.1102.Shortcut.Path",
+            "plugin://plugin.video.youtube/")
+        and managed_setting_is("HomeSwitcher.1102.Shortcut.Target", "videos")
+    )
+    observe("arctic_fuse.youtube_entry_configured", 1 if youtube_ok else 0)
+
+    # Settings tile
+    observe("arctic_fuse.settings_tile_configured",
+            1 if managed_setting_is("optionstiles.02.include", "Settings")
+            else 0)
+
+    # Home widgets
+    expected_home_widgets = [
+        {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
+        {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
+    ]
+    actual_home_widgets = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-homewidgets.json"))
+    observe("arctic_fuse.home_widgets_configured",
+            1 if actual_home_widgets == expected_home_widgets else 0)
+
+    # Power menu
+    expected_power_menu = [
+        {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""},
+        {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""},
+        {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""},
+        {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""},
+        {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""},
+    ]
+    actual_power_menu = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-powermenu.json"))
+    observe("arctic_fuse.power_menu_configured",
+            1 if actual_power_menu == expected_power_menu else 0)
+
+    # Smart playlists
+    EXPECTED_PLAYLISTS = {
+        "InProgressMovies90Days": {
+            "type": "movies", "name": "In-Progress Movies", "match": "all",
+            "limit": "50",
+            "rules": [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+            "order": ("lastplayed", "descending"),
+        },
+        "InProgressShows90Days": {
+            "type": "tvshows", "name": "In-Progress Shows", "match": "all",
+            "limit": "50",
+            "rules": [("inprogress", "true", ""), ("lastplayed", "inthelast", "90 days")],
+            "order": ("lastplayed", "descending"),
+        },
+        "RecentlyAiredEpisodes30Days": {
+            "type": "episodes", "name": "Recently Aired Shows", "match": "all",
+            "limit": "50",
+            "rules": [("airdate", "inthelast", "30 days"),
+                      ("airdate", "notinthelast", "-1 days")],
+            "order": ("year", "descending"),
+        },
+        "RecentlyReleasedMoviesCurrentYear": {
+            "type": "movies", "name": "Recently Released Movies", "match": "all",
+            "limit": "50",
+            "rules": [("year", "is", str(datetime.date.today().year))],
+            "order": ("year", "descending"),
+        },
+        "NewShows": {
+            "type": "tvshows", "name": "New Shows", "match": "all",
+            "limit": "50",
+            "rules": [("playcount", "is", "0")],
+            "order": ("dateadded", "descending"),
+        },
+        "NewMovies": {
+            "type": "movies", "name": "New Movies", "match": "all",
+            "limit": "50",
+            "rules": [("playcount", "is", "0")],
+            "order": ("dateadded", "descending"),
+        },
+    }
+    for playlist_name, expected_sig in EXPECTED_PLAYLISTS.items():
+        actual_sig = smart_playlist_signature(
+            os.path.join(playlists_dir, playlist_name + ".xsp"))
+        observe("arctic_fuse.playlist.%s.configured" % playlist_name,
+                1 if actual_sig == expected_sig else 0)
+
+    observe(
+        "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent",
+        0 if os.path.lexists(os.path.join(
+            playlists_dir, "RecentlyReleasedMovies90Days.xsp")) else 1)
 
     for line in OBSERVATIONS:
         sys.stdout.write(line + "\n")
@@ -2379,6 +2813,19 @@ coreelec_addon_selection() {
   fi
 }
 
+# Requires that both OMDb and MDbList API keys are set when an actual Kodi
+# deployment is requested. Both keys are needed to populate Arctic Fuse 3
+# ratings metadata; without them the skin is deployed in a broken state.
+# Skipped when APPLY_KODI != 1 (--no-kodi) so config and artifact checks
+# remain keyless.
+require_arctic_fuse_metadata_keys() {
+  [[ "${APPLY_KODI}" == "1" ]] || return 0
+  [[ -n "${OMDB_API_KEY:-}" ]] \
+    || die "OMDB_API_KEY is required for an Arctic Fuse 3 Kodi deployment"
+  [[ -n "${MDBLIST_API_KEY:-}" ]] \
+    || die "MDBLIST_API_KEY is required for an Arctic Fuse 3 Kodi deployment"
+}
+
 # Refuses an --addon that is not in the locked configuration. This is a purely
 # local decision -- the IDs come from ADDON_ARTIFACT records, not from the
 # device -- so it runs in the preflight, before the administrator key is
@@ -2456,7 +2903,7 @@ coreelec_plex_configured() {
 }
 
 coreelec_tmdb_helper_configured() {
-  [[ -n "${OMDB_API_KEY:-}" || -n "${MDBLIST_API_KEY:-}" ]]
+  [[ -n "${OMDB_API_KEY:-}" && -n "${MDBLIST_API_KEY:-}" ]]
 }
 
 coreelec_youtube_configured() {
@@ -2698,10 +3145,70 @@ verify_remote_baseline() {
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "script.plexmod" coreelec_plex_configured || failures=$((failures + 1))
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
-    "plugin.video.themoviedb.helper" coreelec_tmdb_helper_configured \
-    || failures=$((failures + 1))
-  coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "plugin.video.youtube" coreelec_youtube_configured || failures=$((failures + 1))
+
+  # Split ratings-key verification: each key is independently fatal.
+  local arctic_fuse_failures=0
+  if [[ -n "${OMDB_API_KEY:-}" ]]; then
+    coreelec_verify_boolean_observation "${observations}" \
+      "addon_settings.plugin.video.themoviedb.helper.omdb_configured" \
+      "metadata.omdb" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  fi
+  if [[ -n "${MDBLIST_API_KEY:-}" ]]; then
+    coreelec_verify_boolean_observation "${observations}" \
+      "addon_settings.plugin.video.themoviedb.helper.mdblist_configured" \
+      "metadata.mdblist" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  fi
+
+  # Arctic Fuse skin surfaces. The hub verdict is split so the report names
+  # the hub that failed; the aggregate remains fatal for the comparison.
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.next_aired_disabled" "arctic_fuse.next_aired_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.pvr_hub_configured" "arctic_fuse.pvr_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.addons_hub_configured" "arctic_fuse.addons_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.hubs_configured" "arctic_fuse.hubs" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.plex_entry_configured" "arctic_fuse.plex_entry" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.youtube_entry_configured" "arctic_fuse.youtube_entry" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.settings_tile_configured" "arctic_fuse.settings_tile" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.home_widgets_configured" "arctic_fuse.home" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+
+  local playlist_name
+  for playlist_name in InProgressMovies90Days InProgressShows90Days \
+    RecentlyAiredEpisodes30Days RecentlyReleasedMoviesCurrentYear NewShows NewMovies; do
+    coreelec_verify_boolean_observation "${observations}" \
+      "arctic_fuse.playlist.${playlist_name}.configured" \
+      "arctic_fuse.playlist.${playlist_name}" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  done
+
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent" \
+    "arctic_fuse.playlist_migration" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+
+  if (( arctic_fuse_failures == 0 )); then
+    printf 'arctic_fuse.status=ok\n'
+  else
+    printf 'arctic_fuse.status=mismatch\n'
+  fi
 
   printf 'verification_failures=%s\n' "${failures}"
   if (( failures == 0 )); then
@@ -2712,9 +3219,13 @@ verify_remote_baseline() {
   return 1
 }
 
-# Reports whether the device confirmed the settings this run wrote for one
-# add-on. Nothing is claimed for an add-on that was not deployed or whose
-# optional values were never supplied.
+# Compares one boolean observation against the expected value of 1.
+coreelec_verify_boolean_observation() {
+  local observations="$1" observation_key="$2" report_prefix="$3"
+  coreelec_report_comparison "${report_prefix}" "1" \
+    "$(coreelec_observation_value "${observation_key}" "${observations}" || true)"
+}
+
 coreelec_verify_addon_settings() {
   local observations="$1" manifest="$2" addon_id="$3" predicate="$4" value
   coreelec_manifest_contains "${manifest}" "${addon_id}" || return 0
@@ -2829,11 +3340,16 @@ coreelec_report_manual_actions() {
     number=$((number + 1))
     printf 'manual_action.%s=Home Assistant Weather: set the Home Assistant URL, long-lived token, and forecast entity, then select the provider.\n' "${number}"
   fi
-  if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
-    number=$((number + 1))
-    printf 'manual_action.%s=Optional: authorize Trakt and a TMDb user account in TMDb Helper; both are interactive and neither is required.\n' "${number}"
-  fi
   printf 'manual_actions=%s\n' "${number}"
+}
+
+# Facts about the deployed state that need explaining but ask nothing of the
+# operator, so they are never numbered among the manual actions.
+coreelec_report_informational_notes() {
+  local manifest="$1"
+  if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
+    printf 'next_aired_note=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class.\n'
+  fi
 }
 
 # The report body. Every line is key=value; the raw device inventory the
@@ -2906,6 +3422,7 @@ coreelec_report_render() {
   done
 
   if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+    coreelec_report_informational_notes "${manifest}"
     coreelec_report_manual_actions "${manifest}"
   fi
 }
@@ -3129,6 +3646,8 @@ validate_identifier "Kodi username" "${KODI_USER}"
 validate_identifier "Expected release" "${EXPECTED_RELEASE}"
 
 coreelec_config_validate
+
+require_arctic_fuse_metadata_keys
 
 # The add-on selection is resolved and refused here, before the first remote
 # call of any kind.

@@ -1049,6 +1049,60 @@ test_automatic_rollback_restores_settings_written_before_the_failure() {
     "no partially applied setting may survive the rollback"
 }
 
+# The failure path rebuilds APPLIED.txt from the transformer's raw output.
+# That list is what rollback uses to delete managed files this run created,
+# so a rebuild that cannot be completed must fail the rollback loudly rather
+# than leave a truncated list behind and claim a complete restoration.
+test_a_failed_applied_list_rebuild_never_claims_a_complete_rollback() {
+  local dir root bin_dir rc output
+
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  # Only the rebuild of the applied-path list fails; every other sed the
+  # transaction runs behaves exactly as the device's own sed does.
+  cat > "${bin_dir}/sed" <<'STUB'
+#!/bin/bash
+for argument in "$@"; do
+  if [[ "${argument}" == *applied.raw ]]; then
+    printf 'sed stub: forced failure reading %s\n' "${argument}" >&2
+    exit 1
+  fi
+done
+for candidate in /usr/bin/sed /bin/sed; do
+  [[ -x "${candidate}" ]] && exec "${candidate}" "$@"
+done
+printf 'sed stub: no system sed was found\n' >&2
+exit 127
+STUB
+  chmod 755 "${bin_dir}/sed"
+
+  # Block the timezone cache write so the transformer fails after it has
+  # already created managed files.
+  mkdir -p "${root}/.cache/timezone"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a transformer failure must fail the transaction"
+  assert_contains "${output}" "could not be rebuilt" \
+    "the unusable applied-path list is reported"
+  assert_contains "${output}" "ROLLBACK INCOMPLETE" \
+    "a rollback without the applied-path list is incomplete"
+  assert_not_contains "${output}" "the device was restored to its pre-deployment state" \
+    "no complete restoration may be claimed"
+  if [[ ! -f "${root}/.cache/coreelec-provision/current-transaction" ]]; then
+    printf 'an incomplete rollback must retain the transaction pointer\n' >&2
+    return 1
+  fi
+}
+
 test_remote_deploy_refuses_a_second_pending_transaction() {
   local dir root bin_dir rc output
   dir="$(make_scratch_dir)"
@@ -1641,7 +1695,8 @@ test_an_unlocked_addon_is_refused_before_any_remote_call() {
   bin_dir="$(install_network_stubs "${dir}")"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" \
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" \
     --target 192.0.2.1 --addon plugin.video.unknown --yes 2>&1)"
   rc=$?
   set -e
@@ -1665,7 +1720,8 @@ test_a_default_run_survives_the_empty_addon_array_under_bash_3_2() {
   bin_dir="$(install_network_stubs "${dir}")"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 2>&1)"
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 2>&1)"
   rc=$?
   set -e
   assert_not_contains "${output}" "unbound variable" \
@@ -1691,7 +1747,8 @@ test_an_unreachable_target_fails_with_an_actionable_error() {
   printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
   rc=$?
   set -e
   assert_failure "${rc}" "an unreachable target must fail the run" || return 1
@@ -1736,7 +1793,8 @@ STUB
   printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
 
   set +e
-  output="$(run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
   rc=$?
   set -e
   assert_failure "${rc}" "a keyed but failing identity read must fail the run" || return 1
@@ -1755,6 +1813,89 @@ STUB
     "a failed identity read stops before any artifact is downloaded" || return 1
   assert_not_contains "${calls}" "authorized_keys" \
     "a failed identity read stops before the key install" || return 1
+}
+
+# --- Ratings-key preflight ---------------------------------------------------
+
+# A real Kodi deployment (APPLY_KODI=1, the default) must refuse before any
+# network command when both API keys are absent, when only OMDB is set, or
+# when only MDBLIST is set.
+test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact() {
+  local dir bin_dir output rc
+  # Isolate from ambient environment secrets so the preflight tests are
+  # deterministic regardless of the operator's shell, and put them back so
+  # this test does not change the environment later tests observe.
+  stash_unset_env OMDB_API_KEY MDBLIST_API_KEY
+
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"; restore_stashed_env' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+
+  # Case 1: neither key.
+  set +e
+  output="$(run_provisioner_offline "${dir}" "${bin_dir}" \
+    --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "neither key: run must fail" || return 1
+  assert_contains "${output}" "OMDB_API_KEY" \
+    "neither key: error names OMDB_API_KEY" || return 1
+  assert_eq "" "$(cat "${dir}/network-calls.log")" \
+    "neither key: no network contact before the preflight" || return 1
+  : > "${dir}/network-calls.log"
+
+  # Case 2: only OMDB_API_KEY set — MDBLIST_API_KEY missing.
+  set +e
+  output="$(OMDB_API_KEY=omdb-secret-never-log \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "only OMDB: run must fail" || return 1
+  assert_contains "${output}" "MDBLIST_API_KEY" \
+    "only OMDB: error names MDBLIST_API_KEY" || return 1
+  assert_not_contains "${output}" "omdb-secret-never-log" \
+    "only OMDB: secret value must not appear in output" || return 1
+  assert_eq "" "$(cat "${dir}/network-calls.log")" \
+    "only OMDB: no network contact before the preflight" || return 1
+  : > "${dir}/network-calls.log"
+
+  # Case 3: only MDBLIST_API_KEY set — OMDB_API_KEY missing.
+  set +e
+  output="$(MDBLIST_API_KEY=mdblist-secret-never-log \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 --yes 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "only MDBLIST: run must fail" || return 1
+  assert_contains "${output}" "OMDB_API_KEY" \
+    "only MDBLIST: error names OMDB_API_KEY" || return 1
+  assert_not_contains "${output}" "mdblist-secret-never-log" \
+    "only MDBLIST: secret value must not appear in output" || return 1
+  assert_eq "" "$(cat "${dir}/network-calls.log")" \
+    "only MDBLIST: no network contact before the preflight" || return 1
+}
+
+# A --no-kodi run does not write Arctic Fuse state and must not be gated on
+# ratings keys. It should reach the first read-only SSH call, proving that
+# the preflight is skipped for non-Kodi deployment.
+test_no_kodi_deployment_does_not_require_ratings_keys() {
+  local dir bin_dir rc calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+  # Provide an existing admin key so the run skips key creation and reaches
+  # the platform-read SSH call immediately.
+  printf 'scratch administrator key\n' > "${dir}/scratch_admin_key"
+  printf 'ssh-ed25519 AAAA scratch\n' > "${dir}/scratch_admin_key.pub"
+
+  set +e
+  run_provisioner_offline "${dir}" "${bin_dir}" \
+    --target 192.0.2.1 --yes --no-kodi >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_failure "${rc}" "--no-kodi without keys fails (SSH stub exits 1), not a key-gate failure" || return 1
+  calls="$(cat "${dir}/network-calls.log")"
+  assert_contains "${calls}" "ssh " \
+    "--no-kodi reached the first SSH call without a ratings-key gate" || return 1
 }
 
 # --- Audit report ------------------------------------------------------------
@@ -1855,6 +1996,63 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
     "each deployed add-on is one key=value line"
 }
 
+# The managed skin paths added by Task 3 (skin settings, skinvariables nodes,
+# and playlists) participate in the same backup/rollback transaction as
+# guisettings.xml and add-on settings. This test proves that a pre-existing
+# managed file is restored and a newly created managed file is removed when the
+# transformer fails mid-run, using the same forced-failure pattern as the
+# existing guisettings rollback test.
+test_automatic_rollback_restores_skin_managed_paths() {
+  local dir root bin_dir rc output home_json playlist_path old_playlist old_playlist_content
+
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+
+  # Pre-seed a managed home widgets JSON that rollback must restore.
+  home_json="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
+  mkdir -p "$(dirname "${home_json}")"
+  printf '[{"guid":"old-widget"}]\n' > "${home_json}"
+
+  # The NewMovies.xsp playlist does not exist yet; rollback must remove it.
+  playlist_path="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+
+  # Pre-seed the obsolete movie playlist; rollback must restore its exact content.
+  old_playlist="${root}/.kodi/userdata/playlists/video/RecentlyReleasedMovies90Days.xsp"
+  old_playlist_content='<?xml version="1.0"?><smartplaylist type="movies"><name>old</name></smartplaylist>'
+  mkdir -p "$(dirname "${old_playlist}")"
+  printf '%s\n' "${old_playlist_content}" > "${old_playlist}"
+
+  stage_addon_bundle "${dir}" "${root}" "plugin.video.fixture:1.2.3:plugin.video.fixture"
+
+  # Block the timezone cache write so the transformer fails after it has
+  # already rewritten the home widgets JSON and created the playlists.
+  mkdir -p "${root}/.cache/timezone"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a transformer failure must fail the transaction"
+
+  # A pre-existing managed file must be restored from the backup.
+  assert_eq '[{"guid":"old-widget"}]' "$(cat "${home_json}")" \
+    "the pre-existing home widgets JSON is restored by the rollback"
+
+  # A newly created managed file must be removed by the rollback.
+  if [ -e "${playlist_path}" ]; then
+    printf 'a newly created playlist must not survive the automatic rollback\n' >&2
+    return 1
+  fi
+
+  # The obsolete playlist that the transformer deleted must be restored.
+  assert_eq "${old_playlist_content}" "$(cat "${old_playlist}")" \
+    "the obsolete movie playlist is restored by the rollback"
+}
+
 run_all_tests \
   test_artifact_record_requires_four_fields \
   test_artifact_record_rejects_non_https_url \
@@ -1882,6 +2080,8 @@ run_all_tests \
   test_remote_deploy_rolls_back_automatically_when_a_step_fails \
   test_remote_deploy_refuses_a_second_pending_transaction \
   test_automatic_rollback_restores_settings_written_before_the_failure \
+  test_a_failed_applied_list_rebuild_never_claims_a_complete_rollback \
+  test_automatic_rollback_restores_skin_managed_paths \
   test_remote_stage_upload_replaces_a_stale_bundle \
   test_rendered_remote_scripts_are_posix_clean \
   test_the_public_key_program_installs_the_key_through_the_device_login_shell \
@@ -1904,4 +2104,6 @@ run_all_tests \
   test_a_default_run_survives_the_empty_addon_array_under_bash_3_2 \
   test_an_unreachable_target_fails_with_an_actionable_error \
   test_a_keyed_but_failing_identity_read_fails_with_an_actionable_error \
+  test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact \
+  test_no_kodi_deployment_does_not_require_ratings_keys \
   test_the_audit_report_is_key_value_and_names_the_pending_transaction

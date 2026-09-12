@@ -66,7 +66,7 @@ Run the shared baseline first, then the separate post-deployment checks:
 ./provision-coreelec.sh --check-artifacts
 ```
 
-Both exit 0 without `--target`. `--check-artifacts` downloads all 34 pinned add-on artifacts, verifies their SHA-256 checksums, and confirms each is a safe, correctly identified ZIP. Run these after any configuration edit and before the first real deployment.
+Both exit 0 without `--target`. `--check-artifacts` downloads all 42 pinned add-on artifacts, verifies their SHA-256 checksums, and confirms each is a safe, correctly identified ZIP. Run these after any configuration edit and before the first real deployment.
 
 ### Provision the device
 
@@ -93,7 +93,8 @@ Each run writes a redacted, `key=value` report to `<REPORT_DIR>/<target>-<UTC-ti
 - `deployment_state` (`committed`, `rolled-back`, `pending-verification`, or `incomplete-rollback` — see restoration/retry below).
 - Per-add-on status: `configured` (this run wrote its settings), `installed-unconfigured` (deployed but nothing supplied to configure), or `installed-manual` (always true for Emby and YouTube — see below).
 - `regional.localtime.status` and `regional.date_offset.status` (regional verification, below).
-- The numbered `manual_action.*` lines — the interactive steps left for you, in a fixed order.
+- The numbered `manual_action.*` lines — the interactive steps left for you, in a fixed order, counted by `manual_actions`. Only real steps are numbered here.
+- `next_aired_note` — informational, not a manual action: it explains why the Next Aired hub is disabled and asks nothing of you.
 
 ### Post-deployment unattended service validation
 
@@ -193,7 +194,7 @@ These are deployed either way, and are reported `configured` only when their val
 - **PM4K** (`script.plexmod`): `PLEX_SERVER_HOST`/`PLEX_SERVER_PORT`/`PLEX_SERVER_NAME`/`PLEX_PROFILE_IDS` plus `PLEX_TOKEN`. Local-mode PM4K is written with `allow_insecure=always`, a deliberate relaxation required to reach a plain-HTTP LAN Plex server; use a token-authorized remote/account link instead if that relaxation is unacceptable for a given room.
 - **NextPVR** (`pvr.nextpvr`): `NEXTPVR_HOST`/`NEXTPVR_PORT`/`NEXTPVR_PROTOCOL`/`NEXTPVR_INSTANCE_NAME` plus `NEXTPVR_PIN`. Without them, provisioning creates a disabled, credential-free placeholder client instance when none exists, so Kodi can keep the add-on installed and enabled without repeatedly trying its generated `127.0.0.1:8866` default. Existing instances are preserved when those values are omitted on a later run.
 - **Home Assistant Weather** (`weather.ha`): `HOME_ASSISTANT_URL`/`HOME_ASSISTANT_WEATHER_ENTITY`/`HOME_ASSISTANT_SUN_ENTITY` plus `HOME_ASSISTANT_TOKEN`.
-- **TMDb Helper** (`plugin.video.themoviedb.helper`): `OMDB_API_KEY` and/or `MDBLIST_API_KEY` populate metadata keys; Trakt and TMDb user-account linking remain interactive and optional either way.
+- **TMDb Helper** (`plugin.video.themoviedb.helper`): `OMDB_API_KEY` and `MDBLIST_API_KEY` are both required for real `APPLY_KODI=1` deployments; both are optional for `--check-config` and `--check-artifacts`. Trakt and TMDb user-account linking remain interactive and manual either way. See the [Arctic Fuse 3 skin integration](../config/README.md#arctic-fuse-3-skin-integration) notes for how Trakt terminology differs from a user OAuth credential.
 
 ### Full live add-on acceptance sequence
 
@@ -252,9 +253,147 @@ guided route but record a credential-related `authorization-required`,
 limitation, not a successful YouTube authorization. Do not weaken the expected
 result for the other configured services.
 
-### Arctic Fuse 3 activation
+### Arctic Fuse 3 Home and Power baseline
 
-`skin.arctic.fuse.3` is deployed and set active (`lookandfeel.skin`) by the same run, alongside the regional baseline (`videoplayer.adjustrefreshrate`=On start/stop, `videoplayer.usedisplayasclock`=Off) — no separate manual skin-activation step remains.
+`skin.arctic.fuse.3` is deployed and set active (`lookandfeel.skin`) by the same run, alongside the regional baseline (`videoplayer.adjustrefreshrate`=On start/stop, `videoplayer.usedisplayasclock`=Off) — no separate manual skin-activation step remains. The managed skin settings apply to the **primary profile only**; additional profiles are not touched. Provisioning is authoritative and idempotent: every run converges the managed Home and Power files to the declared baseline, so manual edits to those managed settings will be overwritten.
+
+**Home navigation order** (after the Home entry): Plex · YouTube · PVR · Add-ons. The options tray tile writes `Settings` at position `optionstiles.02.include`.
+
+**Next Aired is intentionally disabled.** Arctic Fuse shows a hub whenever
+`Skin.String(HomeSwitcher.1106.Toggle)` is non-empty — the skin's own toggle
+uses `Skin.Reset(...)` to disable a hub — so provisioning removes every
+case-insensitive `HomeSwitcher.1106.Toggle` and `HomeSwitcher.1106.UpNextMode`
+node before Kodi starts. After startup, Arctic Fuse
+3.2.16 may normalize the toggle as an empty string-typed placeholder or a
+bool-typed node with value `false`. The live verifier accepts no toggle matches,
+or matches that are each one of those disabled representations. `UpNextMode`
+remains valid only when absent or represented by empty string-typed
+placeholders; every other type/value combination fails. TMDb Helper 6.17.1's
+`library_nextaired` route still requires end-user Trakt OAuth despite using
+Trakt's public calendar. The alternative `library_airingnext` route was
+disposable-live-tested but suffered OMDb timeouts and per-library thread
+exhaustion on this device class, so it is not an automation-safe replacement.
+
+**Home widgets** (exact order):
+
+1. In-Progress Movies (`InProgressMovies90Days.xsp`)
+2. In-Progress Shows (`InProgressShows90Days.xsp`)
+3. Recently Aired Shows (`RecentlyAiredEpisodes30Days.xsp`)
+4. Recently Released Movies (`RecentlyReleasedMoviesCurrentYear.xsp`)
+5. New Shows (`NewShows.xsp`)
+6. New Movies (`NewMovies.xsp`)
+
+**Managed playlist semantics:**
+
+- **Recently Aired Shows** (`RecentlyAiredEpisodes30Days.xsp`): rolling previous 30 days; future dates excluded; Kodi Omega XSP field: `airdate`.
+- **Recently Released Movies** (`RecentlyReleasedMoviesCurrentYear.xsp`): premiere year equals the device year captured during provisioning; ordered by year descending. Rerun provisioning after a year boundary to update the literal year. Calendar-year behavior was selected because Kodi Omega exposes `premiered` through a numeric XSP field that cannot perform day-level relative filtering.
+  - **Dec 31 midnight boundary**: the literal year is written by the transformer and re-derived by the verifier, each from the current date at the moment it runs. A deployment that straddles the year rollover therefore writes one year and verifies against the next, fails closed on `arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.status=mismatch`, and rolls back. This is intended: rerun provisioning after midnight and the run converges on the new year.
+
+- **Recently Released Movies (obsolete)** (`RecentlyReleasedMovies90Days.xsp`): no longer a managed widget playlist. It is still managed for reversibility — it is in the backup set, provisioning removes it, and rollback restores it byte-for-byte.
+
+**Power menu actions** (exact order):
+
+1. Power off (`Powerdown()`)
+2. Custom shutdown timer (`AlarmClock(shutdowntimer,Shutdown())`)
+3. Suspend (`Suspend()`)
+4. Reboot (`Reset()`)
+5. Restart Kodi (`RestartApp()`)
+
+### Arctic Fuse 3 report statuses
+
+After a successful provisioning run, the audit report includes `arctic_fuse.*`
+and `metadata.*` lines. Values of `1` indicate presence; the overall status
+uses an `ok`/`mismatch` string form. `metadata.omdb.status` and
+`metadata.mdblist.status` reflect OMDb and MDbList key delivery; both are
+required integration inputs and their statuses roll into `arctic_fuse.status`.
+
+Expected lines when both metadata keys are supplied:
+
+```
+arctic_fuse.status=ok
+arctic_fuse.home.status=ok
+arctic_fuse.power.status=ok
+arctic_fuse.hubs.status=ok
+arctic_fuse.next_aired_hub.status=ok
+arctic_fuse.pvr_hub.status=ok
+arctic_fuse.addons_hub.status=ok
+arctic_fuse.plex_entry.status=ok
+arctic_fuse.youtube_entry.status=ok
+metadata.omdb.status=ok
+metadata.mdblist.status=ok
+```
+
+`arctic_fuse.hubs.status` is the aggregate hub verdict. The three hub lines
+beside it say which hub failed: `next_aired_hub` (must be disabled),
+`pvr_hub`, and `addons_hub` (must be enabled). Every managed skin setting is
+compared against **all** of its case-insensitive matches, because Kodi
+resolves `Skin.String` without regard to case, and at least one match must be
+a direct child of the settings root, because that is all Kodi reads.
+
+A `mismatch` in any child status (including `metadata.omdb.status` or
+`metadata.mdblist.status`) rolls into `arctic_fuse.status=mismatch`. Inspect
+the individual child lines to identify the specific failure.
+
+### Safe acceptance sequence for Arctic Fuse 3
+
+Acceptance inspects the provisioned skin state **and walks the Home hubs on
+the device**. It never executes a Power action: the Power overlay may be
+opened and focus-walked for inspection, but no Power item is ever selected or
+activated.
+
+The Home hub walk is required because report-only verification is not
+sufficient evidence that a hub is gone. During the 2026-09-11 acceptance the
+report passed every `arctic_fuse.*` status while a Next Aired hub was still
+rendered and navigable: the settings file held the disabled value the
+verifier then expected, but the skin renders a hub whenever its toggle string
+is non-empty.
+
+Before contacting the device, validate configuration and all 42 artifacts
+without a `--target`:
+
+```bash
+./provision-coreelec.sh --check-config
+./provision-coreelec.sh --check-artifacts
+```
+
+Export the required secrets into the process environment only — never paste
+real values into tracked files, command arguments, shell history, reports, or
+issue text. Use an OS credential store or a no-echo prompt:
+
+```bash
+: "${OMDB_API_KEY:?export OMDB_API_KEY in the secure operator environment}"
+: "${MDBLIST_API_KEY:?export MDBLIST_API_KEY in the secure operator environment}"
+./provision-coreelec.sh --target coreelec-theater --yes
+```
+
+After the run, verify the audit report in `./coreelec-provision-reports/`:
+
+- `deployment_state=committed`
+- `arctic_fuse.status=ok` and all child `arctic_fuse.*` statuses `ok`
+- `metadata.omdb.status=ok` and `metadata.mdblist.status=ok`
+
+Any `mismatch` value requires re-provisioning with corrected inputs; do not
+weaken the acceptance criteria.
+
+Then walk the Home hubs on the device. This is navigation only — no Power
+item and no destructive action is ever selected:
+
+1. Read the hub list the Home hub button actually executes, `Container(399)`,
+   and confirm it is exactly Home, Plex (`ReplaceWindow(1101)`), YouTube
+   (`ReplaceWindow(1102)`), PVR (`ReplaceWindow(1107)`), Addons
+   (`ReplaceWindow(1108)`), Options. **No Next Aired entry
+   (`ReplaceWindow(1106)`) may appear**, in this list or in the hub bar of
+   any hub window.
+2. Walk the hubs in order — `10000 → 11101 → 11102 → 11107 → 11108` — and
+   confirm each hub opens its add-on or window, and that no Trakt
+   authorization dialog appears.
+3. Confirm the Kodi log written since the restart has no `Unauthorised`,
+   `TraktAPI`, `library_nextaired`, or `trakt_calendar` matches.
+4. The Power overlay (`11170`) may be opened and focus-walked to confirm the
+   five managed labels, then closed with Back. **Never select or activate a
+   Power item**: `Powerdown()`, `AlarmClock(shutdowntimer,Shutdown())`,
+   `Suspend()`, `Reset()`, and `RestartApp()` are inspected in the managed
+   JSON, not executed.
 
 ### Regional verification
 
