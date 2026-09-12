@@ -416,7 +416,7 @@ CONFIG
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
         --report-dir "${dir}/reports" \
-        --target coreelec-theater \
+        --target ugoos-theater \
         --dry-run \
         --interactive 2>&1
     )"
@@ -430,7 +430,7 @@ CONFIG
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
         --report-dir "${dir}/reports" \
-        --target coreelec-theater \
+        --target ugoos-theater \
         --dry-run 2>&1
     )"
   fi
@@ -483,7 +483,7 @@ STUB
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
         --report-dir "${dir}/reports" \
-        --target coreelec-theater \
+        --target ugoos-theater \
         --addon plugin.video.youtube \
         --dry-run 2>&1
   )"
@@ -525,7 +525,7 @@ test_default_run_never_starts_account_authorization() {
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
       --report-dir "${dir}/reports" \
-      --target coreelec-theater 2>&1
+      --target ugoos-theater 2>&1
   )"
   rc=$?
   set -e
@@ -551,7 +551,7 @@ test_requested_addon_must_be_in_the_pinned_manifest() {
   write_config "${config}" weather.ha
 
   set +e
-  output="$(bash "${CLI_SCRIPT}" --config "${config}" --dry-run --target coreelec-theater --addon plugin.video.youtube 2>&1)"
+  output="$(bash "${CLI_SCRIPT}" --config "${config}" --dry-run --target ugoos-theater --addon plugin.video.youtube 2>&1)"
   rc=$?
   set -e
 
@@ -576,7 +576,7 @@ test_introspection_rejects_a_missing_required_method() {
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
       --interactive \
-      --target coreelec-theater \
+      --target ugoos-theater \
       --addon plugin.video.youtube 2>&1
   )"
   rc=$?
@@ -603,7 +603,7 @@ test_introspection_requires_addons_getaddondetails() {
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
       --interactive \
-      --target coreelec-theater \
+      --target ugoos-theater \
       --addon plugin.video.youtube 2>&1
   )"
   rc=$?
@@ -621,7 +621,7 @@ test_every_remote_script_is_one_ssh_argument() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   printf '%s\n' '{}' > "${dir}/stub/response-default.json"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   KODI_PORT="8080"
   KODI_USER="homeassistant"
@@ -639,7 +639,7 @@ test_every_remote_script_is_one_ssh_argument() {
 
   assert_eq "4" "$(ssh_call_count "${dir}")" "all four SSH transport paths were exercised" || return 1
   for call in 1 2 3 4; do
-    assert_single_remote_script_argument "${dir}" "${call}" "coreelec-theater" || return 1
+    assert_single_remote_script_argument "${dir}" "${call}" "ugoos-theater" || return 1
   done
 }
 
@@ -650,7 +650,7 @@ test_ssh_transport_matches_provisioner_hardening() {
   bin_dir="$(install_ssh_stub "${dir}")"
   printf '%s\n' '{}' > "${dir}/stub/response-default.json"
   identity_file="${dir}/coreelec admin key"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   KODI_PORT="8080"
   KODI_USER="homeassistant"
@@ -660,8 +660,8 @@ test_ssh_transport_matches_provisioner_hardening() {
   COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
     kodi_rpc "JSONRPC.Introspect" '{"getdescriptions":false,"getmetadata":false}' >/dev/null
 
-  assert_hardened_ssh_options "${dir}" "1" "${identity_file}" "coreelec-theater" || return 1
-  assert_single_remote_script_argument "${dir}" "1" "coreelec-theater"
+  assert_hardened_ssh_options "${dir}" "1" "${identity_file}" "ugoos-theater" || return 1
+  assert_single_remote_script_argument "${dir}" "1" "ugoos-theater"
 }
 
 test_kodi_rpc_curl_config_does_not_quote_the_at_file_path() {
@@ -670,7 +670,7 @@ test_kodi_rpc_curl_config_does_not_quote_the_at_file_path() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   printf '%s\n' '{}' > "${dir}/stub/response-default.json"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   KODI_PORT="8080"
   KODI_USER="homeassistant"
@@ -693,7 +693,7 @@ test_addon_data_reader_keeps_path_values_out_of_remote_command() {
   bin_dir="$(install_ssh_stub "${dir}")"
   addon_id='script.plexmod; printf ADDON_INJECTION'
   relative_path='settings.xml; printf PATH_INJECTION'
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   IDENTITY_FILE="${dir}/admin-key"
 
@@ -715,7 +715,7 @@ test_shared_ssh_command_preserves_one_remote_argv_word() {
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   IDENTITY_FILE="${dir}/admin-key"
 
@@ -724,7 +724,7 @@ test_shared_ssh_command_preserves_one_remote_argv_word() {
 
   assert_eq "1" "$(ssh_call_count "${dir}")" "coreelec_ssh_command makes exactly one SSH call" || return 1
   argc="$(ssh_argc "${dir}" "1")"
-  assert_eq "root@coreelec-theater" "$(ssh_argv_element "${dir}" "1" "$((argc - 1))")" \
+  assert_eq "root@ugoos-theater" "$(ssh_argv_element "${dir}" "1" "$((argc - 1))")" \
     "the target is the second-to-last argv element" || return 1
   assert_eq "$(printf 'set -eu\necho hello')" "$(ssh_argv_element "${dir}" "1" "${argc}")" \
     "the remote command is passed as exactly one argv word, matching the current add-on transport"
@@ -735,7 +735,7 @@ test_shared_ssh_batch_streams_the_remote_program_on_stdin() {
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   IDENTITY_FILE="${dir}/admin-key"
 
@@ -744,7 +744,7 @@ test_shared_ssh_batch_streams_the_remote_program_on_stdin() {
 
   assert_eq "1" "$(ssh_call_count "${dir}")" "coreelec_ssh_batch makes exactly one SSH call" || return 1
   argc="$(ssh_argc "${dir}" "1")"
-  assert_eq "root@coreelec-theater" "$(ssh_argv_element "${dir}" "1" "$((argc - 1))")" \
+  assert_eq "root@ugoos-theater" "$(ssh_argv_element "${dir}" "1" "$((argc - 1))")" \
     "the target is the second-to-last argv element" || return 1
   assert_eq "sh -s" "$(ssh_argv_element "${dir}" "1" "${argc}")" \
     "the remote program travels as the literal 'sh -s' argv word, not split across two argv words" || return 1
@@ -759,7 +759,7 @@ test_shared_ssh_helpers_use_only_the_selected_identity() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   identity_file="${dir}/coreelec admin key"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   IDENTITY_FILE="${identity_file}"
 
@@ -787,7 +787,7 @@ test_shared_ssh_helpers_disable_password_and_interactive_auth() {
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   IDENTITY_FILE="${dir}/admin-key"
 
@@ -813,7 +813,7 @@ test_shared_ssh_helpers_preserve_remote_failure_status() {
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_failing_ssh_stub "${dir}")"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   IDENTITY_FILE="${dir}/admin-key"
 
@@ -843,7 +843,7 @@ test_gui_guard_rejects_an_unexpected_window_without_sending_input() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   write_gui_state_response "${dir}/stub/response-1.json" "Wrong Window" "Expected Control"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   KODI_PORT="8080"
   KODI_USER="homeassistant"
@@ -854,7 +854,7 @@ test_gui_guard_rejects_an_unexpected_window_without_sending_input() {
     COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" bash -c '
       source "'"${SSH_LIB}"'"
       source "'"${WORKFLOW_LIB}"'"
-      TARGET="coreelec-theater"
+      TARGET="ugoos-theater"
       SSH_PORT="22"
       KODI_PORT="8080"
       KODI_USER="homeassistant"
@@ -883,7 +883,7 @@ test_rpc_request_ids_never_contain_secret_values() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-default.json"
-  TARGET="coreelec-theater"
+  TARGET="ugoos-theater"
   SSH_PORT="22"
   KODI_PORT="8080"
   KODI_USER="homeassistant"
@@ -917,7 +917,7 @@ test_report_contains_statuses_but_no_secret_values() {
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
       --report-dir "${dir}/reports" \
-      --target coreelec-theater 2>&1
+      --target ugoos-theater 2>&1
   )"
   rc=$?
   set -e
@@ -946,7 +946,7 @@ test_weather_check_accepts_config_and_entity_responses() {
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -988,7 +988,7 @@ test_weather_check_rejects_labels_from_another_provider() {
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1015,7 +1015,7 @@ test_weather_check_reports_unauthorized_without_echoing_token() {
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1048,7 +1048,7 @@ test_nextpvr_check_uses_the_configured_protocol_host_port_and_pin() {
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1086,7 +1086,7 @@ test_nextpvr_check_requires_a_successful_session_login() {
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1118,7 +1118,7 @@ test_pm4k_local_check_requires_identity_and_token_authorized_root() {
   success_output="$({
     export COREELEC_SSH_STUB_DIR="${success_dir}/stub"
     export PATH="${success_python_bin}:${success_bin}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1152,7 +1152,7 @@ test_pm4k_local_check_requires_identity_and_token_authorized_root() {
   failure_output="$({
     export COREELEC_SSH_STUB_DIR="${failure_dir}/stub"
     export PATH="${failure_bin}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1212,7 +1212,7 @@ test_service_checks_do_not_modify_addon_settings() {
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1265,7 +1265,7 @@ test_pm4k_launch_uses_addons_executeaddon() {
     export PATH="${bin_dir}:${PATH}"
     export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="1"
     export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1305,7 +1305,7 @@ test_pm4k_selects_sign_in_only_when_expected_control_is_focused() {
     export PATH="${bin_dir}:${PATH}"
     export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="0"
     export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1340,7 +1340,7 @@ JSON
     export PATH="${bin_dir}:${PATH}"
     export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="1"
     export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1382,7 +1382,7 @@ test_youtube_dismisses_only_the_expected_intro_dialog() {
     export PATH="${bin_dir}:${PATH}"
     export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="0"
     export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1415,7 +1415,7 @@ test_guided_flow_times_out_as_manual_required() {
     export PATH="${bin_dir}:${PATH}"
     export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="0"
     export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1445,7 +1445,7 @@ JSON
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1475,7 +1475,7 @@ test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${bin_dir}:${PATH}"
-    TARGET="coreelec-theater"
+    TARGET="ugoos-theater"
     SSH_PORT="22"
     KODI_PORT="8080"
     KODI_USER="homeassistant"
@@ -1540,7 +1540,7 @@ CONFIG
     UGOOS_ENV_FILE="${env_file}" \
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
-        --target coreelec-theater \
+        --target ugoos-theater \
         --interactive \
         --addon plugin.service.emby-next-gen \
         --report-dir "${report_dir}"

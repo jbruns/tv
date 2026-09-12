@@ -188,6 +188,18 @@ test_target_is_not_loaded_from_shared_config() {
   assert_contains "${output}" "unknown configuration key" "TARGET is rejected as unknown"
 }
 
+test_repository_uses_canonical_theater_hostname() {
+  local repository_root legacy_hostname matches
+  repository_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  legacy_hostname="coreelec""-theater"
+  matches="$(
+    git -C "${repository_root}" grep -n -- "${legacy_hostname}" -- \
+      ':!tests/test-coreelec-config.sh' || true
+  )"
+  assert_eq "" "${matches}" \
+    "repository examples and fixtures use the canonical ugoos-theater hostname"
+}
+
 test_partial_youtube_credentials_are_rejected() {
   coreelec_config_defaults
   local rc output
@@ -623,6 +635,7 @@ run_all_tests \
   test_kodi_password_in_config_is_rejected_as_a_secret \
   test_cli_value_overrides_config_value \
   test_target_is_not_loaded_from_shared_config \
+  test_repository_uses_canonical_theater_hostname \
   test_partial_youtube_credentials_are_rejected \
   test_service_secret_without_endpoint_is_rejected \
   test_missing_optional_secrets_are_allowed \

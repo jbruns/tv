@@ -116,7 +116,7 @@ Internal:
 Examples:
   ./provision-coreelec.sh --check-config
   ./provision-coreelec.sh --check-artifacts
-  ./provision-coreelec.sh --target coreelec-theater
+  ./provision-coreelec.sh --target ugoos-theater
   ./provision-coreelec.sh --config /path/to/device.conf --target 172.16.99.50
 
 The device must first be booted through the CoreELEC wizard with Ethernet and
