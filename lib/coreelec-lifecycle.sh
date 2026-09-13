@@ -301,6 +301,26 @@ _lifecycle_manifest_complete() {
   return 0
 }
 
+# True only while deployment is still in the backup phase, before the
+# marker that permits installation is published. No live target file has
+# been changed at this point, so recovery may discard the abandoned journal
+# without attempting restoration from incomplete pre-images.
+_lifecycle_preinstall_cleanup_safe() {
+  _lpcs_t="$1"
+  [ -f "${_lpcs_t}/manifest" ] || return 1
+  [ ! -L "${_lpcs_t}/manifest" ] || return 1
+  [ -f "${_lpcs_t}/phase" ] || return 1
+  [ ! -L "${_lpcs_t}/phase" ] || return 1
+  [ -d "${_lpcs_t}/rollback" ] || return 1
+  [ ! -L "${_lpcs_t}/rollback" ] || return 1
+  [ ! -e "${_lpcs_t}/backups-complete" ] || return 1
+  [ ! -L "${_lpcs_t}/backups-complete" ] || return 1
+  [ "$(sed -n 's/^MANIFEST_VERSION=//p' "${_lpcs_t}/manifest")" = "2" ] || return 1
+  [ "$(sed -n 's/^TRANSACTION=//p' "${_lpcs_t}/manifest")" = "${_lpcs_t}" ] || return 1
+  _lifecycle_initial_state "${_lpcs_t}" >/dev/null || return 1
+  [ "$(cat "${_lpcs_t}/phase")" = "backing-up" ]
+}
+
 _lifecycle_initial_state() {
   _lis_state="$(sed -n 's/^INITIAL_STATE=//p' "$1/manifest")" || return 1
   case "${_lis_state}" in
@@ -378,6 +398,25 @@ _lifecycle_restore_service() {
   return 1
 }
 
+_lifecycle_files_equal() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+
+left_path, right_path = sys.argv[1:]
+try:
+    with open(left_path, "rb") as left, open(right_path, "rb") as right:
+        while True:
+            left_chunk = left.read(65536)
+            right_chunk = right.read(65536)
+            if left_chunk != right_chunk:
+                raise SystemExit(1)
+            if not left_chunk:
+                break
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
 # Publish only byte-verified pre-images. A failed/short copy remains a
 # .pending file and can never satisfy the restoration manifest.
 _lifecycle_backup_one() {
@@ -385,7 +424,7 @@ _lifecycle_backup_one() {
   _lbo_item="$2"
   if [ -e "${_lbo_source}" ]; then
     cp -p "${_lbo_source}" "${_lbo_item}.pending" || return 1
-    cmp -s "${_lbo_source}" "${_lbo_item}.pending" || return 1
+    _lifecycle_files_equal "${_lbo_source}" "${_lbo_item}.pending" || return 1
     chmod 600 "${_lbo_item}.pending" || return 1
     mv "${_lbo_item}.pending" "${_lbo_item}" || return 1
   else
@@ -427,7 +466,7 @@ _lifecycle_verify_one() {
     [ ! -e "${_lvo_target}" ]
     return $?
   fi
-  cmp -s "${_lvo_item}" "${_lvo_target}"
+  _lifecycle_files_equal "${_lvo_item}" "${_lvo_target}"
 }
 LIFECYCLE_SHARED_LIB
 }
@@ -739,6 +778,31 @@ if _lifecycle_receipt_matches "${cache_root}/last-rolled-back-transaction" "${tr
   exit 22
 fi
 
+if _lifecycle_receipt_matches "${cache_root}/last-abandoned-transaction" "${transaction}"; then
+  if rm -rf "${transaction}" && rm -f "${pointer_file}"; then
+    printf 'ROLLBACK_RECOVERY:abandoned-pre-install-transaction\n'
+    printf 'ROLLBACK_STATE:rolled-back\n'
+    exit 0
+  fi
+  printf 'ROLLBACK_STATE:incomplete-rollback\n' >&2
+  printf 'TRANSACTION:%s\n' "${transaction}" >&2
+  exit 22
+fi
+
+if _lifecycle_preinstall_cleanup_safe "${transaction}" \
+    && [ ! -e "${cache_root}/finalizing-transaction" ] \
+    && [ ! -L "${cache_root}/finalizing-transaction" ]; then
+  if _lifecycle_record_receipt "${cache_root}/last-abandoned-transaction" "${transaction}" \
+      && rm -rf "${transaction}" && rm -f "${pointer_file}"; then
+    printf 'ROLLBACK_RECOVERY:abandoned-pre-install-transaction\n'
+    printf 'ROLLBACK_STATE:rolled-back\n'
+    exit 0
+  fi
+  printf 'ROLLBACK_STATE:incomplete-rollback\n' >&2
+  printf 'TRANSACTION:%s\n' "${transaction}" >&2
+  exit 22
+fi
+
 if ! _lifecycle_manifest_complete "${transaction}"; then
   printf 'ROLLBACK_FAIL:incomplete-manifest:%s\n' "${transaction}" >&2
   printf 'TRANSACTION:%s\n' "${transaction}" >&2
@@ -934,7 +998,8 @@ transaction="$(_lifecycle_resolve_transaction "${candidate}" "${backup_root_cano
   exit 0
 }
 
-for receipt in finalizing-transaction last-finalized-transaction last-rolled-back-transaction; do
+for receipt in finalizing-transaction last-finalized-transaction last-rolled-back-transaction \
+  last-abandoned-transaction; do
   if _lifecycle_receipt_matches "${cache_root}/${receipt}" "${transaction}"; then
     if _lifecycle_receipt_matches "${pointer_file}" "${transaction}"; then
       printf 'INSPECT_STATE:cleanup-pending\n'
@@ -944,6 +1009,7 @@ for receipt in finalizing-transaction last-finalized-transaction last-rolled-bac
     printf 'TRANSACTION:%s\n' "${transaction}"
     case "${receipt}" in
       last-rolled-back-transaction) printf 'COMPLETION:rolled-back\n' ;;
+      last-abandoned-transaction) printf 'COMPLETION:abandoned-pre-install\n' ;;
       *) printf 'COMPLETION:committed\n' ;;
     esac
     exit 0

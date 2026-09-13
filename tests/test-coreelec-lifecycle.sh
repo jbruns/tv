@@ -866,6 +866,43 @@ test_deploy_creates_private_directories_and_atomic_candidates() {
   fi
 }
 
+test_deploy_does_not_require_cmp_on_coreelec() {
+  local dir os_release pubkey systemctl_bin systemctl_dir sshd_bin root no_cmp_bin script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  generate_fixture_keypair "${dir}" "admin"
+  pubkey="${dir}/admin.pub"
+  systemctl_bin="$(install_lifecycle_systemctl_fixture "${dir}")"
+  systemctl_dir="$(dirname "${systemctl_bin}")"
+  sshd_bin="$(install_fixture_sshd "${dir}" "supported")"
+  os_release="${dir}/etc/os-release"
+  write_fixture_os_release "${os_release}" "1"
+  root="${dir}/root"
+  mkdir -p "${root}/.config" "${root}/.ssh"
+  printf 'ORIGINAL_WRAPPER\n' > "${root}/.config/kodi-lifecycle"
+  printf 'ORIGINAL_KEYS\n' > "${root}/.ssh/authorized_keys"
+
+  no_cmp_bin="${dir}/no-cmp-bin"
+  mkdir -p "${no_cmp_bin}"
+  cat > "${no_cmp_bin}/cmp" <<'STUB'
+#!/bin/sh
+printf 'cmp: command not found\n' >&2
+exit 127
+STUB
+  chmod +x "${no_cmp_bin}/cmp"
+
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script deploy "${root}" "${os_release}" "${pubkey}" \
+    "/usr/bin/systemctl" "${sshd_bin}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_SYSTEMCTL_CONFIG_DIR="${dir}/systemctl-config" \
+    PATH="${no_cmp_bin}:${systemctl_dir}:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the deploy transaction must not require CoreELEC to provide cmp: ${output}" || return 1
+  assert_contains "${output}" "DEPLOY_STATE:pending-verification" \
+    "the deploy reaches pending-verification without cmp"
+}
+
 test_deploy_preserves_unrelated_authorized_keys() {
   local dir os_release pubkey systemctl_bin systemctl_dir sshd_bin root script output rc
   dir="$(make_scratch_dir)"
@@ -1356,8 +1393,15 @@ STUB
   output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
   rc=$?
   set -e
-  assert_failure "${rc}" "manual recovery must also refuse incomplete pre-images" || return 1
-  assert_eq "ADMINISTRATOR_ACCESS_MUST_SURVIVE" "$(cat "${root}/.ssh/authorized_keys")"
+  assert_success "${rc}" "manual recovery must clean up a proven pre-install transaction: ${output}" || return 1
+  assert_contains "${output}" "ROLLBACK_RECOVERY:abandoned-pre-install-transaction" \
+    "recovery must distinguish cleanup from file restoration" || return 1
+  assert_eq "ADMINISTRATOR_ACCESS_MUST_SURVIVE" "$(cat "${root}/.ssh/authorized_keys")" \
+    "pre-install cleanup must not rewrite authorized_keys" || return 1
+  assert_eq "HEALTHY_WRAPPER" "$(cat "${root}/.config/kodi-lifecycle")" \
+    "pre-install cleanup must not rewrite the wrapper" || return 1
+  [[ ! -e "${transaction}" ]] || return 1
+  [[ ! -e "${root}/.cache/kodi-lifecycle/current-transaction" ]]
 )
 
 test_failed_partial_authorized_keys_backup_never_overwrites_live_keys() {
@@ -1366,6 +1410,45 @@ test_failed_partial_authorized_keys_backup_never_overwrites_live_keys() {
 
 test_successful_short_backup_copy_is_rejected_before_install() {
   partial_backup_is_rejected 0
+}
+
+test_abandoned_preinstall_cleanup_retries_after_pointer_unlink_failure() {
+  local dir root transaction pointer fault_bin script output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  transaction="${root}/backup/kodi-lifecycle/20260913T001714Z-fixture"
+  pointer="${root}/.cache/kodi-lifecycle/current-transaction"
+  mkdir -p "${transaction}/rollback" "$(dirname "${pointer}")" "${root}/.config" "${root}/.ssh"
+  {
+    printf 'MANIFEST_VERSION=2\n'
+    printf 'TRANSACTION=%s\n' "${transaction}"
+    printf 'INITIAL_STATE=running\n'
+  } > "${transaction}/manifest"
+  printf 'backing-up\n' > "${transaction}/phase"
+  printf '%s\n' "${transaction}" > "${pointer}"
+  printf 'HEALTHY_WRAPPER\n' > "${root}/.config/kodi-lifecycle"
+  printf 'ADMINISTRATOR_ACCESS_MUST_SURVIVE\n' > "${root}/.ssh/authorized_keys"
+
+  fault_bin="$(install_lifecycle_exact_rm_fault "${dir}")"
+  script="$("${CONFIGURE_KODI_LIFECYCLE_CLI}" --emit-remote-script rollback "${root}" "${transaction}")"
+  set +e
+  output="$(printf '%s\n' "${script}" | FIXTURE_RM_BLOCKED_PATH="${pointer}" \
+    PATH="${fault_bin}:${PATH}" sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a failed pointer unlink must retain retry evidence: ${output}" || return 1
+  assert_contains "${output}" "ROLLBACK_STATE:incomplete-rollback" || return 1
+  [[ ! -e "${transaction}" && -f "${pointer}" ]] || return 1
+  assert_eq "${transaction}" \
+    "$(cat "${root}/.cache/kodi-lifecycle/last-abandoned-transaction")" \
+    "cleanup must record the abandoned transaction before deleting it" || return 1
+
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  assert_contains "${output}" "ROLLBACK_RECOVERY:abandoned-pre-install-transaction" || return 1
+  [[ ! -e "${pointer}" ]] || return 1
+  assert_eq "HEALTHY_WRAPPER" "$(cat "${root}/.config/kodi-lifecycle")" || return 1
+  assert_eq "ADMINISTRATOR_ACCESS_MUST_SURVIVE" "$(cat "${root}/.ssh/authorized_keys")"
 }
 
 interrupted_verification_restores_service() (
@@ -2482,6 +2565,7 @@ run_all_tests \
   test_interrupted_verification_rollback_restores_stopped_service \
   test_failed_partial_authorized_keys_backup_never_overwrites_live_keys \
   test_successful_short_backup_copy_is_rejected_before_install \
+  test_abandoned_preinstall_cleanup_retries_after_pointer_unlink_failure \
   test_lifecycle_library_sources_cleanly_on_its_own \
   test_public_key_validation_accepts_one_ed25519_key \
   test_public_key_validation_rejects_multiple_or_malformed_keys \
@@ -2499,6 +2583,7 @@ run_all_tests \
   test_target_and_key_arguments_are_required \
   test_platform_check_requires_coreelec_21_3_amlogic_ng \
   test_deploy_creates_private_directories_and_atomic_candidates \
+  test_deploy_does_not_require_cmp_on_coreelec \
   test_deploy_preserves_unrelated_authorized_keys \
   test_rerun_replaces_only_the_marked_controller_key \
   test_deploy_prefers_restrict_when_sshd_supports_it \
