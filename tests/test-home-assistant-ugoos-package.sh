@@ -173,9 +173,8 @@ test_package_uses_expected_theater_entities_and_host() {
   local body
   body="$(package_body)"
   for expected in \
-    "media_player.sony_xr_65a90j" \
-    "media_player.kodi_theater" \
-    "ugoos-theater" \
+    "media_player.bravia_xr_65a90j" \
+    "media_player.theater_kodi_theater" \
     "/config/.ssh/ugoos_kodi_lifecycle_ed25519" \
     "/config/.ssh/known_hosts" \
     "input_boolean.ugoos_theater_keep_kodi_running" \
@@ -238,7 +237,7 @@ test_ssh_commands_require_batch_mode_strict_host_key_and_persistent_paths() {
   body="$(ssh_config_body)"
   for expected in \
     "Host ugoos-theater-lifecycle" \
-    "HostName ugoos-theater" \
+    "HostName ugoos-theater.lan.wavebe.am" \
     "User root" \
     "Port 22" \
     "IdentityFile /config/.ssh/ugoos_kodi_lifecycle_ed25519" \

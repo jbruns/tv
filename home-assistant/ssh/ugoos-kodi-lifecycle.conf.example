@@ -1,5 +1,5 @@
 Host ugoos-theater-lifecycle
-  HostName ugoos-theater
+  HostName ugoos-theater.lan.wavebe.am
   User root
   Port 22
   IdentityFile /config/.ssh/ugoos_kodi_lifecycle_ed25519

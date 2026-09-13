@@ -20,8 +20,8 @@ import jinja2
 import yaml
 
 
-SONY = "media_player.sony_xr_65a90j"
-KODI = "media_player.kodi_theater"
+SONY = "media_player.bravia_xr_65a90j"
+KODI = "media_player.theater_kodi_theater"
 IDLE = "input_boolean.ugoos_theater_input_idle"
 SENT = "input_boolean.ugoos_theater_idle_poweroff_sent"
 KEEP = "input_boolean.ugoos_theater_keep_kodi_running"

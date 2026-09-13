@@ -29,9 +29,9 @@ CoreELEC wizard
 
 | Value | Exact ID/path |
 |---|---|
-| Sony entity | `media_player.sony_xr_65a90j` |
-| Kodi entity | `media_player.kodi_theater` |
-| Ugoos lifecycle host | `ugoos-theater` via SSH alias `ugoos-theater-lifecycle` |
+| Sony entity | `media_player.bravia_xr_65a90j` |
+| Kodi entity | `media_player.theater_kodi_theater` |
+| Ugoos lifecycle host | `ugoos-theater.lan.wavebe.am` via SSH alias `ugoos-theater-lifecycle` |
 | Home Assistant private key | `/config/.ssh/ugoos_kodi_lifecycle_ed25519` |
 | Home Assistant known hosts | `/config/.ssh/known_hosts` |
 | Home Assistant SSH config | `/config/.ssh/ugoos-kodi-lifecycle.conf` |
@@ -101,7 +101,7 @@ authenticated fingerprint. Only a matching candidate may enter
 
 ```bash
 expected='SHA256:REPLACE_WITH_INDEPENDENTLY_VERIFIED_SERVER_FINGERPRINT'
-ssh-keyscan -T 5 -t ed25519 -H ugoos-theater > /config/.ssh/ugoos-theater.candidate
+ssh-keyscan -T 5 -t ed25519 -H ugoos-theater.lan.wavebe.am > /config/.ssh/ugoos-theater.candidate
 observed="$(ssh-keygen -l -E sha256 -f /config/.ssh/ugoos-theater.candidate | awk '{print $2}' | sort -u)"
 if [ "${observed}" = "${expected}" ] && [ -n "${observed}" ]; then
   cat /config/.ssh/ugoos-theater.candidate >> /config/.ssh/known_hosts
@@ -155,10 +155,10 @@ exactly `Allowed commands: start, stop, status` on stderr.
      packages: !include_dir_named packages
    ```
 
-4. Configure the Sony BRAVIA and Kodi integrations so Home Assistant exposes
-   the exact package IDs `media_player.sony_xr_65a90j` and
-   `media_player.kodi_theater`. Rename entities or duplicate the package for a
-   different room before enabling automations.
+4. Configure the Sony BRAVIA and Kodi integrations, then confirm Home Assistant
+   exposes `media_player.bravia_xr_65a90j` and
+   `media_player.theater_kodi_theater`. Update a room-specific package if the
+   integration-generated IDs differ before enabling automations.
 
 Run validation and restart/reload:
 
@@ -200,7 +200,8 @@ Valid lifecycle stdout is exactly `running`, `stopped`, or `failed`.
   override. Turning it on keeps Kodi running after Sony-off or idle-driven Sony
   power-off until an operator turns it off.
 - When a reconciliation wants Kodi `running`, the package waits up to
-  **90 seconds** for `media_player.kodi_theater` to become JSON-RPC available.
+  **90 seconds** for `media_player.theater_kodi_theater` to become JSON-RPC
+  available.
 - Sony idle power-off is latched once per episode, including on a
   **30-second** confirmation timeout or action exception. Only genuine
   playback/input activity or an explicit operator retry rearms it.

@@ -24,7 +24,9 @@ Use the [theater signal topology](../README.md#signal-topology). These settings 
 - Set authentication to the PSK-capable mode and configure a unique pre-shared key stored outside the repository.
 - Set **Remote start: On** so Home Assistant can control the television from standby.
 - In Home Assistant, add the **Sony Bravia TV** integration under **Settings > Devices & services** using the reserved address and PSK.
-- Rename the integration entity to `media_player.sony_xr_65a90j` so the lifecycle package contract is satisfied.
+- Confirm the Sony Bravia integration exposes `media_player.bravia_xr_65a90j`;
+  do not use the similarly named Music Assistant media-player entity for TV
+  power control.
 
 ## HDMI signal formats
 
