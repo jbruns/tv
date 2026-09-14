@@ -67,7 +67,6 @@ Options:
   --addon ID                Deploy only this pinned add-on from the locked
                              manifest; repeatable. An ID that is not locked in
                              the configuration is rejected.
-  --with-youtube            Equivalent to --addon plugin.video.youtube
   --report-dir PATH         Local report directory
   --expected-release VER    Required CoreELEC release substring (default: 21.3)
   --no-kodi                 Skip Kodi and Home Assistant baseline configuration
@@ -126,7 +125,6 @@ password and for the passphrase of the dedicated administrator key.
 Configuration precedence is: built-in defaults, then the selected --config
 file, then explicit CLI options, then secrets sourced from the repository
 .env file (KODI_WEB_PASSWORD, OMDB_API_KEY, MDBLIST_API_KEY,
-YOUTUBE_API_KEY, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET,
 HOME_ASSISTANT_TOKEN, NEXTPVR_PIN, PLEX_TOKEN, and EMBY_PASSWORD). None may appear
 in the config file, and TARGET is never a config-file key. See
 config/README.md for every supported key, the repeated ADDON_ARTIFACT
@@ -136,8 +134,8 @@ this transactional provisioner validates and redacts it but never uses it.
 
 This script deliberately does not configure audio codecs or the display mode
 whitelist (room-specific, live HDMI-dependent), and it cannot perform Emby
-server sign-in or YouTube's interactive Google device authorization -- those
-add-ons are always left for the operator to finish by hand.
+server sign-in -- that add-on is always left for the operator to finish by
+hand.
 USAGE
 }
 
@@ -239,7 +237,6 @@ import xml.etree.ElementTree as ET
 
 SKIN_ID = "skin.arctic.fuse.3"
 WEATHER_ADDON_ID = "weather.ha"
-YOUTUBE_CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
 
 WRITTEN_PATHS = []
 ADDON_DOCUMENTS = {}
@@ -534,9 +531,6 @@ def main(argv):
         register_managed_directory(directory)
         return os.path.join(directory, name)
 
-    youtube_configured = (have("YOUTUBE_API_KEY")
-                          and have("YOUTUBE_CLIENT_ID")
-                          and have("YOUTUBE_CLIENT_SECRET"))
     weather_configured = bool(config("HOME_ASSISTANT_URL")
                               and config("HOME_ASSISTANT_WEATHER_ENTITY")
                               and have("HOME_ASSISTANT_TOKEN"))
@@ -584,32 +578,6 @@ def main(argv):
         fail("CEC_TV_OFF_ACTION must be 36028 (Ignore); got %r"
              % (cec_tv_off_action,))
     set_cec_tv_off_action(storage_root, cec_tv_off_action)
-
-    # --- YouTube ------------------------------------------------------------
-    youtube_settings = addon_file("plugin.video.youtube", "settings.xml")
-    set_addon_setting(youtube_settings, "kodion.setup_wizard", "false")
-    set_addon_setting(youtube_settings, "youtube.language", "en-US")
-    set_addon_setting(youtube_settings, "youtube.region", "US")
-    if youtube_configured:
-        # The add-on strips whitespace and the Google domain suffix itself;
-        # storing the already-stripped values keeps it from rewriting the file.
-        api_key = "".join(secret("YOUTUBE_API_KEY").split())
-        client_id = "".join(secret("YOUTUBE_CLIENT_ID").split())
-        client_id = client_id.replace(YOUTUBE_CLIENT_ID_SUFFIX, "")
-        client_secret = "".join(secret("YOUTUBE_CLIENT_SECRET").split())
-        write_json_atomic(
-            addon_file("plugin.video.youtube", "api_keys.json"),
-            {
-                "keys": {
-                    "developer": {},
-                    "user": {
-                        "api_key": api_key,
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                    },
-                },
-            },
-        )
 
     # --- TMDb Helper --------------------------------------------------------
     # OMDb and MDbList keys belong to TMDb Helper only, never to the skin.
@@ -726,18 +694,6 @@ def main(argv):
     set_skin_setting("HomeSwitcher.1101.Shortcut.Path",
                      "RunAddon(script.plexmod)")
 
-    set_skin_setting("HomeSwitcher.1102.Name", "YouTube")
-    set_skin_setting("HomeSwitcher.1102.Toggle", "true")
-    set_skin_setting("HomeSwitcher.1102.Icon",
-                     "special://home/addons/plugin.video.youtube/resources/media/icon.png")
-    set_skin_setting("HomeSwitcher.1102.Shortcut.Path",
-                     "plugin://plugin.video.youtube/")
-    set_skin_setting("HomeSwitcher.1102.Shortcut.Target", "videos")
-
-    # Arctic Fuse renders a hub whenever its toggle string is non-empty, so
-    # the disabled state is the absence of every case-insensitive toggle node.
-    remove_skin_setting("HomeSwitcher.1106.Toggle")
-    remove_skin_setting("HomeSwitcher.1106.UpNextMode")
     set_skin_setting("HomeSwitcher.1107.Toggle", "true")
     set_skin_setting("HomeSwitcher.1108.Toggle", "true")
     set_skin_setting("optionstiles.02.include", "Settings")
@@ -745,7 +701,6 @@ def main(argv):
     # Remove stale direct-hub state
     remove_skin_setting("HomeSwitcher.1101.Shortcut.Target")
     remove_skin_setting("HomeSwitcher.1101.Spotlight.Path")
-    remove_skin_setting("HomeSwitcher.1102.Spotlight.Path")
 
     write_xml_atomic(skin_settings_path, skin_tree)
 
@@ -888,8 +843,6 @@ managed_settings_paths() {
   cat <<'MANAGED_SETTINGS_PATHS'
 .kodi/userdata/guisettings.xml
 .cache/timezone
-.kodi/userdata/addon_data/plugin.video.youtube/settings.xml
-.kodi/userdata/addon_data/plugin.video.youtube/api_keys.json
 .kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
 .kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
 .kodi/userdata/addon_data/script.plexmod/settings.xml
@@ -2249,23 +2202,6 @@ def main(argv):
             for server in servers)
         observe("addon_settings.script.plexmod.configured", 1 if matched else 0)
 
-    if have("YOUTUBE_API_KEY"):
-        matched = False
-        try:
-            handle = open(addon_data("plugin.video.youtube",
-                                     "api_keys.json"), "r")
-            try:
-                document = json.load(handle)
-            finally:
-                handle.close()
-            user = document.get("keys", {}).get("user", {})
-            matched = bool(user.get("api_key") and user.get("client_id")
-                           and user.get("client_secret"))
-        except Exception:
-            matched = False
-        observe("addon_settings.plugin.video.youtube.configured",
-                1 if matched else 0)
-
     if have("OMDB_API_KEY") or have("MDBLIST_API_KEY"):
         values = read_settings(
             addon_data("plugin.video.themoviedb.helper", "settings.xml")) or {}
@@ -2315,18 +2251,6 @@ def main(argv):
             if (node.get("id") or "").casefold() == wanted
         ]
 
-    def is_empty_string_placeholder(match):
-        _, setting_type, value, _ = match
-        return setting_type.casefold() == "string" and value == ""
-
-    def is_disabled_toggle(match):
-        _, setting_type, value, _ = match
-        setting_type = setting_type.casefold()
-        return (
-            (setting_type == "string" and value == "")
-            or (setting_type == "bool" and value.casefold() == "false")
-        )
-
     def managed_setting_is(setting_id, expected):
         """The managed value is present exactly, on a node Kodi reads, and no
         case variant anywhere in the file disagrees with it."""
@@ -2373,26 +2297,14 @@ def main(argv):
         userdata, "addon_data", "script.skinvariables", "nodes", SKIN_ID)
     playlists_dir = os.path.join(userdata, "playlists", "video")
 
-    # Hub toggles. Arctic Fuse renders a hub whenever its toggle string is
-    # non-empty and may recreate empty disabled placeholders after startup.
-    # Each hub is observed on its own line: the aggregate says only that
-    # something is wrong, these say which hub.
-    next_aired_toggles = xml_setting_matches(
-        skin_settings_path, "HomeSwitcher.1106.Toggle")
-    next_aired_modes = xml_setting_matches(
-        skin_settings_path, "HomeSwitcher.1106.UpNextMode")
-    next_aired_disabled = (
-        all(is_disabled_toggle(match) for match in next_aired_toggles)
-        and all(is_empty_string_placeholder(match)
-                for match in next_aired_modes)
-    )
+    # Hub toggles. Each hub is observed on its own line: the aggregate says
+    # only that something is wrong, these say which hub.
     pvr_hub_ok = managed_setting_is("HomeSwitcher.1107.Toggle", "true")
     addons_hub_ok = managed_setting_is("HomeSwitcher.1108.Toggle", "true")
-    observe("arctic_fuse.next_aired_disabled", 1 if next_aired_disabled else 0)
     observe("arctic_fuse.pvr_hub_configured", 1 if pvr_hub_ok else 0)
     observe("arctic_fuse.addons_hub_configured", 1 if addons_hub_ok else 0)
     observe("arctic_fuse.hubs_configured",
-            1 if (next_aired_disabled and pvr_hub_ok and addons_hub_ok) else 0)
+            1 if (pvr_hub_ok and addons_hub_ok) else 0)
 
     # Plex entry (1101)
     plex_ok = (
@@ -2405,19 +2317,6 @@ def main(argv):
         and managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Target")
     )
     observe("arctic_fuse.plex_entry_configured", 1 if plex_ok else 0)
-
-    # YouTube entry (1102)
-    youtube_ok = (
-        managed_setting_is("HomeSwitcher.1102.Name", "YouTube")
-        and managed_setting_is(
-            "HomeSwitcher.1102.Icon",
-            "special://home/addons/plugin.video.youtube/resources/media/icon.png")
-        and managed_setting_is(
-            "HomeSwitcher.1102.Shortcut.Path",
-            "plugin://plugin.video.youtube/")
-        and managed_setting_is("HomeSwitcher.1102.Shortcut.Target", "videos")
-    )
-    observe("arctic_fuse.youtube_entry_configured", 1 if youtube_ok else 0)
 
     # Settings tile
     observe("arctic_fuse.settings_tile_configured",
@@ -2768,10 +2667,6 @@ while (( $# > 0 )); do
       DEPLOY_ACTION="rollback"
       shift
       ;;
-    --with-youtube)
-      coreelec_config_add_cli_addon "plugin.video.youtube"
-      shift
-      ;;
     --report-dir)
       (( $# >= 2 )) || die "--report-dir requires a value"
       coreelec_config_apply_cli "REPORT_DIR" "$2"
@@ -2965,11 +2860,6 @@ coreelec_tmdb_helper_configured() {
   [[ -n "${OMDB_API_KEY:-}" && -n "${MDBLIST_API_KEY:-}" ]]
 }
 
-coreelec_youtube_configured() {
-  [[ -n "${YOUTUBE_API_KEY:-}" && -n "${YOUTUBE_CLIENT_ID:-}" \
-     && -n "${YOUTUBE_CLIENT_SECRET:-}" ]]
-}
-
 # Whether one add-on ID is part of the set this run deployed.
 coreelec_manifest_contains() {
   local manifest="$1" wanted="$2" index addon_id rest
@@ -2987,9 +2877,9 @@ coreelec_manifest_contains() {
 classify_addon_status() {
   local addon_id="$1"
   case "${addon_id}" in
-    plugin.service.emby-next-gen|plugin.video.youtube)
-      # Emby's server/user selection and Google's device authorization are
-      # dialog-driven; supplying credentials does not complete either.
+    plugin.service.emby-next-gen)
+      # Emby's server/user selection is dialog-driven; supplying credentials
+      # does not complete it.
       printf 'installed-manual\n'
       ;;
     weather.ha)
@@ -3210,8 +3100,6 @@ verify_remote_baseline() {
     "pvr.nextpvr" coreelec_nextpvr_configured || failures=$((failures + 1))
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "script.plexmod" coreelec_plex_configured || failures=$((failures + 1))
-  coreelec_verify_addon_settings "${observations}" "${manifest}" \
-    "plugin.video.youtube" coreelec_youtube_configured || failures=$((failures + 1))
 
   # Split ratings-key verification: each key is independently fatal.
   local arctic_fuse_failures=0
@@ -3229,9 +3117,6 @@ verify_remote_baseline() {
   # Arctic Fuse skin surfaces. The hub verdict is split so the report names
   # the hub that failed; the aggregate remains fatal for the comparison.
   coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.next_aired_disabled" "arctic_fuse.next_aired_hub" \
-    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
-  coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.pvr_hub_configured" "arctic_fuse.pvr_hub" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
@@ -3242,9 +3127,6 @@ verify_remote_baseline() {
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.plex_entry_configured" "arctic_fuse.plex_entry" \
-    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
-  coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.youtube_entry_configured" "arctic_fuse.youtube_entry" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.settings_tile_configured" "arctic_fuse.settings_tile" \
@@ -3315,9 +3197,6 @@ coreelec_secret_value() {
     KODI_WEB_PASSWORD) printf '%s' "${KODI_WEB_PASSWORD:-}" ;;
     OMDB_API_KEY) printf '%s' "${OMDB_API_KEY:-}" ;;
     MDBLIST_API_KEY) printf '%s' "${MDBLIST_API_KEY:-}" ;;
-    YOUTUBE_API_KEY) printf '%s' "${YOUTUBE_API_KEY:-}" ;;
-    YOUTUBE_CLIENT_ID) printf '%s' "${YOUTUBE_CLIENT_ID:-}" ;;
-    YOUTUBE_CLIENT_SECRET) printf '%s' "${YOUTUBE_CLIENT_SECRET:-}" ;;
     HOME_ASSISTANT_TOKEN) printf '%s' "${HOME_ASSISTANT_TOKEN:-}" ;;
     NEXTPVR_PIN) printf '%s' "${NEXTPVR_PIN:-}" ;;
     PLEX_TOKEN) printf '%s' "${PLEX_TOKEN:-}" ;;
@@ -3331,9 +3210,6 @@ coreelec_secret_names() {
 KODI_WEB_PASSWORD
 OMDB_API_KEY
 MDBLIST_API_KEY
-YOUTUBE_API_KEY
-YOUTUBE_CLIENT_ID
-YOUTUBE_CLIENT_SECRET
 HOME_ASSISTANT_TOKEN
 NEXTPVR_PIN
 PLEX_TOKEN
@@ -3390,10 +3266,6 @@ coreelec_report_manual_actions() {
     number=$((number + 1))
     printf 'manual_action.%s=Emby: select the server and sign in from Kodi; Emby Next Gen stores server and user state in its own database and cannot be preseeded.\n' "${number}"
   fi
-  if coreelec_manifest_contains "${manifest}" "plugin.video.youtube"; then
-    number=$((number + 1))
-    printf 'manual_action.%s=YouTube: complete Google device authorization in the add-on to sign in; API credentials alone do not sign an account in.\n' "${number}"
-  fi
   if coreelec_manifest_contains "${manifest}" "script.plexmod" && ! coreelec_plex_configured; then
     number=$((number + 1))
     printf 'manual_action.%s=Plex: link the account in PM4K or set PLEX_SERVER_HOST and PLEX_TOKEN to configure local mode.\n' "${number}"
@@ -3407,15 +3279,6 @@ coreelec_report_manual_actions() {
     printf 'manual_action.%s=Home Assistant Weather: set the Home Assistant URL, long-lived token, and forecast entity, then select the provider.\n' "${number}"
   fi
   printf 'manual_actions=%s\n' "${number}"
-}
-
-# Facts about the deployed state that need explaining but ask nothing of the
-# operator, so they are never numbered among the manual actions.
-coreelec_report_informational_notes() {
-  local manifest="$1"
-  if coreelec_manifest_contains "${manifest}" "plugin.video.themoviedb.helper"; then
-    printf 'next_aired_note=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class.\n'
-  fi
 }
 
 # The report body. Every line is key=value; the raw device inventory the
@@ -3488,7 +3351,6 @@ coreelec_report_render() {
   done
 
   if [[ -n "${manifest}" && -r "${manifest}" ]]; then
-    coreelec_report_informational_notes "${manifest}"
     coreelec_report_manual_actions "${manifest}"
   fi
 }
@@ -3948,9 +3810,6 @@ coreelec_settings_payload() {
   coreelec_settings_payload_secret KODI_WEB_PASSWORD "${KODI_WEB_PASSWORD}"
   coreelec_settings_payload_secret OMDB_API_KEY "${OMDB_API_KEY:-}"
   coreelec_settings_payload_secret MDBLIST_API_KEY "${MDBLIST_API_KEY:-}"
-  coreelec_settings_payload_secret YOUTUBE_API_KEY "${YOUTUBE_API_KEY:-}"
-  coreelec_settings_payload_secret YOUTUBE_CLIENT_ID "${YOUTUBE_CLIENT_ID:-}"
-  coreelec_settings_payload_secret YOUTUBE_CLIENT_SECRET "${YOUTUBE_CLIENT_SECRET:-}"
   coreelec_settings_payload_secret HOME_ASSISTANT_TOKEN "${HOME_ASSISTANT_TOKEN:-}"
   coreelec_settings_payload_secret NEXTPVR_PIN "${NEXTPVR_PIN:-}"
   coreelec_settings_payload_secret PLEX_TOKEN "${PLEX_TOKEN:-}"
@@ -4068,7 +3927,6 @@ apply_kodi_baseline() {
 
   # Only the names of the configured integrations are logged; a value that
   # came from the shared secret environment is never printed.
-  [[ -n "${YOUTUBE_API_KEY:-}" ]] && info "YouTube API credentials will be configured"
   [[ -n "${OMDB_API_KEY:-}" || -n "${MDBLIST_API_KEY:-}" ]] && info "TMDb Helper metadata keys will be configured"
   [[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && info "Home Assistant weather will be configured"
   [[ -n "${NEXTPVR_PIN:-}" ]] && info "NextPVR client instance will be configured"
@@ -4147,8 +4005,6 @@ coreelec_verify_request() {
     "$([[ -n "${NEXTPVR_PIN:-}" ]] && printf '1' || printf '0')"
   coreelec_settings_payload_entry HAVE_PLEX_TOKEN \
     "$([[ -n "${PLEX_TOKEN:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_YOUTUBE_API_KEY \
-    "$([[ -n "${YOUTUBE_API_KEY:-}" ]] && printf '1' || printf '0')"
   coreelec_settings_payload_entry HAVE_OMDB_API_KEY \
     "$([[ -n "${OMDB_API_KEY:-}" ]] && printf '1' || printf '0')"
   coreelec_settings_payload_entry HAVE_MDBLIST_API_KEY \

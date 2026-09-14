@@ -62,11 +62,10 @@ Supported post-deployment add-ons:
   weather.ha                 fully-unattended
   pvr.nextpvr                fully-unattended
   script.plexmod             fully-unattended / guided (--interactive)
-  plugin.video.youtube      guided (--interactive)
   plugin.service.emby-next-gen guided (--interactive)
 
 The default run performs non-interactive checks only. Use --interactive
-before any PM4K account, YouTube, or Emby GUI workflow.
+before any PM4K account or Emby GUI workflow.
 This command sources shared secrets from the repository-root .env file.
 It does not write Home Assistant, NextPVR, or PM4K local-mode
 settings. Supply those values to provision-coreelec.sh first, then use this

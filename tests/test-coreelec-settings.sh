@@ -106,12 +106,6 @@ OMDB_API_KEY=omdb-api-key-secret
 HAVE_OMDB_API_KEY=1
 MDBLIST_API_KEY=mdblist-api-key-secret
 HAVE_MDBLIST_API_KEY=1
-YOUTUBE_API_KEY=youtube-api-key-secret
-HAVE_YOUTUBE_API_KEY=1
-YOUTUBE_CLIENT_ID=youtube-client-id-secret.apps.googleusercontent.com
-HAVE_YOUTUBE_CLIENT_ID=1
-YOUTUBE_CLIENT_SECRET=youtube-client-secret-secret
-HAVE_YOUTUBE_CLIENT_SECRET=1
 HOME_ASSISTANT_URL=https://homeassistant.example.lan:8123
 HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
 HOME_ASSISTANT_SUN_ENTITY=sun.sun
@@ -217,24 +211,6 @@ for node in root.iter("setting"):
         break
 else:
     sys.stdout.write("missing")
-PYEOF
-}
-
-# Walks a JSON document by successive dictionary keys and prints the leaf,
-# canonicalized when it is not a plain string.
-json_path() {
-  local file="$1"
-  shift
-  python3 - "${file}" "$@" <<'PYEOF'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-for key in sys.argv[2:]:
-    data = data[key]
-sys.stdout.write(data if isinstance(data, str)
-                 else json.dumps(data, sort_keys=True))
 PYEOF
 }
 
@@ -593,56 +569,6 @@ test_tmdb_helper_keys_go_to_tmdb_helper_only() {
   assert_eq "${helper} " "${matches}" "the MDbList key exists in exactly one file"
 }
 
-test_youtube_credentials_require_all_three_values() {
-  local dir root payload youtube_dir rc
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf -- "${dir}"' RETURN
-  root="${dir}/storage"
-  payload="${dir}/payload.conf"
-  write_base_payload "${payload}"
-  append_payload_entry "${payload}" "YOUTUBE_API_KEY" "youtube-api-key-secret"
-  append_payload_entry "${payload}" "HAVE_YOUTUBE_API_KEY" "1"
-  append_payload_entry "${payload}" "HAVE_YOUTUBE_CLIENT_ID" "0"
-  append_payload_entry "${payload}" "HAVE_YOUTUBE_CLIENT_SECRET" "0"
-  run_transform "${root}" "${payload}" >/dev/null
-
-  youtube_dir="$(addon_data_path "${root}" plugin.video.youtube)"
-  [[ ! -e "${youtube_dir}/api_keys.json" ]] || {
-    printf 'api_keys.json must not be written for partial credentials\n' >&2
-    return 1
-  }
-  assert_eq "en-US" "$(xml_setting "${youtube_dir}/settings.xml" youtube.language)" "language still provisioned"
-  set +e
-  grep -rq 'youtube-api-key-secret' "${root}"
-  rc=$?
-  set -e
-  assert_failure "${rc}" "a partial API key is never written anywhere"
-}
-
-test_youtube_api_keys_json_has_expected_shape() {
-  local dir root payload keys
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf -- "${dir}"' RETURN
-  root="${dir}/storage"
-  payload="${dir}/payload.conf"
-  write_full_payload "${payload}"
-  run_transform "${root}" "${payload}" >/dev/null
-
-  keys="$(addon_data_path "${root}" plugin.video.youtube)/api_keys.json"
-  assert_eq "youtube-api-key-secret" "$(json_path "${keys}" keys user api_key)" "api_key"
-  assert_eq "youtube-client-id-secret" "$(json_path "${keys}" keys user client_id)" "client_id without the Google domain suffix"
-  assert_eq "youtube-client-secret-secret" "$(json_path "${keys}" keys user client_secret)" "client_secret"
-  assert_eq "{}" "$(json_path "${keys}" keys developer)" "developer key set stays empty"
-  assert_eq '{"developer": {}, "user": {"api_key": "youtube-api-key-secret", "client_id": "youtube-client-id-secret", "client_secret": "youtube-client-secret-secret"}}' \
-    "$(json_path "${keys}" keys)" "complete key set shape"
-
-  local settings
-  settings="$(addon_data_path "${root}" plugin.video.youtube)/settings.xml"
-  assert_eq "US" "$(xml_setting "${settings}" youtube.region)" "region"
-  assert_eq "false" "$(xml_setting "${settings}" kodion.setup_wizard)" "setup wizard suppressed"
-  assert_eq "2" "$(xml_root_attribute "${settings}" version)" "standard add-on settings use version 2"
-}
-
 test_nextpvr_uses_instance_settings_format() {
   local dir root payload instance
   dir="$(make_scratch_dir)"
@@ -741,8 +667,7 @@ test_absent_optional_secrets_do_not_create_secret_settings() {
   for path in \
     "$(addon_data_path "${root}" plugin.video.themoviedb.helper)/settings.xml" \
     "$(addon_data_path "${root}" script.plexmod)/settings.xml" \
-    "$(addon_data_path "${root}" weather.ha)/settings.xml" \
-    "$(addon_data_path "${root}" plugin.video.youtube)/api_keys.json"; do
+    "$(addon_data_path "${root}" weather.ha)/settings.xml"; do
     [[ ! -e "${path}" ]] || {
       printf 'unexpected file created without its secret: %s\n' "${path}" >&2
       return 1
@@ -817,8 +742,6 @@ test_transformer_output_never_reveals_secrets() {
     "kodi-web-password-secret" \
     "omdb-api-key-secret" \
     "mdblist-api-key-secret" \
-    "youtube-api-key-secret" \
-    "youtube-client-secret-secret" \
     "home-assistant-token-secret" \
     "nextpvr-pin-secret" \
     "plex-token-secret"; do
@@ -879,7 +802,7 @@ test_atomic_writes_do_not_follow_a_symlinked_temp_path() {
 }
 
 test_written_modes_ignore_a_permissive_umask() {
-  local dir root payload youtube_dir
+  local dir root payload ha_dir
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
@@ -890,12 +813,11 @@ test_written_modes_ignore_a_permissive_umask() {
   # calling shell happened to have.
   (umask 000; run_transform "${root}" "${payload}" >/dev/null)
 
-  youtube_dir="$(addon_data_path "${root}" plugin.video.youtube)"
+  ha_dir="$(addon_data_path "${root}" weather.ha)"
   assert_eq "600" "$(file_mode "$(guisettings_path "${root}")")" "guisettings.xml"
-  assert_eq "600" "$(file_mode "${youtube_dir}/api_keys.json")" "api_keys.json"
   assert_eq "600" "$(file_mode "$(addon_data_path "${root}" weather.ha)/settings.xml")" "weather.ha settings"
   assert_eq "644" "$(file_mode "${root}/.cache/timezone")" "the timezone cache stays readable on purpose"
-  assert_eq "700" "$(file_mode "${youtube_dir}")" "add-on data directories are private"
+  assert_eq "700" "$(file_mode "${ha_dir}")" "add-on data directories are private"
   assert_eq "700" "$(file_mode "${root}/.kodi/userdata/addon_data")" "intermediate directories are private"
   assert_eq "700" "$(file_mode "${root}/.cache")" "the cache directory is private"
 }
@@ -908,9 +830,9 @@ test_a_failed_write_leaves_no_secret_temp_file() {
   payload="${dir}/payload.conf"
   write_full_payload "${payload}"
 
-  # A directory where api_keys.json belongs makes the final rename fail after
+  # A directory where settings.xml belongs makes the final rename fail after
   # the secret bytes have already been written to the temp file.
-  mkdir -p "$(addon_data_path "${root}" plugin.video.youtube)/api_keys.json"
+  mkdir -p "$(addon_data_path "${root}" weather.ha)/settings.xml"
 
   set +e
   output="$(run_transform "${root}" "${payload}" 2>&1)"
@@ -919,8 +841,8 @@ test_a_failed_write_leaves_no_secret_temp_file() {
 
   assert_failure "${status}" "an unwritable target must fail loudly"
   assert_eq "" "$(orphan_temp_files "${root}")" "a failed write must not orphan a secret temp file"
-  assert_eq "" "$(files_containing "${root}" "youtube-api-key-secret")" "no file under the root retains the secret"
-  assert_not_contains "${output}" "youtube-api-key-secret" "the failure output must not leak a secret"
+  assert_eq "" "$(files_containing "${root}" "home-assistant-token-secret")" "no file under the root retains the secret"
+  assert_not_contains "${output}" "home-assistant-token-secret" "the failure output must not leak a secret"
 }
 
 test_present_but_empty_secret_is_rejected() {
@@ -1108,11 +1030,6 @@ test_arctic_fuse_hubs_and_options_tray_are_converged() {
     <setting id="homeswitcher.1101.toggle">stale-case-variant</setting>
     <setting id="HomeSwitcher.1101.Shortcut.Target">oldplex</setting>
     <setting id="HomeSwitcher.1101.Spotlight.Path">old-spotlight</setting>
-    <setting id="HomeSwitcher.1102.Spotlight.Path">old-spotlight-2</setting>
-    <setting id="HomeSwitcher.1106.Toggle">true</setting>
-    <setting id="homeswitcher.1106.toggle">false</setting>
-    <setting id="HomeSwitcher.1106.UpNextMode">library_nextaired</setting>
-    <setting id="homeswitcher.1106.upnextmode">trakt_calendar</setting>
 </settings>
 XML
 
@@ -1133,15 +1050,6 @@ XML
   assert_eq "RunAddon(script.plexmod)" \
     "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Path")" "1101.Shortcut.Path"
 
-  assert_eq "YouTube" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" "1102.Name"
-  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Toggle")" "1102.Toggle"
-  assert_eq "special://home/addons/plugin.video.youtube/resources/media/icon.png" \
-    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Icon")" "1102.Icon"
-  assert_eq "plugin://plugin.video.youtube/" \
-    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Path")" "1102.Shortcut.Path"
-  assert_eq "videos" \
-    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Target")" "1102.Shortcut.Target"
-
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" "1107.Toggle"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" "1108.Toggle"
   assert_eq "Settings" "$(xml_setting "${skin_file}" "optionstiles.02.include")" "optionstiles.02"
@@ -1155,17 +1063,6 @@ XML
     || { printf '1101.Shortcut.Target must be absent\n' >&2; return 1; }
   skin_setting_absent "${root}" "HomeSwitcher.1101.Spotlight.Path" \
     || { printf '1101.Spotlight.Path must be absent\n' >&2; return 1; }
-  skin_setting_absent "${root}" "HomeSwitcher.1102.Spotlight.Path" \
-    || { printf '1102.Spotlight.Path must be absent\n' >&2; return 1; }
-  skin_setting_absent "${root}" "HomeSwitcher.1106.UpNextMode" \
-    || { printf '1106.UpNextMode must be absent\n' >&2; return 1; }
-
-  # Arctic Fuse renders a hub whenever its toggle string is non-empty, so the
-  # disabled state is the absence of every case-insensitive toggle node.
-  skin_setting_absent "${root}" "HomeSwitcher.1106.Toggle" \
-    || { printf '1106.Toggle must be absent\n' >&2; return 1; }
-  skin_setting_absent "${root}" "homeswitcher.1106.toggle" \
-    || { printf 'case-variant 1106.Toggle must be absent\n' >&2; return 1; }
 }
 
 # Kodi reads only the direct `<setting>` children of a skin settings root,
@@ -1185,11 +1082,10 @@ test_arctic_fuse_managed_settings_are_promoted_to_root_nodes() {
 <?xml version='1.0' encoding='UTF-8'?>
 <settings>
     <category id="hubs">
+        <setting id="HomeSwitcher.1101.Name">Old Plex</setting>
         <setting id="HomeSwitcher.1107.Toggle">false</setting>
         <setting id="homeswitcher.1108.toggle">stale-case-variant</setting>
-        <setting id="HomeSwitcher.1102.Name">Old YouTube</setting>
-        <setting id="HomeSwitcher.1106.Toggle">true</setting>
-        <setting id="homeswitcher.1106.upnextmode">library_nextaired</setting>
+        <setting id="HomeSwitcher.1101.Shortcut.Target">videos</setting>
         <setting id="unrelated.nested.keep">yes</setting>
     </category>
 </settings>
@@ -1201,24 +1097,22 @@ XML
 
   # Each managed setting converges to exactly one node, and that node is a
   # direct child of the settings root.
+  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Name")" \
+    "1101.Name is one root node"
   assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1107.Toggle")" \
     "1107.Toggle is one root node"
   assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1108.Toggle")" \
     "1108.Toggle is one root node"
-  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1102.Name")" \
-    "1102.Name is one root node"
+  assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" \
+    "promoted 1101.Name carries the managed value"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" \
     "promoted 1107.Toggle carries the managed value"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" \
     "promoted 1108.Toggle carries the managed value"
-  assert_eq "YouTube" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" \
-    "promoted 1102.Name carries the managed value"
 
   # Removed managed settings are gone from every scope.
-  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1106.Toggle")" \
-    "nested 1106.Toggle is removed everywhere"
-  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1106.UpNextMode")" \
-    "nested 1106.UpNextMode is removed everywhere"
+  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Shortcut.Target")" \
+    "nested 1101.Shortcut.Target is removed everywhere"
 
   # Unmanaged nested state is left exactly where the skin put it.
   assert_eq "1 0" "$(skin_setting_scope_counts "${root}" "unrelated.nested.keep")" \
@@ -1445,7 +1339,7 @@ test_arctic_fuse_managed_settings_carry_type_string() {
 <?xml version='1.0' encoding='UTF-8'?>
 <settings>
     <setting id="HomeSwitcher.1101.Toggle" type="bool">false</setting>
-    <setting id="HomeSwitcher.1102.Name">stale</setting>
+    <setting id="HomeSwitcher.1101.Name">stale</setting>
     <setting id="unrelated.keep" type="integer">42</setting>
 </settings>
 XML
@@ -1461,11 +1355,6 @@ XML
     "HomeSwitcher.1101.Toggle" \
     "HomeSwitcher.1101.Icon" \
     "HomeSwitcher.1101.Shortcut.Path" \
-    "HomeSwitcher.1102.Name" \
-    "HomeSwitcher.1102.Toggle" \
-    "HomeSwitcher.1102.Icon" \
-    "HomeSwitcher.1102.Shortcut.Path" \
-    "HomeSwitcher.1102.Shortcut.Target" \
     "HomeSwitcher.1107.Toggle" \
     "HomeSwitcher.1108.Toggle" \
     "optionstiles.02.include"; do
@@ -1560,8 +1449,6 @@ run_all_tests \
   test_cec_settings_file_mode_is_private \
   test_remote_backup_includes_peripheral_data \
   test_tmdb_helper_keys_go_to_tmdb_helper_only \
-  test_youtube_credentials_require_all_three_values \
-  test_youtube_api_keys_json_has_expected_shape \
   test_nextpvr_uses_instance_settings_format \
   test_home_assistant_weather_uses_flat_settings_format \
   test_weather_provider_changes_only_when_configured \

@@ -1368,7 +1368,7 @@ print_addon_selection() {
 write_selection_manifest() {
   local manifest="$1"
   {
-    printf '1\tplugin.video.youtube\t7.4.4\t1.zip\n'
+    printf '1\tscript.plexmod\t1.14.1-beta1\t1.zip\n'
     printf '2\tscript.module.requests\t2.31.0\t2.zip\n'
     printf '3\tweather.ha\t0.0.6.6\t3.zip\n'
   } > "${manifest}"
@@ -1393,9 +1393,9 @@ test_addon_selection_filters_to_requested_ids() {
   manifest="${dir}/manifest.tsv"
   write_selection_manifest "${manifest}"
 
-  output="$(print_addon_selection "${manifest}" --addon plugin.video.youtube)"
+  output="$(print_addon_selection "${manifest}" --addon script.plexmod)"
   assert_eq "1" "$(printf '%s\n' "${output}" | grep -c .)" "only the requested add-on is selected"
-  assert_contains "${output}" "plugin.video.youtube" "the requested add-on is kept"
+  assert_contains "${output}" "script.plexmod" "the requested add-on is kept"
   assert_not_contains "${output}" "weather.ha" "unrequested add-ons are dropped"
 }
 
@@ -2021,7 +2021,7 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
   PLEX_PROFILE_IDS=""
   ADDON_ARTIFACTS=()
   mkdir -p "${ARTIFACT_STAGE_DIR}"
-  printf '1\tplugin.video.youtube\t7.4.4\t1.zip\n' > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  printf '1\tscript.plexmod\t1.14.1-beta1\t1.zip\n' > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
   DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
 
   report="$(write_audit_report)"
@@ -2054,7 +2054,7 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
     "the report records the deployment state"
   assert_contains "${body}" "requested_addons=all-locked-artifacts" \
     "a default run records that the whole lock was selected"
-  assert_contains "${body}" "deployed_addon.plugin.video.youtube=7.4.4" \
+  assert_contains "${body}" "deployed_addon.script.plexmod=1.14.1-beta1" \
     "each deployed add-on is one key=value line"
 }
 

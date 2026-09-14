@@ -45,14 +45,14 @@ test_repeated_addon_artifacts_preserve_order() {
   cat > "${file}" <<'CONF'
 ADDON_ARTIFACT=plugin.service.emby-next-gen|1.0.0|https://example.test/a.zip|deadbeef
 ADDON_ARTIFACT=script.plexmod|2.0.0|https://example.test/b.zip|cafebabe
-ADDON_ARTIFACT=plugin.video.youtube|3.0.0|https://example.test/c.zip|abad1dea
+ADDON_ARTIFACT=weather.ha|3.0.0|https://example.test/c.zip|abad1dea
 CONF
   coreelec_config_defaults
   coreelec_config_load "${file}"
   assert_eq "3" "${#ADDON_ARTIFACTS[@]}" "three artifacts recorded"
   assert_contains "${ADDON_ARTIFACTS[0]}" "plugin.service.emby-next-gen" "first artifact preserved"
   assert_contains "${ADDON_ARTIFACTS[1]}" "script.plexmod" "second artifact preserved"
-  assert_contains "${ADDON_ARTIFACTS[2]}" "plugin.video.youtube" "third artifact preserved"
+  assert_contains "${ADDON_ARTIFACTS[2]}" "weather.ha" "third artifact preserved"
 }
 
 test_duplicate_scalar_key_is_rejected() {
@@ -188,17 +188,6 @@ test_target_is_not_loaded_from_shared_config() {
   assert_contains "${output}" "unknown configuration key" "TARGET is rejected as unknown"
 }
 
-test_partial_youtube_credentials_are_rejected() {
-  coreelec_config_defaults
-  local rc output
-  set +e
-  output="$(YOUTUBE_API_KEY="key" coreelec_config_validate 2>&1)"
-  rc=$?
-  set -e
-  assert_failure "${rc}" "partial YouTube credentials must be rejected"
-  assert_contains "${output}" "YOUTUBE_API_KEY" "error mentions YouTube credentials"
-}
-
 test_service_secret_without_endpoint_is_rejected() {
   coreelec_config_defaults
   local rc output
@@ -216,9 +205,8 @@ test_missing_optional_secrets_are_allowed() {
   local rc
   set +e
   (
-    unset OMDB_API_KEY MDBLIST_API_KEY YOUTUBE_API_KEY YOUTUBE_CLIENT_ID \
-      YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN \
-      EMBY_PASSWORD 2>/dev/null
+    unset OMDB_API_KEY MDBLIST_API_KEY HOME_ASSISTANT_TOKEN NEXTPVR_PIN \
+      PLEX_TOKEN EMBY_PASSWORD 2>/dev/null
     KODI_WEB_PASSWORD="configured-kodi-password"
     coreelec_config_validate
   )
@@ -353,7 +341,6 @@ inputstream.adaptive
 inputstream.ffmpegdirect
 plugin.service.emby-next-gen
 plugin.video.themoviedb.helper
-plugin.video.youtube
 pvr.nextpvr
 repository.beta.emby.kodi
 repository.dontpanic
@@ -363,7 +350,6 @@ resource.images.arctic.waves
 resource.images.moviecountryicons.maps
 resource.images.studios.white
 resource.images.weatherfanart.multi
-service.upnext
 resource.font.robotocjksc
 resource.images.studios.coloured
 resource.images.weathericons.white
@@ -430,9 +416,8 @@ test_production_config_carries_no_secret_values() {
   local rc
   set +e
   (
-    unset OMDB_API_KEY MDBLIST_API_KEY YOUTUBE_API_KEY YOUTUBE_CLIENT_ID \
-      YOUTUBE_CLIENT_SECRET HOME_ASSISTANT_TOKEN NEXTPVR_PIN PLEX_TOKEN \
-      EMBY_PASSWORD 2>/dev/null
+    unset OMDB_API_KEY MDBLIST_API_KEY HOME_ASSISTANT_TOKEN NEXTPVR_PIN \
+      PLEX_TOKEN EMBY_PASSWORD 2>/dev/null
     coreelec_config_validate
   )
   rc=$?
@@ -447,7 +432,6 @@ test_production_config_locks_primary_addon_versions() {
   coreelec_config_load "${PRODUCTION_CONFIG}"
   assert_artifact_version "plugin.service.emby-next-gen" "12.4.23"
   assert_artifact_version "script.plexmod" "1.14.1-beta1"
-  assert_artifact_version "plugin.video.youtube" "7.4.4"
   assert_artifact_version "skin.arctic.fuse.3" "3.2.16"
   assert_artifact_version "plugin.video.themoviedb.helper" "6.17.1"
   assert_artifact_version "weather.ha" "0.0.6.6"
@@ -467,7 +451,6 @@ test_production_config_locks_arctic_fuse_supported_optional_addons() {
   assert_artifact_version "resource.images.weatherfanart.multi" "0.0.6"
   assert_artifact_version "resource.images.moviecountryicons.maps" "0.0.1"
   assert_artifact_version "resource.images.studios.white" "0.0.34"
-  assert_artifact_version "service.upnext" "1.1.9+matrix.1"
   assert_artifact_version "script.module.defusedxml" "0.6.0+matrix.1"
   assert_artifact_version "script.module.future" "1.0.0+matrix.1"
 }
@@ -511,7 +494,7 @@ test_production_config_records_each_artifact_exactly_once() {
   local duplicates
   duplicates="$(artifact_id_versions | cut -f1 | LC_ALL=C sort | uniq -d)"
   assert_eq "" "${duplicates}" "no artifact ID appears twice"
-  assert_eq "42" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
+  assert_eq "40" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
 }
 
 # An artifact URL must be immutably addressed so the pinned bytes cannot be
@@ -623,7 +606,6 @@ run_all_tests \
   test_kodi_password_in_config_is_rejected_as_a_secret \
   test_cli_value_overrides_config_value \
   test_target_is_not_loaded_from_shared_config \
-  test_partial_youtube_credentials_are_rejected \
   test_service_secret_without_endpoint_is_rejected \
   test_missing_optional_secrets_are_allowed \
   test_kodi_baseline_requires_password_from_shared_environment \

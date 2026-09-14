@@ -69,7 +69,6 @@ write_manifest() {
 2	weather.ha	0.0.6.6	2.zip
 3	pvr.nextpvr	21.3.2.1	3.zip
 4	script.plexmod	1.14.1-beta1	4.zip
-5	plugin.video.youtube	7.4.4	5.zip
 6	plugin.service.emby-next-gen	12.4.23	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
 8	resource.language.en_us	11.0.82	8.zip
@@ -81,7 +80,6 @@ write_manifest() {
 14	resource.images.weatherfanart.multi	0.0.6	14.zip
 15	resource.images.moviecountryicons.maps	0.0.1	15.zip
 16	resource.images.studios.white	0.0.34	16.zip
-17	service.upnext	1.1.9+matrix.1	17.zip
 18	inputstream.adaptive	21.5.24.1	18.zip
 19	inputstream.ffmpegdirect	21.3.8.1	19.zip
 20	resource.font.robotocjksc	0.0.3	20.zip
@@ -146,10 +144,6 @@ addon.script.plexmod.installed=1
 addon.script.plexmod.version=1.14.1-beta1
 addon.script.plexmod.enabled=1
 addon.script.plexmod.enable_attempted=0
-addon.plugin.video.youtube.installed=1
-addon.plugin.video.youtube.version=7.4.4
-addon.plugin.video.youtube.enabled=1
-addon.plugin.video.youtube.enable_attempted=0
 addon.plugin.service.emby-next-gen.installed=1
 addon.plugin.service.emby-next-gen.version=12.4.23
 addon.plugin.service.emby-next-gen.enabled=1
@@ -194,10 +188,6 @@ addon.resource.images.studios.white.installed=1
 addon.resource.images.studios.white.version=0.0.34
 addon.resource.images.studios.white.enabled=1
 addon.resource.images.studios.white.enable_attempted=0
-addon.service.upnext.installed=1
-addon.service.upnext.version=1.1.9+matrix.1
-addon.service.upnext.enabled=1
-addon.service.upnext.enable_attempted=0
 addon.inputstream.adaptive.installed=1
 addon.inputstream.adaptive.version=21.5.24.1
 addon.inputstream.adaptive.enabled=1
@@ -304,11 +294,9 @@ addon_settings.script.plexmod.configured=1
 addon_settings.plugin.video.themoviedb.helper.omdb_configured=1
 addon_settings.plugin.video.themoviedb.helper.mdblist_configured=1
 arctic_fuse.hubs_configured=1
-arctic_fuse.next_aired_disabled=1
 arctic_fuse.pvr_hub_configured=1
 arctic_fuse.addons_hub_configured=1
 arctic_fuse.plex_entry_configured=1
-arctic_fuse.youtube_entry_configured=1
 arctic_fuse.settings_tile_configured=1
 arctic_fuse.home_widgets_configured=1
 arctic_fuse.power_menu_configured=1
@@ -394,13 +382,13 @@ test_all_expected_addon_versions_are_verified() {
   set -e
   assert_success "${rc}" "a matching device must verify" || return 1
   assert_contains "${output}" "verification_result=pass" "result line present" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.requested_version=7.4.4" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.requested_version=12.4.23" \
     "requested version is reported" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.observed_version=7.4.4" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.observed_version=12.4.23" \
     "observed version is reported" || return 1
   assert_contains "${output}" "addon.script.plexmod.observed_version=1.14.1-beta1" \
     "pre-release version round-trips" || return 1
-  assert_eq "42" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
+  assert_eq "40" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
     "every manifest add-on is verified" || return 1
 }
 
@@ -414,7 +402,7 @@ test_disabled_addon_is_failure() {
   write_configured_config "${config}"
   write_manifest "${manifest}"
   write_pass_observations "${observations}"
-  set_observation "${observations}" "addon.plugin.video.youtube.enabled" "0"
+  set_observation "${observations}" "addon.plugin.service.emby-next-gen.enabled" "0"
 
   set +e
   output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
@@ -422,9 +410,9 @@ test_disabled_addon_is_failure() {
   rc=$?
   set -e
   assert_failure "${rc}" "an installed-but-disabled add-on must fail verification" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.enabled=0" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.enabled=0" \
     "the disabled state is reported" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.verification=mismatch" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.verification=mismatch" \
     "the add-on is marked mismatched" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
 }
@@ -441,12 +429,12 @@ test_unresolved_enables_are_named_in_the_report() {
   write_configured_config "${config}"
   write_manifest "${manifest}"
   write_pass_observations "${observations}"
-  set_observation "${observations}" "addon.plugin.video.youtube.enabled" "0"
-  set_observation "${observations}" "addon.plugin.video.youtube.enable_attempted" "1"
+  set_observation "${observations}" "addon.plugin.service.emby-next-gen.enabled" "0"
+  set_observation "${observations}" "addon.plugin.service.emby-next-gen.enable_attempted" "1"
   set_observation "${observations}" "addon.script.plexmod.enabled" "0"
   set_observation "${observations}" "addon.script.plexmod.enable_attempted" "1"
   set_observation "${observations}" "addon_enable_unresolved" \
-    "plugin.video.youtube script.plexmod"
+    "plugin.service.emby-next-gen script.plexmod"
 
   set +e
   output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
@@ -454,7 +442,7 @@ test_unresolved_enables_are_named_in_the_report() {
   rc=$?
   set -e
   assert_failure "${rc}" "an add-on that could not be enabled must fail verification" || return 1
-  assert_contains "${output}" "addon_enable_unresolved=plugin.video.youtube script.plexmod" \
+  assert_contains "${output}" "addon_enable_unresolved=plugin.service.emby-next-gen script.plexmod" \
     "the exact unresolved add-ons are named" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
 }
@@ -905,7 +893,7 @@ test_selected_subset_verifies_only_the_selected_addons() {
 MANIFEST
   # An add-on outside the selection is disabled on the device; that is not
   # this run's deployment set and must not fail it.
-  set_observation "${observations}" "addon.plugin.video.youtube.enabled" "0"
+  set_observation "${observations}" "addon.plugin.service.emby-next-gen.enabled" "0"
 
   set +e
   output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
@@ -914,13 +902,13 @@ MANIFEST
   assert_success "${rc}" "only the selected deployment set is verified" || return 1
   assert_contains "${output}" "addon.skin.arctic.fuse.3.verification=ok" \
     "selected add-on verified" || return 1
-  assert_not_contains "${output}" "addon.plugin.video.youtube.verification" \
+  assert_not_contains "${output}" "addon.plugin.service.emby-next-gen.verification" \
     "an unselected add-on is not verified" || return 1
 }
 
 # --- Add-on status classification -------------------------------------------
 
-test_emby_and_youtube_are_classified_manual() {
+test_emby_is_classified_manual() {
   local dir config
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
@@ -930,11 +918,6 @@ test_emby_and_youtube_are_classified_manual() {
   assert_eq "installed-manual" \
     "$(run_classify "${config}" plugin.service.emby-next-gen)" \
     "Emby always needs interactive server/user login" || return 1
-  # Personal OAuth keys still leave Google device authorization interactive.
-  assert_eq "installed-manual" \
-    "$(YOUTUBE_API_KEY=k YOUTUBE_CLIENT_ID=i YOUTUBE_CLIENT_SECRET=s \
-       run_classify "${config}" plugin.video.youtube)" \
-    "YouTube always needs device authorization" || return 1
 }
 
 test_configured_nextpvr_ha_and_pm4k_are_classified_configured() {
@@ -1015,8 +998,8 @@ test_report_lists_secret_presence_without_secret_values() {
     "NextPVR PIN presence reported" || return 1
   assert_eq "0" "$(report_line "${report}" secret_present.OMDB_API_KEY)" \
     "an absent secret is reported absent" || return 1
-  assert_eq "0" "$(report_line "${report}" secret_present.YOUTUBE_API_KEY)" \
-    "absent YouTube credentials reported absent" || return 1
+  assert_eq "0" "$(report_line "${report}" secret_present.MDBLIST_API_KEY)" \
+    "an absent MDbList key is reported absent" || return 1
   assert_not_contains "$(cat "${report}")" "ha-token-value" "no token literal" || return 1
   assert_not_contains "$(cat "${report}")" "pin-value" "no PIN literal" || return 1
   assert_not_contains "$(cat "${report}")" "plex-token-value" "no Plex token literal" || return 1
@@ -1143,19 +1126,12 @@ test_report_lists_manual_actions_in_order() {
   report="$(run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
   actions="$(grep '^manual_action\.' "${report}")"
   assert_contains "${actions}" "manual_action.1=Emby" "Emby login is first" || return 1
-  assert_contains "${actions}" "manual_action.2=YouTube" "YouTube authorization is second" || return 1
-  assert_contains "${actions}" "manual_action.3=Plex" "Plex linking is listed" || return 1
-  assert_contains "${actions}" "manual_action.4=NextPVR" "NextPVR setup is listed" || return 1
-  assert_contains "${actions}" "manual_action.5=Home Assistant Weather" \
+  assert_contains "${actions}" "manual_action.2=Plex" "Plex linking is listed" || return 1
+  assert_contains "${actions}" "manual_action.3=NextPVR" "NextPVR setup is listed" || return 1
+  assert_contains "${actions}" "manual_action.4=Home Assistant Weather" \
     "Home Assistant Weather setup is listed" || return 1
-  assert_eq "5" "$(report_line "${report}" manual_actions)" \
+  assert_eq "4" "$(report_line "${report}" manual_actions)" \
     "only real manual steps are counted" || return 1
-  assert_not_contains "${actions}" "Next Aired" \
-    "the Next Aired explanation is not a manual action" || return 1
-  # It is a fact about the deployed state, so it is reported as one.
-  assert_contains "$(cat "${report}")" \
-    "next_aired_note=Next Aired is disabled because the installed TMDb Helper requires Trakt OAuth and the local-data alternative is not reliable on this device class." \
-    "the Next Aired resolution is reported as information" || return 1
 
   # Configured integrations drop out; the always-manual ones remain.
   write_configured_config "${config}"
@@ -1163,15 +1139,12 @@ test_report_lists_manual_actions_in_order() {
     run_report "${config}" "${dir}/out2" "${observations}" "${manifest}")"
   actions="$(grep '^manual_action\.' "${report}")"
   assert_contains "${actions}" "manual_action.1=Emby" "Emby stays manual" || return 1
-  assert_contains "${actions}" "manual_action.2=YouTube" "YouTube stays manual" || return 1
   assert_not_contains "${actions}" "=Plex" "configured PM4K needs no manual Plex step" || return 1
   assert_not_contains "${actions}" "=NextPVR" "configured NextPVR needs no manual step" || return 1
   assert_not_contains "${actions}" "=Home Assistant Weather" \
     "configured weather needs no manual step" || return 1
-  assert_eq "2" "$(report_line "${report}" manual_actions)" \
+  assert_eq "1" "$(report_line "${report}" manual_actions)" \
     "manual action numbering stays contiguous" || return 1
-  assert_contains "$(cat "${report}")" "next_aired_note=Next Aired is disabled" \
-    "the informational note is independent of the manual actions" || return 1
 }
 
 # A test that isolates itself from ambient operator secrets must not leave the
@@ -1638,12 +1611,12 @@ with open(sys.argv[1], "w") as handle:
 
 # Builds a JSON-RPC batch response for the fixed probe request set.
 write_jsonrpc_response() {
-  local file="$1" youtube_enabled="$2"
-  python3 - "${file}" "${youtube_enabled}" <<'PYEOF'
+  local file="$1" pm4k_enabled="$2"
+  python3 - "${file}" "${pm4k_enabled}" <<'PYEOF'
 import json
 import sys
 
-path, youtube_enabled = sys.argv[1], sys.argv[2] == "true"
+path, pm4k_enabled = sys.argv[1], sys.argv[2] == "true"
 settings = {
     "locale.language": "resource.language.en_us",
     "locale.country": "USA (12h)",
@@ -1660,10 +1633,10 @@ for setting_id, value in settings.items():
 batch.append({"jsonrpc": "2.0", "id": "addon:weather.ha",
               "result": {"addon": {"addonid": "weather.ha", "enabled": True,
                                    "version": "0.0.6.6"}}})
-batch.append({"jsonrpc": "2.0", "id": "addon:plugin.video.youtube",
-              "result": {"addon": {"addonid": "plugin.video.youtube",
-                                   "enabled": youtube_enabled,
-                                   "version": "7.4.4"}}})
+batch.append({"jsonrpc": "2.0", "id": "addon:plugin.service.emby-next-gen",
+              "result": {"addon": {"addonid": "plugin.service.emby-next-gen",
+                                   "enabled": pm4k_enabled,
+                                   "version": "12.4.23"}}})
 batch.append({"jsonrpc": "2.0", "id": "addon:script.missing",
               "error": {"code": -32602, "message": "Invalid params."}})
 with open(path, "w") as handle:
@@ -2069,13 +2042,13 @@ KODI_WEB_USER=homeassistant
 KODI_WEB_PASSWORD=kodi-web-password-secret
 KODI_PORT=8080
 JSONRPC_ATTEMPTS=1
-ADDON_IDS=plugin.video.youtube
+ADDON_IDS=plugin.service.emby-next-gen
 TIMEZONE=America/Los_Angeles
 ENTRIES
   # First query: installed but disabled. After SetAddonEnabled, the re-query
   # reports it enabled.
   write_jsonrpc_response "${dir}/stub/response-1.json" false
-  printf '[{"jsonrpc":"2.0","id":"enable:plugin.video.youtube","result":"OK"}]\n' \
+  printf '[{"jsonrpc":"2.0","id":"enable:plugin.service.emby-next-gen","result":"OK"}]\n' \
     > "${dir}/stub/response-2.json"
   write_jsonrpc_response "${dir}/stub/response-3.json" true
   write_jsonrpc_response "${dir}/stub/response-default.json" true
@@ -2085,9 +2058,9 @@ ENTRIES
   assert_contains "${requests}" "Addons.SetAddonEnabled" \
     "a disabled add-on is enabled over JSON-RPC" || return 1
   assert_not_contains "${requests}" "EnableAddon" "no modal dialog is used" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.enabled=1" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.enabled=1" \
     "the re-query observes the enabled state" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.enable_attempted=1" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.enable_attempted=1" \
     "the enable attempt is recorded" || return 1
   assert_eq "3" "$(cat "${dir}/stub/call-count")" "query, enable, re-query" || return 1
 }
@@ -2106,7 +2079,7 @@ test_remote_verify_probe_converges_on_dependency_ordered_enables() {
   bin_dir="$(install_kodi_addon_state_stub "${dir}")"
   request="${dir}/request.conf"
   write_stub_addons "${dir}/stub/addons.json" <<'ADDONS'
-plugin.video.youtube|7.4.4|script.module.requests
+plugin.service.emby-next-gen|12.4.23|script.module.requests
 script.module.requests|2.31.0|script.module.certifi
 script.module.certifi|2023.5.7|
 ADDONS
@@ -2116,7 +2089,7 @@ KODI_WEB_USER=homeassistant
 KODI_WEB_PASSWORD=kodi-web-password-secret
 KODI_PORT=8080
 JSONRPC_ATTEMPTS=1
-ADDON_IDS=plugin.video.youtube\nscript.module.requests\nscript.module.certifi
+ADDON_IDS=plugin.service.emby-next-gen\nscript.module.requests\nscript.module.certifi
 TIMEZONE=America/Los_Angeles
 ENTRIES
   install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
@@ -2126,9 +2099,9 @@ ENTRIES
     "the leaf dependency is enabled" || return 1
   assert_contains "${output}" "addon.script.module.requests.enabled=1" \
     "a dependency enabled in an earlier pass lets its dependent enable" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.enabled=1" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.enabled=1" \
     "the probe keeps asking until the dependent is enabled too" || return 1
-  assert_contains "${output}" "addon.plugin.video.youtube.enable_attempted=1" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.enable_attempted=1" \
     "the enable attempt is recorded" || return 1
   assert_contains "${output}" "addon.script.module.certifi.enable_attempted=1" \
     "an add-on attempted in an earlier round keeps its attempt recorded" || return 1
@@ -2310,11 +2283,6 @@ make_arctic_fuse_fixture_root() {
     <setting id="HomeSwitcher.1101.Toggle">true</setting>
     <setting id="HomeSwitcher.1101.Icon">special://home/addons/script.plexmod/icon2.png</setting>
     <setting id="HomeSwitcher.1101.Shortcut.Path">RunAddon(script.plexmod)</setting>
-    <setting id="HomeSwitcher.1102.Name">YouTube</setting>
-    <setting id="HomeSwitcher.1102.Toggle">true</setting>
-    <setting id="HomeSwitcher.1102.Icon">special://home/addons/plugin.video.youtube/resources/media/icon.png</setting>
-    <setting id="HomeSwitcher.1102.Shortcut.Path">plugin://plugin.video.youtube/</setting>
-    <setting id="HomeSwitcher.1102.Shortcut.Target">videos</setting>
     <setting id="HomeSwitcher.1107.Toggle">true</setting>
     <setting id="HomeSwitcher.1108.Toggle">true</setting>
     <setting id="optionstiles.02.include">Settings</setting>
@@ -2413,7 +2381,6 @@ test_probe_arctic_fuse_valid_baseline_emits_all_ones() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.hubs_configured=1" "hubs ok" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry_configured=1" "plex ok" || return 1
-  assert_contains "${output}" "arctic_fuse.youtube_entry_configured=1" "youtube ok" || return 1
   assert_contains "${output}" "arctic_fuse.settings_tile_configured=1" "settings tile ok" || return 1
   assert_contains "${output}" "arctic_fuse.home_widgets_configured=1" "home widgets ok" || return 1
   assert_contains "${output}" "arctic_fuse.power_menu_configured=1" "power menu ok" || return 1
@@ -2451,288 +2418,6 @@ test_probe_malformed_skin_xml_emits_zero() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.hubs_configured=0" "malformed XML → hubs 0" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" "malformed XML → plex 0" || return 1
-}
-
-test_probe_enabled_next_aired_toggle_emits_zero() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "HomeSwitcher.1106.Toggle", "type": "bool"},
-).text = "true"
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
-    "enabled Next Aired toggle → hubs 0" || return 1
-}
-
-# Arctic Fuse renders a hub whenever Skin.String(HomeSwitcher.1106.Toggle) is
-# non-empty, so the literal string "false" still shows Next Aired.
-test_probe_false_next_aired_toggle_emits_zero() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "HomeSwitcher.1106.Toggle", "type": "string"},
-).text = "false"
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
-    "non-empty false Next Aired toggle → hubs 0" || return 1
-}
-
-test_probe_bool_false_next_aired_toggle_emits_one() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "homeswitcher.1106.toggle", "type": "bool"},
-).text = "false"
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "HomeSwitcher.1106.Toggle", "type": "string"},
-)
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
-    "bool-false and empty string Next Aired placeholders → hubs 1" || return 1
-}
-
-test_probe_empty_next_aired_toggle_placeholder_emits_one() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "homeswitcher.1106.toggle", "type": "string"},
-)
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
-    "empty Next Aired toggle placeholder → hubs 1" || return 1
-}
-
-test_probe_empty_next_aired_toggle_does_not_mask_stale_variant() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "homeswitcher.1106.toggle", "type": "string"},
-)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "HomeSwitcher.1106.Toggle", "type": "string"},
-).text = "disabled"
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
-    "empty toggle cannot mask arbitrary stale case variant → hubs 0" || return 1
-}
-
-test_probe_duplicate_next_aired_toggle_emits_zero() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "HomeSwitcher.1106.Toggle", "type": "string"},
-).text = "true"
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "homeswitcher.1106.toggle", "type": "bool"},
-).text = "true"
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
-    "duplicate Next Aired toggle → hubs 0" || return 1
-}
-
-test_probe_stale_next_aired_mode_emits_zero() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "HomeSwitcher.1106.UpNextMode"},
-).text = "library_nextaired"
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
-    "stale Next Aired mode → hubs 0" || return 1
-}
-
-test_probe_empty_next_aired_mode_placeholder_emits_one() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "homeswitcher.1106.UpNextMode", "type": "string"},
-)
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
-    "empty Next Aired mode placeholder → hubs 1" || return 1
-}
-
-test_probe_bool_empty_next_aired_mode_emits_zero() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "homeswitcher.1106.upnextmode", "type": "bool"},
-)
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
-    "bool-typed empty Next Aired mode → hubs 0" || return 1
-}
-
-test_probe_empty_next_aired_mode_does_not_mask_stale_variant() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  python3 - "${skin_file}" <<'PYEOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "HomeSwitcher.1106.UpNextMode", "type": "string"},
-)
-ET.SubElement(
-    tree.getroot(),
-    "setting",
-    {"id": "homeswitcher.1106.upnextmode", "type": "string"},
-).text = "library_nextaired"
-tree.write(path, encoding="UTF-8", xml_declaration=True)
-PYEOF
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
-    "empty mode cannot mask stale case variant → hubs 0" || return 1
 }
 
 # --- Managed skin settings: case-insensitive exact state --------------------
@@ -2845,21 +2530,6 @@ test_probe_case_variant_stale_plex_shortcut_target_emits_zero() {
     "a case-variant stale Plex shortcut target → plex entry 0" || return 1
 }
 
-test_probe_case_variant_youtube_name_duplicate_emits_zero() {
-  local dir root bin_dir output skin_file
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  append_skin_setting_node "${skin_file}" "homeswitcher.1102.name" "string" \
-    "YouTube Kids"
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.youtube_entry_configured=0" \
-    "a case-variant YouTube name duplicate → youtube entry 0" || return 1
-}
-
 test_probe_case_variant_settings_tile_duplicate_emits_zero() {
   local dir root bin_dir output skin_file
   dir="$(make_scratch_dir)"
@@ -2903,8 +2573,6 @@ test_probe_reports_each_hub_observation_independently() {
   skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.next_aired_disabled=1" \
-    "baseline Next Aired is disabled" || return 1
   assert_contains "${output}" "arctic_fuse.pvr_hub_configured=1" \
     "baseline PVR hub is enabled" || return 1
   assert_contains "${output}" "arctic_fuse.addons_hub_configured=1" \
@@ -2912,15 +2580,13 @@ test_probe_reports_each_hub_observation_independently() {
   assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
     "baseline aggregate hub verdict" || return 1
 
-  # Only Next Aired is wrong: the two enabled hubs still report separately.
-  append_skin_setting_node "${skin_file}" "HomeSwitcher.1106.Toggle" "string" "true"
+  # Only PVR is wrong: the Add-ons hub still reports separately.
+  append_skin_setting_node "${skin_file}" "homeswitcher.1107.toggle" "string" ""
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.next_aired_disabled=0" \
-    "a rendered Next Aired hub is named on its own line" || return 1
-  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=1" \
-    "PVR stays ok while Next Aired fails" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=0" \
+    "a rendered PVR mismatch is named on its own line" || return 1
   assert_contains "${output}" "arctic_fuse.addons_hub_configured=1" \
-    "Add-ons stays ok while Next Aired fails" || return 1
+    "Add-ons stays ok while PVR fails" || return 1
   assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
     "the aggregate hub verdict still fails" || return 1
 }
@@ -3142,7 +2808,6 @@ test_arctic_fuse_complete_state_verifies() {
   assert_contains "${output}" "arctic_fuse.home.status=ok" "home status" || return 1
   assert_contains "${output}" "arctic_fuse.power.status=ok" "power status" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry.status=ok" "plex entry status" || return 1
-  assert_contains "${output}" "arctic_fuse.youtube_entry.status=ok" "youtube entry status" || return 1
   assert_contains "${output}" "metadata.omdb.status=ok" "omdb status" || return 1
   assert_contains "${output}" "metadata.mdblist.status=ok" "mdblist status" || return 1
 }
@@ -3226,8 +2891,6 @@ test_arctic_fuse_split_hub_statuses_name_the_failing_hub() {
   rc=$?
   set -e
   assert_success "${rc}" "a complete hub state verifies" || return 1
-  assert_contains "${output}" "arctic_fuse.next_aired_hub.status=ok" \
-    "the Next Aired hub has its own status" || return 1
   assert_contains "${output}" "arctic_fuse.pvr_hub.status=ok" \
     "the PVR hub has its own status" || return 1
   assert_contains "${output}" "arctic_fuse.addons_hub.status=ok" \
@@ -3242,8 +2905,6 @@ test_arctic_fuse_split_hub_statuses_name_the_failing_hub() {
   assert_failure "${rc}" "a PVR hub mismatch must fail verification" || return 1
   assert_contains "${output}" "arctic_fuse.pvr_hub.status=mismatch" \
     "the PVR hub is identified as the failure" || return 1
-  assert_contains "${output}" "arctic_fuse.next_aired_hub.status=ok" \
-    "Next Aired stays ok while PVR fails" || return 1
   assert_contains "${output}" "arctic_fuse.addons_hub.status=ok" \
     "Add-ons stays ok while PVR fails" || return 1
   assert_contains "${output}" "arctic_fuse.status=mismatch" \
@@ -3268,26 +2929,6 @@ test_arctic_fuse_plex_entry_mismatch_fails_verification() {
   set -e
   assert_failure "${rc}" "a Plex entry mismatch must fail verification" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry.status=mismatch" "plex entry mismatch" || return 1
-}
-
-test_arctic_fuse_youtube_entry_mismatch_fails_verification() {
-  local dir config manifest observations output rc
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  config="${dir}/provision.conf"
-  manifest="${dir}/deploy.tsv"
-  observations="${dir}/observations.conf"
-  write_configured_config "${config}"
-  write_manifest "${manifest}"
-  write_pass_observations "${observations}"
-  set_observation "${observations}" "arctic_fuse.youtube_entry_configured" "0"
-
-  set +e
-  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
-  rc=$?
-  set -e
-  assert_failure "${rc}" "a YouTube entry mismatch must fail verification" || return 1
-  assert_contains "${output}" "arctic_fuse.youtube_entry.status=mismatch" "youtube entry mismatch" || return 1
 }
 
 test_arctic_fuse_home_widget_order_mismatch_fails_verification() {
@@ -3478,7 +3119,6 @@ test_report_names_every_arctic_fuse_surface() {
   assert_contains "$(cat "${report}")" "arctic_fuse.home.status=ok" "home status" || return 1
   assert_contains "$(cat "${report}")" "arctic_fuse.power.status=ok" "power status" || return 1
   assert_contains "$(cat "${report}")" "arctic_fuse.plex_entry.status=ok" "plex entry" || return 1
-  assert_contains "$(cat "${report}")" "arctic_fuse.youtube_entry.status=ok" "youtube entry" || return 1
   assert_contains "$(cat "${report}")" "metadata.omdb.status=ok" "omdb" || return 1
   assert_contains "$(cat "${report}")" "metadata.mdblist.status=ok" "mdblist" || return 1
 }
@@ -3535,7 +3175,7 @@ run_all_tests \
   test_unreadable_manifest_rolls_back_the_deployment \
   test_english_us_values_are_verified \
   test_selected_subset_verifies_only_the_selected_addons \
-  test_emby_and_youtube_are_classified_manual \
+  test_emby_is_classified_manual \
   test_configured_nextpvr_ha_and_pm4k_are_classified_configured \
   test_missing_optional_values_are_classified_unconfigured \
   test_report_lists_secret_presence_without_secret_values \
@@ -3572,21 +3212,10 @@ run_all_tests \
   test_probe_arctic_fuse_valid_baseline_emits_all_ones \
   test_probe_missing_skin_settings_emits_zero \
   test_probe_malformed_skin_xml_emits_zero \
-  test_probe_enabled_next_aired_toggle_emits_zero \
-  test_probe_false_next_aired_toggle_emits_zero \
-  test_probe_bool_false_next_aired_toggle_emits_one \
-  test_probe_empty_next_aired_toggle_placeholder_emits_one \
-  test_probe_empty_next_aired_toggle_does_not_mask_stale_variant \
-  test_probe_duplicate_next_aired_toggle_emits_zero \
-  test_probe_stale_next_aired_mode_emits_zero \
-  test_probe_empty_next_aired_mode_placeholder_emits_one \
-  test_probe_bool_empty_next_aired_mode_emits_zero \
-  test_probe_empty_next_aired_mode_does_not_mask_stale_variant \
   test_probe_case_variant_pvr_toggle_duplicate_emits_zero \
   test_probe_case_variant_addons_toggle_duplicate_emits_zero \
   test_probe_case_variant_plex_shortcut_duplicate_emits_zero \
   test_probe_case_variant_stale_plex_shortcut_target_emits_zero \
-  test_probe_case_variant_youtube_name_duplicate_emits_zero \
   test_probe_case_variant_settings_tile_duplicate_emits_zero \
   test_probe_managed_setting_only_inside_a_category_emits_zero \
   test_probe_reports_each_hub_observation_independently \
@@ -3608,7 +3237,6 @@ run_all_tests \
   test_arctic_fuse_hub_mismatch_fails_verification \
   test_arctic_fuse_split_hub_statuses_name_the_failing_hub \
   test_arctic_fuse_plex_entry_mismatch_fails_verification \
-  test_arctic_fuse_youtube_entry_mismatch_fails_verification \
   test_arctic_fuse_home_widget_order_mismatch_fails_verification \
   test_comparator_settings_tile_zero_fails_verification \
   test_arctic_fuse_power_action_mismatch_fails_verification \

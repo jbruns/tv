@@ -46,6 +46,10 @@ For unique settings, use the selected room's Ugoos guide, such as the current
    ```
 
 9. Review the redacted report and resolve any rollback before continuing.
+   When applying a reduced add-on baseline to an existing installation,
+   uninstall add-ons no longer present in the artifact lock and remove their
+   saved add-on data first. The provisioner installs and replaces selected
+   artifacts but does not remove add-ons omitted from the lock.
 10. Run:
 
     ```bash
@@ -58,7 +62,6 @@ For unique settings, use the selected room's Ugoos guide, such as the current
     ```bash
     ./configure-coreelec-addons.sh --target <hostname-or-IP> --interactive \
       --addon script.plexmod \
-      --addon plugin.video.youtube \
       --addon plugin.service.emby-next-gen
     ```
 

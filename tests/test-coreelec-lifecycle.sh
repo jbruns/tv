@@ -598,7 +598,10 @@ test_wrapper_never_uses_eval() {
   trap 'rm -rf -- "${dir}"' RETURN
   systemctl="$(install_lifecycle_systemctl_fixture "${dir}")"
   source="$(coreelec_lifecycle_render_wrapper "${systemctl}")"
-  assert_not_contains "${source}" "eval" "the rendered wrapper must never use eval"
+  if grep -Eq '(^|[[:space:];|&])eval([[:space:];|&]|$)' <<<"${source}"; then
+    printf 'the rendered wrapper must never execute eval\n' >&2
+    return 1
+  fi
 }
 
 # --- Task 3: CLI parsing, help, and dry-run -----------------------------
@@ -632,7 +635,8 @@ STUB
   report_dir="${dir}/reports"
 
   set +e
-  output="$(PATH="${bogus_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
+  output="$(UGOOS_ENV_FILE="${dir}/must-not-exist.env" \
+    PATH="${bogus_bin}:${PATH}" "${CONFIGURE_KODI_LIFECYCLE_CLI}" \
     --target 127.0.0.1 \
     --controller-public-key "${dir}/controller.pub" \
     --controller-identity "${dir}/controller" \

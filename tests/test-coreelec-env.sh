@@ -107,7 +107,7 @@ test_env_loader_does_not_fall_back_to_ambient_secrets() {
   assert_eq "" "${KODI_WEB_PASSWORD}" "the shared file is the authoritative secret source"
 }
 
-test_all_ugoos_entry_points_require_the_shared_environment_file() {
+test_secret_consuming_entry_points_require_the_shared_environment_file() {
   local dir script output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
@@ -115,8 +115,7 @@ test_all_ugoos_entry_points_require_the_shared_environment_file() {
 
   for script in \
     provision-coreelec.sh \
-    configure-coreelec-addons.sh \
-    configure-kodi-lifecycle.sh; do
+    configure-coreelec-addons.sh; do
     set +e
     output="$(cd "${dir}" && bash "./${script}" 2>&1)"
     rc=$?
@@ -157,5 +156,5 @@ run_all_tests \
   test_env_loader_preserves_existing_allexport_mode \
   test_env_loader_does_not_override_non_secret_script_state \
   test_env_loader_does_not_fall_back_to_ambient_secrets \
-  test_all_ugoos_entry_points_require_the_shared_environment_file \
+  test_secret_consuming_entry_points_require_the_shared_environment_file \
   test_addon_cli_loads_the_repository_environment_file

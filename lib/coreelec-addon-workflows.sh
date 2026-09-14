@@ -20,7 +20,6 @@ coreelec_postdeploy_supported_addons() {
 weather.ha
 pvr.nextpvr
 script.plexmod
-plugin.video.youtube
 plugin.service.emby-next-gen
 ADDONS
 }
@@ -44,7 +43,7 @@ coreelec_postdeploy_addon_interaction_level() {
     script.plexmod)
       printf 'fully-unattended / guided (--interactive)\n'
       ;;
-    plugin.video.youtube|plugin.service.emby-next-gen)
+    plugin.service.emby-next-gen)
       printf 'guided (--interactive)\n'
       ;;
     *)
@@ -58,9 +57,6 @@ coreelec_postdeploy_secret_names() {
 KODI_WEB_PASSWORD
 OMDB_API_KEY
 MDBLIST_API_KEY
-YOUTUBE_API_KEY
-YOUTUBE_CLIENT_ID
-YOUTUBE_CLIENT_SECRET
 HOME_ASSISTANT_TOKEN
 NEXTPVR_PIN
 PLEX_TOKEN
@@ -73,9 +69,6 @@ coreelec_postdeploy_secret_value() {
     KODI_WEB_PASSWORD) printf '%s' "${KODI_WEB_PASSWORD:-}" ;;
     OMDB_API_KEY) printf '%s' "${OMDB_API_KEY:-}" ;;
     MDBLIST_API_KEY) printf '%s' "${MDBLIST_API_KEY:-}" ;;
-    YOUTUBE_API_KEY) printf '%s' "${YOUTUBE_API_KEY:-}" ;;
-    YOUTUBE_CLIENT_ID) printf '%s' "${YOUTUBE_CLIENT_ID:-}" ;;
-    YOUTUBE_CLIENT_SECRET) printf '%s' "${YOUTUBE_CLIENT_SECRET:-}" ;;
     HOME_ASSISTANT_TOKEN) printf '%s' "${HOME_ASSISTANT_TOKEN:-}" ;;
     NEXTPVR_PIN) printf '%s' "${NEXTPVR_PIN:-}" ;;
     PLEX_TOKEN) printf '%s' "${PLEX_TOKEN:-}" ;;
@@ -408,41 +401,6 @@ sys.stdout.write("1" if token else "0")
 PYEOF
 }
 
-coreelec_postdeploy_youtube_token_present() {
-  local access_manager_json
-  access_manager_json="$(coreelec_postdeploy_read_addon_data_file "plugin.video.youtube" "access_manager.json")" || return 1
-  ACCESS_MANAGER_JSON="${access_manager_json}" python3 - <<'PYEOF'
-import json
-import os
-import sys
-
-text = os.environ.get("ACCESS_MANAGER_JSON", "")
-if not text.strip():
-    sys.stdout.write("0")
-    raise SystemExit(0)
-
-try:
-    payload = json.loads(text)
-except Exception:
-    raise SystemExit(1)
-
-def has_token(value):
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if key in ("access_token", "refresh_token") and isinstance(item, str) and item.strip():
-                return True
-            if has_token(item):
-                return True
-    elif isinstance(value, list):
-        for item in value:
-            if has_token(item):
-                return True
-    return False
-
-sys.stdout.write("1" if has_token(payload) else "0")
-PYEOF
-}
-
 coreelec_postdeploy_guided_timeout_seconds() {
   local value="${COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS:-300}"
   case "${value}" in
@@ -468,14 +426,6 @@ coreelec_postdeploy_guided_poll_limit() {
     divisor=1
   fi
   printf '%s\n' "$((timeout_seconds / divisor + 1))"
-}
-
-coreelec_postdeploy_gui_state_matches() {
-  local expected_window expected_control
-  expected_window="$(coreelec_trim_surrounding_whitespace "$1")"
-  expected_control="$(coreelec_trim_surrounding_whitespace "$2")"
-  capture_gui_state || return 1
-  [[ "${KODI_GUI_WINDOW_LABEL}" == "${expected_window}" && "${KODI_GUI_CONTROL_LABEL}" == "${expected_control}" ]]
 }
 
 coreelec_postdeploy_gui_control_matches() {
@@ -579,73 +529,6 @@ authorize_pm4k_account() {
   done
 
   coreelec_postdeploy_observe "service.script.plexmod.failure" "timeout"
-  printf 'manual-required\n'
-}
-
-authorize_youtube() {
-  local token_present launch_response attempts attempt interval_seconds intro_dismissed=0
-  coreelec_postdeploy_require_pinned_addon_version "plugin.video.youtube" "service.plugin.video.youtube" || {
-    printf 'manual-required\n'
-    return 0
-  }
-
-  token_present="$(coreelec_postdeploy_youtube_token_present 2>/dev/null || true)"
-  if [[ ! "${token_present}" =~ ^[01]$ ]]; then
-    coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "token-state-unreadable"
-    printf 'manual-required\n'
-    return 0
-  fi
-  coreelec_postdeploy_guided_observe_token_state "service.plugin.video.youtube.account_token_present" "${token_present}"
-  if [[ "${token_present}" == "1" ]]; then
-    printf 'already-configured\n'
-    return 0
-  fi
-
-  launch_response="$(kodi_rpc "GUI.ActivateWindow" '{"window":"videos","parameters":["plugin://plugin.video.youtube/sign/in/"]}')" || {
-    coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "kodi-rpc"
-    printf 'manual-required\n'
-    return 0
-  }
-  if ! coreelec_postdeploy_kodi_call_ok "${launch_response}"; then
-    coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "kodi-rpc"
-    printf 'manual-required\n'
-    return 0
-  fi
-  coreelec_postdeploy_observe "service.plugin.video.youtube.kodi_activate" "ok"
-  coreelec_postdeploy_observe "service.plugin.video.youtube.note" "multiple-google-codes-possible-in-7.4.4"
-
-  attempts="$(coreelec_postdeploy_guided_poll_limit)"
-  interval_seconds="$(coreelec_postdeploy_guided_poll_interval_seconds)"
-  for ((attempt = 1; attempt <= attempts; attempt++)); do
-    if (( intro_dismissed == 0 )) \
-      && coreelec_postdeploy_gui_state_matches "Please sign in and complete all access authorisation prompts" "OK"; then
-      if ! coreelec_postdeploy_guided_select; then
-        coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "kodi-rpc"
-        printf 'manual-required\n'
-        return 0
-      fi
-      coreelec_postdeploy_observe "service.plugin.video.youtube.intro_dialog" "dismissed"
-      intro_dismissed=1
-    fi
-
-    token_present="$(coreelec_postdeploy_youtube_token_present 2>/dev/null || true)"
-    if [[ ! "${token_present}" =~ ^[01]$ ]]; then
-      coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "token-state-unreadable"
-      printf 'manual-required\n'
-      return 0
-    fi
-    coreelec_postdeploy_guided_observe_token_state "service.plugin.video.youtube.account_token_present" "${token_present}"
-    if [[ "${token_present}" == "1" ]]; then
-      printf 'configured\n'
-      return 0
-    fi
-
-    if (( attempt < attempts && interval_seconds > 0 )); then
-      sleep "${interval_seconds}"
-    fi
-  done
-
-  coreelec_postdeploy_observe "service.plugin.video.youtube.failure" "timeout"
   printf 'manual-required\n'
 }
 
@@ -1561,13 +1444,6 @@ run_addon_workflow() {
         check_pm4k_local
       elif [[ "${INTERACTIVE:-0}" == "1" ]]; then
         authorize_pm4k_account
-      else
-        printf 'authorization-required\n'
-      fi
-      ;;
-    plugin.video.youtube)
-      if [[ "${INTERACTIVE:-0}" == "1" ]]; then
-        authorize_youtube
       else
         printf 'authorization-required\n'
       fi

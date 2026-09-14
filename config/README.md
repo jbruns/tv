@@ -34,9 +34,6 @@ The real `.env` is gitignored. None of the reserved keys below may appear in
 - `KODI_WEB_PASSWORD`
 - `OMDB_API_KEY`
 - `MDBLIST_API_KEY`
-- `YOUTUBE_API_KEY`
-- `YOUTUBE_CLIENT_ID`
-- `YOUTUBE_CLIENT_SECRET`
 - `HOME_ASSISTANT_TOKEN`
 - `NEXTPVR_PIN`
 - `PLEX_TOKEN`
@@ -50,8 +47,6 @@ Secret requirements:
 - `OMDB_API_KEY` and `MDBLIST_API_KEY` are required together for real
   `APPLY_KODI=1` deployments; both are optional for `--check-config` and
   `--check-artifacts`.
-- `YOUTUBE_API_KEY`, `YOUTUBE_CLIENT_ID`, and `YOUTUBE_CLIENT_SECRET` are
-  all-or-none.
 - `HOME_ASSISTANT_TOKEN` requires `HOME_ASSISTANT_URL`.
 - `NEXTPVR_PIN` requires `NEXTPVR_HOST`.
 - `PLEX_TOKEN` requires `PLEX_SERVER_HOST`.
@@ -120,15 +115,15 @@ expansion, so shell metacharacters in a value are inert data.
 | `EMBY_SERVER_URL` | unset | `https://...`; `http://...` only for RFC1918/loopback with `EMBY_ALLOW_LOCAL_HTTP=1` |
 | `EMBY_USERNAME` | unset | non-empty |
 | `EMBY_ALLOW_LOCAL_HTTP` | `0` | `0` or `1` |
-| `ADDON_ARTIFACT` | (42 records shipped) | repeatable, see below |
+| `ADDON_ARTIFACT` | (40 records shipped) | repeatable, see below |
 
 ### Add-on artifact lock
 
 `ADDON_ARTIFACT` records are `id|version|https-url|sha256`, one per line.
-The shipped lock contains 42 records: the selected add-ons, their
+The shipped lock contains 40 records: the selected add-ons, their
 repositories, the regional language resource, the managed Arctic Fuse optional
 add-ons, two extra Python modules they introduce, and the remaining transitive
-dependency closure. `--check-artifacts` downloads and verifies all 42 over
+dependency closure. `--check-artifacts` downloads and verifies all 40 over
 HTTPS.
 
 ### Precedence
@@ -145,17 +140,8 @@ HTTPS.
 
 The shared baseline manages the following Arctic Fuse state:
 
-- `Next Aired` is disabled by removing every case-insensitive
-  `HomeSwitcher.1106.Toggle` and `HomeSwitcher.1106.UpNextMode` root setting
-  before Kodi starts.
-- Verification accepts either no `HomeSwitcher.1106.Toggle` match, an empty
-  string-typed placeholder, or a bool-typed `false` placeholder recreated by
-  the skin at runtime.
-- `HomeSwitcher.1106.UpNextMode` is valid only when absent or represented by
-  an empty string-typed placeholder.
 - `HomeSwitcher.1101.*` opens `script.plexmod`.
-- `HomeSwitcher.1102.*` opens `plugin://plugin.video.youtube/`.
-- The managed Home order after Home is Plex, YouTube, PVR, Add-ons.
+- The managed Home order after Home is Plex, PVR, Add-ons.
 - Managed skin settings are normalized to one canonical root node per setting
   ID, with other case variants removed before verification.
 - `RecentlyAiredEpisodes30Days.xsp` is the rolling previous 30 days with

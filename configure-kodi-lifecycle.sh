@@ -26,8 +26,6 @@ die() {
 
 # shellcheck source=lib/coreelec-config.sh
 source "${SCRIPT_DIR}/lib/coreelec-config.sh"
-# shellcheck source=lib/coreelec-env.sh
-source "${SCRIPT_DIR}/lib/coreelec-env.sh"
 # shellcheck source=lib/coreelec-ssh.sh
 source "${SCRIPT_DIR}/lib/coreelec-ssh.sh"
 # shellcheck source=lib/coreelec-lifecycle.sh
@@ -99,8 +97,7 @@ This command installs a restricted, forced-command SSH identity on the
 CoreELEC target that can only run \`start\`, \`stop\`, or \`status\` against
 kodi.service, verifies it end to end over that restricted identity, and
 either commits or rolls back the change. Reports never contain public or
-private key material. It sources the shared repository-root .env file used by
-the other Ugoos configuration commands.
+private key material.
 USAGE
 }
 
@@ -494,7 +491,6 @@ main() {
   scratch=""
   local report_file
   parse_args "$@"
-  coreelec_env_load "${UGOOS_ENV_FILE:-${SCRIPT_DIR}/.env}"
 
   if [[ "${ROLLBACK_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
         "${INSPECT_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \

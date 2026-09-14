@@ -277,7 +277,7 @@ coreelec_config_assign() {
   fi
 
   case "${key}" in
-    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|YOUTUBE_API_KEY|YOUTUBE_CLIENT_ID|YOUTUBE_CLIENT_SECRET|HOME_ASSISTANT_TOKEN|NEXTPVR_PIN|PLEX_TOKEN|EMBY_PASSWORD|TMDB_API_KEY)
+    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|HOME_ASSISTANT_TOKEN|NEXTPVR_PIN|PLEX_TOKEN|EMBY_PASSWORD|TMDB_API_KEY)
       die "${location}: ${key} is a secret and must be supplied only as an environment variable"
       ;;
   esac
@@ -454,16 +454,8 @@ coreelec_config_add_cli_addon() {
 # here only to check presence/companionship; their values are never stored
 # in a global, logged, or copied into a diagnostic string.
 coreelec_config_validate() {
-  local youtube_present=0
   if [[ "${APPLY_KODI}" == "1" && -z "${KODI_WEB_PASSWORD:-}" ]]; then
     die "KODI_WEB_PASSWORD must be set in the shared .env file when APPLY_KODI=1"
-  fi
-
-  [[ -n "${YOUTUBE_API_KEY:-}" ]] && youtube_present=$((youtube_present + 1))
-  [[ -n "${YOUTUBE_CLIENT_ID:-}" ]] && youtube_present=$((youtube_present + 1))
-  [[ -n "${YOUTUBE_CLIENT_SECRET:-}" ]] && youtube_present=$((youtube_present + 1))
-  if (( youtube_present != 0 && youtube_present != 3 )); then
-    die "YOUTUBE_API_KEY, YOUTUBE_CLIENT_ID, and YOUTUBE_CLIENT_SECRET must be all present or all absent"
   fi
 
   if [[ -n "${HOME_ASSISTANT_TOKEN:-}" && -z "${HOME_ASSISTANT_URL:-}" ]]; then

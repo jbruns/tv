@@ -21,7 +21,6 @@ addon_record() {
     weather.ha) printf '%s\n' 'weather.ha|0.0.6.6|https://example.test/weather.ha.zip|deadbeef' ;;
     pvr.nextpvr) printf '%s\n' 'pvr.nextpvr|21.3.2.1|https://example.test/pvr.nextpvr.zip|deadbeef' ;;
     script.plexmod) printf '%s\n' 'script.plexmod|1.14.1-beta1|https://example.test/script.plexmod.zip|deadbeef' ;;
-    plugin.video.youtube) printf '%s\n' 'plugin.video.youtube|7.4.4|https://example.test/plugin.video.youtube.zip|deadbeef' ;;
     plugin.service.emby-next-gen) printf '%s\n' 'plugin.service.emby-next-gen|12.4.23|https://example.test/plugin.service.emby-next-gen.zip|deadbeef' ;;
     *)
       printf 'unknown fixture add-on: %s\n' "$1" >&2
@@ -42,6 +41,16 @@ REPORT_DIR=./ignored-by-tests
 CONFIG
   while (( $# > 0 )); do
     printf 'ADDON_ARTIFACT=%s\n' "$(addon_record "$1")" >> "${file}"
+    shift
+  done
+}
+
+write_shared_env_file() {
+  local file="$1"
+  shift
+  : > "${file}"
+  while (( $# > 0 )); do
+    printf '%s\n' "$1" >> "${file}"
     shift
   done
 }
@@ -361,7 +370,6 @@ PYEOF
 set_guided_flow_pins() {
   ADDON_ARTIFACTS=(
     "$(addon_record script.plexmod)"
-    "$(addon_record plugin.video.youtube)"
   )
 }
 
@@ -370,7 +378,8 @@ test_help_lists_supported_addons_and_interaction_levels() {
   output="$(bash "${CLI_SCRIPT}" --help)"
   assert_contains "${output}" "Supported post-deployment add-ons:" "help lists supported add-ons" || return 1
   assert_contains "${output}" "weather.ha                 fully-unattended" "weather.ha interaction level" || return 1
-  assert_contains "${output}" "plugin.video.youtube      guided (--interactive)" "YouTube interaction level" || return 1
+  assert_contains "${output}" "script.plexmod             fully-unattended / guided (--interactive)" \
+    "Plex interaction level" || return 1
   assert_contains "${output}" "plugin.service.emby-next-gen guided (--interactive)" "Emby interaction level" || return 1
 }
 
@@ -391,12 +400,16 @@ test_kodi_password_must_come_from_shared_environment() {
 }
 
 assert_dry_run_makes_no_ssh_calls() (
-  local interactive="$1" dir config bin_dir output rc report report_body addon_id
+  local interactive="$1" dir config env_file bin_dir output rc report report_body addon_id
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' EXIT
   config="${dir}/postdeploy.conf"
+  env_file="${dir}/.env"
   write_config "${config}" \
-    weather.ha pvr.nextpvr script.plexmod plugin.video.youtube plugin.service.emby-next-gen
+    weather.ha pvr.nextpvr script.plexmod plugin.service.emby-next-gen
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=dry-run-kodi-secret' \
+    'HOME_ASSISTANT_TOKEN=dry-run-home-assistant-secret'
   cat >> "${config}" <<'CONFIG'
 HOME_ASSISTANT_URL=https://ha.example.test
 HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
@@ -409,9 +422,8 @@ CONFIG
   if [[ "${interactive}" == "1" ]]; then
     output="$(
       COREELEC_SSH_STUB_DIR="${dir}/stub" \
-      KODI_WEB_PASSWORD="dry-run-kodi-secret" \
-      HOME_ASSISTANT_TOKEN="dry-run-home-assistant-secret" \
       COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0" \
+      UGOOS_ENV_FILE="${env_file}" \
       PATH="${bin_dir}:${PATH}" \
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
@@ -423,9 +435,8 @@ CONFIG
   else
     output="$(
       COREELEC_SSH_STUB_DIR="${dir}/stub" \
-      KODI_WEB_PASSWORD="dry-run-kodi-secret" \
-      HOME_ASSISTANT_TOKEN="dry-run-home-assistant-secret" \
       COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0" \
+      UGOOS_ENV_FILE="${env_file}" \
       PATH="${bin_dir}:${PATH}" \
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
@@ -444,7 +455,7 @@ CONFIG
     "dry-run must not open a transport capable of transmitting secrets" || return 1
   report="$(find_single_report "${dir}/reports")"
   report_body="$(cat "${report}")"
-  for addon_id in weather.ha pvr.nextpvr script.plexmod plugin.video.youtube plugin.service.emby-next-gen; do
+  for addon_id in weather.ha pvr.nextpvr script.plexmod plugin.service.emby-next-gen; do
     assert_contains "${report_body}" "addon.${addon_id}.status=dry-run" \
       "dry-run emits one static status for ${addon_id}" || return 1
   done
@@ -463,11 +474,14 @@ test_interactive_dry_run_makes_zero_ssh_calls() {
 }
 
 test_report_creation_uses_private_umask_before_chmod() {
-  local dir config bin_dir output rc report modes
+  local dir config env_file bin_dir output rc report modes
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   config="${dir}/postdeploy.conf"
-  write_config "${config}" plugin.video.youtube
+  env_file="${dir}/.env"
+  write_config "${config}" script.plexmod
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="${dir}/stub-bin"
   mkdir -p "${bin_dir}"
   cat > "${bin_dir}/chmod" <<'STUB'
@@ -480,11 +494,12 @@ STUB
   output="$(
     umask 022
     PATH="${bin_dir}:${PATH}" \
+    UGOOS_ENV_FILE="${env_file}" \
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
         --report-dir "${dir}/reports" \
         --target coreelec-theater \
-        --addon plugin.video.youtube \
+        --addon script.plexmod \
         --dry-run 2>&1
   )"
   rc=$?
@@ -508,19 +523,22 @@ PYEOF
 }
 
 test_default_run_never_starts_account_authorization() {
-  local dir config bin_dir output rc report body
+  local dir config env_file bin_dir output rc report body
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   config="${dir}/postdeploy.conf"
+  env_file="${dir}/.env"
   write_config "${config}" \
-    weather.ha pvr.nextpvr script.plexmod plugin.video.youtube plugin.service.emby-next-gen
+    weather.ha pvr.nextpvr script.plexmod plugin.service.emby-next-gen
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="$(install_ssh_stub "${dir}")"
   write_introspection_response "${dir}/stub/response-default.json"
 
   set +e
   output="$(
     COREELEC_SSH_STUB_DIR="${dir}/stub" \
-    KODI_WEB_PASSWORD="kodi-web-password-secret" \
+    UGOOS_ENV_FILE="${env_file}" \
     PATH="${bin_dir}:${PATH}" \
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
@@ -536,22 +554,25 @@ test_default_run_never_starts_account_authorization() {
   assert_eq '{"jsonrpc":"2.0","id":"introspect","method":"JSONRPC.Introspect","params":{"getdescriptions":false,"getmetadata":false}}' \
     "${body}" "default run performs the required introspection call" || return 1
   report="$(find_single_report "${dir}/reports")"
-  assert_contains "$(cat "${report}")" "addon.plugin.video.youtube.status=authorization-required" \
-    "default run reports that YouTube authorization is deferred" || return 1
+  assert_contains "$(cat "${report}")" "addon.script.plexmod.status=authorization-required" \
+    "default run reports that Plex authorization is deferred" || return 1
   assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.status=authorization-required" \
     "default run reports that Emby authorization is deferred" || return 1
   assert_not_contains "${output}" "Input.ExecuteAction" "default run never attempts guided input" || return 1
 }
 
 test_requested_addon_must_be_in_the_pinned_manifest() {
-  local dir config output rc
+  local dir config env_file output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   config="${dir}/postdeploy.conf"
+  env_file="${dir}/.env"
   write_config "${config}" weather.ha
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=kodi-web-password-secret'
 
   set +e
-  output="$(bash "${CLI_SCRIPT}" --config "${config}" --dry-run --target coreelec-theater --addon plugin.video.youtube 2>&1)"
+  output="$(UGOOS_ENV_FILE="${env_file}" bash "${CLI_SCRIPT}" --config "${config}" --dry-run --target coreelec-theater --addon script.plexmod 2>&1)"
   rc=$?
   set -e
 
@@ -560,24 +581,27 @@ test_requested_addon_must_be_in_the_pinned_manifest() {
 }
 
 test_introspection_rejects_a_missing_required_method() {
-  local dir config bin_dir output rc
+  local dir config env_file bin_dir output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   config="${dir}/postdeploy.conf"
-  write_config "${config}" plugin.video.youtube
+  env_file="${dir}/.env"
+  write_config "${config}" script.plexmod
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="$(install_ssh_stub "${dir}")"
   write_introspection_response "${dir}/stub/response-default.json" "Input.SendText"
 
   set +e
   output="$(
     COREELEC_SSH_STUB_DIR="${dir}/stub" \
-    KODI_WEB_PASSWORD="kodi-web-password-secret" \
+    UGOOS_ENV_FILE="${env_file}" \
     PATH="${bin_dir}:${PATH}" \
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
       --interactive \
       --target coreelec-theater \
-      --addon plugin.video.youtube 2>&1
+      --addon script.plexmod 2>&1
   )"
   rc=$?
   set -e
@@ -587,24 +611,27 @@ test_introspection_rejects_a_missing_required_method() {
 }
 
 test_introspection_requires_addons_getaddondetails() {
-  local dir config bin_dir output rc
+  local dir config env_file bin_dir output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   config="${dir}/postdeploy.conf"
-  write_config "${config}" plugin.video.youtube
+  env_file="${dir}/.env"
+  write_config "${config}" script.plexmod
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="$(install_ssh_stub "${dir}")"
   write_introspection_response "${dir}/stub/response-default.json" "Addons.GetAddonDetails"
 
   set +e
   output="$(
     COREELEC_SSH_STUB_DIR="${dir}/stub" \
-    KODI_WEB_PASSWORD="kodi-web-password-secret" \
+    UGOOS_ENV_FILE="${env_file}" \
     PATH="${bin_dir}:${PATH}" \
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
       --interactive \
       --target coreelec-theater \
-      --addon plugin.video.youtube 2>&1
+      --addon script.plexmod 2>&1
   )"
   rc=$?
   set -e
@@ -901,18 +928,21 @@ test_rpc_request_ids_never_contain_secret_values() {
 }
 
 test_report_contains_statuses_but_no_secret_values() {
-  local dir config bin_dir output rc report report_body
+  local dir config env_file bin_dir output rc report report_body
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   config="${dir}/postdeploy.conf"
-  write_config "${config}" weather.ha plugin.video.youtube
+  env_file="${dir}/.env"
+  write_config "${config}" weather.ha script.plexmod
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="$(install_ssh_stub "${dir}")"
   write_introspection_response "${dir}/stub/response-default.json"
 
   set +e
   output="$(
     COREELEC_SSH_STUB_DIR="${dir}/stub" \
-    KODI_WEB_PASSWORD="kodi-web-password-secret" \
+    UGOOS_ENV_FILE="${env_file}" \
     PATH="${bin_dir}:${PATH}" \
     bash "${CLI_SCRIPT}" \
       --config "${config}" \
@@ -926,8 +956,8 @@ test_report_contains_statuses_but_no_secret_values() {
   report="$(find_single_report "${dir}/reports")"
   report_body="$(cat "${report}")"
   assert_contains "${report_body}" "addon.weather.ha.status=skipped" "weather status is written" || return 1
-  assert_contains "${report_body}" "addon.plugin.video.youtube.status=authorization-required" \
-    "YouTube status is written" || return 1
+  assert_contains "${report_body}" "addon.script.plexmod.status=authorization-required" \
+    "Plex status is written" || return 1
   assert_not_contains "${report_body}" "kodi-web-password-secret" "report must not leak the Kodi password" || return 1
   assert_contains "${output}" "Report:" "run output points to the report file" || return 1
 }
@@ -1319,96 +1349,18 @@ test_pm4k_selects_sign_in_only_when_expected_control_is_focused() {
   assert_contains "${output}" "workflow_status=manual-required" "PM4K account flow fails closed when Sign In is not focused" || return 1
 }
 
-test_youtube_launch_uses_the_pinned_sign_in_plugin_route() {
-  local dir bin_dir output body
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf -- "${dir}"' RETURN
-  bin_dir="$(install_ssh_stub "${dir}")"
-  set_guided_flow_pins
-  write_addon_details_response "${dir}/stub/response-1.json" "plugin.video.youtube" "7.4.4"
-  printf '%s\n' '{}' > "${dir}/stub/response-2.json"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"gui-activatewindow","result":"OK"}' > "${dir}/stub/response-3.json"
-  write_gui_state_response "${dir}/stub/response-4.json" \
-    "Please sign in and complete all access authorisation prompts" "OK"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-5.json"
-  cat > "${dir}/stub/response-6.json" <<'JSON'
-{"access_manager":{"users":{"0":{"access_token":"","refresh_token":"youtube-refresh-token-secret","token_expires":9999999999}},"current_user":0,"last_origin":"plugin.video.youtube","developers":{}}}
-JSON
-
-  output="$({
-    export COREELEC_SSH_STUB_DIR="${dir}/stub"
-    export PATH="${bin_dir}:${PATH}"
-    export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="1"
-    export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
-    TARGET="coreelec-theater"
-    SSH_PORT="22"
-    KODI_PORT="8080"
-    KODI_USER="homeassistant"
-    KODI_WEB_PASSWORD="kodi-web-password-secret"
-    printf 'workflow_status=%s\n' "$(authorize_youtube)"
-  } 2>&1)"
-
-  body="$(ssh_request_body "${dir}" 1)"
-  assert_eq '{"jsonrpc":"2.0","id":"addons-getaddondetails","method":"Addons.GetAddonDetails","params":{"addonid":"plugin.video.youtube","properties":["version"]}}' \
-    "${body}" "YouTube guided flow checks the installed version before private steps" || return 1
-  body="$(ssh_request_body "${dir}" 3)"
-  assert_eq '{"jsonrpc":"2.0","id":"gui-activatewindow","method":"GUI.ActivateWindow","params":{"window":"videos","parameters":["plugin://plugin.video.youtube/sign/in/"]}}' \
-    "${body}" "YouTube guided flow uses the pinned sign-in plugin route" || return 1
-  body="$(ssh_request_body "${dir}" 5)"
-  assert_eq '{"jsonrpc":"2.0","id":"input-executeaction","method":"Input.ExecuteAction","params":{"action":"select"}}' \
-    "${body}" "YouTube guided flow dismisses the intro dialog through Input.ExecuteAction(select)" || return 1
-  assert_contains "${output}" "service.plugin.video.youtube.note=multiple-google-codes-possible-in-7.4.4" \
-    "YouTube guided flow reports the pinned add-on caveat" || return 1
-  assert_contains "${output}" "service.plugin.video.youtube.account_token_present=1" \
-    "YouTube guided flow reports token presence as a boolean" || return 1
-  assert_contains "${output}" "workflow_status=configured" "YouTube guided flow succeeds once the token appears" || return 1
-  assert_not_contains "${output}" "youtube-refresh-token-secret" "YouTube guided flow must not print the token" || return 1
-}
-
-test_youtube_dismisses_only_the_expected_intro_dialog() {
-  local dir bin_dir output
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf -- "${dir}"' RETURN
-  bin_dir="$(install_ssh_stub "${dir}")"
-  set_guided_flow_pins
-  write_addon_details_response "${dir}/stub/response-1.json" "plugin.video.youtube" "7.4.4"
-  printf '%s\n' '{}' > "${dir}/stub/response-2.json"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"gui-activatewindow","result":"OK"}' > "${dir}/stub/response-3.json"
-  write_gui_state_response "${dir}/stub/response-4.json" "Unexpected Dialog" "Cancel"
-  printf '%s\n' '{}' > "${dir}/stub/response-5.json"
-
-  output="$({
-    export COREELEC_SSH_STUB_DIR="${dir}/stub"
-    export PATH="${bin_dir}:${PATH}"
-    export COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS="0"
-    export COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
-    TARGET="coreelec-theater"
-    SSH_PORT="22"
-    KODI_PORT="8080"
-    KODI_USER="homeassistant"
-    KODI_WEB_PASSWORD="kodi-web-password-secret"
-    printf 'workflow_status=%s\n' "$(authorize_youtube)"
-  } 2>&1)"
-
-  assert_eq "5" "$(ssh_call_count "${dir}")" "YouTube guided flow times out without dismissing an unexpected dialog" || return 1
-  assert_not_contains "${output}" "input-executeaction" "YouTube guided flow must not dismiss the wrong dialog" || return 1
-  assert_contains "${output}" "service.plugin.video.youtube.failure=timeout" "YouTube guided flow reports a bounded guided timeout" || return 1
-  assert_contains "${output}" "workflow_status=manual-required" "YouTube guided flow fails closed on an unexpected dialog" || return 1
-}
-
 test_guided_flow_times_out_as_manual_required() {
   local dir bin_dir output
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   set_guided_flow_pins
-  write_addon_details_response "${dir}/stub/response-1.json" "plugin.video.youtube" "7.4.4"
-  printf '%s\n' '{}' > "${dir}/stub/response-2.json"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"gui-activatewindow","result":"OK"}' > "${dir}/stub/response-3.json"
-  write_gui_state_response "${dir}/stub/response-4.json" \
-    "Please sign in and complete all access authorisation prompts" "OK"
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  printf '%s\n' '<settings></settings>' > "${dir}/stub/response-2.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
+  write_gui_state_response "${dir}/stub/response-4.json" "Plex" "Sign In"
   printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-5.json"
-  printf '%s\n' '{}' > "${dir}/stub/response-6.json"
+  printf '%s\n' '<settings></settings>' > "${dir}/stub/response-6.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -1420,11 +1372,12 @@ test_guided_flow_times_out_as_manual_required() {
     KODI_PORT="8080"
     KODI_USER="homeassistant"
     KODI_WEB_PASSWORD="kodi-web-password-secret"
-    printf 'workflow_status=%s\n' "$(authorize_youtube)"
+    printf 'workflow_status=%s\n' "$(authorize_pm4k_account)"
   } 2>&1)"
 
-  assert_contains "${output}" "service.plugin.video.youtube.account_token_present=0" "guided timeout reports token absence as a boolean" || return 1
-  assert_contains "${output}" "service.plugin.video.youtube.failure=timeout" "guided timeout is classified distinctly" || return 1
+  assert_eq "6" "$(ssh_call_count "${dir}")" "guided timeout stops after the PM4K sign-in prompt remains unresolved" || return 1
+  assert_contains "${output}" "service.script.plexmod.account_token_present=0" "guided timeout reports token absence as a boolean" || return 1
+  assert_contains "${output}" "service.script.plexmod.failure=timeout" "guided timeout is classified distinctly" || return 1
   assert_contains "${output}" "workflow_status=manual-required" "guided timeout returns manual-required" || return 1
 }
 
@@ -1437,10 +1390,6 @@ test_guided_flow_detects_persisted_tokens_without_printing_them() {
   write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
   printf '%s\n' '<settings><setting id="auth.token">pm4k-account-token-secret</setting></settings>' \
     > "${dir}/stub/response-2.json"
-  write_addon_details_response "${dir}/stub/response-3.json" "plugin.video.youtube" "7.4.4"
-  cat > "${dir}/stub/response-4.json" <<'JSON'
-{"access_manager":{"users":{"0":{"access_token":"youtube-access-token-secret","refresh_token":"youtube-refresh-token-secret","token_expires":9999999999}},"current_user":0,"last_origin":"plugin.video.youtube","developers":{}}}
-JSON
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -1452,15 +1401,11 @@ JSON
     KODI_WEB_PASSWORD="kodi-web-password-secret"
     INTERACTIVE="1"
     printf 'pm4k_status=%s\n' "$(run_addon_workflow script.plexmod)"
-    printf 'youtube_status=%s\n' "$(run_addon_workflow plugin.video.youtube)"
   } 2>&1)"
 
-  assert_eq "4" "$(ssh_call_count "${dir}")" "persisted-token detection stops before launch when already configured" || return 1
+  assert_eq "2" "$(ssh_call_count "${dir}")" "persisted-token detection stops before launch when already configured" || return 1
   assert_contains "${output}" "pm4k_status=already-configured" "PM4K account flow detects an existing token" || return 1
-  assert_contains "${output}" "youtube_status=already-configured" "YouTube guided flow detects an existing token" || return 1
   assert_not_contains "${output}" "pm4k-account-token-secret" "PM4K token must not be printed" || return 1
-  assert_not_contains "${output}" "youtube-access-token-secret" "YouTube access token must not be printed" || return 1
-  assert_not_contains "${output}" "youtube-refresh-token-secret" "YouTube refresh token must not be printed" || return 1
 }
 
 test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
@@ -1470,7 +1415,6 @@ test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
   bin_dir="$(install_ssh_stub "${dir}")"
   set_guided_flow_pins
   write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.0"
-  write_addon_details_response "${dir}/stub/response-2.json" "plugin.video.youtube" "7.4.3"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -1482,14 +1426,11 @@ test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
     KODI_WEB_PASSWORD="kodi-web-password-secret"
     INTERACTIVE="1"
     printf 'pm4k_status=%s\n' "$(run_addon_workflow script.plexmod)"
-    printf 'youtube_status=%s\n' "$(run_addon_workflow plugin.video.youtube)"
   } 2>&1)"
 
-  assert_eq "2" "$(ssh_call_count "${dir}")" "version mismatches stop before any private state or GUI steps" || return 1
+  assert_eq "1" "$(ssh_call_count "${dir}")" "version mismatches stop before any private state or GUI steps" || return 1
   assert_contains "${output}" "pm4k_status=manual-required" "PM4K version mismatch fails closed" || return 1
-  assert_contains "${output}" "youtube_status=manual-required" "YouTube version mismatch fails closed" || return 1
   assert_contains "${output}" "service.script.plexmod.failure=version-mismatch" "PM4K mismatch is classified explicitly" || return 1
-  assert_contains "${output}" "service.plugin.video.youtube.failure=version-mismatch" "YouTube mismatch is classified explicitly" || return 1
 }
 
 test_emby_password_never_appears_in_argv_log_or_report() {
@@ -1695,8 +1636,6 @@ run_all_tests \
   test_service_checks_do_not_modify_addon_settings \
   test_pm4k_launch_uses_addons_executeaddon \
   test_pm4k_selects_sign_in_only_when_expected_control_is_focused \
-  test_youtube_launch_uses_the_pinned_sign_in_plugin_route \
-  test_youtube_dismisses_only_the_expected_intro_dialog \
   test_guided_flow_times_out_as_manual_required \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
   test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
