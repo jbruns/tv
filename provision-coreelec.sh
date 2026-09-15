@@ -2085,15 +2085,16 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-SETTING_IDS = [
+CORE_SETTING_IDS = [
     "locale.language",
     "locale.country",
     "locale.keyboardlayouts",
     "locale.timezonecountry",
     "locale.timezone",
-    "lookandfeel.skin",
-    "weather.addon",
 ]
+SKIN_SETTING_IDS = ["lookandfeel.skin"]
+SERVICE_SETTING_IDS = ["weather.addon"]
+SETTING_IDS = CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
 
 # `date +%Z%z` output: a zone abbreviation followed by a UTC offset. Anything
 # else -- an unexpanded format string, an error line, an empty answer -- is not
@@ -2131,6 +2132,11 @@ def observe(key, value):
     text = "%s" % (value,)
     text = text.replace("\r", " ").replace("\n", " ")
     OBSERVATIONS.append("%s=%s" % (key, text))
+
+
+def emit_observations():
+    for line in OBSERVATIONS:
+        sys.stdout.write(line + "\n")
 
 
 def read_request(path):
@@ -2231,9 +2237,9 @@ def index_responses(payload):
     return entries
 
 
-def query_batch(addon_ids):
+def query_batch(addon_ids, setting_ids=SETTING_IDS):
     batch = [{"jsonrpc": "2.0", "id": "version", "method": "JSONRPC.Version"}]
-    for setting_id in SETTING_IDS:
+    for setting_id in setting_ids:
         batch.append({"jsonrpc": "2.0",
                       "id": "setting:" + setting_id,
                       "method": "Settings.GetSettingValue",
@@ -2300,7 +2306,8 @@ def request_enable(curl_config, url, addon_id):
                                      "enabled": True}}]) is not None
 
 
-def converge_enabled_addons(curl_config, url, addon_ids, entries):
+def converge_enabled_addons(curl_config, url, addon_ids, entries,
+                            setting_ids=SETTING_IDS):
     """Enables every installed add-on Kodi reports disabled, asks Kodi again,
     and repeats until it reports them all enabled, stops changing its answer,
     or the round bound is reached.
@@ -2333,7 +2340,8 @@ def converge_enabled_addons(curl_config, url, addon_ids, entries):
             if not request_enable(curl_config, url, addon_id):
                 served = False
         requeried = index_responses(
-            call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+            call_jsonrpc(curl_config, url,
+                         query_batch(addon_ids, setting_ids)))
         if not requeried or not jsonrpc_version(requeried):
             # Kodi stopped answering. The last state it did report stands,
             # and an add-on left disabled in it stays a failure.
@@ -2591,8 +2599,28 @@ def main(argv):
     def have(key):
         return request.get("HAVE_" + key, "0") == "1"
 
-    addon_ids = [line.strip() for line in config("ADDON_IDS").split("\n")
-                 if line.strip()]
+    canonical_components = ["core", "cec", "addons", "services", "skin"]
+    component_text = config("EFFECTIVE_COMPONENTS")
+    components = component_text.split(",")
+    if (not component_text or any(not item for item in components)
+            or components != [
+                item for item in canonical_components if item in components]):
+        fail("invalid effective component scope")
+
+    def selected(component):
+        return component in components
+
+    setting_ids = []
+    if selected("core"):
+        setting_ids.extend(CORE_SETTING_IDS)
+    if selected("skin"):
+        setting_ids.extend(SKIN_SETTING_IDS)
+    if selected("services"):
+        setting_ids.extend(SERVICE_SETTING_IDS)
+    addon_ids = (
+        [line.strip() for line in config("ADDON_IDS").split("\n")
+         if line.strip()]
+        if selected("addons") else [])
     port = config("KODI_PORT", "8080")
     url = "http://127.0.0.1:%s/jsonrpc" % port
     try:
@@ -2609,7 +2637,8 @@ def main(argv):
         try:
             for attempt in range(attempts):
                 entries = index_responses(
-                    call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+                    call_jsonrpc(
+                        curl_config, url, query_batch(addon_ids, setting_ids)))
                 if jsonrpc_version(entries):
                     break
                 entries = {}
@@ -2626,56 +2655,62 @@ def main(argv):
         # round after round -- so the reported state is what Kodi observes
         # once it has settled rather than what a single pass asked for.
         entries, enable_attempted, enable_unresolved = converge_enabled_addons(
-            curl_config, url, addon_ids, entries)
+            curl_config, url, addon_ids, entries, setting_ids)
     finally:
         if os.path.lexists(curl_config):
             os.remove(curl_config)
 
     observe("observation_format", "coreelec-verification-1")
     observe("jsonrpc_version", jsonrpc_version(entries))
-    for setting_id in SETTING_IDS:
+    for setting_id in setting_ids:
         observe("setting." + setting_id, setting_value(entries, setting_id))
 
-    timezone = config("TIMEZONE")
-    observe("timezone_cache", timezone_cache_value(storage_root))
-    observe("localtime_path", localtime_target(system_root))
-    observe("localtime_kind", localtime_kind(system_root))
-    observe("localtime_zoneinfo_match",
-            localtime_zoneinfo_match(system_root, timezone))
-    if timezone:
-        verdict, expected_marks, observed_marks = zone_marks_verdict(timezone)
-    else:
-        verdict, expected_marks, observed_marks = ("unavailable", "", "")
-    observe("date_offset_expected", expected_marks)
-    observe("date_offset_observed", observed_marks)
-    observe("date_matches_timezone", verdict)
-    cec_values = cec_power_values(storage_root)
-    observe("cec.activate_source", cec_values["activate_source"])
-    observe("cec.wake_devices", cec_values["wake_devices"])
-    observe("cec.standby_devices", cec_values["standby_devices"])
-    observe("cec.standby_tv_on_pc_standby",
-            cec_values["standby_tv_on_pc_standby"])
-    observe("cec.tv_off_action",
-            cec_values["standby_pc_on_tv_standby"])
+    if selected("core"):
+        timezone = config("TIMEZONE")
+        observe("timezone_cache", timezone_cache_value(storage_root))
+        observe("localtime_path", localtime_target(system_root))
+        observe("localtime_kind", localtime_kind(system_root))
+        observe("localtime_zoneinfo_match",
+                localtime_zoneinfo_match(system_root, timezone))
+        if timezone:
+            verdict, expected_marks, observed_marks = zone_marks_verdict(timezone)
+        else:
+            verdict, expected_marks, observed_marks = ("unavailable", "", "")
+        observe("date_offset_expected", expected_marks)
+        observe("date_offset_observed", observed_marks)
+        observe("date_matches_timezone", verdict)
 
-    for addon_id in addon_ids:
-        installed, version, enabled = addon_state(entries.get("addon:" + addon_id))
-        observe("addon.%s.installed" % addon_id, installed)
-        observe("addon.%s.version" % addon_id, version)
-        observe("addon.%s.enabled" % addon_id, enabled)
-        observe("addon.%s.enable_attempted" % addon_id,
-                1 if addon_id in enable_attempted else 0)
+    if selected("cec"):
+        cec_values = cec_power_values(storage_root)
+        observe("cec.activate_source", cec_values["activate_source"])
+        observe("cec.wake_devices", cec_values["wake_devices"])
+        observe("cec.standby_devices", cec_values["standby_devices"])
+        observe("cec.standby_tv_on_pc_standby",
+                cec_values["standby_tv_on_pc_standby"])
+        observe("cec.tv_off_action",
+                cec_values["standby_pc_on_tv_standby"])
 
-    # The add-ons Kodi was asked for and still reports disabled, named exactly.
-    # An add-on ID is not a secret, and naming them is what tells the operator
-    # which ones to look at.
-    observe("addon_enable_unresolved", " ".join(enable_unresolved))
+    if selected("addons"):
+        for addon_id in addon_ids:
+            installed, version, enabled = addon_state(
+                entries.get("addon:" + addon_id))
+            observe("addon.%s.installed" % addon_id, installed)
+            observe("addon.%s.version" % addon_id, version)
+            observe("addon.%s.enabled" % addon_id, enabled)
+            observe("addon.%s.enable_attempted" % addon_id,
+                    1 if addon_id in enable_attempted else 0)
+
+        # The add-ons Kodi was asked for and still reports disabled, named
+        # exactly. An add-on ID is not a secret, and naming it tells the
+        # operator what to inspect.
+        observe("addon_enable_unresolved", " ".join(enable_unresolved))
 
     def addon_data(addon_id, name):
         return os.path.join(storage_root, ".kodi", "userdata", "addon_data",
                             addon_id, name)
 
-    if have("HOME_ASSISTANT_TOKEN") and config("HOME_ASSISTANT_URL") \
+    if selected("services") and have("HOME_ASSISTANT_TOKEN") \
+            and config("HOME_ASSISTANT_URL") \
             and config("HOME_ASSISTANT_WEATHER_ENTITY"):
         values = read_settings(addon_data("weather.ha", "settings.xml")) or {}
         matched = (values.get("ha_server") == config("HOME_ASSISTANT_URL")
@@ -2684,7 +2719,8 @@ def main(argv):
                    and bool(values.get("ha_key")))
         observe("addon_settings.weather.ha.configured", 1 if matched else 0)
 
-    if have("NEXTPVR_PIN") and config("NEXTPVR_HOST"):
+    if selected("services") and have("NEXTPVR_PIN") \
+            and config("NEXTPVR_HOST"):
         values = read_settings(
             addon_data("pvr.nextpvr", "instance-settings-1.xml")) or {}
         matched = (values.get("host") == config("NEXTPVR_HOST")
@@ -2694,7 +2730,8 @@ def main(argv):
             matched = matched and values.get("port") == config("NEXTPVR_PORT")
         observe("addon_settings.pvr.nextpvr.configured", 1 if matched else 0)
 
-    if have("OMDB_API_KEY") or have("MDBLIST_API_KEY"):
+    if selected("services") \
+            and (have("OMDB_API_KEY") or have("MDBLIST_API_KEY")):
         values = read_settings(
             addon_data("plugin.video.themoviedb.helper", "settings.xml")) or {}
         if have("OMDB_API_KEY"):
@@ -2703,6 +2740,10 @@ def main(argv):
         if have("MDBLIST_API_KEY"):
             observe("addon_settings.plugin.video.themoviedb.helper.mdblist_configured",
                     1 if bool(values.get("mdblist_apikey")) else 0)
+
+    if not selected("skin"):
+        emit_observations()
+        return
 
     # --- Arctic Fuse skin state -------------------------------------------
 
@@ -3070,8 +3111,7 @@ def main(argv):
             0 if os.path.lexists(os.path.join(
                 playlists_dir, playlist_name + ".xsp")) else 1)
 
-    for line in OBSERVATIONS:
-        sys.stdout.write(line + "\n")
+    emit_observations()
 
 
 main(sys.argv)
@@ -3745,6 +3785,7 @@ verify_remote_baseline() {
   local failures=0
   local index addon_id version filename observed_version installed enabled attempted
   local addon_failed value content match expected_marks observed_marks
+  local arctic_fuse_failures=0 playlist_name
 
   if [[ ! -r "${observations}" ]]; then
     warn "Verification observations are not readable: ${observations}"
@@ -3765,6 +3806,10 @@ verify_remote_baseline() {
 
   printf 'verification_source=device-localhost-jsonrpc\n'
 
+  coreelec_report_comparison "observation_format" "coreelec-verification-1" \
+    "$(coreelec_observation_value observation_format "${observations}" || true)" \
+    || failures=$((failures + 1))
+
   value="$(coreelec_observation_value jsonrpc_version "${observations}" || true)"
   printf 'jsonrpc.version=%s\n' "${value}"
   if [[ -n "${value}" ]]; then
@@ -3774,6 +3819,7 @@ verify_remote_baseline() {
     failures=$((failures + 1))
   fi
 
+  if coreelec_component_effective core; then
   coreelec_report_comparison "regional.locale.language" "${LOCALE_LANGUAGE}" \
     "$(coreelec_observation_value setting.locale.language "${observations}" || true)" \
     || failures=$((failures + 1))
@@ -3792,10 +3838,12 @@ verify_remote_baseline() {
   coreelec_report_comparison "regional.timezone_cache" "${TIMEZONE}" \
     "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
     || failures=$((failures + 1))
+  fi
 
   # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
   # not user-configurable, so the expected side is a literal rather than a
   # configuration variable.
+  if coreelec_component_effective cec; then
   coreelec_report_comparison "cec.tv_off_action" "36028" \
     "$(coreelec_observation_value cec.tv_off_action "${observations}" || true)" \
     || failures=$((failures + 1))
@@ -3811,6 +3859,7 @@ verify_remote_baseline() {
   coreelec_report_comparison "cec.standby_tv_on_pc_standby" "0" \
     "$(coreelec_observation_value cec.standby_tv_on_pc_standby "${observations}" || true)" \
     || failures=$((failures + 1))
+  fi
 
   # CoreELEC images differ both in where the zoneinfo tree lives and in how
   # /etc/localtime is stored. A symlink is matched against the tail of its
@@ -3819,6 +3868,7 @@ verify_remote_baseline() {
   # is judged by the byte comparison the device performed against its own
   # copy of the requested zone. Anything else is still a mismatch: unproven is
   # not proven.
+  if coreelec_component_effective core; then
   value="$(coreelec_observation_value localtime_path "${observations}" || true)"
   content="$(coreelec_observation_value localtime_zoneinfo_match "${observations}" || true)"
   printf 'regional.localtime.expected=%s\n' "${TIMEZONE}"
@@ -3865,27 +3915,32 @@ verify_remote_baseline() {
       printf 'regional.date_offset.status=unavailable\n'
       ;;
   esac
+  fi
 
   # The skin and the weather provider are only verified when this run
   # deployed the add-on that provides them.
-  if coreelec_manifest_contains "${manifest}" "skin.arctic.fuse.3"; then
+  if coreelec_component_effective skin \
+      && coreelec_manifest_contains "${manifest}" "skin.arctic.fuse.3"; then
     coreelec_report_comparison "skin" "skin.arctic.fuse.3" \
       "$(coreelec_observation_value setting.lookandfeel.skin "${observations}" || true)" \
       || failures=$((failures + 1))
   fi
 
-  value="$(coreelec_observation_value setting.weather.addon "${observations}" || true)"
-  if coreelec_weather_configured && coreelec_manifest_contains "${manifest}" "weather.ha"; then
-    coreelec_report_comparison "weather_provider" "weather.ha" "${value}" \
-      || failures=$((failures + 1))
-  else
-    # Without a Home Assistant URL, entity, and token the run deliberately
-    # leaves the existing provider alone; reporting it is not a verdict.
-    printf 'weather_provider.expected=unchanged\n'
-    printf 'weather_provider.observed=%s\n' "${value}"
-    printf 'weather_provider.status=not-configured\n'
+  if coreelec_component_effective services; then
+    value="$(coreelec_observation_value setting.weather.addon "${observations}" || true)"
+    if coreelec_weather_configured && coreelec_manifest_contains "${manifest}" "weather.ha"; then
+      coreelec_report_comparison "weather_provider" "weather.ha" "${value}" \
+        || failures=$((failures + 1))
+    else
+      # Without a Home Assistant URL, entity, and token the run deliberately
+      # leaves the existing provider alone; reporting it is not a verdict.
+      printf 'weather_provider.expected=unchanged\n'
+      printf 'weather_provider.observed=%s\n' "${value}"
+      printf 'weather_provider.status=not-configured\n'
+    fi
   fi
 
+  if coreelec_component_effective addons; then
   while IFS=$'\t' read -r index addon_id version filename; do
     [[ -n "${addon_id}" ]] || continue
     addon_failed=0
@@ -3898,7 +3953,9 @@ verify_remote_baseline() {
     printf 'addon.%s.installed=%s\n' "${addon_id}" "${installed:-0}"
     printf 'addon.%s.enabled=%s\n' "${addon_id}" "${enabled:-0}"
     printf 'addon.%s.enable_attempted=%s\n' "${addon_id}" "${attempted:-0}"
-    printf 'addon.%s.status=%s\n' "${addon_id}" "$(classify_addon_status "${addon_id}")"
+    if coreelec_component_effective services; then
+      printf 'addon.%s.status=%s\n' "${addon_id}" "$(classify_addon_status "${addon_id}")"
+    fi
     [[ "${installed}" == "1" ]] || addon_failed=1
     [[ "${enabled}" == "1" ]] || addon_failed=1
     [[ "${observed_version}" == "${version}" ]] || addon_failed=1
@@ -3918,28 +3975,31 @@ verify_remote_baseline() {
   if [[ -n "${value}" ]]; then
     printf 'addon_enable_unresolved=%s\n' "${value}"
   fi
+  fi
 
   # Files this run configured are checked on the device, which returns a
   # boolean rather than the stored token, key, or PIN.
+  if coreelec_component_effective services; then
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "weather.ha" coreelec_weather_configured || failures=$((failures + 1))
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "pvr.nextpvr" coreelec_nextpvr_configured || failures=$((failures + 1))
 
   # Split ratings-key verification: each key is independently fatal.
-  local arctic_fuse_failures=0
   if [[ -n "${OMDB_API_KEY:-}" ]]; then
     coreelec_verify_boolean_observation "${observations}" \
       "addon_settings.plugin.video.themoviedb.helper.omdb_configured" \
-      "metadata.omdb" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+      "metadata.omdb" || failures=$((failures + 1))
   fi
   if [[ -n "${MDBLIST_API_KEY:-}" ]]; then
     coreelec_verify_boolean_observation "${observations}" \
       "addon_settings.plugin.video.themoviedb.helper.mdblist_configured" \
-      "metadata.mdblist" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+      "metadata.mdblist" || failures=$((failures + 1))
+  fi
   fi
 
   # Arctic Fuse surfaces are each reported before the aggregate status.
+  if coreelec_component_effective skin; then
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.tv_hub_configured" "arctic_fuse.tv_hub" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
@@ -3983,7 +4043,6 @@ verify_remote_baseline() {
     "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
-  local playlist_name
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
     RecentlyAiredEpisodes30Days TraktPopularTVShows TraktWeekendBoxOffice \
     RecentlyReleasedMoviesCurrentAndPreviousYear NewShows NewMovies; do
@@ -4023,6 +4082,7 @@ verify_remote_baseline() {
     printf 'arctic_fuse.status=ok\n'
   else
     printf 'arctic_fuse.status=mismatch\n'
+  fi
   fi
 
   printf 'verification_failures=%s\n' "${failures}"
@@ -4144,6 +4204,15 @@ coreelec_report_manual_actions() {
 # section, and it is fenced by begin/end markers.
 coreelec_report_render() {
   local manifest="$1" name value index filename
+  local report_component_set report_addons=0 report_services=0
+  local requested_csv effective_csv dependencies_csv
+  report_component_set="${EFFECTIVE_COMPONENT_SET:-$'\ncore\ncec\naddons\nservices\nskin\n'}"
+  case "${report_component_set}" in
+    *$'\n'addons$'\n'*) report_addons=1 ;;
+  esac
+  case "${report_component_set}" in
+    *$'\n'services$'\n'*) report_services=1 ;;
+  esac
   printf 'report_format=coreelec-provisioning-report-2\n'
   printf 'script_version=%s\n' "${SCRIPT_VERSION}"
   printf 'created_utc=%s\n' "$(timestamp)"
@@ -4167,18 +4236,36 @@ coreelec_report_render() {
     printf 'remote_backup_path=%s\n' "${REMOTE_BACKUP_PATH}"
   fi
 
-  if (( ${#ADDONS[@]} > 0 )); then
-    printf 'requested_addons=%s\n' "$(printf '%s,' ${ADDONS[@]+"${ADDONS[@]}"} | sed 's/,$//')"
-    printf 'addon_selection=subset\n'
-    # A narrowed selection deploys exactly what was named; nothing resolves
-    # its dependencies, so that stays the operator's problem and is stated.
-    printf 'addon_dependency_resolution=manual\n'
-  else
-    printf 'requested_addons=all-locked-artifacts\n'
-    printf 'addon_selection=all-locked-artifacts\n'
-    printf 'addon_dependency_resolution=complete-locked-closure\n'
+  if [[ "${report_addons}" == "1" ]]; then
+    if (( ${#ADDONS[@]} > 0 )); then
+      printf 'requested_addons=%s\n' "$(printf '%s,' ${ADDONS[@]+"${ADDONS[@]}"} | sed 's/,$//')"
+      printf 'addon_selection=subset\n'
+      # A narrowed selection deploys exactly what was named; nothing resolves
+      # its dependencies, so that stays the operator's problem and is stated.
+      printf 'addon_dependency_resolution=manual\n'
+    else
+      printf 'requested_addons=all-locked-artifacts\n'
+      printf 'addon_selection=all-locked-artifacts\n'
+      printf 'addon_dependency_resolution=complete-locked-closure\n'
+    fi
   fi
 
+  if [[ -n "${EFFECTIVE_COMPONENT_SET:-}" ]]; then
+    requested_csv="$(IFS=,; printf '%s' "${REQUESTED_COMPONENTS[*]}")"
+    effective_csv="$(IFS=,; printf '%s' "${EFFECTIVE_COMPONENTS[*]}")"
+    if (( ${#COMPONENT_DEPENDENCIES_ADDED[@]} > 0 )); then
+      dependencies_csv="$(IFS=,; printf '%s' "${COMPONENT_DEPENDENCIES_ADDED[*]}")"
+    else
+      dependencies_csv="none"
+    fi
+  else
+    requested_csv="baseline"
+    effective_csv="core,cec,addons,services,skin"
+    dependencies_csv="none"
+  fi
+  printf 'components.requested=%s\n' "${requested_csv}"
+  printf 'components.effective=%s\n' "${effective_csv}"
+  printf 'components.dependencies_added=%s\n' "${dependencies_csv}"
   if [[ -n "${REMOTE_TRANSACTION}" ]]; then
     printf 'deployment_transaction=%s\n' "${REMOTE_TRANSACTION}"
   fi
@@ -4186,7 +4273,7 @@ coreelec_report_render() {
   printf 'verification_result=%s\n' "${VERIFICATION_RESULT}"
   # What this run deployed, independently of what verification observed, so
   # the record of the change survives even a failed verification.
-  if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+  if [[ "${report_addons}" == "1" && -n "${manifest}" && -r "${manifest}" ]]; then
     while IFS=$'\t' read -r index name value filename; do
       [[ -n "${name}" ]] || continue
       printf 'deployed_addon.%s=%s\n' "${name}" "${value}"
@@ -4203,12 +4290,16 @@ coreelec_report_render() {
 
   coreelec_secret_names | while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
+    case "${name}" in
+      KODI_WEB_PASSWORD) ;;
+      *) [[ "${report_services}" == "1" ]] || continue ;;
+    esac
     value="0"
     [[ -n "$(coreelec_secret_value "${name}")" ]] && value="1"
     printf 'secret_present.%s=%s\n' "${name}" "${value}"
   done
 
-  if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+  if [[ "${report_services}" == "1" && -n "${manifest}" && -r "${manifest}" ]]; then
     coreelec_report_manual_actions "${manifest}"
   fi
 }
@@ -4904,27 +4995,37 @@ wait_for_kodi_jsonrpc() {
 # answers with a boolean.
 coreelec_verify_request() {
   local index id version filename ids=""
+  coreelec_settings_payload_entry EFFECTIVE_COMPONENTS \
+    "$(coreelec_components_csv "${EFFECTIVE_COMPONENTS[@]}")"
   coreelec_settings_payload_entry KODI_WEB_USER "${KODI_USER}"
   coreelec_settings_payload_entry KODI_WEB_PASSWORD "${KODI_WEB_PASSWORD}"
   coreelec_settings_payload_entry KODI_PORT "${KODI_PORT}"
-  coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
-  coreelec_settings_payload_entry HOME_ASSISTANT_URL "${HOME_ASSISTANT_URL}"
-  coreelec_settings_payload_entry HOME_ASSISTANT_WEATHER_ENTITY "${HOME_ASSISTANT_WEATHER_ENTITY}"
-  coreelec_settings_payload_entry NEXTPVR_HOST "${NEXTPVR_HOST}"
-  coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
-  coreelec_settings_payload_entry HAVE_HOME_ASSISTANT_TOKEN \
-    "$([[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_NEXTPVR_PIN \
-    "$([[ -n "${NEXTPVR_PIN:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_OMDB_API_KEY \
-    "$([[ -n "${OMDB_API_KEY:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_MDBLIST_API_KEY \
-    "$([[ -n "${MDBLIST_API_KEY:-}" ]] && printf '1' || printf '0')"
-  while IFS=$'\t' read -r index id version filename; do
-    [[ -n "${id}" ]] || continue
-    ids="${ids}${id}"$'\n'
-  done < "${DEPLOY_MANIFEST}"
-  coreelec_settings_payload_entry ADDON_IDS "${ids}"
+  if coreelec_component_effective core; then
+    coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
+  fi
+  if coreelec_component_effective services || coreelec_component_effective skin; then
+    coreelec_settings_payload_entry HOME_ASSISTANT_URL "${HOME_ASSISTANT_URL}"
+    coreelec_settings_payload_entry HOME_ASSISTANT_WEATHER_ENTITY "${HOME_ASSISTANT_WEATHER_ENTITY}"
+    coreelec_settings_payload_entry NEXTPVR_HOST "${NEXTPVR_HOST}"
+    coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
+    coreelec_settings_payload_entry HAVE_HOME_ASSISTANT_TOKEN \
+      "$([[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && printf '1' || printf '0')"
+    coreelec_settings_payload_entry HAVE_NEXTPVR_PIN \
+      "$([[ -n "${NEXTPVR_PIN:-}" ]] && printf '1' || printf '0')"
+  fi
+  if coreelec_component_effective services; then
+    coreelec_settings_payload_entry HAVE_OMDB_API_KEY \
+      "$([[ -n "${OMDB_API_KEY:-}" ]] && printf '1' || printf '0')"
+    coreelec_settings_payload_entry HAVE_MDBLIST_API_KEY \
+      "$([[ -n "${MDBLIST_API_KEY:-}" ]] && printf '1' || printf '0')"
+  fi
+  if coreelec_component_effective addons; then
+    while IFS=$'\t' read -r index id version filename; do
+      [[ -n "${id}" ]] || continue
+      ids="${ids}${id}"$'\n'
+    done < "${DEPLOY_MANIFEST}"
+    coreelec_settings_payload_entry ADDON_IDS "${ids}"
+  fi
 }
 
 upload_kodi_verify_request() {

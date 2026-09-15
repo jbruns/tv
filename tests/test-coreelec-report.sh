@@ -361,6 +361,14 @@ run_verify() {
     --verify-fixture "${observations}" "${manifest}"
 }
 
+run_verify_components() {
+  local component="$1" config="$2" observations="$3" manifest="$4"
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --component "${component}" \
+    --verify-fixture "${observations}" "${manifest}"
+}
+
 run_classify() {
   local config="$1" addon_id="$2"
   HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
@@ -376,6 +384,15 @@ run_report() {
   HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
     NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
     bash "${PROVISIONER}" --config "${config}" \
+    --report-fixture "${directory}" "${observations}" "${manifest}" "${reachable}"
+}
+
+run_report_components() {
+  local component="$1" config="$2" directory="$3" observations="$4" manifest="$5"
+  local reachable="${6:-unknown}"
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --component "${component}" \
     --report-fixture "${directory}" "${observations}" "${manifest}" "${reachable}"
 }
 
@@ -709,6 +726,79 @@ test_cec_power_coupling_mismatch_fails_verification() {
     assert_contains "${output}" "cec.${key}.status=mismatch" \
       "the CEC ${key} mismatch is reported" || return 1
   done
+}
+
+test_cec_only_verification_ignores_unselected_component_observations() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "setting.locale.language" "invalid"
+  set_observation "${observations}" "addon.weather.ha.enabled" "0"
+  set_observation "${observations}" "addon_settings.weather.ha.configured" "0"
+  set_observation "${observations}" "arctic_fuse.home_widgets_configured" "0"
+
+  set +e
+  output="$(run_verify_components cec "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "CEC-only verification ignores unselected state" || return 1
+  assert_contains "${output}" "cec.activate_source.status=ok" \
+    "the selected CEC value is verified" || return 1
+  assert_not_contains "${output}" "arctic_fuse." \
+    "skin verdicts are omitted" || return 1
+  assert_not_contains "${output}" "addon.weather.ha." \
+    "add-on verdicts are omitted" || return 1
+  assert_not_contains "${output}" "regional.locale." \
+    "regional verdicts are omitted" || return 1
+}
+
+test_cec_only_verification_fails_when_a_selected_observation_is_missing() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  grep -v '^cec.activate_source=' "${observations}" > "${observations}.new"
+  mv "${observations}.new" "${observations}"
+
+  set +e
+  output="$(run_verify_components cec "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing selected CEC value must fail verification" || return 1
+  assert_contains "${output}" "cec.activate_source.status=mismatch" \
+    "the unanswered selected observation is named" || return 1
+}
+
+test_default_baseline_still_rejects_invalid_arctic_fuse_state() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.home_widgets_configured" "0"
+
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "the default baseline keeps strict AF3 verification" || return 1
+  assert_contains "${output}" "arctic_fuse.status=mismatch" \
+    "the full baseline reports the AF3 mismatch" || return 1
 }
 
 # CoreELEC images ship /etc/localtime either as a symlink into the zoneinfo
@@ -1094,6 +1184,58 @@ test_audit_report_records_cec_ignore_without_adapter_filename() {
     "the report never names the dynamic CEC adapter file" || return 1
   assert_not_contains "$(cat "${report}")" "peripheral_data" \
     "the report never names the peripheral_data path" || return 1
+}
+
+test_report_records_the_deterministic_component_plan() {
+  local dir config manifest observations report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  report="$(run_report_components skin "${config}" "${dir}/out" \
+    "${observations}" "${manifest}")"
+  assert_eq "skin" "$(report_line "${report}" components.requested)" \
+    "the requested component is recorded" || return 1
+  assert_eq "core,addons,skin" "$(report_line "${report}" components.effective)" \
+    "effective components use stable dependency order" || return 1
+  assert_eq "core,addons" "$(report_line "${report}" components.dependencies_added)" \
+    "added dependencies are explicit" || return 1
+}
+
+test_cec_only_report_omits_unselected_verdicts_and_remains_redacted() {
+  local dir config manifest observations report contents
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  report="$(HOME_ASSISTANT_TOKEN=cec-only-report-secret \
+    run_report_components cec "${config}" "${dir}/out" \
+    "${observations}" "${manifest}")"
+  contents="$(cat "${report}")"
+  assert_eq "cec" "$(report_line "${report}" components.requested)" \
+    "the CEC-only request is recorded" || return 1
+  assert_eq "cec" "$(report_line "${report}" components.effective)" \
+    "the CEC-only effective scope stays narrow" || return 1
+  assert_contains "${contents}" "cec.activate_source.status=ok" \
+    "the selected CEC verdict is reported" || return 1
+  assert_not_contains "${contents}" "arctic_fuse." \
+    "unselected skin verdicts are omitted" || return 1
+  assert_not_contains "${contents}" "addon.weather.ha." \
+    "unselected add-on verdicts are omitted" || return 1
+  assert_not_contains "${contents}" "regional.locale." \
+    "unselected regional verdicts are omitted" || return 1
+  assert_not_contains "${contents}" "cec-only-report-secret" \
+    "the existing redaction guard still protects scoped reports" || return 1
 }
 
 test_report_redacts_all_supplied_secret_values() {
@@ -1788,16 +1930,22 @@ install_probe_path_without_curl() {
 # in a value becomes a newline, because the production request carries the
 # add-on list as one multi-line value.
 write_probe_request() {
-  local file="$1" line key value
+  local file="$1" line key value have_component_scope=0
   : > "${file}"
   chmod 600 "${file}"
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
     key="${line%%=*}"
     value="${line#*=}"
+    [[ "${key}" != "EFFECTIVE_COMPONENTS" ]] || have_component_scope=1
     value="${value//\\n/$'\n'}"
     printf '%s=%s\n' "${key}" "$(printf '%s' "${value}" | openssl base64 -A)" >> "${file}"
   done
+  if [[ "${have_component_scope}" == "0" ]]; then
+    printf 'EFFECTIVE_COMPONENTS=%s\n' \
+      "$(printf '%s' 'core,cec,addons,services,skin' | openssl base64 -A)" \
+      >> "${file}"
+  fi
 }
 
 # `layout` selects how /etc/localtime is stored, because CoreELEC images use
@@ -1938,6 +2086,95 @@ ENTRIES
   assert_failure "${rc}" "a missing CEC peripheral file must fail the probe" || return 1
   assert_contains "${output}" "peripheral_data" \
     "the failure names the peripheral_data directory" || return 1
+}
+
+test_cec_only_remote_probe_emits_only_common_and_cec_observations() {
+  local dir root bin_dir request output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+EFFECTIVE_COMPONENTS=cec
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "observation_format=coreelec-verification-1" \
+    "the observation contract is always reported" || return 1
+  assert_contains "${output}" "jsonrpc_version=" \
+    "Kodi restart/readiness evidence is always reported" || return 1
+  assert_contains "${output}" "cec.tv_off_action=36028" \
+    "the selected CEC state is reported" || return 1
+  assert_not_contains "${output}" "setting.locale." \
+    "the CEC probe omits regional observations" || return 1
+  assert_not_contains "${output}" "addon.weather.ha." \
+    "the CEC probe omits add-on observations" || return 1
+  assert_not_contains "${output}" "addon_settings." \
+    "the CEC probe omits service observations" || return 1
+  assert_not_contains "${output}" "arctic_fuse." \
+    "the CEC probe omits skin observations" || return 1
+}
+
+test_remote_probe_rejects_an_invalid_component_scope() {
+  local dir root bin_dir request output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+EFFECTIVE_COMPONENTS=cec,unknown
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  set +e
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an invalid effective component list must be rejected" || return 1
+  assert_contains "${output}" "invalid effective component scope" \
+    "the malformed scope is diagnosed" || return 1
+}
+
+test_remote_probe_rejects_a_missing_component_scope() {
+  local dir root bin_dir request output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ENTRIES
+  grep -v '^EFFECTIVE_COMPONENTS=' "${request}" > "${request}.new"
+  mv "${request}.new" "${request}"
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  set +e
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing effective component list must not widen to baseline" || return 1
+  assert_contains "${output}" "invalid effective component scope" \
+    "the missing scope is diagnosed" || return 1
 }
 
 test_remote_probe_rejects_a_malformed_cec_document() {
@@ -3881,6 +4118,9 @@ run_all_tests \
   test_timezone_cache_and_zoneinfo_are_verified \
   test_cec_ignore_mismatch_fails_verification \
   test_cec_power_coupling_mismatch_fails_verification \
+  test_cec_only_verification_ignores_unselected_component_observations \
+  test_cec_only_verification_fails_when_a_selected_observation_is_missing \
+  test_default_baseline_still_rejects_invalid_arctic_fuse_state \
   test_regular_file_localtime_is_verified_by_content \
   test_unexpected_device_date_output_is_advisory_not_fatal \
   test_date_offset_reports_expected_and_observed_marks \
@@ -3893,6 +4133,8 @@ run_all_tests \
   test_missing_optional_values_are_classified_unconfigured \
   test_report_lists_secret_presence_without_secret_values \
   test_audit_report_records_cec_ignore_without_adapter_filename \
+  test_report_records_the_deterministic_component_plan \
+  test_cec_only_report_omits_unselected_verdicts_and_remains_redacted \
   test_report_redacts_all_supplied_secret_values \
   test_report_records_config_fingerprint_without_secrets \
   test_report_lists_manual_actions_in_order \
@@ -3912,6 +4154,9 @@ run_all_tests \
   test_remote_verify_script_passes_shell_syntax_check \
   test_remote_verify_probe_reports_state_without_secrets \
   test_remote_probe_reports_cec_ignore \
+  test_cec_only_remote_probe_emits_only_common_and_cec_observations \
+  test_remote_probe_rejects_an_invalid_component_scope \
+  test_remote_probe_rejects_a_missing_component_scope \
   test_remote_probe_rejects_a_malformed_cec_document \
   test_remote_probe_rejects_unreadable_or_ambiguous_cec_values \
   test_remote_verify_probe_compares_a_copied_localtime_by_content \
