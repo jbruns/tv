@@ -345,6 +345,95 @@ PYEOF
     "lookandfeel.soundskin converges to the managed value"
 }
 
+# Kodi's settings manager resolves a guisettings ID without regard to case, so
+# a differently cased node is the same setting. Leaving one beside the managed
+# node lets Kodi read the stale value and makes verification permanently
+# ambiguous.
+test_kodi_setting_case_variants_are_removed() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_guisettings "${root}"
+  python3 - "$(guisettings_path "${root}")" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+root = tree.getroot()
+node = ET.SubElement(root, "setting", {"id": "LOOKANDFEEL.SOUNDSKIN"})
+node.text = "resource.uisounds.default"
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "0" "$(xml_setting_count "${settings}" "LOOKANDFEEL.SOUNDSKIN")" \
+    "the uppercase sound skin variant is removed"
+  assert_eq "1 1" "$(xml_setting_scope_counts "${settings}" lookandfeel.soundskin)" \
+    "exactly one canonical root sound skin node survives"
+  assert_eq "resource.uisounds.fromashes" \
+    "$(xml_setting "${settings}" lookandfeel.soundskin)" \
+    "the surviving node carries the managed sound skin"
+}
+
+# Kodi reads only the direct `<setting>` children of the guisettings root,
+# while the verifier reads the document recursively. A managed value left at
+# any depth would therefore be invisible to Kodi and still be found, so
+# convergence must promote it to one canonical root node without disturbing
+# unrelated nested state.
+test_nested_kodi_settings_are_promoted_to_root_nodes() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_guisettings "${root}"
+  python3 - "$(guisettings_path "${root}")" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+root = tree.getroot()
+category = ET.SubElement(root, "category", {"id": "videolibrary"})
+ET.SubElement(category, "setting", {"id": "input.enablemouse"}).text = "true"
+ET.SubElement(
+    category, "setting", {"id": "unmanaged.category.preference"}
+).text = "keep-category"
+group = ET.SubElement(category, "group", {"id": "general"})
+ET.SubElement(
+    group, "setting", {"id": "videolibrary.flattentvshows"}
+).text = "0"
+ET.SubElement(
+    group, "setting", {"id": "unmanaged.group.preference"}
+).text = "keep-group"
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "1 1" "$(xml_setting_scope_counts "${settings}" input.enablemouse)" \
+    "a category-nested managed setting is promoted to one root node"
+  assert_eq "false" "$(xml_setting "${settings}" input.enablemouse)" \
+    "the promoted mouse setting carries the managed value"
+  assert_eq "1 1" \
+    "$(xml_setting_scope_counts "${settings}" videolibrary.flattentvshows)" \
+    "a deeply nested managed setting is promoted to one root node"
+  assert_eq "1" "$(xml_setting "${settings}" videolibrary.flattentvshows)" \
+    "the promoted flatten setting carries the managed value"
+  assert_eq "keep-category" \
+    "$(xml_setting "${settings}" unmanaged.category.preference)" \
+    "unrelated category state is preserved"
+  assert_eq "keep-group" \
+    "$(xml_setting "${settings}" unmanaged.group.preference)" \
+    "unrelated deeply nested state is preserved"
+}
+
 test_existing_unmanaged_settings_are_preserved() {
   local dir root payload settings
   dir="$(make_scratch_dir)"
@@ -1186,6 +1275,39 @@ XML
   done
 }
 
+# The Weather tile owns all three of its fields. A stale `.path` or `.target`
+# left beside a managed `.include` still points the tile at whatever the
+# previous profile configured, so both are removed in the configured branch
+# exactly as they are in the unconfigured one.
+test_arctic_fuse_configured_weather_tile_clears_stale_path_and_target() {
+  local dir root payload skin_file setting_id
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  cat > "$(skin_settings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings>
+    <setting id="optionstiles.03.include">Old Weather</setting>
+    <setting id="optionstiles.03.path">stale-weather-path</setting>
+    <setting id="optionstiles.03.target">stale-weather-target</setting>
+</settings>
+XML
+
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  skin_file="$(skin_settings_path "${root}")"
+  assert_eq "Weather" "$(xml_setting "${skin_file}" "optionstiles.03.include")" \
+    "the configured Weather tile keeps its managed include"
+  for setting_id in "optionstiles.03.path" "optionstiles.03.target"; do
+    skin_setting_absent "${root}" "${setting_id}" \
+      || { printf '%s must be absent\n' "${setting_id}" >&2; return 1; }
+  done
+}
+
 test_arctic_fuse_pvr_and_weather_are_absent_when_unconfigured() {
   local dir root payload skin_file setting_id
   dir="$(make_scratch_dir)"
@@ -1635,13 +1757,13 @@ test_arctic_fuse_second_run_is_byte_identical() {
 }
 
 test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
-  local dir root payload managed_output
+  local dir root payload managed_output written backup line relative
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
   payload="${dir}/payload.conf"
-  write_base_payload "${payload}"
-  run_transform "${root}" "${payload}" >/dev/null
+  write_full_payload "${payload}"
+  written="$(run_transform "${root}" "${payload}")"
 
   # Check that coreelec_managed_settings_paths_block lists the skin settings,
   # every managed node JSON file, new playlists, and removed migration paths.
@@ -1668,6 +1790,22 @@ test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
   assert_contains "${managed_output}" "TraktWeekendBoxOffice.xsp" "TWBO in managed paths"
   assert_contains "${managed_output}" "NewShows.xsp" "NS in managed paths"
   assert_contains "${managed_output}" "NewMovies.xsp" "NM in managed paths"
+
+  # Containment is not enough: a path the transformer starts writing but that
+  # nobody adds to the backup set would still satisfy every assertion above.
+  # Running the real backup program the device receives, over the tree the
+  # real transformer just wrote, cross-checks the two sets against each other,
+  # so a newly managed path cannot be left out of the transaction snapshot.
+  backup="$(umask 022; printf '%s\n' "${managed_output}" | sh -s)"
+  while IFS= read -r line; do
+    [[ "${line}" == "settings applied: "* ]] || continue
+    relative="${line#settings applied: }"
+    relative="${relative#"${root}/"}"
+    if [[ ! -f "${backup}/${relative}" ]]; then
+      printf 'the transaction backup does not capture %s\n' "${relative}" >&2
+      return 1
+    fi
+  done <<< "${written}"
 }
 
 test_arctic_fuse_managed_settings_carry_type_string() {
@@ -1811,6 +1949,8 @@ test_arctic_fuse_replaces_obsolete_recently_released_playlists() {
 run_all_tests \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
+  test_kodi_setting_case_variants_are_removed \
+  test_nested_kodi_settings_are_promoted_to_root_nodes \
   test_existing_unmanaged_settings_are_preserved \
   test_second_run_is_byte_identical \
   test_cec_tv_off_action_is_changed_to_ignore \
@@ -1841,6 +1981,7 @@ run_all_tests \
   test_remote_payload_upload_replaces_a_permissive_file \
   test_remote_backup_directory_is_private \
   test_arctic_fuse_hubs_and_options_tray_are_converged \
+  test_arctic_fuse_configured_weather_tile_clears_stale_path_and_target \
   test_arctic_fuse_pvr_and_weather_are_absent_when_unconfigured \
   test_arctic_fuse_managed_settings_are_promoted_to_root_nodes \
   test_arctic_fuse_deeply_nested_managed_settings_are_promoted_to_root_nodes \

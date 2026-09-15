@@ -400,6 +400,45 @@ def _setting_nodes(root, setting_id):
     return found
 
 
+def _folded_setting_nodes(root, setting_id):
+    """Every case-insensitively matching `<setting>` node at any depth, with
+    its parent. Kodi's settings manager resolves an ID without regard to case,
+    so a differently cased node is the same setting, and a recursive reader
+    still finds one buried in a legacy `<category>` or `<group>`."""
+    wanted = setting_id.casefold()
+    matches = []
+    stack = [root]
+    while stack:
+        parent = stack.pop()
+        for node in list(parent):
+            if (node.tag == "setting"
+                    and (node.get("id") or "").casefold() == wanted):
+                matches.append((parent, node))
+            stack.append(node)
+    return matches
+
+
+def canonical_setting_node(root, setting_id):
+    """The single managed node for `setting_id`, as a direct child of `root`.
+
+    Kodi reads only the direct `<setting>` children of a settings root, while
+    verification reads the document recursively. Reusing a nested node would
+    write a value Kodi never resolves and still look converged, so every other
+    case-insensitive match at any depth is removed and the survivor is
+    promoted to (or created at) the root under the canonical ID spelling."""
+    node = None
+    for parent, candidate in _folded_setting_nodes(root, setting_id):
+        if parent is root and node is None:
+            node = candidate
+            continue
+        parent.remove(candidate)
+    if node is None:
+        node = ET.SubElement(root, "setting")
+    node.set("id", setting_id)
+    node.attrib.pop("default", None)
+    return node
+
+
 def _set_xml_setting(root, setting_id, value, flat):
     # One rule for every managed setting, Kodi or add-on: an empty value is
     # never stored. Writing one would replace a good existing value with
@@ -424,8 +463,19 @@ def _set_xml_setting(root, setting_id, value, flat):
 
 
 def set_kodi_setting(root, setting_id, value):
-    """Sets one Kodi guisettings value on an already-loaded document root."""
-    return _set_xml_setting(root, setting_id, value, flat=False)
+    """Sets one Kodi guisettings value on an already-loaded document root.
+
+    The managed state is exactly one canonical direct-root node: case variants
+    and nested copies are the same setting to Kodi and are removed."""
+    # One rule for every managed setting, Kodi or add-on: an empty value is
+    # never stored. Writing one would replace a good existing value with
+    # nothing, and Kodi reads an empty node as unset anyway.
+    if value == "":
+        return None
+    node = canonical_setting_node(root, setting_id)
+    node.attrib.pop("value", None)
+    node.text = value
+    return node
 
 
 def set_addon_setting(path, setting_id, value, version=2):
@@ -653,19 +703,6 @@ def main(argv):
         skin_root = ET.Element("settings")
         skin_tree = ET.ElementTree(skin_root)
 
-    def _skin_setting_nodes(root, setting_id):
-        wanted = setting_id.casefold()
-        matches = []
-        stack = [root]
-        while stack:
-            parent = stack.pop()
-            for node in list(parent):
-                if (node.tag == "setting"
-                        and (node.get("id") or "").casefold() == wanted):
-                    matches.append((parent, node))
-                stack.append(node)
-        return matches
-
     def set_skin_setting(setting_id, value):
         # Kodi reads only the direct `<setting>` children of the settings
         # root, while a recursive reader also sees the legacy `<category>`
@@ -673,22 +710,13 @@ def main(argv):
         # write a value the skin never resolves and still look converged, so
         # the managed node is always the canonical root child and every other
         # case-insensitive match is removed.
-        node = None
-        for parent, candidate in _skin_setting_nodes(skin_root, setting_id):
-            if parent is skin_root and node is None:
-                node = candidate
-                continue
-            parent.remove(candidate)
-        if node is None:
-            node = ET.SubElement(skin_root, "setting", {"id": setting_id})
-        node.set("id", setting_id)
+        node = canonical_setting_node(skin_root, setting_id)
         node.set("type", "string")
         node.attrib.pop("value", None)
-        node.attrib.pop("default", None)
         node.text = value
 
     def remove_skin_setting(setting_id):
-        for parent, node in _skin_setting_nodes(skin_root, setting_id):
+        for parent, node in _folded_setting_nodes(skin_root, setting_id):
             parent.remove(node)
 
     # Hub toggles and shortcuts
@@ -746,12 +774,15 @@ def main(argv):
     set_skin_setting("optionstiles.02.include", "Settings")
     set_skin_setting("optionstiles.04.include", "SystemInfo")
 
+    # The Weather tile owns all three of its fields. A stale `.path` or
+    # `.target` from an earlier profile would still aim the tile somewhere
+    # else, so both are cleared whether or not the tile itself is configured.
+    remove_skin_setting("optionstiles.03.path")
+    remove_skin_setting("optionstiles.03.target")
     if weather_configured:
         set_skin_setting("optionstiles.03.include", "Weather")
     else:
         remove_skin_setting("optionstiles.03.include")
-        remove_skin_setting("optionstiles.03.path")
-        remove_skin_setting("optionstiles.03.target")
 
     write_xml_atomic(skin_settings_path, skin_tree)
 
@@ -2501,13 +2532,15 @@ def main(argv):
         config("HOME_ASSISTANT_URL")
         and config("HOME_ASSISTANT_WEATHER_ENTITY")
         and have("HOME_ASSISTANT_TOKEN"))
-    weather_tile_ok = (
+    # The Weather tile owns all three of its fields in both configurations: a
+    # stale path or target still aims the tile at the previous destination.
+    weather_tile_ok = all((
         managed_setting_is("optionstiles.03.include", "Weather")
-        if weather_expected else all((
-            managed_setting_is_unset("optionstiles.03.include"),
-            managed_setting_is_unset("optionstiles.03.path"),
-            managed_setting_is_unset("optionstiles.03.target"),
-        )))
+        if weather_expected
+        else managed_setting_is_unset("optionstiles.03.include"),
+        managed_setting_is_unset("optionstiles.03.path"),
+        managed_setting_is_unset("optionstiles.03.target"),
+    ))
     option_tiles_ok = all((
         managed_setting_is("optionstiles.01.include", "NowPlaying"),
         managed_setting_is("optionstiles.02.include", "Settings"),
@@ -3407,13 +3440,23 @@ verify_remote_baseline() {
       || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   done
 
+  # The sound dependency belongs to the whole locked deployment. A narrowed
+  # --addon selection deploys a subset on purpose, so requiring From Ashes in
+  # a selection that did not ask for it would reject a legitimate transaction.
+  # A full run, and any selection that names it, still must deploy it.
   if coreelec_manifest_contains "${manifest}" "resource.uisounds.fromashes"; then
     value=1
   else
     value=0
   fi
-  coreelec_report_comparison "arctic_fuse.from_ashes_manifest" "1" "${value}" \
-    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  if (( ${#ADDONS[@]} > 0 )) && (( value == 0 )); then
+    printf 'arctic_fuse.from_ashes_manifest.expected=not-selected\n'
+    printf 'arctic_fuse.from_ashes_manifest.observed=not-selected\n'
+    printf 'arctic_fuse.from_ashes_manifest.status=not-selected\n'
+  else
+    coreelec_report_comparison "arctic_fuse.from_ashes_manifest" "1" "${value}" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  fi
 
   if (( arctic_fuse_failures == 0 )); then
     printf 'arctic_fuse.status=ok\n'

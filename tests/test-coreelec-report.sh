@@ -2292,6 +2292,36 @@ run_verify_with_keys() {
     run_verify "${config}" "${observations}" "${manifest}"
 }
 
+# The same comparator for a narrowed `--addon` selection, which is what an
+# operator runs when redeploying part of the lock onto a provisioned device.
+run_verify_selection() {
+  local config="$1" observations="$2" manifest="$3"
+  shift 3
+  local addon_flags=() addon_id
+  for addon_id in "$@"; do
+    addon_flags+=(--addon "${addon_id}")
+  done
+  HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    OMDB_API_KEY=omdb-key MDBLIST_API_KEY=mdblist-key \
+    HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" "${addon_flags[@]}" \
+    --verify-fixture "${observations}" "${manifest}"
+}
+
+# Narrows a deployment manifest fixture to the given add-on IDs, keeping the
+# rows exactly as `coreelec_addon_selection` would emit them.
+narrow_manifest() {
+  local manifest="$1"
+  shift
+  local addon_id keep="${manifest}.narrowed"
+  : > "${keep}"
+  for addon_id in "$@"; do
+    grep -F $'\t'"${addon_id}"$'\t' "${manifest}" >> "${keep}"
+  done
+  mv "${keep}" "${manifest}"
+}
+
 # --- Arctic Fuse probe fixture helpers --------------------------------------
 
 # Creates a fixture root with every managed Arctic Fuse setting, widget node,
@@ -2904,6 +2934,38 @@ test_probe_rejects_missing_configured_weather_tile() {
     "configured Weather requires the Weather option tile" || return 1
 }
 
+test_probe_rejects_stale_weather_tile_path() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  # A stale path beside a managed include still points the configured tile at
+  # the previous profile's destination.
+  append_skin_setting_node "${skin_file}" "optionstiles.03.path" "string" \
+    "stale-weather-path"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=0" \
+    "a configured Weather tile must carry no stale path" || return 1
+}
+
+test_probe_rejects_stale_weather_tile_target() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "optionstiles.03.target" "string" \
+    "stale-weather-target"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=0" \
+    "a configured Weather tile must carry no stale target" || return 1
+}
+
 test_probe_rejects_weather_tile_when_unconfigured() {
   local dir root bin_dir output
   dir="$(make_scratch_dir)"
@@ -3312,6 +3374,54 @@ test_missing_from_ashes_manifest_entry_fails_verification() {
   assert_failure "${rc}" "a selected sound dependency absent from the manifest must fail" || return 1
   assert_contains "${output}" "arctic_fuse.from_ashes_manifest.status=mismatch" \
     "the report names the missing From Ashes deployment" || return 1
+}
+
+# A narrowed `--addon` selection deploys part of the lock on purpose. From
+# Ashes is a property of the whole locked deployment, so a subset that did not
+# select it is a legitimate transaction, not a missing sound dependency.
+test_from_ashes_is_not_required_by_a_narrowed_selection() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  narrow_manifest "${manifest}" script.plexmod
+
+  set +e
+  output="$(run_verify_selection "${config}" "${observations}" "${manifest}" \
+    script.plexmod 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a subset that does not select From Ashes must verify" || return 1
+  assert_contains "${output}" "arctic_fuse.from_ashes_manifest.status=not-selected" \
+    "the report names From Ashes as out of this selection" || return 1
+  assert_contains "${output}" "verification_result=pass" "result line present" || return 1
+}
+
+test_from_ashes_is_required_by_a_selection_that_names_it() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  narrow_manifest "${manifest}" resource.uisounds.fromashes
+
+  set +e
+  output="$(run_verify_selection "${config}" "${observations}" "${manifest}" \
+    resource.uisounds.fromashes 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a selection that names From Ashes must verify" || return 1
+  assert_contains "${output}" "arctic_fuse.from_ashes_manifest.status=ok" \
+    "From Ashes is still verified when the selection names it" || return 1
 }
 
 test_comparator_home_widgets_zero_fails_verification() {
@@ -3750,6 +3860,8 @@ run_all_tests \
   test_probe_rejects_pvr_toggle_when_unconfigured \
   test_probe_rejects_pvr_disable_flag \
   test_probe_rejects_missing_configured_weather_tile \
+  test_probe_rejects_stale_weather_tile_path \
+  test_probe_rejects_stale_weather_tile_target \
   test_probe_rejects_weather_tile_when_unconfigured \
   test_probe_malformed_json_emits_zero_for_home_widgets \
   test_probe_malformed_json_emits_zero_for_power_menu \
@@ -3773,6 +3885,8 @@ run_all_tests \
   test_probe_wrong_sound_skin_emits_kodi_defaults_zero \
   test_arctic_fuse_complete_state_verifies \
   test_missing_from_ashes_manifest_entry_fails_verification \
+  test_from_ashes_is_not_required_by_a_narrowed_selection \
+  test_from_ashes_is_required_by_a_selection_that_names_it \
   test_comparator_home_widgets_zero_fails_verification \
   test_comparator_power_menu_zero_fails_verification \
   test_arctic_fuse_hub_mismatch_fails_verification \
