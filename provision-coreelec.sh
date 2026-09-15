@@ -70,11 +70,16 @@ Options:
   --kodi-port PORT          Kodi HTTP/JSON-RPC port (default: 8080)
   --kodi-user USER          Kodi account for Home Assistant (default: homeassistant)
   --addon ID                Deploy only this pinned add-on from the locked
-                             manifest; repeatable. An ID that is not locked in
-                             the configuration is rejected.
+                             manifest; repeatable. Without --component, the
+                             full baseline still applies. With --component,
+                             this also selects the addons component. An ID
+                             that is not locked in the configuration is
+                             rejected.
   --component NAME          Apply only this component and its dependencies;
-                             repeatable. Supported components are baseline,
-                             core, cec, addons, services, and skin.
+                             repeatable. Implemented components are baseline,
+                             core, cec, addons, services, and skin. The room
+                             name is reserved and rejected as unimplemented.
+                             Dependencies are expanded and reported.
   --report-dir PATH         Local report directory
   --expected-release VER    Required CoreELEC release substring (default: 21.3)
   --no-kodi                 Skip Kodi and Home Assistant baseline configuration
@@ -127,7 +132,15 @@ Examples:
   ./provision-coreelec.sh --check-config
   ./provision-coreelec.sh --check-artifacts
   ./provision-coreelec.sh --target coreelec-theater
+  ./provision-coreelec.sh --target coreelec-theater --component cec
+  ./provision-coreelec.sh --target coreelec-theater --component skin
+  ./provision-coreelec.sh --target coreelec-theater --component cec --addon script.plexmod
   ./provision-coreelec.sh --config /path/to/device.conf --target 172.16.99.50
+
+With no --component, provisioning applies the full baseline. Explicit
+components narrow mutation, backup, verification, and reporting to their
+expanded effective scope. Component dependencies are services -> addons and
+skin -> core, addons.
 
 The device must first be booted through the CoreELEC wizard with Ethernet and
 SSH enabled and a unique root password. The first run may prompt for that root

@@ -81,6 +81,40 @@ Kodi keeps CEC enabled for navigation, but it neither claims the active source
 nor sends TV power-on or standby commands when Kodi starts or stops. The
 peripheral XML must contain direct-child settings with value attributes.
 
+### CEC-only maintenance after lifecycle control is active
+
+Before any provisioning run that may stop or restart Kodi, turn on
+`input_boolean.ugoos_theater_keep_kodi_running`, confirm the lifecycle state is
+`running`, and confirm `media_player.theater_kodi_theater` is available. Keep
+the override enabled throughout the CEC transaction and while installing and
+restarting the corrected Home Assistant package.
+
+Run only the CEC component:
+
+```bash
+./provision-coreelec.sh \
+  --target ugoos-theater \
+  --component cec \
+  --yes
+```
+
+The report must show `components.requested=cec`,
+`components.effective=cec`, `components.dependencies_added=none`,
+`deployment_state=committed`, `verification_result=pass`, and
+`verification_failures=0`, plus `status=ok` for all five CEC checks listed
+above. It must not contain an Arctic Fuse verdict. Verification retries full
+device-local samples for up to 60 seconds before the same transaction engine
+commits or rolls back the CEC-owned path.
+
+Do not turn the override off merely because the repository files are updated.
+First install `/config/packages/ugoos_theater_kodi_lifecycle.yaml`, run
+`ha core check`, restart Home Assistant, and complete the documented live
+recovery validation. Until that rollout occurs, neither the corrected package
+nor the corrected CEC policy should be treated as live. The provisioning
+rollback commands and recovery fields are unchanged; follow
+[the shared provisioning workflow](../operations/provision-ugoos.md#full-baseline-and-scoped-maintenance).
+No Sony or Denon settings or service calls are part of this maintenance run.
+
 ## 2. Create the Home Assistant controller identity
 
 In Home Assistant Terminal & SSH, create the dedicated unattended controller

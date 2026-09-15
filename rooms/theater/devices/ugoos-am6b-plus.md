@@ -15,6 +15,28 @@ Apply these room-specific values with the shared Ugoos procedures.
 - **Kodi entity:** `media_player.theater_kodi_theater`
 - **Lifecycle SSH alias:** `ugoos-theater-lifecycle`
 
+## Scoped CEC maintenance
+
+Once Home Assistant lifecycle control is active, enable
+`input_boolean.ugoos_theater_keep_kodi_running` and confirm Kodi is running
+before maintenance. Apply only the Ugoos CEC policy with:
+
+```bash
+./provision-coreelec.sh \
+  --target ugoos-theater \
+  --component cec \
+  --yes
+```
+
+Keep the override enabled until the corrected Home Assistant package is
+installed and its live recovery checks complete. The repository state alone
+does not prove that either the CEC policy or package is live. The scoped run
+uses the shared transaction and rollback workflow and must report only CEC
+verdicts; it must not judge Arctic Fuse or other unselected state.
+
+This rollout does not change Sony or Denon configuration. Weather, buffering,
+add-on sequencing, and future room desired state remain separate work.
+
 ## Shared guides
 
 - [Shared installation guide](../../../docs/devices/ugoos-am6b-plus/coreelec-21.3.md), including shared power, startup-override, and playback-sync defaults

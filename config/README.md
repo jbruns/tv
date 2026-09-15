@@ -124,6 +124,50 @@ downloads and verifies all 41 over HTTPS.
 
 `--target HOST` is always supplied only on the command line.
 
+## Provisioning component contract
+
+Components are CLI selectors, not `provision.conf` keys. With no explicit
+`--component`, `provision-coreelec.sh` requests `baseline`, preserving the full
+shared baseline. A legacy `--addon ID` invocation also keeps that full baseline
+and narrows only the artifact set. When components are explicit, each
+`--addon ID` additionally requests `addons`.
+
+| Component | Owned state |
+| --- | --- |
+| `core` | Regional, locale, timezone, keyboard, Kodi web-access, update-policy, and shared non-room Kodi defaults; the timezone cache and `/etc/localtime` |
+| `cec` | Exactly one detected Kodi CEC peripheral file: `activate_source=0`, `wake_devices=231`, `standby_devices=231`, `standby_tv_on_pc_standby=0`, and `standby_pc_on_tv_standby=36028` (reported as `cec.tv_off_action`) |
+| `addons` | The selected, checksum-locked artifacts and their installed add-on directories |
+| `services` | Settings owned by `plugin.video.themoviedb.helper`, `weather.ha`, `pvr.nextpvr`, and `script.plexmod` |
+| `skin` | Active Arctic Fuse selection, Arctic Fuse settings, Skin Variables widget JSON, managed video playlists, and skin-specific shared Kodi defaults |
+| `room` | Reserved for a future reviewed room-specific playback/library contract; currently unimplemented and rejected rather than treated as a no-op |
+| `baseline` | Alias for every implemented component: `core,cec,addons,services,skin`; it excludes reserved `room` |
+
+Dependencies are expanded before device contact, cycle-checked, and reported
+in stable effective order:
+
+| Requested component | Added dependencies |
+| --- | --- |
+| `core` | none |
+| `cec` | none |
+| `addons` | none |
+| `services` | `addons` |
+| `skin` | `core`, `addons` |
+| `room` | `core` in the reserved graph, but the request is rejected because `room` is not implemented |
+| `baseline` | expands to `core,cec,addons,services,skin` |
+
+Use `--print-component-plan` to inspect normalization without contacting a
+device. Unknown or unimplemented names, `--no-kodi` combined with
+`--component`, dependency cycles, and empty effective plans fail locally.
+Non-add-on scopes use a valid empty private artifact manifest and neither
+download nor stage add-on archives.
+
+Component scope controls Kodi/add-on mutation paths, rollback capture,
+verification, and component report fields. Platform identification,
+administrator-key installation, optional SSH hardening, transaction identity,
+and rollback capability remain shared transaction invariants. A failed scoped
+verification rolls back only the paths in that scoped transaction; the dated
+operational backup remains available.
+
 ## Arctic Fuse 3 managed contract
 
 The shared baseline manages the following Arctic Fuse state. It does not
