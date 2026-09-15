@@ -251,6 +251,13 @@ WRITTEN_PATHS = []
 ADDON_DOCUMENTS = {}
 MANAGED_DIRECTORIES = set()
 TEMPORARY_SUFFIX = ".provision-new"
+COMPONENT_PAYLOAD_KEYS = (
+    "APPLY_COMPONENT_CORE",
+    "APPLY_COMPONENT_CEC",
+    "APPLY_COMPONENT_ADDONS",
+    "APPLY_COMPONENT_SERVICES",
+    "APPLY_COMPONENT_SKIN",
+)
 
 
 def fail(message):
@@ -310,10 +317,15 @@ def read_payload(path):
 
 
 def validate_payload(values):
-    """`HAVE_X=1` with a missing or empty `X` is a contradiction: the caller
-    believes the secret is configured while the payload carries nothing.
-    Failing here, before any write, keeps an empty managed value from being
-    stored as if it were a real credential. Only the key name is reported."""
+    """Requires strict scope flags and rejects contradictory secret markers.
+
+    Failing before any write keeps an empty managed value from being stored as
+    a credential. Error messages name keys but never decoded values."""
+    for key in COMPONENT_PAYLOAD_KEYS:
+        if key not in values:
+            fail("missing required component payload key: %s" % key)
+        if values[key] not in ("0", "1"):
+            fail("%s must be 0 or 1" % key)
     for key in sorted(values):
         if not key.startswith("HAVE_") or values[key] != "1":
             continue
@@ -597,11 +609,22 @@ def main(argv):
     def secret(key):
         return config(key) if have(key) else ""
 
+    apply_core = config("APPLY_COMPONENT_CORE") == "1"
+    apply_cec = config("APPLY_COMPONENT_CEC") == "1"
+    # Add-ons owns artifacts rather than settings, but its explicit flag is
+    # still parsed and validated with every other implemented component.
+    apply_addons = config("APPLY_COMPONENT_ADDONS") == "1"
+    apply_services = config("APPLY_COMPONENT_SERVICES") == "1"
+    apply_skin = config("APPLY_COMPONENT_SKIN") == "1"
+
     userdata = os.path.join(storage_root, ".kodi", "userdata")
     addon_data = os.path.join(userdata, "addon_data")
-    register_managed_directory(userdata)
-    register_managed_directory(addon_data)
-    register_managed_directory(os.path.join(storage_root, ".cache"))
+    if apply_core or apply_skin:
+        register_managed_directory(userdata)
+    if apply_services or apply_skin:
+        register_managed_directory(addon_data)
+    if apply_core:
+        register_managed_directory(os.path.join(storage_root, ".cache"))
 
     def addon_file(addon_id, name):
         directory = os.path.join(addon_data, addon_id)
@@ -614,99 +637,133 @@ def main(argv):
     nextpvr_configured = bool(config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
 
     # --- Kodi guisettings ---------------------------------------------------
-    kodi_values = {
-        "general.addonupdates":
-            "0" if config("ADDON_UPDATE_MODE") == "auto" else "1",
-        "input.enablemouse": "false",
-        "locale.country": config("LOCALE_COUNTRY"),
-        "locale.keyboardlayouts": config("KEYBOARD_LAYOUT"),
-        "locale.language": config("LOCALE_LANGUAGE"),
-        "locale.timezone": config("TIMEZONE"),
-        "locale.timezonecountry": config("TIMEZONE_COUNTRY"),
-        "lookandfeel.skin": SKIN_ID,
-        "lookandfeel.soundskin": "resource.uisounds.fromashes",
-        "videolibrary.flattentvshows": "1",
-        "videolibrary.ignorevideoextras": "true",
-        "videolibrary.ignorevideoversions": "true",
-        "videoplayer.adjustrefreshrate": "2",
-        "videoplayer.usedisplayasclock": "false",
-    }
-    if have("KODI_WEB_PASSWORD"):
+    kodi_values = {}
+    if apply_core:
         kodi_values.update({
-            "services.esallinterfaces": "false",
-            "services.esenabled": "true",
-            "services.webserver": "true",
-            "services.webserverauthentication": "true",
-            "services.webserverpassword": secret("KODI_WEB_PASSWORD"),
-            "services.webserverport": config("KODI_WEB_PORT"),
-            "services.webserverssl": "false",
-            "services.webserverusername": config("KODI_WEB_USER"),
+            "general.addonupdates":
+                "0" if config("ADDON_UPDATE_MODE") == "auto" else "1",
+            "input.enablemouse": "false",
+            "locale.country": config("LOCALE_COUNTRY"),
+            "locale.keyboardlayouts": config("KEYBOARD_LAYOUT"),
+            "locale.language": config("LOCALE_LANGUAGE"),
+            "locale.timezone": config("TIMEZONE"),
+            "locale.timezonecountry": config("TIMEZONE_COUNTRY"),
+            "videolibrary.flattentvshows": "1",
+            "videolibrary.ignorevideoextras": "true",
+            "videolibrary.ignorevideoversions": "true",
+            "videoplayer.adjustrefreshrate": "2",
+            "videoplayer.usedisplayasclock": "false",
         })
-    if weather_configured:
-        kodi_values["weather.addon"] = WEATHER_ADDON_ID
+        if have("KODI_WEB_PASSWORD"):
+            kodi_values.update({
+                "services.esallinterfaces": "false",
+                "services.esenabled": "true",
+                "services.webserver": "true",
+                "services.webserverauthentication": "true",
+                "services.webserverpassword": secret("KODI_WEB_PASSWORD"),
+                "services.webserverport": config("KODI_WEB_PORT"),
+                "services.webserverssl": "false",
+                "services.webserverusername": config("KODI_WEB_USER"),
+            })
+        if weather_configured:
+            kodi_values["weather.addon"] = WEATHER_ADDON_ID
+    if apply_skin:
+        kodi_values.update({
+            "lookandfeel.skin": SKIN_ID,
+            "lookandfeel.soundskin": "resource.uisounds.fromashes",
+        })
 
-    guisettings_path = os.path.join(userdata, "guisettings.xml")
-    guisettings_tree, guisettings_root = load_kodi_settings(guisettings_path)
-    for setting_id in sorted(kodi_values):
-        set_kodi_setting(guisettings_root, setting_id, kodi_values[setting_id])
-    write_xml_atomic(guisettings_path, guisettings_tree)
+    if apply_core or apply_skin:
+        guisettings_path = os.path.join(userdata, "guisettings.xml")
+        guisettings_tree, guisettings_root = load_kodi_settings(
+            guisettings_path
+        )
+        for setting_id in sorted(kodi_values):
+            set_kodi_setting(
+                guisettings_root, setting_id, kodi_values[setting_id]
+            )
+        write_xml_atomic(guisettings_path, guisettings_tree)
 
     # --- HDMI-CEC TV standby behavior ---------------------------------------
     # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
     # not user-configurable, so any other value is a caller defect.
-    cec_tv_off_action = config("CEC_TV_OFF_ACTION")
-    if cec_tv_off_action != "36028":
-        fail("CEC_TV_OFF_ACTION must be 36028 (Ignore); got %r"
-             % (cec_tv_off_action,))
-    set_cec_power_policy(storage_root, cec_tv_off_action)
+    if apply_cec:
+        cec_tv_off_action = config("CEC_TV_OFF_ACTION")
+        if cec_tv_off_action != "36028":
+            fail("CEC_TV_OFF_ACTION must be 36028 (Ignore); got %r"
+                 % (cec_tv_off_action,))
+        set_cec_power_policy(storage_root, cec_tv_off_action)
 
-    # --- TMDb Helper --------------------------------------------------------
-    # OMDb and MDbList keys belong to TMDb Helper only, never to the skin.
-    tmdb_settings = addon_file("plugin.video.themoviedb.helper", "settings.xml")
-    if have("MDBLIST_API_KEY"):
-        set_addon_setting(tmdb_settings, "mdblist_apikey",
-                          secret("MDBLIST_API_KEY"))
-    if have("OMDB_API_KEY"):
-        set_addon_setting(tmdb_settings, "omdb_apikey", secret("OMDB_API_KEY"))
+    if apply_services:
+        # --- TMDb Helper ----------------------------------------------------
+        # OMDb and MDbList keys belong to TMDb Helper only, never to the skin.
+        tmdb_settings = addon_file(
+            "plugin.video.themoviedb.helper", "settings.xml"
+        )
+        if have("MDBLIST_API_KEY"):
+            set_addon_setting(tmdb_settings, "mdblist_apikey",
+                              secret("MDBLIST_API_KEY"))
+        if have("OMDB_API_KEY"):
+            set_addon_setting(tmdb_settings, "omdb_apikey",
+                              secret("OMDB_API_KEY"))
 
-    # --- NextPVR ------------------------------------------------------------
-    # Kodi 21 has no pvrmanager.enabled setting: the PVR manager starts from an
-    # enabled client instance, so instance-settings-1.xml carries the enable.
-    instance = addon_file("pvr.nextpvr", "instance-settings-1.xml")
-    if nextpvr_configured:
-        set_addon_setting(instance, "host", config("NEXTPVR_HOST"))
-        set_addon_setting(instance, "hostprotocol",
-                          config("NEXTPVR_PROTOCOL") or "http")
-        set_addon_setting(instance, "kodi_addon_instance_enabled", "true")
-        set_addon_setting(instance, "kodi_addon_instance_name",
-                          config("NEXTPVR_INSTANCE_NAME") or "NextPVR")
-        set_addon_setting(instance, "pin", secret("NEXTPVR_PIN"))
-        set_addon_setting(instance, "port", config("NEXTPVR_PORT") or "8866")
-    elif not os.path.exists(instance):
-        # Without a backend, Kodi's generated localhost instance fails
-        # permanently and Kodi disables the add-on itself.
-        set_addon_setting(instance, "kodi_addon_instance_enabled", "false")
+        # --- NextPVR --------------------------------------------------------
+        # Kodi 21 has no pvrmanager.enabled setting: the PVR manager starts
+        # from an enabled client instance, so instance-settings-1.xml carries
+        # the enable.
+        instance = addon_file("pvr.nextpvr", "instance-settings-1.xml")
+        if nextpvr_configured:
+            set_addon_setting(instance, "host", config("NEXTPVR_HOST"))
+            set_addon_setting(instance, "hostprotocol",
+                              config("NEXTPVR_PROTOCOL") or "http")
+            set_addon_setting(instance, "kodi_addon_instance_enabled", "true")
+            set_addon_setting(instance, "kodi_addon_instance_name",
+                              config("NEXTPVR_INSTANCE_NAME") or "NextPVR")
+            set_addon_setting(instance, "pin", secret("NEXTPVR_PIN"))
+            set_addon_setting(
+                instance, "port", config("NEXTPVR_PORT") or "8866"
+            )
+        elif not os.path.exists(instance):
+            # Without a backend, Kodi's generated localhost instance fails
+            # permanently and Kodi disables the add-on itself.
+            set_addon_setting(
+                instance, "kodi_addon_instance_enabled", "false"
+            )
 
-    # Local Plex is no longer supported. Remove only settings previously
-    # managed by this provisioner so existing devices migrate to account link.
-    plex_settings = addon_file("script.plexmod", "settings.xml")
-    for setting_id in ("allow_insecure", "local_mode", "local_servers_json",
-                       "local_profiles_json"):
-        remove_addon_setting(plex_settings, setting_id)
+        # Local Plex is no longer supported. Remove only settings previously
+        # managed by this provisioner so existing devices migrate to account
+        # link.
+        plex_settings = addon_file("script.plexmod", "settings.xml")
+        for setting_id in (
+                "allow_insecure", "local_mode", "local_servers_json",
+                "local_profiles_json"):
+            remove_addon_setting(plex_settings, setting_id)
 
-    # --- Home Assistant Weather --------------------------------------------
-    if weather_configured:
-        weather_settings = addon_file(WEATHER_ADDON_ID, "settings.xml")
-        set_addon_setting(weather_settings, "ha_key",
-                          secret("HOME_ASSISTANT_TOKEN"), version=1)
-        set_addon_setting(weather_settings, "ha_server",
-                          config("HOME_ASSISTANT_URL"), version=1)
-        set_addon_setting(weather_settings, "ha_weather_forecast_entity_id",
-                          config("HOME_ASSISTANT_WEATHER_ENTITY"), version=1)
-        set_addon_setting(weather_settings, "ha_sun_entity_id",
-                          config("HOME_ASSISTANT_SUN_ENTITY"), version=1)
+        # --- Home Assistant Weather ----------------------------------------
+        if weather_configured:
+            weather_settings = addon_file(WEATHER_ADDON_ID, "settings.xml")
+            set_addon_setting(weather_settings, "ha_key",
+                              secret("HOME_ASSISTANT_TOKEN"), version=1)
+            set_addon_setting(weather_settings, "ha_server",
+                              config("HOME_ASSISTANT_URL"), version=1)
+            set_addon_setting(
+                weather_settings, "ha_weather_forecast_entity_id",
+                config("HOME_ASSISTANT_WEATHER_ENTITY"), version=1
+            )
+            set_addon_setting(
+                weather_settings, "ha_sun_entity_id",
+                config("HOME_ASSISTANT_SUN_ENTITY"), version=1
+            )
 
-    commit_addon_settings()
+        commit_addon_settings()
+
+    if not apply_skin:
+        if apply_core and config("TIMEZONE"):
+            write_text_atomic(
+                os.path.join(storage_root, ".cache", "timezone"),
+                "TIMEZONE=%s\n" % config("TIMEZONE"), mode=0o644
+            )
+        return
 
     # --- Arctic Fuse skin settings ------------------------------------------
     skin_settings_path = addon_file(SKIN_ID, "settings.xml")
@@ -940,7 +997,7 @@ def main(argv):
     # --- CoreELEC timezone cache -------------------------------------------
     # Kodi's CoreELEC patch writes this file when the timezone changes through
     # the UI; offline edits must write it explicitly. It holds no secret.
-    if config("TIMEZONE"):
+    if apply_core and config("TIMEZONE"):
         write_text_atomic(os.path.join(storage_root, ".cache", "timezone"),
                           "TIMEZONE=%s\n" % config("TIMEZONE"), mode=0o644)
 
@@ -4346,6 +4403,16 @@ coreelec_settings_payload_secret() {
 }
 
 coreelec_settings_payload() {
+  coreelec_settings_payload_entry APPLY_COMPONENT_CORE \
+    "$(coreelec_component_effective core && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_CEC \
+    "$(coreelec_component_effective cec && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_ADDONS \
+    "$(coreelec_component_effective addons && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_SERVICES \
+    "$(coreelec_component_effective services && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_SKIN \
+    "$(coreelec_component_effective skin && printf 1 || printf 0)"
   coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
   coreelec_settings_payload_entry TIMEZONE_COUNTRY "${TIMEZONE_COUNTRY}"
   coreelec_settings_payload_entry LOCALE_LANGUAGE "${LOCALE_LANGUAGE}"

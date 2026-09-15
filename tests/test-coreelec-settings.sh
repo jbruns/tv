@@ -73,8 +73,12 @@ write_payload() {
 }
 
 # The non-secret regional baseline every run receives from the config file.
-write_base_payload() {
-  write_payload "$1" <<'ENTRIES'
+# Component flags default to the legacy full baseline so existing tests keep
+# exercising exactly the pre-scoping behavior.
+write_scoped_base_payload() {
+  local file="$1" apply_core="$2" apply_cec="$3" apply_addons="$4"
+  local apply_services="$5" apply_skin="$6"
+  write_payload "${file}" <<ENTRIES
 TIMEZONE=America/Los_Angeles
 TIMEZONE_COUNTRY=United States
 LOCALE_LANGUAGE=resource.language.en_us
@@ -82,13 +86,22 @@ LOCALE_COUNTRY=USA (12h)
 KEYBOARD_LAYOUT=English QWERTY
 ADDON_UPDATE_MODE=notify
 CEC_TV_OFF_ACTION=36028
+APPLY_COMPONENT_CORE=${apply_core}
+APPLY_COMPONENT_CEC=${apply_cec}
+APPLY_COMPONENT_ADDONS=${apply_addons}
+APPLY_COMPONENT_SERVICES=${apply_services}
+APPLY_COMPONENT_SKIN=${apply_skin}
 ENTRIES
+}
+
+write_base_payload() {
+  write_scoped_base_payload "$1" 1 1 1 1 1
 }
 
 # Every managed value present, so each optional branch of the transformer runs.
 # CEC_TV_OFF_ACTION is included here too (not just in write_base_payload)
-# because the transformer requires it on every run, and this fixture must
-# stay a superset of the base payload rather than a divergent one.
+# because the transformer requires it whenever CEC is selected, and this
+# fixture must stay a superset of the base payload rather than a divergent one.
 write_full_payload() {
   write_payload "$1" <<'ENTRIES'
 TIMEZONE=America/Los_Angeles
@@ -117,6 +130,11 @@ NEXTPVR_PROTOCOL=http
 NEXTPVR_INSTANCE_NAME=Living Room NextPVR
 NEXTPVR_PIN=nextpvr-pin-secret
 HAVE_NEXTPVR_PIN=1
+APPLY_COMPONENT_CORE=1
+APPLY_COMPONENT_CEC=1
+APPLY_COMPONENT_ADDONS=1
+APPLY_COMPONENT_SERVICES=1
+APPLY_COMPONENT_SKIN=1
 ENTRIES
 }
 
@@ -254,6 +272,63 @@ seed_guisettings() {
     <setting id="lookandfeel.skin" default="true">skin.estuary</setting>
 </settings>
 XML
+}
+
+seed_scoped_settings_sentinels() {
+  local root="$1" path
+  seed_guisettings "${root}"
+
+  mkdir -p "${root}/.kodi/userdata/peripheral_data"
+  cat > "$(cec_settings_path "${root}")" <<'XML'
+<settings>
+    <setting id="enabled" value="1" />
+    <setting id="activate_source" value="1" />
+    <setting id="wake_devices" value="36037" />
+    <setting id="standby_devices" value="36037" />
+    <setting id="standby_tv_on_pc_standby" value="1" />
+    <setting id="standby_pc_on_tv_standby" value="13011" />
+</settings>
+XML
+
+  while IFS='|' read -r path sentinel; do
+    mkdir -p "$(dirname "${path}")"
+    printf '<settings version="2"><setting id="%s">%s</setting></settings>\n' \
+      "${sentinel}" "${sentinel}" > "${path}"
+  done <<EOF
+$(addon_data_path "${root}" plugin.video.themoviedb.helper)/settings.xml|sentinel.tmdb
+$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml|sentinel.nextpvr
+$(addon_data_path "${root}" script.plexmod)/settings.xml|sentinel.plex
+$(addon_data_path "${root}" weather.ha)/settings.xml|sentinel.weather
+$(skin_settings_path "${root}")|sentinel.skin
+EOF
+
+  path="$(skinvariables_node_path "${root}" skinvariables-shortcut-homewidgets.json)"
+  mkdir -p "$(dirname "${path}")"
+  printf '[{"guid":"sentinel-widget","label":"leave widget alone"}]\n' > "${path}"
+
+  path="$(video_playlist_path "${root}" InProgressMovies90Days.xsp)"
+  mkdir -p "$(dirname "${path}")"
+  printf '<smartplaylist type="movies"><name>sentinel playlist</name></smartplaylist>\n' \
+    > "${path}"
+}
+
+applied_path_count() {
+  local output="$1" path="$2"
+  printf '%s\n' "${output}" | grep -Fxc "settings applied: ${path}" || true
+}
+
+load_provisioner_function() {
+  local name="$1" body
+  body="$(awk -v start="${name}() {" '
+    $0 == start { capturing = 1 }
+    capturing { print }
+    capturing && $0 == "}" { exit }
+  ' "${PROVISIONER}")"
+  [[ -n "${body}" ]] || {
+    printf 'no %s() definition was found in the provisioner\n' "${name}" >&2
+    return 1
+  }
+  eval "${body}"
 }
 
 # --- Regional baseline ------------------------------------------------------
@@ -487,11 +562,232 @@ test_second_run_is_byte_identical() {
 # --- HDMI-CEC TV standby behavior --------------------------------------------
 #
 # Kodi's CEC peripheral file, not guisettings.xml, decides what a CEC-capable
-# TV's standby broadcast makes the box do. The transformer always forces this
+# TV's standby broadcast makes the box do. A CEC-selected transform forces this
 # to 36028 (Ignore), so a sleeping TV never puts an always-awake box to sleep
-# with it, and it is fatal (not silently skipped) when the file is missing or
-# ambiguous, because guessing which peripheral file to edit is worse than
-# refusing to run.
+# with it. A selected transform fails when the file is missing or ambiguous,
+# because guessing which peripheral file to edit is worse than refusing to run.
+
+test_cec_only_transform_is_isolated() {
+  local dir root payload cec_path guisettings skin_settings weather_settings
+  local playlist widget tmdb nextpvr plex written first_cec second_cec
+  local guisettings_before skin_before weather_before playlist_before
+  local widget_before tmdb_before nextpvr_before plex_before
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_scoped_settings_sentinels "${root}"
+  write_scoped_base_payload "${payload}" 0 1 0 0 0
+
+  cec_path="$(cec_settings_path "${root}")"
+  guisettings="$(guisettings_path "${root}")"
+  skin_settings="$(skin_settings_path "${root}")"
+  weather_settings="$(addon_data_path "${root}" weather.ha)/settings.xml"
+  playlist="$(video_playlist_path "${root}" InProgressMovies90Days.xsp)"
+  widget="$(skinvariables_node_path "${root}" skinvariables-shortcut-homewidgets.json)"
+  tmdb="$(addon_data_path "${root}" plugin.video.themoviedb.helper)/settings.xml"
+  nextpvr="$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml"
+  plex="$(addon_data_path "${root}" script.plexmod)/settings.xml"
+
+  guisettings_before="$(sha256sum "${guisettings}")"
+  skin_before="$(sha256sum "${skin_settings}")"
+  weather_before="$(sha256sum "${weather_settings}")"
+  playlist_before="$(sha256sum "${playlist}")"
+  widget_before="$(sha256sum "${widget}")"
+  tmdb_before="$(sha256sum "${tmdb}")"
+  nextpvr_before="$(sha256sum "${nextpvr}")"
+  plex_before="$(sha256sum "${plex}")"
+
+  written="$(run_transform "${root}" "${payload}")"
+
+  assert_eq "1" "$(xml_setting "${cec_path}" enabled)" \
+    "CEC navigation remains enabled"
+  assert_eq "0" "$(xml_setting "${cec_path}" activate_source)"
+  assert_eq "231" "$(xml_setting "${cec_path}" wake_devices)"
+  assert_eq "231" "$(xml_setting "${cec_path}" standby_devices)"
+  assert_eq "0" "$(xml_setting "${cec_path}" standby_tv_on_pc_standby)"
+  assert_eq "36028" "$(xml_setting "${cec_path}" standby_pc_on_tv_standby)"
+  assert_eq "${guisettings_before}" "$(sha256sum "${guisettings}")"
+  assert_eq "${skin_before}" "$(sha256sum "${skin_settings}")"
+  assert_eq "${weather_before}" "$(sha256sum "${weather_settings}")"
+  assert_eq "${playlist_before}" "$(sha256sum "${playlist}")"
+  assert_eq "${widget_before}" "$(sha256sum "${widget}")"
+  assert_eq "${tmdb_before}" "$(sha256sum "${tmdb}")"
+  assert_eq "${nextpvr_before}" "$(sha256sum "${nextpvr}")"
+  assert_eq "${plex_before}" "$(sha256sum "${plex}")"
+  assert_eq "1" "$(applied_path_count "${written}" "${cec_path}")" \
+    "the CEC path is reported exactly once"
+  assert_eq "1" "$(printf '%s\n' "${written}" | grep -c '^settings applied: ')" \
+    "CEC-only output contains exactly one changed path"
+
+  first_cec="$(sha256sum "${cec_path}")"
+  written="$(run_transform "${root}" "${payload}")"
+  second_cec="$(sha256sum "${cec_path}")"
+  assert_eq "${first_cec}" "${second_cec}" \
+    "a second CEC-only transform is byte-identical"
+  assert_eq "1" "$(applied_path_count "${written}" "${cec_path}")" \
+    "the idempotent CEC rewrite is reported exactly once"
+}
+
+test_core_and_cec_transform_only_owned_surfaces() {
+  local dir root payload cec_path guisettings skin_settings weather_settings
+  local playlist widget tmdb nextpvr plex written
+  local cec_before guisettings_before skin_before weather_before playlist_before
+  local widget_before tmdb_before nextpvr_before plex_before
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_scoped_settings_sentinels "${root}"
+  write_scoped_base_payload "${payload}" 1 1 0 0 0
+
+  cec_path="$(cec_settings_path "${root}")"
+  guisettings="$(guisettings_path "${root}")"
+  skin_settings="$(skin_settings_path "${root}")"
+  weather_settings="$(addon_data_path "${root}" weather.ha)/settings.xml"
+  playlist="$(video_playlist_path "${root}" InProgressMovies90Days.xsp)"
+  widget="$(skinvariables_node_path "${root}" skinvariables-shortcut-homewidgets.json)"
+  tmdb="$(addon_data_path "${root}" plugin.video.themoviedb.helper)/settings.xml"
+  nextpvr="$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml"
+  plex="$(addon_data_path "${root}" script.plexmod)/settings.xml"
+
+  cec_before="$(sha256sum "${cec_path}")"
+  guisettings_before="$(sha256sum "${guisettings}")"
+  skin_before="$(sha256sum "${skin_settings}")"
+  weather_before="$(sha256sum "${weather_settings}")"
+  playlist_before="$(sha256sum "${playlist}")"
+  widget_before="$(sha256sum "${widget}")"
+  tmdb_before="$(sha256sum "${tmdb}")"
+  nextpvr_before="$(sha256sum "${nextpvr}")"
+  plex_before="$(sha256sum "${plex}")"
+
+  written="$(run_transform "${root}" "${payload}")"
+
+  if [[ "${cec_before}" == "$(sha256sum "${cec_path}")" ]]; then
+    printf 'the core+cec transform did not change the CEC surface\n' >&2
+    return 1
+  fi
+  if [[ "${guisettings_before}" == "$(sha256sum "${guisettings}")" ]]; then
+    printf 'the core+cec transform did not change the core guisettings surface\n' >&2
+    return 1
+  fi
+  assert_eq "America/Los_Angeles" \
+    "$(xml_setting "${guisettings}" locale.timezone)"
+  assert_eq "skin.estuary" \
+    "$(xml_setting "${guisettings}" lookandfeel.skin)" \
+    "core leaves the skin-owned active-skin setting unchanged"
+  assert_eq "36028" \
+    "$(xml_setting "${cec_path}" standby_pc_on_tv_standby)"
+  assert_eq "${skin_before}" "$(sha256sum "${skin_settings}")"
+  assert_eq "${weather_before}" "$(sha256sum "${weather_settings}")"
+  assert_eq "${playlist_before}" "$(sha256sum "${playlist}")"
+  assert_eq "${widget_before}" "$(sha256sum "${widget}")"
+  assert_eq "${tmdb_before}" "$(sha256sum "${tmdb}")"
+  assert_eq "${nextpvr_before}" "$(sha256sum "${nextpvr}")"
+  assert_eq "${plex_before}" "$(sha256sum "${plex}")"
+  assert_eq "1" "$(applied_path_count "${written}" "${guisettings}")" \
+    "the core guisettings path is reported exactly once"
+  assert_eq "1" "$(applied_path_count "${written}" "${cec_path}")" \
+    "the CEC path is reported exactly once"
+  assert_eq "3" "$(printf '%s\n' "${written}" | grep -c '^settings applied: ')" \
+    "core+cec output contains only guisettings, CEC, and timezone"
+}
+
+test_core_only_transform_does_not_validate_cec() {
+  local dir root payload cec_path before written
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  cec_path="$(cec_settings_path "${root}")"
+  mkdir -p "$(dirname "${cec_path}")"
+  printf '<peripheral><setting id="sentinel" value="unchanged" /></peripheral>\n' \
+    > "${cec_path}"
+  write_scoped_base_payload "${payload}" 1 0 0 0 0
+  before="$(sha256sum "${cec_path}")"
+
+  written="$(run_transform "${root}" "${payload}")"
+
+  assert_eq "${before}" "$(sha256sum "${cec_path}")" \
+    "an unselected CEC file is neither validated nor rewritten"
+  assert_eq "America/Los_Angeles" \
+    "$(xml_setting "$(guisettings_path "${root}")" locale.timezone)"
+  assert_eq "0" "$(applied_path_count "${written}" "${cec_path}")" \
+    "an unselected CEC path is absent from transformer output"
+}
+
+test_component_payload_flags_are_strict_booleans() {
+  local dir root payload output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_scoped_base_payload "${payload}" 0 1 0 yes 0
+  write_cec_settings "${root}" "13011"
+
+  set +e
+  output="$(bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "a non-boolean component flag must be rejected"
+  assert_contains "${output}" "APPLY_COMPONENT_SERVICES" \
+    "the invalid component key is identified without printing its value"
+}
+
+test_component_payload_requires_every_implemented_component() {
+  local dir root payload output status
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_scoped_base_payload "${payload}" 0 1 0 0 0
+  grep -v '^APPLY_COMPONENT_ADDONS=' "${payload}" > "${payload}.missing"
+  mv "${payload}.missing" "${payload}"
+  chmod 600 "${payload}"
+  write_cec_settings "${root}" "13011"
+
+  set +e
+  output="$(bash "${PROVISIONER}" --transform-fixture "${root}" "${payload}" 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}" "a missing implemented component flag must be rejected"
+  assert_contains "${output}" "APPLY_COMPONENT_ADDONS" \
+    "the missing component key is identified"
+}
+
+test_host_payload_renders_every_effective_component() {
+  local flags expected
+  local TIMEZONE="" TIMEZONE_COUNTRY="" LOCALE_LANGUAGE="" LOCALE_COUNTRY=""
+  local KEYBOARD_LAYOUT="" ADDON_UPDATE_MODE="" KODI_USER="" KODI_PORT=""
+  local HOME_ASSISTANT_URL="" HOME_ASSISTANT_WEATHER_ENTITY=""
+  local HOME_ASSISTANT_SUN_ENTITY="" NEXTPVR_HOST="" NEXTPVR_PORT=""
+  local NEXTPVR_PROTOCOL="" NEXTPVR_INSTANCE_NAME="" KODI_WEB_PASSWORD=""
+
+  load_provisioner_function coreelec_settings_payload
+  coreelec_settings_payload_entry() {
+    printf '%s=%s\n' "$1" "$2"
+  }
+  coreelec_settings_payload_secret() {
+    :
+  }
+  coreelec_component_effective() {
+    case "$1" in
+      cec|addons) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  flags="$(coreelec_settings_payload | grep '^APPLY_COMPONENT_' || true)"
+  expected='APPLY_COMPONENT_CORE=0
+APPLY_COMPONENT_CEC=1
+APPLY_COMPONENT_ADDONS=1
+APPLY_COMPONENT_SERVICES=0
+APPLY_COMPONENT_SKIN=0'
+  assert_eq "${expected}" "${flags}" \
+    "the settings payload carries one strict flag for every component"
+}
 
 test_cec_tv_off_action_is_changed_to_ignore() {
   local dir root payload
@@ -1988,6 +2284,12 @@ run_all_tests \
   test_nested_kodi_settings_are_promoted_to_root_nodes \
   test_existing_unmanaged_settings_are_preserved \
   test_second_run_is_byte_identical \
+  test_cec_only_transform_is_isolated \
+  test_core_and_cec_transform_only_owned_surfaces \
+  test_core_only_transform_does_not_validate_cec \
+  test_component_payload_flags_are_strict_booleans \
+  test_component_payload_requires_every_implemented_component \
+  test_host_payload_renders_every_effective_component \
   test_cec_tv_off_action_is_changed_to_ignore \
   test_cec_navigation_remains_enabled_without_tv_power_coupling \
   test_cec_text_only_setting_is_repaired_to_kodi_attribute \
