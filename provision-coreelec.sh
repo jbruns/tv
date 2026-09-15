@@ -19,6 +19,11 @@ SCRIPT_VERSION="1.0.0"
 TARGET=""
 IDENTITY_FILE="${HOME}/.ssh/coreelec_admin_ed25519"
 ADDONS=()
+REQUESTED_COMPONENTS=()
+EFFECTIVE_COMPONENTS=()
+CLI_COMPONENTS=()
+COMPONENTS_EXPLICIT="0"
+PRINT_COMPONENT_PLAN="0"
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
@@ -67,6 +72,9 @@ Options:
   --addon ID                Deploy only this pinned add-on from the locked
                              manifest; repeatable. An ID that is not locked in
                              the configuration is rejected.
+  --component NAME          Apply only this component and its dependencies;
+                             repeatable. Supported components are baseline,
+                             core, cec, addons, services, and skin.
   --report-dir PATH         Local report directory
   --expected-release VER    Required CoreELEC release substring (default: 21.3)
   --no-kodi                 Skip Kodi and Home Assistant baseline configuration
@@ -81,6 +89,9 @@ Options:
   -h, --help                Show this help
 
 Internal:
+  --print-component-plan    Print the normalized requested and effective
+                             component plan, then exit without contacting a
+                             device.
   --transform-fixture ROOT PAYLOAD
                             Apply the Kodi/add-on settings transformer to ROOT
                              using a base64 KEY=value payload file, then exit.
@@ -2859,6 +2870,145 @@ coreelec_emit_remote_script() {
   esac
 }
 
+coreelec_component_known() {
+  case "$1" in
+    baseline|core|cec|addons|services|skin|room) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coreelec_component_implemented() {
+  case "$1" in
+    baseline|core|cec|addons|services|skin) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coreelec_component_dependencies() {
+  case "$1" in
+    services) printf '%s\n' addons ;;
+    skin) printf '%s\n' core addons ;;
+    room) printf '%s\n' core ;;
+  esac
+}
+
+coreelec_component_set_contains() {
+  case "$1" in
+    *$'\n'"$2"$'\n'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coreelec_component_requested() {
+  coreelec_component_set_contains "${REQUESTED_COMPONENT_SET:-$'\n'}" "$1"
+}
+
+coreelec_component_effective() {
+  coreelec_component_set_contains "${EFFECTIVE_COMPONENT_SET:-$'\n'}" "$1"
+}
+
+coreelec_expand_component() {
+  local component="$1" stack="$2" dependency
+
+  coreelec_component_set_contains "${stack}" "${component}" \
+    && die "Component dependency cycle detected at: ${component}"
+  coreelec_component_effective "${component}" && return 0
+  stack="${stack}${component}"$'\n'
+
+  if [[ "${component}" == "baseline" ]]; then
+    for dependency in core cec addons services skin; do
+      coreelec_expand_component "${dependency}" "${stack}"
+    done
+    return 0
+  fi
+
+  while IFS= read -r dependency; do
+    [[ -n "${dependency}" ]] || continue
+    coreelec_expand_component "${dependency}" "${stack}"
+  done < <(coreelec_component_dependencies "${component}")
+  EFFECTIVE_COMPONENT_SET="${EFFECTIVE_COMPONENT_SET}${component}"$'\n'
+}
+
+coreelec_prepare_component_plan() {
+  local component requested_set=$'\n' canonical
+
+  REQUESTED_COMPONENTS=()
+  REQUESTED_COMPONENT_SET=$'\n'
+  EFFECTIVE_COMPONENTS=()
+  EFFECTIVE_COMPONENT_SET=$'\n'
+  COMPONENT_DEPENDENCIES_ADDED=()
+
+  if [[ "${COMPONENTS_EXPLICIT}" == "1" ]]; then
+    [[ "${APPLY_KODI}" == "1" ]] \
+      || die "--no-kodi cannot be used with --component"
+    for component in ${CLI_COMPONENTS[@]+"${CLI_COMPONENTS[@]}"}; do
+      [[ -n "${component}" ]] || continue
+      coreelec_component_known "${component}" \
+        || die "Unknown component: ${component}"
+      coreelec_component_implemented "${component}" \
+        || die "Component is not implemented: ${component}"
+      if ! coreelec_component_set_contains "${requested_set}" "${component}"; then
+        REQUESTED_COMPONENTS+=("${component}")
+        requested_set="${requested_set}${component}"$'\n'
+      fi
+    done
+    if (( ${#ADDONS[@]} > 0 )) \
+      && ! coreelec_component_set_contains "${requested_set}" addons; then
+      REQUESTED_COMPONENTS+=("addons")
+      requested_set="${requested_set}addons"$'\n'
+    fi
+  else
+    REQUESTED_COMPONENTS=("baseline")
+    requested_set="${requested_set}baseline"$'\n'
+  fi
+  REQUESTED_COMPONENT_SET="${requested_set}"
+
+  for component in ${REQUESTED_COMPONENTS[@]+"${REQUESTED_COMPONENTS[@]}"}; do
+    coreelec_expand_component "${component}" $'\n'
+  done
+
+  for canonical in core cec addons services skin room; do
+    if coreelec_component_effective "${canonical}"; then
+      EFFECTIVE_COMPONENTS+=("${canonical}")
+    fi
+  done
+  (( ${#EFFECTIVE_COMPONENTS[@]} > 0 )) \
+    || die "Effective component plan is empty"
+
+  if ! coreelec_component_requested baseline; then
+    for canonical in ${EFFECTIVE_COMPONENTS[@]+"${EFFECTIVE_COMPONENTS[@]}"}; do
+      if ! coreelec_component_requested "${canonical}"; then
+        COMPONENT_DEPENDENCIES_ADDED+=("${canonical}")
+      fi
+    done
+  fi
+}
+
+coreelec_components_csv() {
+  local result="" component
+  for component in "$@"; do
+    if [[ -n "${result}" ]]; then
+      result="${result},${component}"
+    else
+      result="${component}"
+    fi
+  done
+  printf '%s\n' "${result}"
+}
+
+coreelec_print_component_plan() {
+  printf 'components.requested=%s\n' \
+    "$(coreelec_components_csv "${REQUESTED_COMPONENTS[@]}")"
+  printf 'components.effective=%s\n' \
+    "$(coreelec_components_csv "${EFFECTIVE_COMPONENTS[@]}")"
+  if (( ${#COMPONENT_DEPENDENCIES_ADDED[@]} > 0 )); then
+    printf 'components.dependencies_added=%s\n' \
+      "$(coreelec_components_csv "${COMPONENT_DEPENDENCIES_ADDED[@]}")"
+  else
+    printf 'components.dependencies_added=none\n'
+  fi
+}
+
 # Precedence: built-in safe defaults, then the selected configuration file,
 # then explicit CLI options, then shared .env secrets (checked by
 # coreelec_config_validate). --config is parsed here in a lightweight,
@@ -2974,6 +3124,16 @@ while (( $# > 0 )); do
       coreelec_config_add_cli_addon "$2"
       shift 2
       ;;
+    --component)
+      (( $# >= 2 )) || die "--component requires a value"
+      COMPONENTS_EXPLICIT="1"
+      CLI_COMPONENTS+=("$2")
+      shift 2
+      ;;
+    --print-component-plan)
+      PRINT_COMPONENT_PLAN="1"
+      shift
+      ;;
     --print-addon-selection)
       (( $# >= 2 )) || die "--print-addon-selection requires a manifest path"
       PRINT_ADDON_SELECTION="$2"
@@ -3051,6 +3211,12 @@ while (( $# > 0 )); do
       ;;
   esac
 done
+
+coreelec_prepare_component_plan
+if [[ "${PRINT_COMPONENT_PLAN}" == "1" ]]; then
+  coreelec_print_component_plan
+  exit 0
+fi
 
 # Bash 3.2 treats expanding "${array[@]}" of an *empty* array under `set -u`
 # as an unbound-variable error rather than an empty list. Every
