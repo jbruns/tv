@@ -265,7 +265,6 @@ script:
                 data:
                   operation: status
                   message: status returned failed for kodi.service
-              - stop: status failed
       - choose:
           - conditions:
               - condition: template
@@ -534,6 +533,7 @@ script:
             states('input_number.ugoos_theater_idle_timeout_minutes') | int(30) * 60 %}
           {{ is_state('media_player.theater_kodi_theater', 'idle')
           and is_state('input_boolean.ugoos_theater_observation_ready', 'on')
+          and states('media_player.bravia_xr_65a90j') not in ['off', 'unknown', 'unavailable']
           and as_timestamp(now()) - as_timestamp(
                 states('input_datetime.ugoos_theater_observation_started'), as_timestamp(now())
               ) >= idle_seconds
@@ -688,7 +688,7 @@ automation:
                           {{ poll_stdout in ['running', 'stopped']
                           and (not previous_host_reachable
                             or not is_state('input_boolean.ugoos_theater_observation_ready', 'on')
-                            or (previous_lifecycle_state in ['stopped', 'failed'] and poll_stdout == 'running')) }}
+                            or poll_stdout != states('sensor.ugoos_theater_desired_kodi_state')) }}
                     sequence:
                       - action: script.ugoos_theater_begin_observation
               - action: input_text.set_value
@@ -900,14 +900,14 @@ automation:
       - trigger: state
         entity_id: media_player.theater_kodi_theater
         from: idle
+        not_to: idle
+      - trigger: state
+        entity_id: media_player.bravia_xr_65a90j
+        from: "off"
         not_to:
           - "off"
           - unknown
           - unavailable
-    conditions:
-      - condition: template
-        value_template: >-
-          {{ states('media_player.theater_kodi_theater') not in ['idle', 'off', 'unknown', 'unavailable'] }}
     actions:
       - action: input_boolean.turn_off
         target:
