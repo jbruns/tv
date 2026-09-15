@@ -50,7 +50,21 @@ For unique settings, use the selected room's Ugoos guide, such as the current
    uninstall add-ons no longer present in the artifact lock and remove their
    saved add-on data first. The provisioner installs and replaces selected
    artifacts but does not remove add-ons omitted from the lock.
-10. Run:
+10. After the manual Emby sign-in completes and the library sync finishes,
+    run these post-provision checks:
+
+    - Confirm Home, TV Shows, Movies, Plex, PVR (when configured), and
+      Add-ons appear in order.
+    - Confirm TV and Movies each show four managed widgets.
+    - Confirm the Trakt Popular TV Shows and Trakt Weekend Box Office widgets
+      populate.
+    - Confirm the redacted report shows `arctic_fuse.status=ok`.
+
+    The stable Emby 11.1.27 client still requires manual sign-in, and the
+    server/library metadata supplies the Trakt tags after synchronization. An
+    empty Trakt widget after a successful configuration report is an Emby
+    tag/sync issue, not playlist-definition convergence.
+11. Run:
 
     ```bash
     ./configure-coreelec-addons.sh --target <hostname-or-IP>
@@ -65,7 +79,7 @@ For unique settings, use the selected room's Ugoos guide, such as the current
       --addon plugin.service.emby-next-gen
     ```
 
-11. Run `./configure-kodi-lifecycle.sh` with the Home Assistant controller
+12. Run `./configure-kodi-lifecycle.sh` with the Home Assistant controller
     public key and matching identity:
 
     ```bash
@@ -78,12 +92,12 @@ For unique settings, use the selected room's Ugoos guide, such as the current
     Use the
     [Ugoos Kodi lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md)
     for key installation, verification, rollback, and recovery steps.
-12. Add the room's native Home Assistant integrations and set the stable
+13. Add the room's native Home Assistant integrations and set the stable
     entity IDs required by the selected package before enabling that package.
     For theater this includes Sony BRAVIA and Kodi, with the exact IDs
     documented in the
     [lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md).
-13. Install the SSH alias and room package in Home Assistant, following the
+14. Install the SSH alias and room package in Home Assistant, following the
     file locations in the
     [lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md). Then restart
     Home Assistant and verify package state.
@@ -92,7 +106,7 @@ For unique settings, use the selected room's Ugoos guide, such as the current
     ha core check
     ```
 
-14. Apply only the room-specific Dolby Vision, whitelist, and audio settings.
-15. Verify room playback, device control, network reachability, and Home
+15. Apply only the room-specific Dolby Vision, whitelist, and audio settings.
+16. Verify room playback, device control, network reachability, and Home
     Assistant automations.
-16. Create a CoreELEC backup before optional eMMC migration.
+17. Create a CoreELEC backup before optional eMMC migration.

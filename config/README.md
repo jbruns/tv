@@ -103,16 +103,16 @@ expansion, so shell metacharacters in a value are inert data.
 | `NEXTPVR_PORT` | unset | `1`-`65535` |
 | `NEXTPVR_PROTOCOL` | unset | `http` or `https` |
 | `NEXTPVR_INSTANCE_NAME` | unset | free-text display charset |
-| `ADDON_ARTIFACT` | (40 records shipped) | repeatable, see below |
+| `ADDON_ARTIFACT` | (41 records shipped) | repeatable, see below |
 
 ### Add-on artifact lock
 
 `ADDON_ARTIFACT` records are `id|version|https-url|sha256`, one per line.
-The shipped lock contains 40 records: the selected add-ons, their
+The shipped lock contains 41 records: the selected add-ons, their
 repositories, the regional language resource, the managed Arctic Fuse optional
-add-ons, two extra Python modules they introduce, and the remaining transitive
-dependency closure. `--check-artifacts` downloads and verifies all 40 over
-HTTPS.
+add-ons, the pinned From Ashes UI sound theme, two extra Python modules they
+introduce, and the remaining transitive dependency closure. `--check-artifacts`
+downloads and verifies all 41 over HTTPS.
 
 ### Precedence
 
@@ -126,20 +126,37 @@ HTTPS.
 
 ## Arctic Fuse 3 managed contract
 
-The shared baseline manages the following Arctic Fuse state:
+The shared baseline manages the following Arctic Fuse state. It does not
+provision YouTube.
 
 - `HomeSwitcher.1101.*` opens `script.plexmod`.
-- The managed Home order after Home is Plex, PVR, Add-ons.
+- The managed top-level order after Home is TV Shows, Movies, Plex,
+  conditional PVR, Add-ons.
+- Home retains its four managed widgets in order: In-Progress Movies,
+  In-Progress Shows, Recently Aired Shows, and Recently Released Movies.
+- TV Shows uses `skinvariables-shortcut-1101widgets.json` with widgets in
+  order: In-Progress Shows, Recently Aired Shows, Trakt Popular TV Shows, and
+  New Shows.
+- Movies uses `skinvariables-shortcut-1102widgets.json` with widgets in
+  order: In-Progress Movies, Recently Released Movies, Trakt Weekend Box
+  Office, and New Movies.
 - Managed skin settings are normalized to one canonical root node per setting
   ID, with other case variants removed before verification.
 - `RecentlyAiredEpisodes30Days.xsp` is the rolling previous 30 days with
   future dates excluded.
-- `skinvariables-shortcut-1101widgets.json` and
-  `skinvariables-shortcut-1102widgets.json` are the native TV and Movies hub
-  widget nodes.
 - `TraktPopularTVShows.xsp` and `TraktWeekendBoxOffice.xsp` are tag-driven
-  playlists whose metadata is owned by Emby/server tags.
-- `RecentlyReleasedMoviesCurrentAndPreviousYear.xsp` uses numeric year bounds
-  for the current and previous calendar years and excludes future years.
-- `RecentlyReleasedMoviesCurrentYear.xsp` and
-  `RecentlyReleasedMovies90Days.xsp` are removed during provisioning.
+  playlists. The stable Emby 11.1.27 client still requires manual sign-in;
+  server/library metadata supplies the `trakt-popular` and
+  `trakt-weekend-box-office` tags after library synchronization.
+- `RecentlyReleasedMoviesCurrentAndPreviousYear.xsp` uses numeric year
+  semantics: `year > current year - 2` and `year < current year + 1`. That
+  includes the current and previous calendar years while excluding future
+  years.
+- `RecentlyReleasedMoviesCurrent&#8203;Year.xsp` and
+  `RecentlyReleasedMovies90&#8203;Days.xsp` are removed during provisioning.
+- The Weather tile and the built-in PVR hub are conditional: Weather appears
+  only when Home Assistant weather is fully configured, and PVR appears only
+  when NextPVR host and PIN are configured.
+- The five managed Kodi defaults are `locale.language`, `locale.country`,
+  `locale.keyboardlayouts`, `locale.timezonecountry`, and `locale.timezone`.
+- `lookandfeel.soundskin` is pinned to `resource.uisounds.fromashes`.
