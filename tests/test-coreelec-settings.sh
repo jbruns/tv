@@ -1368,6 +1368,52 @@ XML
   assert_eq "${first}" "${second}" "a second run over promoted settings changes nothing"
 }
 
+test_arctic_fuse_deeply_nested_managed_settings_are_promoted_to_root_nodes() {
+  local dir root payload skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  cat > "$(skin_settings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings>
+    <category id="outer">
+        <group>
+            <category id="inner">
+                <setting id="HomeSwitcher.1101.Name">Old Plex</setting>
+                <setting id="homeswitcher.1101.name">stale-case-variant</setting>
+                <setting id="HomeSwitcher.1107.Toggle">false</setting>
+                <setting id="HomeSwitcher.1101.Shortcut.Target">videos</setting>
+                <setting id="unrelated.deep.keep">yes</setting>
+            </category>
+        </group>
+    </category>
+</settings>
+XML
+
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  skin_file="$(skin_settings_path "${root}")"
+
+  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Name")" \
+    "deeply nested 1101.Name converges to one root node"
+  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1107.Toggle")" \
+    "deeply nested 1107.Toggle converges to one root node"
+  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Shortcut.Target")" \
+    "deeply nested managed removals apply everywhere"
+  assert_eq "TV Shows" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" \
+    "deeply nested 1101.Name carries the managed value"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" \
+    "deeply nested 1107.Toggle carries the managed value"
+
+  assert_eq "1 0" "$(skin_setting_scope_counts "${root}" "unrelated.deep.keep")" \
+    "deeply nested unmanaged state is preserved in place"
+  assert_eq "yes" "$(xml_setting "${skin_file}" "unrelated.deep.keep")" \
+    "deeply nested unmanaged state keeps its value"
+}
+
 test_arctic_fuse_home_widgets_are_exact_and_ordered() {
   local dir root payload home_json expected actual
   dir="$(make_scratch_dir)"
@@ -1727,6 +1773,7 @@ run_all_tests \
   test_arctic_fuse_hubs_and_options_tray_are_converged \
   test_arctic_fuse_pvr_and_weather_are_absent_when_unconfigured \
   test_arctic_fuse_managed_settings_are_promoted_to_root_nodes \
+  test_arctic_fuse_deeply_nested_managed_settings_are_promoted_to_root_nodes \
   test_arctic_fuse_home_widgets_are_exact_and_ordered \
   test_arctic_fuse_power_menu_is_coreelec_appropriate \
   test_arctic_fuse_smart_playlists_have_exact_rules \

@@ -655,12 +655,16 @@ def main(argv):
 
     def _skin_setting_nodes(root, setting_id):
         wanted = setting_id.casefold()
-        return [
-            (parent, node)
-            for parent in [root] + list(root.findall("category"))
-            for node in parent.findall("setting")
-            if (node.get("id") or "").casefold() == wanted
-        ]
+        matches = []
+        stack = [root]
+        while stack:
+            parent = stack.pop()
+            for node in list(parent):
+                if (node.tag == "setting"
+                        and (node.get("id") or "").casefold() == wanted):
+                    matches.append((parent, node))
+                stack.append(node)
+        return matches
 
     def set_skin_setting(setting_id, value):
         # Kodi reads only the direct `<setting>` children of the settings
