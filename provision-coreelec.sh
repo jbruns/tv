@@ -3989,12 +3989,14 @@ verify_remote_baseline() {
   if [[ -n "${OMDB_API_KEY:-}" ]]; then
     coreelec_verify_boolean_observation "${observations}" \
       "addon_settings.plugin.video.themoviedb.helper.omdb_configured" \
-      "metadata.omdb" || failures=$((failures + 1))
+      "metadata.omdb" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   fi
   if [[ -n "${MDBLIST_API_KEY:-}" ]]; then
     coreelec_verify_boolean_observation "${observations}" \
       "addon_settings.plugin.video.themoviedb.helper.mdblist_configured" \
-      "metadata.mdblist" || failures=$((failures + 1))
+      "metadata.mdblist" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   fi
   fi
 

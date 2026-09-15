@@ -4015,6 +4015,8 @@ test_each_ratings_key_presence_is_verified_separately() {
   assert_failure "${rc}" "missing OMDb key must fail" || return 1
   assert_contains "${output}" "metadata.omdb.status=mismatch" "omdb mismatch" || return 1
   assert_contains "${output}" "metadata.mdblist.status=ok" "mdblist still ok" || return 1
+  assert_contains "${output}" "arctic_fuse.status=mismatch" \
+    "the baseline AF3 aggregate includes the OMDb mismatch" || return 1
 
   # Only MDbList missing
   write_pass_observations "${observations}"
@@ -4026,6 +4028,8 @@ test_each_ratings_key_presence_is_verified_separately() {
   assert_failure "${rc}" "missing MDbList key must fail" || return 1
   assert_contains "${output}" "metadata.mdblist.status=mismatch" "mdblist mismatch" || return 1
   assert_contains "${output}" "metadata.omdb.status=ok" "omdb still ok" || return 1
+  assert_contains "${output}" "arctic_fuse.status=mismatch" \
+    "the baseline AF3 aggregate includes the MDbList mismatch" || return 1
 }
 
 # --- Report content for Arctic Fuse surfaces --------------------------------
