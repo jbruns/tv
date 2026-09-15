@@ -420,6 +420,7 @@ resource.images.weatherfanart.multi
 resource.font.robotocjksc
 resource.images.studios.coloured
 resource.images.weathericons.white
+resource.uisounds.fromashes
 resource.language.en_us
 script.module.addon.signals
 script.module.certifi
@@ -531,6 +532,7 @@ test_production_config_locks_arctic_fuse_supported_optional_addons() {
   assert_artifact_version "resource.images.weatherfanart.multi" "0.0.6"
   assert_artifact_version "resource.images.moviecountryicons.maps" "0.0.1"
   assert_artifact_version "resource.images.studios.white" "0.0.34"
+  assert_artifact_version "resource.uisounds.fromashes" "3.0.01"
   assert_artifact_version "script.module.defusedxml" "0.6.0+matrix.1"
   assert_artifact_version "script.module.future" "1.0.0+matrix.1"
 }
@@ -574,7 +576,7 @@ test_production_config_records_each_artifact_exactly_once() {
   local duplicates
   duplicates="$(artifact_id_versions | cut -f1 | LC_ALL=C sort | uniq -d)"
   assert_eq "" "${duplicates}" "no artifact ID appears twice"
-  assert_eq "40" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
+  assert_eq "41" "${#ADDON_ARTIFACTS[@]}" "locked artifact count"
 }
 
 # An artifact URL must be immutably addressed so the pinned bytes cannot be
