@@ -68,7 +68,7 @@ write_manifest() {
 1	skin.arctic.fuse.3	3.2.16	1.zip
 2	weather.ha	0.0.6.6	2.zip
 3	pvr.nextpvr	21.3.2.1	3.zip
-4	script.plexmod	1.14.1-beta1	4.zip
+4	script.plexmod	1.3.19	4.zip
 5	resource.uisounds.fromashes	3.0.01	5.zip
 6	plugin.service.emby-next-gen	11.1.27	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
@@ -608,7 +608,7 @@ stage_addon_bundle() {
   local dir="$1" root="$2"
   shift 2
   local stage="${root}/.cache/coreelec-provision/stage"
-  local index=0 spec id version topdir work weather_settings
+  local index=0 spec id version topdir work weather_settings pm4k_monitor
   mkdir -p "${stage}"
   : > "${stage}/deploy.tsv"
   for spec in "$@"; do
@@ -636,6 +636,20 @@ stage_addon_bundle() {
 </settings>
 XML
       printf '%s/resources/settings.xml\t%s\n' "${topdir}" "${weather_settings}" \
+        >> "${work}/zip-manifest.tsv"
+    fi
+    if [[ "${id}" == "script.plexmod" ]]; then
+      mkdir -p "${work}/lib"
+      pm4k_monitor="${work}/lib/monitor.py"
+      cat > "${pm4k_monitor}" <<'PY'
+def onNotification(sender, method):
+    if sender == "xbmc" and method == "System.OnQuit":
+        from .windows import windowutils
+        windowutils.HOME.closeOption = "kodi_exit"
+        windowutils.HOME.doClose()
+        return
+PY
+      printf '%s/lib/monitor.py\t%s\n' "${topdir}" "${pm4k_monitor}" \
         >> "${work}/zip-manifest.tsv"
     fi
     build_zip_from_manifest "${stage}/${index}.zip" "${work}/zip-manifest.tsv"
@@ -761,6 +775,28 @@ test_remote_deploy_stops_kodi_after_staging_validation() {
   assert_eq "3" "${first_service}" "both extractions precede the first service call"
   assert_contains "$(sed -n '3p' "${REMOTE_CALL_LOG}")" "stop kodi.service" \
     "the first service call stops Kodi"
+}
+
+test_remote_deploy_guards_pm4k_shutdown_without_an_open_home_window() {
+  local dir root bin_dir output rc monitor
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "script.plexmod:1.3.19:plex-for-kodi-fixture"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the pinned PM4K bundle must deploy: ${output}" || return 1
+
+  monitor="${root}/.kodi/addons/script.plexmod/lib/monitor.py"
+  assert_contains "$(cat "${monitor}")" "if windowutils.HOME:" \
+    "PM4K shutdown must guard the nullable HOME window before dereferencing it"
 }
 
 test_remote_deploy_traps_kodi_restart() {
@@ -1020,7 +1056,7 @@ test_remote_deploy_uses_addon_xml_id_not_zip_directory_name() {
   # carries a version suffix or an entirely different name.
   stage_addon_bundle "${dir}" "${root}" \
     "weather.ha:0.0.6.6:weather.ha-0.0.6.6" \
-    "script.plexmod:1.14.1-beta1:plugin.video.pm4k"
+    "script.plexmod:1.3.19:plugin.video.pm4k"
 
   set +e
   transaction="$(run_remote_script deploy "${root}" "${bin_dir}" 2>/dev/null)"
@@ -1031,7 +1067,7 @@ test_remote_deploy_uses_addon_xml_id_not_zip_directory_name() {
   assert_eq "new weather.ha 0.0.6.6" \
     "$(cat "${root}/.kodi/addons/weather.ha/marker.txt")" \
     "the add-on is installed under its addon.xml ID"
-  assert_eq "new script.plexmod 1.14.1-beta1" \
+  assert_eq "new script.plexmod 1.3.19" \
     "$(cat "${root}/.kodi/addons/script.plexmod/marker.txt")" \
     "a differently named ZIP root is installed under its addon.xml ID"
   assert_contains \
@@ -1430,7 +1466,7 @@ print_addon_selection() {
 write_selection_manifest() {
   local manifest="$1"
   {
-    printf '1\tscript.plexmod\t1.14.1-beta1\t1.zip\n'
+    printf '1\tscript.plexmod\t1.3.19\t1.zip\n'
     printf '2\tscript.module.requests\t2.31.0\t2.zip\n'
     printf '3\tweather.ha\t0.0.6.6\t3.zip\n'
   } > "${manifest}"
@@ -2217,6 +2253,7 @@ run_all_tests \
   test_absolute_path_entry_fails \
   test_duplicate_artifact_id_fails \
   test_remote_deploy_stops_kodi_after_staging_validation \
+  test_remote_deploy_guards_pm4k_shutdown_without_an_open_home_window \
   test_remote_deploy_traps_kodi_restart \
   test_remote_deploy_backs_up_each_replaced_path \
   test_remote_deploy_extracts_into_staging_before_replace \

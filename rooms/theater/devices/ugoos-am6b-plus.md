@@ -10,6 +10,8 @@ Apply these room-specific values with the shared Ugoos procedures.
 - **Dolby Vision:** set Dolby Vision mode to **TV-led / display-led**.
 - **Kodi resolution whitelist:** enable all 2160p modes actually reported by the Sony.
 - **Audio path:** pass audio from Sony HDMI 4 through eARC and the OREI link to the Denon; enable HDMI passthrough for Dolby Digital, Dolby Digital Plus, DTS, Dolby TrueHD, DTS-HD, and Dolby Atmos.
+- **CEC:** retain navigation, but do not let Kodi startup or shutdown power the
+  Sony on or off; Home Assistant and user actions own television power.
 - **Kodi entity:** `media_player.theater_kodi_theater`
 - **Lifecycle SSH alias:** `ugoos-theater-lifecycle`
 

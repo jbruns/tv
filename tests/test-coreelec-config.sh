@@ -387,9 +387,8 @@ test_emby_password_is_rejected_in_config() {
 
 PRODUCTION_CONFIG="${SCRIPT_DIR}/../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf"
 
-# Head of pannal/plex-for-kodi's develop_kodi21 branch whose addon.xml declares
-# script.plexmod 1.14.1-beta1. The branch ref moves; this commit does not.
-PLEXMOD_COMMIT="2707bbe72a7ea829b69bdd7ebb753c700552b4d0"
+# Publisher commit that added the stable PM4K 1.3.19 repository package.
+PLEXMOD_COMMIT="eba134ac09bfe4916b3511d1e377bf6bb03a947e"
 
 # A change detector, not a proof. This list is a transcription of the
 # artifact IDs reviewed and recorded in provision.conf; comparing it against
@@ -500,7 +499,7 @@ test_production_config_locks_primary_addon_versions() {
   coreelec_config_load "${PRODUCTION_CONFIG}"
   assert_artifact_version "repository.emby.kodi" "1.0.8"
   assert_artifact_version "plugin.service.emby-next-gen" "11.1.27"
-  assert_artifact_version "script.plexmod" "1.14.1-beta1"
+  assert_artifact_version "script.plexmod" "1.3.19"
   assert_artifact_version "skin.arctic.fuse.3" "3.2.16"
   assert_artifact_version "plugin.video.themoviedb.helper" "6.17.1"
   assert_artifact_version "weather.ha" "0.0.6.6"
@@ -546,9 +545,9 @@ test_production_config_matches_the_reviewed_artifact_id_set() {
   assert_eq "${expected}" "${actual}" "locked artifact ID set"
 }
 
-# The two add-ons that are not published as versioned repository ZIPs are
-# pinned to immutable upstream archives, so the config must record which
-# revision each one came from rather than pointing at a moving ref.
+# The externally hosted add-ons are pinned to immutable publisher revisions,
+# so the config must record which revision each one came from rather than
+# pointing at a moving ref.
 test_production_config_records_immutable_upstream_sources() {
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
@@ -561,13 +560,14 @@ test_production_config_records_immutable_upstream_sources() {
     esac
   done
   assert_contains "${plexmod_url:-}" \
-    "https://codeload.github.com/pannal/plex-for-kodi/zip/${PLEXMOD_COMMIT}" \
-    "script.plexmod is pinned to an immutable commit archive"
+    "https://raw.githubusercontent.com/pannal/dontpanickodi/${PLEXMOD_COMMIT}/omega/zips/script.plexmod/script.plexmod-1.3.19.zip" \
+    "script.plexmod is pinned to its immutable stable repository package"
   assert_contains "${weather_url:-}" \
     "https://codeload.github.com/Eugeniusz-Gienek/kodi_weather_ha/zip/refs/tags/0.0.6.6" \
     "weather.ha is pinned to its upstream tag archive"
   assert_contains "${body}" "${PLEXMOD_COMMIT}" "the pinned plexmod commit SHA is recorded"
-  assert_contains "${body}" "develop_kodi21" "the plexmod source branch is recorded"
+  assert_contains "${body}" "latest published stable PM4K release" \
+    "the stable plexmod selection rationale is recorded"
 }
 
 test_production_config_records_each_artifact_exactly_once() {

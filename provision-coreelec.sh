@@ -526,11 +526,8 @@ def commit_addon_settings():
         write_xml_atomic(path, ADDON_DOCUMENTS[path][0])
 
 
-def set_cec_tv_off_action(storage_root, value):
-    """Forces Kodi's CEC peripheral setting for what a TV standby broadcast
-    makes the box do. There is exactly one such file once CoreELEC has
-    detected the CEC adapter; zero or more than one is ambiguous, and an
-    always-awake box must never guess which peripheral file to edit."""
+def set_cec_power_policy(storage_root, tv_off_action):
+    """Keeps CEC navigation while decoupling Kodi and TV power state."""
     peripheral_dir = os.path.join(
         storage_root, ".kodi", "userdata", "peripheral_data"
     )
@@ -542,16 +539,22 @@ def set_cec_tv_off_action(storage_root, value):
     root = tree.getroot()
     if root.tag != "settings":
         fail("unexpected root element in %s" % paths[0])
+    managed = {
+        "activate_source": "0",
+        "standby_devices": "231",
+        "standby_pc_on_tv_standby": tv_off_action,
+        "standby_tv_on_pc_standby": "0",
+        "wake_devices": "231",
+    }
     # Peripheral::LoadPersistedSettings reads direct children and value
     # attributes, unlike guisettings.xml. Repair previously nested settings.
-    for parent in root.iter():
-        if parent is not root:
-            for node in list(parent):
-                if node.tag == "setting" and node.get("id") == "standby_pc_on_tv_standby":
-                    parent.remove(node)
-    _set_xml_setting(
-        root, "standby_pc_on_tv_standby", value, flat=True
-    )
+    for setting_id in managed:
+        for parent in root.iter():
+            if parent is not root:
+                for node in list(parent):
+                    if node.tag == "setting" and node.get("id") == setting_id:
+                        parent.remove(node)
+        _set_xml_setting(root, setting_id, managed[setting_id], flat=True)
     write_xml_atomic(paths[0], tree)
 
 
@@ -644,7 +647,7 @@ def main(argv):
     if cec_tv_off_action != "36028":
         fail("CEC_TV_OFF_ACTION must be 36028 (Ignore); got %r"
              % (cec_tv_off_action,))
-    set_cec_tv_off_action(storage_root, cec_tv_off_action)
+    set_cec_power_policy(storage_root, cec_tv_off_action)
 
     # --- TMDb Helper --------------------------------------------------------
     # OMDb and MDbList keys belong to TMDb Helper only, never to the skin.
@@ -1542,6 +1545,52 @@ matches[0].set("type", "number")
 tree.write(path, encoding="UTF-8", xml_declaration=True)
 PYTHON_PATCH_WEATHER_SETTINGS
   fi
+  if [ "${plan_id}" = "script.plexmod" ]; then
+    pm4k_root="${expanded_dir}/${plan_id}/${plan_top}"
+    pm4k_monitor="${pm4k_root}/lib/monitor.py"
+    [ -f "${pm4k_monitor}" ] \
+      || fail "the expanded script.plexmod has no lib/monitor.py"
+    python3 - "${pm4k_root}/addon.xml" "${pm4k_monitor}" <<'PYTHON_PATCH_PM4K_SHUTDOWN' \
+      || fail "could not apply the PM4K 1.3.19 shutdown compatibility patch"
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+addon_path, monitor_path = sys.argv[1:]
+addon = ET.parse(addon_path).getroot()
+if addon.get("id") != "script.plexmod" or addon.get("version") != "1.3.19":
+    raise SystemExit("unexpected PM4K identity or version")
+
+with open(monitor_path, "r", encoding="utf-8") as handle:
+    lines = handle.readlines()
+
+matches = []
+for index in range(len(lines) - 1):
+    first = lines[index]
+    second = lines[index + 1]
+    indent = first[:len(first) - len(first.lstrip())]
+    if (first.strip() == 'windowutils.HOME.closeOption = "kodi_exit"'
+            and second.strip() == "windowutils.HOME.doClose()"
+            and second.startswith(indent)):
+        matches.append((index, indent))
+
+if len(matches) != 1:
+    raise SystemExit("unexpected PM4K System.OnQuit HOME dereference")
+
+index, indent = matches[0]
+lines[index:index + 2] = [
+    indent + "if windowutils.HOME:\n",
+    indent + '    windowutils.HOME.closeOption = "kodi_exit"\n',
+    indent + "    windowutils.HOME.doClose()\n",
+]
+patched = "".join(lines)
+compile(patched, monitor_path, "exec")
+temporary = monitor_path + ".provision-new"
+with open(temporary, "w", encoding="utf-8", newline="") as handle:
+    handle.write(patched)
+os.replace(temporary, monitor_path)
+PYTHON_PATCH_PM4K_SHUTDOWN
+  fi
 done < "${plan_file}"
 
 # --- Phase 2: mutate the device inside a recoverable transaction ------------
@@ -2028,13 +2077,8 @@ def timezone_cache_value(storage_root):
     return ""
 
 
-def cec_tv_off_action_value(storage_root):
-    """Locates the one Kodi CEC peripheral settings file and returns its
-    standby_pc_on_tv_standby value. Never reports the file's own name: the
-    adapter file name varies and is not part of the observation contract. A
-    missing or ambiguous file, or a file with no such setting, is fatal for
-    the same reason it is fatal for the transformer -- guessing which
-    peripheral file governs TV standby is worse than refusing to answer."""
+def cec_power_values(storage_root):
+    """Returns the managed CEC power policy without exposing adapter names."""
     peripheral_dir = os.path.join(
         storage_root, ".kodi", "userdata", "peripheral_data"
     )
@@ -2045,13 +2089,18 @@ def cec_tv_off_action_value(storage_root):
     root = ET.parse(paths[0]).getroot()
     if root.tag != "settings":
         fail("unexpected root element in %s" % paths[0])
-    nodes = [node for node in root.iter("setting")
-             if node.get("id") == "standby_pc_on_tv_standby"]
-    if (len(nodes) != 1 or nodes[0] not in root.findall("setting")
-            or not nodes[0].get("value")):
-        fail("the Kodi CEC peripheral settings file requires exactly one "
-             "direct standby_pc_on_tv_standby setting with a value attribute")
-    return nodes[0].get("value")
+    values = {}
+    for setting_id in (
+            "activate_source", "wake_devices", "standby_devices",
+            "standby_tv_on_pc_standby", "standby_pc_on_tv_standby"):
+        nodes = [node for node in root.iter("setting")
+                 if node.get("id") == setting_id]
+        if (len(nodes) != 1 or nodes[0] not in root.findall("setting")
+                or nodes[0].get("value") is None):
+            fail("the Kodi CEC peripheral settings file requires exactly one "
+                 "direct %s setting with a value attribute" % setting_id)
+        values[setting_id] = nodes[0].get("value")
+    return values
 
 
 def localtime_target(system_root):
@@ -2272,7 +2321,14 @@ def main(argv):
     observe("date_offset_expected", expected_marks)
     observe("date_offset_observed", observed_marks)
     observe("date_matches_timezone", verdict)
-    observe("cec.tv_off_action", cec_tv_off_action_value(storage_root))
+    cec_values = cec_power_values(storage_root)
+    observe("cec.activate_source", cec_values["activate_source"])
+    observe("cec.wake_devices", cec_values["wake_devices"])
+    observe("cec.standby_devices", cec_values["standby_devices"])
+    observe("cec.standby_tv_on_pc_standby",
+            cec_values["standby_tv_on_pc_standby"])
+    observe("cec.tv_off_action",
+            cec_values["standby_pc_on_tv_standby"])
 
     for addon_id in addon_ids:
         installed, version, enabled = addon_state(entries.get("addon:" + addon_id))
@@ -2371,6 +2427,13 @@ def main(argv):
         """A disabled managed setting has no case variant anywhere."""
         matches = xml_setting_matches(skin_settings_path, setting_id)
         return matches is not None and not matches
+
+    def managed_setting_is_unset_or(setting_id, expected):
+        """Accept absence or one inert canonical default recreated by AF3."""
+        matches = xml_setting_matches(skin_settings_path, setting_id)
+        return matches is not None and (
+            not matches
+            or matches == [(setting_id, "string", expected, True)])
 
     def kodi_setting_is(setting_id, expected):
         matches = xml_setting_matches(guisettings_path, setting_id)
@@ -2492,12 +2555,14 @@ def main(argv):
         and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Path")
         and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Target")
     )
-    custom_1104_disabled = all(
-        managed_setting_is_unset("HomeSwitcher.1104." + suffix)
-        for suffix in (
-            "Name", "Toggle", "Icon", "Mode", "Shortcut.Path",
-            "Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
-            "Spotlight.Target"))
+    custom_1104_disabled = (
+        managed_setting_is_unset_or("HomeSwitcher.1104.Name", "Custom")
+        and all(
+            managed_setting_is_unset("HomeSwitcher.1104." + suffix)
+            for suffix in (
+                "Toggle", "Icon", "Mode", "Shortcut.Path",
+                "Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
+                "Spotlight.Target")))
     nextpvr_expected = bool(
         config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
     if nextpvr_expected:
@@ -2538,8 +2603,8 @@ def main(argv):
         managed_setting_is("optionstiles.03.include", "Weather")
         if weather_expected
         else managed_setting_is_unset("optionstiles.03.include"),
-        managed_setting_is_unset("optionstiles.03.path"),
-        managed_setting_is_unset("optionstiles.03.target"),
+        managed_setting_is_unset_or("optionstiles.03.path", ""),
+        managed_setting_is_unset_or("optionstiles.03.target", ""),
     ))
     option_tiles_ok = all((
         managed_setting_is("optionstiles.01.include", "NowPlaying"),
@@ -3250,6 +3315,18 @@ verify_remote_baseline() {
   coreelec_report_comparison "cec.tv_off_action" "36028" \
     "$(coreelec_observation_value cec.tv_off_action "${observations}" || true)" \
     || failures=$((failures + 1))
+  coreelec_report_comparison "cec.activate_source" "0" \
+    "$(coreelec_observation_value cec.activate_source "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "cec.wake_devices" "231" \
+    "$(coreelec_observation_value cec.wake_devices "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "cec.standby_devices" "231" \
+    "$(coreelec_observation_value cec.standby_devices "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "cec.standby_tv_on_pc_standby" "0" \
+    "$(coreelec_observation_value cec.standby_tv_on_pc_standby "${observations}" || true)" \
+    || failures=$((failures + 1))
 
   # CoreELEC images differ both in where the zoneinfo tree lives and in how
   # /etc/localtime is stored. A symlink is matched against the tail of its
@@ -3705,27 +3782,36 @@ coreelec_conclude_deployment() {
   local manifest="$1"
   local observations="${TASK_TEMP_DIR}/verify-observations.conf"
   local verification="${TASK_TEMP_DIR}/verification.conf"
-  local status=0
+  local status=0 attempt=1
+  local max_attempts="${COREELEC_VERIFICATION_ATTEMPTS:-13}"
+  local retry_delay="${COREELEC_VERIFICATION_RETRY_DELAY:-5}"
 
   DEPLOYMENT_STATE="pending-verification"
   info "Verifying the deployed baseline on the device over localhost JSON-RPC" >&2
-  : > "${observations}"
-  chmod 600 "${observations}" 2>/dev/null || true
-  # A probe that cannot run is a verification failure, not a fatal error: the
-  # deployment still has to be undone rather than left half-committed.
-  coreelec_collect_remote_observations "${observations}" || status=$?
+  while (( attempt <= max_attempts )); do
+    status=0
+    : > "${observations}"
+    chmod 600 "${observations}" 2>/dev/null || true
+    # A probe that cannot run is a verification failure, not a fatal error:
+    # the deployment still has to be undone rather than left half-committed.
+    coreelec_collect_remote_observations "${observations}" || status=$?
 
-  # `|| status=$?` rather than toggling errexit: this function is called from
-  # both an errexit and a non-errexit context, and toggling it here would
-  # change the caller's setting behind its back.
-  if (( status == 0 )); then
-    verify_remote_baseline "${observations}" "${manifest}" > "${verification}" \
-      || status=$?
-  else
-    printf 'verification_source=device-localhost-jsonrpc\n' > "${verification}"
-    printf 'verification_error=the device did not answer the verification probe\n' \
-      >> "${verification}"
-  fi
+    # `|| status=$?` rather than toggling errexit: this function is called
+    # from both an errexit and a non-errexit context, and toggling it here
+    # would change the caller's setting behind its back.
+    if (( status == 0 )); then
+      verify_remote_baseline "${observations}" "${manifest}" > "${verification}" \
+        || status=$?
+    else
+      printf 'verification_source=device-localhost-jsonrpc\n' > "${verification}"
+      printf 'verification_error=the device did not answer the verification probe\n' \
+        >> "${verification}"
+    fi
+    (( status == 0 || attempt == max_attempts )) && break
+    info "Device verification has not converged; retrying (${attempt}/${max_attempts})" >&2
+    sleep "${retry_delay}"
+    attempt=$((attempt + 1))
+  done
   chmod 600 "${verification}" 2>/dev/null || true
   VERIFICATION_REPORT_FILE="${verification}"
 
@@ -3814,9 +3900,23 @@ if (( ${#CONCLUDE_FIXTURE[@]} > 0 )); then
   TASK_TEMP_DIR="$(mktemp -d "${CONCLUDE_FIXTURE[4]}.XXXXXX")"
   REMOTE_TRANSACTION="fixture-transaction"
   : > "${CONCLUDE_FIXTURE[4]}"
+  conclude_fixture_attempt=0
+  COREELEC_VERIFICATION_RETRY_DELAY=0
+  if [[ -d "${CONCLUDE_FIXTURE[0]}" ]]; then
+    COREELEC_VERIFICATION_ATTEMPTS="$(
+      find "${CONCLUDE_FIXTURE[0]}" -maxdepth 1 -type f -name '*.conf' | wc -l | tr -d ' '
+    )"
+  else
+    COREELEC_VERIFICATION_ATTEMPTS=1
+  fi
   coreelec_collect_remote_observations() {
     printf 'verify\n' >> "${CONCLUDE_FIXTURE[4]}"
-    cp "${CONCLUDE_FIXTURE[0]}" "$1"
+    if [[ -d "${CONCLUDE_FIXTURE[0]}" ]]; then
+      conclude_fixture_attempt=$((conclude_fixture_attempt + 1))
+      cp "${CONCLUDE_FIXTURE[0]}/${conclude_fixture_attempt}.conf" "$1"
+    else
+      cp "${CONCLUDE_FIXTURE[0]}" "$1"
+    fi
   }
   finalize_remote_deployment() {
     printf 'finalize\n' >> "${CONCLUDE_FIXTURE[4]}"

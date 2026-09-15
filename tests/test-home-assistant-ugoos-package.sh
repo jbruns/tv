@@ -38,6 +38,10 @@ test_host_and_service_recovery_start_fresh_off_observation() {
   package_fixture recovery_starts_fresh_observation
 }
 
+test_stale_desired_sensor_never_restarts_an_intentionally_stopped_kodi() {
+  package_fixture stale_desired_sensor_does_not_restart_stopped_kodi
+}
+
 test_reconciler_first_recovery_starts_fresh_off_observation() {
   package_fixture reconciler_first_recovery_starts_fresh_observation
 }
@@ -336,6 +340,7 @@ run_all_tests \
   test_failed_sony_episode_latch_survives_ha_restart \
   test_fresh_observation_epoch_blocks_old_idle_duration \
   test_host_and_service_recovery_start_fresh_off_observation \
+  test_stale_desired_sensor_never_restarts_an_intentionally_stopped_kodi \
   test_start_and_reload_invalidate_queued_off_intervals \
   test_kodi_availability_recovery_reconciles_with_a_fresh_epoch \
   test_queued_reconciliation_uses_current_desired_state \

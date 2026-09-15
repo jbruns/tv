@@ -493,6 +493,25 @@ def recovery_starts_fresh_observation(path):
         p.drain()
         assert len(p.commands()) == before, "epoch maturity must not retry forever"
 
+def stale_desired_sensor_does_not_restart_stopped_kodi(path):
+    p = Package(path)
+    established_pair(p)
+    p.auto_events = True
+    p.set_state(SONY, "off", age=120)
+    p.service = "stopped"
+    p.set_state(ACTUAL, "running")
+    p.package["template"][0]["sensor"][0]["state"] = "running"
+    epoch = States(p)(EPOCH)
+
+    p.automation("ugoos_theater_kodi_status_poll")
+    p.drain()
+
+    assert p.service == "stopped", \
+        "a stale desired-state sensor restarted Kodi after the confirmed Sony-off stop"
+    assert "start" not in p.commands()
+    assert States(p)(EPOCH) == epoch, \
+        "an ordinary actual/desired mismatch fabricated a fresh recovery epoch"
+
 def reconciler_first_recovery_starts_fresh_observation(path):
     for previous_host, previous_service in (("on", "stopped"), ("on", "failed"), ("off", "running")):
         p = Package(path)

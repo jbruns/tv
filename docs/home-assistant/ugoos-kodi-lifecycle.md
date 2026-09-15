@@ -57,16 +57,29 @@ Run shared baseline provisioning first:
 ```
 
 Review the generated report under `coreelec-provision-reports/`. The required
-CEC Ignore result is:
+CEC power-isolation results are:
 
 ```text
 cec.tv_off_action.expected=36028
 cec.tv_off_action.observed=36028
 cec.tv_off_action.status=ok
+cec.activate_source.expected=0
+cec.activate_source.observed=0
+cec.activate_source.status=ok
+cec.wake_devices.expected=231
+cec.wake_devices.observed=231
+cec.wake_devices.status=ok
+cec.standby_devices.expected=231
+cec.standby_devices.observed=231
+cec.standby_devices.status=ok
+cec.standby_tv_on_pc_standby.expected=0
+cec.standby_tv_on_pc_standby.observed=0
+cec.standby_tv_on_pc_standby.status=ok
 ```
 
-Kodi peripheral XML must contain a direct child
-`<setting id="standby_pc_on_tv_standby" value="36028" />`.
+Kodi keeps CEC enabled for navigation, but it neither claims the active source
+nor sends TV power-on or standby commands when Kodi starts or stops. The
+peripheral XML must contain direct-child settings with value attributes.
 
 ## 2. Create the Home Assistant controller identity
 
@@ -192,6 +205,10 @@ Valid lifecycle stdout is exactly `running`, `stopped`, or `failed`.
   observation epoch** before Home Assistant stops Kodi. Home Assistant start,
   package reload, observed SSH recovery, unexpected stopped or failed to
   running service recovery, and Kodi availability recovery reset that epoch.
+- A normal difference between the polled Kodi service state and the
+  minute-refreshed desired-state sensor does not reset the observation epoch.
+  Reconciliation computes the desired state again from current inputs, so a
+  stale sensor cannot restart Kodi immediately after a confirmed Sony-off stop.
 - `input_number.ugoos_theater_idle_timeout_minutes` defaults to **30 minutes**.
 - Kodi input-idle probing runs every 15 seconds while the Kodi entity is
   reachable. Idle evidence expires after 30 seconds, so stale positive evidence
@@ -213,6 +230,9 @@ Valid lifecycle stdout is exactly `running`, `stopped`, or `failed`.
   repeated off requests.
 - The package never suspends, shuts down, reboots, power-cycles, or sends
   Wake-on-LAN to the Ugoos.
+- Kodi CEC remains available for remote navigation but is provisioned not to
+  power the Sony on or off. Deliberate Sony power-off remains owned by Home
+  Assistant and the user.
 
 ## 6. Operations and diagnostics
 

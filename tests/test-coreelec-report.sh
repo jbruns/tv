@@ -61,7 +61,7 @@ write_manifest() {
 1	skin.arctic.fuse.3	3.2.16	1.zip
 2	weather.ha	0.0.6.6	2.zip
 3	pvr.nextpvr	21.3.2.1	3.zip
-4	script.plexmod	1.14.1-beta1	4.zip
+4	script.plexmod	1.3.19	4.zip
 5	resource.uisounds.fromashes	3.0.01	5.zip
 6	plugin.service.emby-next-gen	11.1.27	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
@@ -137,6 +137,10 @@ date_offset_expected=PDT-0700
 date_offset_observed=PDT-0700
 date_matches_timezone=1
 cec.tv_off_action=36028
+cec.activate_source=0
+cec.wake_devices=231
+cec.standby_devices=231
+cec.standby_tv_on_pc_standby=0
 addon.skin.arctic.fuse.3.installed=1
 addon.skin.arctic.fuse.3.version=3.2.16
 addon.skin.arctic.fuse.3.enabled=1
@@ -150,7 +154,7 @@ addon.pvr.nextpvr.version=21.3.2.1
 addon.pvr.nextpvr.enabled=1
 addon.pvr.nextpvr.enable_attempted=0
 addon.script.plexmod.installed=1
-addon.script.plexmod.version=1.14.1-beta1
+addon.script.plexmod.version=1.3.19
 addon.script.plexmod.enabled=1
 addon.script.plexmod.enable_attempted=0
 addon.resource.uisounds.fromashes.installed=1
@@ -417,7 +421,7 @@ test_all_expected_addon_versions_are_verified() {
     "requested version is reported" || return 1
   assert_contains "${output}" "addon.plugin.service.emby-next-gen.observed_version=11.1.27" \
     "observed version is reported" || return 1
-  assert_contains "${output}" "addon.script.plexmod.observed_version=1.14.1-beta1" \
+  assert_contains "${output}" "addon.script.plexmod.observed_version=1.3.19" \
     "pre-release version round-trips" || return 1
   assert_eq "41" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
     "every manifest add-on is verified" || return 1
@@ -682,6 +686,29 @@ test_cec_ignore_mismatch_fails_verification() {
     "the comparator names the observed CEC action" || return 1
   assert_contains "${output}" "cec.tv_off_action.status=mismatch" \
     "the CEC action mismatch is reported" || return 1
+}
+
+test_cec_power_coupling_mismatch_fails_verification() {
+  local dir config manifest observations output rc key
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+
+  for key in activate_source wake_devices standby_devices standby_tv_on_pc_standby; do
+    write_pass_observations "${observations}"
+    set_observation "${observations}" "cec.${key}" "unexpected"
+    set +e
+    output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "CEC ${key} power coupling must fail verification" || return 1
+    assert_contains "${output}" "cec.${key}.status=mismatch" \
+      "the CEC ${key} mismatch is reported" || return 1
+  done
 }
 
 # CoreELEC images ship /etc/localtime either as a symlink into the zoneinfo
@@ -1352,6 +1379,32 @@ test_verification_success_finalizes_and_commits() {
   assert_eq "verify" "$(head -n 1 "${log}")" "verification ran before finalize" || return 1
 }
 
+test_transient_verification_mismatch_is_retried_before_commit() {
+  local dir config manifest observations log output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations"
+  log="${dir}/remote-calls.log"
+  mkdir -p "${observations}"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}/1.conf"
+  set_observation "${observations}/1.conf" "arctic_fuse.hubs_configured" "0"
+  write_pass_observations "${observations}/2.conf"
+
+  set +e
+  output="$(run_conclude "${config}" "${observations}" "${manifest}" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a transient startup mismatch converges before the deadline" || return 1
+  assert_contains "${output}" "deployment_state=committed" \
+    "the converged transaction is committed" || return 1
+  assert_eq $'verify\nverify\nfinalize' "$(cat "${log}")" \
+    "verification retries once before committing" || return 1
+}
+
 test_verification_mismatch_is_fatal() {
   local dir config manifest observations log output rc
   dir="$(make_scratch_dir)"
@@ -1761,7 +1814,7 @@ make_probe_fixture_root() {
   # A passing CEC peripheral file, matching the transformer's fixed Ignore
   # (36028) baseline. Tests that care about a different CEC state overwrite
   # this file themselves.
-  printf '<settings><setting id="standby_pc_on_tv_standby" value="36028" /></settings>\n' \
+  printf '%s\n' '<settings><setting id="activate_source" value="0" /><setting id="wake_devices" value="231" /><setting id="standby_devices" value="231" /><setting id="standby_tv_on_pc_standby" value="0" /><setting id="standby_pc_on_tv_standby" value="36028" /></settings>' \
     > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
   rm -f "${dir}/system/etc/localtime"
   case "${layout}" in
@@ -1865,6 +1918,14 @@ ENTRIES
   output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
   assert_contains "${output}" "cec.tv_off_action=36028" \
     "the CEC TV-off action is reported" || return 1
+  assert_contains "${output}" "cec.activate_source=0" \
+    "Kodi does not claim the active source at startup" || return 1
+  assert_contains "${output}" "cec.wake_devices=231" \
+    "Kodi wakes no HDMI devices at startup" || return 1
+  assert_contains "${output}" "cec.standby_devices=231" \
+    "Kodi puts no HDMI devices in standby" || return 1
+  assert_contains "${output}" "cec.standby_tv_on_pc_standby=0" \
+    "Kodi shutdown does not power off the TV" || return 1
   assert_not_contains "${output}" "cec_CEC_Adapter" \
     "the dynamic adapter filename is never reported" || return 1
 
@@ -2843,6 +2904,24 @@ test_probe_rejects_enabled_custom_1104() {
     "an enabled custom slot is not the managed disabled state" || return 1
 }
 
+test_probe_accepts_inert_defaults_recreated_by_arctic_fuse() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "HomeSwitcher.1104.Name" "string" "Custom"
+  append_skin_setting_node "${skin_file}" "optionstiles.03.path" "string" ""
+  append_skin_setting_node "${skin_file}" "optionstiles.03.target" "string" ""
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=1" \
+    "an untoggled default custom label remains disabled" || return 1
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=1" \
+    "empty AF3-created Weather path and target do not redirect the tile" || return 1
+}
+
 test_probe_rejects_plex_in_the_wrong_slot() {
   local dir root bin_dir output skin_file setting_spec setting_id value
   dir="$(make_scratch_dir)"
@@ -3801,6 +3880,7 @@ run_all_tests \
   test_weather_provider_is_verified_only_when_configured \
   test_timezone_cache_and_zoneinfo_are_verified \
   test_cec_ignore_mismatch_fails_verification \
+  test_cec_power_coupling_mismatch_fails_verification \
   test_regular_file_localtime_is_verified_by_content \
   test_unexpected_device_date_output_is_advisory_not_fatal \
   test_date_offset_reports_expected_and_observed_marks \
@@ -3823,6 +3903,7 @@ run_all_tests \
   test_host_jsonrpc_unreachability_is_environmental_only \
   test_report_fingerprint_tool_is_required_even_without_kodi \
   test_verification_success_finalizes_and_commits \
+  test_transient_verification_mismatch_is_retried_before_commit \
   test_verification_mismatch_is_fatal \
   test_cec_ignore_mismatch_triggers_rollback \
   test_incomplete_rollback_is_fatal_with_recovery_path \
@@ -3855,6 +3936,7 @@ run_all_tests \
   test_probe_reports_each_hub_observation_independently \
   test_probe_rejects_stale_youtube_movie_shortcut \
   test_probe_rejects_enabled_custom_1104 \
+  test_probe_accepts_inert_defaults_recreated_by_arctic_fuse \
   test_probe_rejects_plex_in_the_wrong_slot \
   test_probe_accepts_unconfigured_pvr_and_weather_absence \
   test_probe_rejects_pvr_toggle_when_unconfigured \

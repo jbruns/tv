@@ -46,6 +46,10 @@ For unique settings, use the selected room's Ugoos guide, such as the current
    ```
 
 9. Review the redacted report and resolve any rollback before continuing.
+   After Kodi JSON-RPC first becomes reachable, the provisioner allows up to
+   60 seconds for skin and add-on startup state to converge. It commits only
+   after a complete verification pass; a persistent mismatch still rolls the
+   transaction back.
    When applying a reduced add-on baseline to an existing installation,
    uninstall add-ons no longer present in the artifact lock and remove their
    saved add-on data first. The provisioner installs and replaces selected

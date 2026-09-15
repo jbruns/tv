@@ -12,7 +12,9 @@ Accepted.
 - Boot and validate on microSD before optional eMMC installation.
 - Use wired LAN with DHCP plus a pfSense reservation and DNS name.
 - Keep CoreELEC awake; do not use suspend, shutdown, CEC wake, or WoL in the normal lifecycle.
-- Use repository provisioning for shared Kodi, add-on, regional, CEC Ignore, SSH-hardening, and skin state.
+- Keep CEC navigation enabled, but do not let Kodi startup or shutdown power
+  the display on or off.
+- Use repository provisioning for shared Kodi, add-on, regional, CEC power isolation, SSH-hardening, and skin state.
 - Use the restricted lifecycle SSH gateway and Home Assistant package for Kodi start/stop.
 
 ## Automated Baseline

@@ -509,6 +509,41 @@ test_cec_tv_off_action_is_changed_to_ignore() {
     "Kodi peripheral LoadPersistedSettings reads only the value attribute"
 }
 
+test_cec_navigation_remains_enabled_without_tv_power_coupling() {
+  local dir root payload cec_path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  mkdir -p "${root}/.kodi/userdata/peripheral_data"
+  cec_path="$(cec_settings_path "${root}")"
+  cat > "${cec_path}" <<'XML'
+<settings>
+  <setting id="enabled" value="1" />
+  <setting id="activate_source" value="1" />
+  <setting id="wake_devices" value="36037" />
+  <setting id="standby_devices" value="36037" />
+  <setting id="standby_tv_on_pc_standby" value="1" />
+  <setting id="standby_pc_on_tv_standby" value="13011" />
+</settings>
+XML
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "1" "$(xml_setting "${cec_path}" enabled)" \
+    "CEC remains enabled for navigation"
+  assert_eq "0" "$(xml_setting "${cec_path}" activate_source)" \
+    "Kodi startup does not make itself the active source"
+  assert_eq "231" "$(xml_setting "${cec_path}" wake_devices)" \
+    "Kodi startup wakes no HDMI devices"
+  assert_eq "231" "$(xml_setting "${cec_path}" standby_devices)" \
+    "Kodi shutdown puts no HDMI devices in standby"
+  assert_eq "0" "$(xml_setting "${cec_path}" standby_tv_on_pc_standby)" \
+    "Kodi shutdown does not power off the TV"
+  assert_eq "36028" "$(xml_setting "${cec_path}" standby_pc_on_tv_standby)" \
+    "TV standby remains ignored by the always-awake CoreELEC host"
+}
+
 test_cec_text_only_setting_is_repaired_to_kodi_attribute() {
   local dir root payload
   dir="$(make_scratch_dir)"
@@ -1954,6 +1989,7 @@ run_all_tests \
   test_existing_unmanaged_settings_are_preserved \
   test_second_run_is_byte_identical \
   test_cec_tv_off_action_is_changed_to_ignore \
+  test_cec_navigation_remains_enabled_without_tv_power_coupling \
   test_cec_text_only_setting_is_repaired_to_kodi_attribute \
   test_cec_nested_setting_is_repaired_to_direct_child \
   test_cec_transform_preserves_unmanaged_peripheral_settings \
