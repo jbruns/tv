@@ -2329,20 +2329,17 @@ def main(argv):
         ]
 
     def managed_setting_is(setting_id, expected):
-        """The managed value is present exactly, on a node Kodi reads, and no
-        case variant anywhere in the file disagrees with it."""
+        """One canonical root string setting is the complete managed state."""
         matches = xml_setting_matches(skin_settings_path, setting_id)
-        return (
-            any(at_root and value == expected
-                for _, _, value, at_root in matches)
-            and all(value == expected for _, _, value, _ in matches)
-        )
+        return matches == [(setting_id, "string", expected, True)]
 
     def managed_setting_is_unset(setting_id):
-        """Kodi treats an empty skin string as unset, so a removed managed
-        setting may exist only as empty nodes -- in any case variant."""
-        return all(value == "" for _, _, value, _
-                   in xml_setting_matches(skin_settings_path, setting_id))
+        """A disabled managed setting has no case variant anywhere."""
+        return not xml_setting_matches(skin_settings_path, setting_id)
+
+    def kodi_setting_is(setting_id, expected):
+        matches = xml_setting_matches(guisettings_path, setting_id)
+        return matches == [(setting_id, "", expected, True)]
 
     def smart_playlist_signature(path):
         try:
@@ -2368,24 +2365,50 @@ def main(argv):
 
     SKIN_ID = "skin.arctic.fuse.3"
     userdata = os.path.join(storage_root, ".kodi", "userdata")
+    guisettings_path = os.path.join(userdata, "guisettings.xml")
     skin_settings_path = os.path.join(
         userdata, "addon_data", SKIN_ID, "settings.xml")
     nodes_dir = os.path.join(
         userdata, "addon_data", "script.skinvariables", "nodes", SKIN_ID)
     playlists_dir = os.path.join(userdata, "playlists", "video")
 
-    # Hub toggles. Each hub is observed on its own line: the aggregate says
-    # only that something is wrong, these say which hub.
-    pvr_hub_ok = managed_setting_is("HomeSwitcher.1107.Toggle", "true")
-    addons_hub_ok = managed_setting_is("HomeSwitcher.1108.Toggle", "true")
-    observe("arctic_fuse.pvr_hub_configured", 1 if pvr_hub_ok else 0)
-    observe("arctic_fuse.addons_hub_configured", 1 if addons_hub_ok else 0)
-    observe("arctic_fuse.hubs_configured",
-            1 if (pvr_hub_ok and addons_hub_ok) else 0)
-
-    # Plex entry (1103)
+    tv_hub_ok = all((
+        managed_setting_is("HomeSwitcher.1101.Name", "TV Shows"),
+        managed_setting_is("HomeSwitcher.1101.Toggle", "true"),
+        managed_setting_is(
+            "HomeSwitcher.1101.Icon",
+            "special://skin/extras/icons/tv.png"),
+        managed_setting_is("HomeSwitcher.1101.Mode", "Standard"),
+        managed_setting_is(
+            "HomeSwitcher.1101.Spotlight.Label", "Random TV Shows"),
+        managed_setting_is(
+            "HomeSwitcher.1101.Spotlight.Path",
+            "special://skin/extras/playlists/RandomTvShows.xsp"),
+        managed_setting_is(
+            "HomeSwitcher.1101.Spotlight.Target", "videos"),
+        managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Path"),
+        managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Target"),
+    ))
+    movies_hub_ok = all((
+        managed_setting_is("HomeSwitcher.1102.Name", "Movies"),
+        managed_setting_is("HomeSwitcher.1102.Toggle", "true"),
+        managed_setting_is(
+            "HomeSwitcher.1102.Icon",
+            "special://skin/extras/icons/film.png"),
+        managed_setting_is("HomeSwitcher.1102.Mode", "Standard"),
+        managed_setting_is(
+            "HomeSwitcher.1102.Spotlight.Label", "Random Movies"),
+        managed_setting_is(
+            "HomeSwitcher.1102.Spotlight.Path",
+            "special://skin/extras/playlists/RandomMovies.xsp"),
+        managed_setting_is(
+            "HomeSwitcher.1102.Spotlight.Target", "videos"),
+        managed_setting_is_unset("HomeSwitcher.1102.Shortcut.Path"),
+        managed_setting_is_unset("HomeSwitcher.1102.Shortcut.Target"),
+    ))
     plex_ok = (
         managed_setting_is("HomeSwitcher.1103.Name", "Plex")
+        and managed_setting_is("HomeSwitcher.1103.Toggle", "true")
         and managed_setting_is(
             "HomeSwitcher.1103.Icon",
             "special://home/addons/script.plexmod/icon2.png")
@@ -2396,12 +2419,70 @@ def main(argv):
         and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Path")
         and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Target")
     )
-    observe("arctic_fuse.plex_entry_configured", 1 if plex_ok else 0)
+    custom_1104_disabled = all(
+        managed_setting_is_unset("HomeSwitcher.1104." + suffix)
+        for suffix in (
+            "Name", "Toggle", "Icon", "Mode", "Shortcut.Path",
+            "Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
+            "Spotlight.Target"))
+    nextpvr_expected = bool(
+        config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
+    if nextpvr_expected:
+        pvr_hub_ok = managed_setting_is(
+            "HomeSwitcher.1107.Toggle", "true")
+    else:
+        pvr_hub_ok = managed_setting_is_unset(
+            "HomeSwitcher.1107.Toggle")
+    pvr_surfaces_ok = all(
+        managed_setting_is_unset("Hub.1107." + suffix)
+        for suffix in (
+            "DisableSearch", "DisableChannels",
+            "DisableGroups", "DisableRecordings"))
+    addons_hub_ok = managed_setting_is("HomeSwitcher.1108.Toggle", "true")
 
-    # Settings tile
-    observe("arctic_fuse.settings_tile_configured",
-            1 if managed_setting_is("optionstiles.02.include", "Settings")
-            else 0)
+    observe("arctic_fuse.tv_hub_configured", 1 if tv_hub_ok else 0)
+    observe("arctic_fuse.movies_hub_configured", 1 if movies_hub_ok else 0)
+    observe("arctic_fuse.plex_entry_configured", 1 if plex_ok else 0)
+    observe("arctic_fuse.custom_1104_disabled",
+            1 if custom_1104_disabled else 0)
+    observe("arctic_fuse.pvr_hub_configured", 1 if pvr_hub_ok else 0)
+    observe("arctic_fuse.pvr_surfaces_configured",
+            1 if pvr_surfaces_ok else 0)
+    observe("arctic_fuse.addons_hub_configured", 1 if addons_hub_ok else 0)
+    observe("arctic_fuse.hubs_configured", 1 if all((
+        tv_hub_ok, movies_hub_ok, plex_ok, custom_1104_disabled,
+        pvr_hub_ok, pvr_surfaces_ok, addons_hub_ok)) else 0)
+
+    weather_expected = bool(
+        config("HOME_ASSISTANT_URL")
+        and config("HOME_ASSISTANT_WEATHER_ENTITY")
+        and have("HOME_ASSISTANT_TOKEN"))
+    weather_tile_ok = (
+        managed_setting_is("optionstiles.03.include", "Weather")
+        if weather_expected else all((
+            managed_setting_is_unset("optionstiles.03.include"),
+            managed_setting_is_unset("optionstiles.03.path"),
+            managed_setting_is_unset("optionstiles.03.target"),
+        )))
+    option_tiles_ok = all((
+        managed_setting_is("optionstiles.01.include", "NowPlaying"),
+        managed_setting_is("optionstiles.02.include", "Settings"),
+        weather_tile_ok,
+        managed_setting_is("optionstiles.04.include", "SystemInfo"),
+    ))
+    observe("arctic_fuse.option_tiles_configured",
+            1 if option_tiles_ok else 0)
+
+    kodi_defaults_ok = all((
+        kodi_setting_is("input.enablemouse", "false"),
+        kodi_setting_is(
+            "lookandfeel.soundskin", "resource.uisounds.fromashes"),
+        kodi_setting_is("videolibrary.flattentvshows", "1"),
+        kodi_setting_is("videolibrary.ignorevideoextras", "true"),
+        kodi_setting_is("videolibrary.ignorevideoversions", "true"),
+    ))
+    observe("arctic_fuse.kodi_defaults_configured",
+            1 if kodi_defaults_ok else 0)
 
     # Home widgets
     expected_home_widgets = [
@@ -2416,6 +2497,28 @@ def main(argv):
         nodes_dir, "skinvariables-shortcut-homewidgets.json"))
     observe("arctic_fuse.home_widgets_configured",
             1 if actual_home_widgets == expected_home_widgets else 0)
+
+    expected_tv_widgets = [
+        {"guid": "coreelec-tv-inprogress", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-recently-aired", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-trakt-popular", "icon": "", "label": "Trakt Popular TV Shows", "path": "special://profile/playlists/video/TraktPopularTVShows.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-new", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
+    ]
+    actual_tv_widgets = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-1101widgets.json"))
+    observe("arctic_fuse.tv_widgets_configured",
+            1 if actual_tv_widgets == expected_tv_widgets else 0)
+
+    expected_movie_widgets = [
+        {"guid": "coreelec-movies-inprogress", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-recently-released", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-trakt-box-office", "icon": "", "label": "Trakt Weekend Box Office", "path": "special://profile/playlists/video/TraktWeekendBoxOffice.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-new", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
+    ]
+    actual_movie_widgets = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-1102widgets.json"))
+    observe("arctic_fuse.movie_widgets_configured",
+            1 if actual_movie_widgets == expected_movie_widgets else 0)
 
     # Power menu
     expected_power_menu = [
@@ -2451,7 +2554,19 @@ def main(argv):
                       ("airdate", "notinthelast", "-1 days")],
             "order": ("year", "descending"),
         },
-        "RecentlyReleasedMoviesCurrentYear": {
+        "TraktPopularTVShows": {
+            "type": "tvshows", "name": "Trakt Popular TV Shows",
+            "match": "all", "limit": "25",
+            "rules": [("tag", "contains", "trakt-popular")],
+            "order": ("dateadded", "descending"),
+        },
+        "TraktWeekendBoxOffice": {
+            "type": "movies", "name": "Trakt Weekend Box Office",
+            "match": "all", "limit": "25",
+            "rules": [("tag", "contains", "trakt-weekend-box-office")],
+            "order": ("dateadded", "descending"),
+        },
+        "RecentlyReleasedMoviesCurrentAndPreviousYear": {
             "type": "movies", "name": "Recently Released Movies", "match": "all",
             "limit": "50",
             "rules": [("year", "greaterthan", str(datetime.date.today().year - 2)),
@@ -2472,18 +2587,18 @@ def main(argv):
         },
     }
     for playlist_name, expected_sig in EXPECTED_PLAYLISTS.items():
-        actual_path = playlist_name + ".xsp"
-        if playlist_name == "RecentlyReleasedMoviesCurrentYear":
-            actual_path = "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp"
         actual_sig = smart_playlist_signature(
-            os.path.join(playlists_dir, actual_path))
+            os.path.join(playlists_dir, playlist_name + ".xsp"))
         observe("arctic_fuse.playlist.%s.configured" % playlist_name,
                 1 if actual_sig == expected_sig else 0)
 
-    observe(
-        "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent",
-        0 if os.path.lexists(os.path.join(
-            playlists_dir, "RecentlyReleasedMovies90Days.xsp")) else 1)
+    for playlist_name in (
+            "RecentlyReleasedMoviesCurrentYear",
+            "RecentlyReleasedMovies90Days"):
+        observe(
+            "arctic_fuse.playlist.%s.absent" % playlist_name,
+            0 if os.path.lexists(os.path.join(
+                playlists_dir, playlist_name + ".xsp")) else 1)
 
     for line in OBSERVATIONS:
         sys.stdout.write(line + "\n")
@@ -3186,10 +3301,24 @@ verify_remote_baseline() {
       "metadata.mdblist" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   fi
 
-  # Arctic Fuse skin surfaces. The hub verdict is split so the report names
-  # the hub that failed; the aggregate remains fatal for the comparison.
+  # Arctic Fuse surfaces are each reported before the aggregate status.
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.tv_hub_configured" "arctic_fuse.tv_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.movies_hub_configured" "arctic_fuse.movies_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.plex_entry_configured" "arctic_fuse.plex_entry" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.custom_1104_disabled" "arctic_fuse.custom_1104_disabled" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.pvr_hub_configured" "arctic_fuse.pvr_hub" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.pvr_surfaces_configured" "arctic_fuse.pvr_surfaces" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.addons_hub_configured" "arctic_fuse.addons_hub" \
@@ -3198,13 +3327,19 @@ verify_remote_baseline() {
     "arctic_fuse.hubs_configured" "arctic_fuse.hubs" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.plex_entry_configured" "arctic_fuse.plex_entry" \
+    "arctic_fuse.option_tiles_configured" "arctic_fuse.option_tiles" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.settings_tile_configured" "arctic_fuse.settings_tile" \
+    "arctic_fuse.kodi_defaults_configured" "arctic_fuse.kodi_defaults" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.home_widgets_configured" "arctic_fuse.home" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.tv_widgets_configured" "arctic_fuse.tv" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.movie_widgets_configured" "arctic_fuse.movies" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
@@ -3212,16 +3347,28 @@ verify_remote_baseline() {
 
   local playlist_name
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
-    RecentlyAiredEpisodes30Days RecentlyReleasedMoviesCurrentYear NewShows NewMovies; do
+    RecentlyAiredEpisodes30Days TraktPopularTVShows TraktWeekendBoxOffice \
+    RecentlyReleasedMoviesCurrentAndPreviousYear NewShows NewMovies; do
     coreelec_verify_boolean_observation "${observations}" \
       "arctic_fuse.playlist.${playlist_name}.configured" \
       "arctic_fuse.playlist.${playlist_name}" \
       || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   done
 
-  coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent" \
-    "arctic_fuse.playlist_migration" \
+  for playlist_name in RecentlyReleasedMoviesCurrentYear \
+    RecentlyReleasedMovies90Days; do
+    coreelec_verify_boolean_observation "${observations}" \
+      "arctic_fuse.playlist.${playlist_name}.absent" \
+      "arctic_fuse.playlist.${playlist_name}.absent" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  done
+
+  if coreelec_manifest_contains "${manifest}" "resource.uisounds.fromashes"; then
+    value=1
+  else
+    value=0
+  fi
+  coreelec_report_comparison "arctic_fuse.from_ashes_manifest" "1" "${value}" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   if (( arctic_fuse_failures == 0 )); then

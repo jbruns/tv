@@ -62,6 +62,7 @@ write_manifest() {
 2	weather.ha	0.0.6.6	2.zip
 3	pvr.nextpvr	21.3.2.1	3.zip
 4	script.plexmod	1.14.1-beta1	4.zip
+5	resource.uisounds.fromashes	3.0.01	5.zip
 6	plugin.service.emby-next-gen	11.1.27	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
 8	resource.language.en_us	11.0.82	8.zip
@@ -112,6 +113,7 @@ setting.locale.keyboardlayouts=English QWERTY
 setting.locale.timezonecountry=United States
 setting.locale.timezone=America/Los_Angeles
 setting.lookandfeel.skin=skin.arctic.fuse.3
+setting.lookandfeel.soundskin=resource.uisounds.fromashes
 setting.weather.addon=weather.ha
 timezone_cache=America/Los_Angeles
 localtime_path=/usr/share/zoneinfo/America/Los_Angeles
@@ -137,6 +139,10 @@ addon.script.plexmod.installed=1
 addon.script.plexmod.version=1.14.1-beta1
 addon.script.plexmod.enabled=1
 addon.script.plexmod.enable_attempted=0
+addon.resource.uisounds.fromashes.installed=1
+addon.resource.uisounds.fromashes.version=3.0.01
+addon.resource.uisounds.fromashes.enabled=1
+addon.resource.uisounds.fromashes.enable_attempted=0
 addon.plugin.service.emby-next-gen.installed=1
 addon.plugin.service.emby-next-gen.version=11.1.27
 addon.plugin.service.emby-next-gen.enabled=1
@@ -287,16 +293,26 @@ addon_settings.script.plexmod.configured=1
 addon_settings.plugin.video.themoviedb.helper.omdb_configured=1
 addon_settings.plugin.video.themoviedb.helper.mdblist_configured=1
 arctic_fuse.hubs_configured=1
+arctic_fuse.tv_hub_configured=1
+arctic_fuse.movies_hub_configured=1
 arctic_fuse.pvr_hub_configured=1
+arctic_fuse.pvr_surfaces_configured=1
 arctic_fuse.addons_hub_configured=1
 arctic_fuse.plex_entry_configured=1
-arctic_fuse.settings_tile_configured=1
+arctic_fuse.custom_1104_disabled=1
+arctic_fuse.option_tiles_configured=1
+arctic_fuse.kodi_defaults_configured=1
 arctic_fuse.home_widgets_configured=1
+arctic_fuse.tv_widgets_configured=1
+arctic_fuse.movie_widgets_configured=1
 arctic_fuse.power_menu_configured=1
 arctic_fuse.playlist.InProgressMovies90Days.configured=1
 arctic_fuse.playlist.InProgressShows90Days.configured=1
 arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=1
-arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=1
+arctic_fuse.playlist.TraktPopularTVShows.configured=1
+arctic_fuse.playlist.TraktWeekendBoxOffice.configured=1
+arctic_fuse.playlist.RecentlyReleasedMoviesCurrentAndPreviousYear.configured=1
+arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent=1
 arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1
 arctic_fuse.playlist.NewShows.configured=1
 arctic_fuse.playlist.NewMovies.configured=1
@@ -389,7 +405,7 @@ test_all_expected_addon_versions_are_verified() {
     "observed version is reported" || return 1
   assert_contains "${output}" "addon.script.plexmod.observed_version=1.14.1-beta1" \
     "pre-release version round-trips" || return 1
-  assert_eq "40" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
+  assert_eq "41" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
     "every manifest add-on is verified" || return 1
 }
 
@@ -890,7 +906,8 @@ test_selected_subset_verifies_only_the_selected_addons() {
   # A run narrowed with --addon deploys, and therefore verifies, only these.
   cat > "${manifest}" <<'MANIFEST'
 1	skin.arctic.fuse.3	3.2.16	1.zip
-2	resource.language.en_us	11.0.82	2.zip
+2	resource.uisounds.fromashes	3.0.01	2.zip
+3	resource.language.en_us	11.0.82	3.zip
 MANIFEST
   # An add-on outside the selection is disabled on the device; that is not
   # this run's deployment set and must not fail it.
@@ -2263,8 +2280,8 @@ run_verify_with_keys() {
 
 # --- Arctic Fuse probe fixture helpers --------------------------------------
 
-# Creates a fixture root with valid Arctic Fuse skin settings, home widgets
-# JSON, power menu JSON, and all six smart playlists. Returns the storage root.
+# Creates a fixture root with every managed Arctic Fuse setting, widget node,
+# power-menu entry, Kodi default, and smart playlist. Returns the storage root.
 # Extends make_probe_fixture_root with the managed skin files the probe reads.
 make_arctic_fuse_fixture_root() {
   local dir="$1" root
@@ -2276,6 +2293,25 @@ make_arctic_fuse_fixture_root() {
   mkdir -p "${skin_dir}" "${nodes_dir}" "${playlists_dir}"
   local current_year
   current_year="$(python3 -c 'import datetime; print(datetime.date.today().year)')"
+
+  cat > "${userdata}/guisettings.xml" <<'XML'
+<settings version="2">
+    <setting id="input.enablemouse">false</setting>
+    <setting id="lookandfeel.soundskin">resource.uisounds.fromashes</setting>
+    <setting id="videolibrary.flattentvshows">1</setting>
+    <setting id="videolibrary.ignorevideoextras">true</setting>
+    <setting id="videolibrary.ignorevideoversions">true</setting>
+</settings>
+XML
+  mkdir -p "${userdata}/addon_data/pvr.nextpvr"
+  cat > "${userdata}/addon_data/pvr.nextpvr/instance-settings-1.xml" <<'XML'
+<settings>
+    <setting id="host" value="nextpvr.example.lan" />
+    <setting id="port" value="8866" />
+    <setting id="pin" value="1234" />
+    <setting id="kodi_addon_instance_enabled" value="true" />
+</settings>
+XML
 
   # Valid skin settings XML
   cat > "${skin_dir}/settings.xml" <<'XML'
@@ -2300,13 +2336,32 @@ make_arctic_fuse_fixture_root() {
     <setting id="HomeSwitcher.1103.Shortcut.Path">RunAddon(script.plexmod)</setting>
     <setting id="HomeSwitcher.1107.Toggle">true</setting>
     <setting id="HomeSwitcher.1108.Toggle">true</setting>
+    <setting id="optionstiles.01.include">NowPlaying</setting>
     <setting id="optionstiles.02.include">Settings</setting>
+    <setting id="optionstiles.03.include">Weather</setting>
+    <setting id="optionstiles.04.include">SystemInfo</setting>
 </settings>
 XML
+  python3 - "${skin_dir}/settings.xml" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1])
+for node in tree.getroot().findall("setting"):
+    node.set("type", "string")
+tree.write(sys.argv[1], encoding="UTF-8", xml_declaration=True)
+PYEOF
 
   # Valid home widgets JSON
   cat > "${nodes_dir}/skinvariables-shortcut-homewidgets.json" <<'JSON'
 [{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
+JSON
+
+  cat > "${nodes_dir}/skinvariables-shortcut-1101widgets.json" <<'JSON'
+[{"guid": "coreelec-tv-inprogress", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-tv-recently-aired", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-tv-trakt-popular", "icon": "", "label": "Trakt Popular TV Shows", "path": "special://profile/playlists/video/TraktPopularTVShows.xsp", "target": "videos"}, {"guid": "coreelec-tv-new", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}]
+JSON
+
+  cat > "${nodes_dir}/skinvariables-shortcut-1102widgets.json" <<'JSON'
+[{"guid": "coreelec-movies-inprogress", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-movies-recently-released", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"}, {"guid": "coreelec-movies-trakt-box-office", "icon": "", "label": "Trakt Weekend Box Office", "path": "special://profile/playlists/video/TraktWeekendBoxOffice.xsp", "target": "videos"}, {"guid": "coreelec-movies-new", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
 JSON
 
   # Valid power menu JSON
@@ -2339,6 +2394,8 @@ JSON
   write_fixture_xsp "${playlists_dir}/NewMovies.xsp" movies \
     "New Movies" "all" 50 "dateadded" "descending" \
     "playcount|is|0"
+  rm -f "${playlists_dir}/RecentlyReleasedMoviesCurrentYear.xsp" \
+    "${playlists_dir}/RecentlyReleasedMovies90Days.xsp"
 
   printf '%s\n' "${root}"
 }
@@ -2384,6 +2441,25 @@ HOME_ASSISTANT_URL=https://homeassistant.example.lan:8123
 HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
 HOME_ASSISTANT_SUN_ENTITY=sun.sun
 HAVE_HOME_ASSISTANT_TOKEN=1
+NEXTPVR_HOST=nextpvr.example.lan
+NEXTPVR_PORT=8866
+HAVE_NEXTPVR_PIN=1
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+  run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1
+}
+
+run_arctic_fuse_probe_unconfigured() {
+  local dir="$1" bin_dir="$2" root="$3"
+  local request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
 ENTRIES
   write_jsonrpc_response "${dir}/stub/response-default.json" true
   install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
@@ -2393,24 +2469,33 @@ ENTRIES
 # --- Arctic Fuse probe fixture tests ----------------------------------------
 
 test_probe_arctic_fuse_valid_baseline_emits_all_ones() {
-  local dir root bin_dir output
+  local dir root bin_dir output expected
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
   root="$(make_arctic_fuse_fixture_root "${dir}")"
   bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.hubs_configured=1" "hubs ok" || return 1
-  assert_contains "${output}" "arctic_fuse.plex_entry_configured=1" "plex ok" || return 1
-  assert_contains "${output}" "arctic_fuse.settings_tile_configured=1" "settings tile ok" || return 1
-  assert_contains "${output}" "arctic_fuse.home_widgets_configured=1" "home widgets ok" || return 1
-  assert_contains "${output}" "arctic_fuse.power_menu_configured=1" "power menu ok" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.InProgressMovies90Days.configured=1" "playlist 1" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=1" "playlist 6" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=1" \
-    "current year movie playlist observation ok" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1" \
-    "obsolete playlist absent" || return 1
+  for expected in \
+    arctic_fuse.tv_hub_configured=1 \
+    arctic_fuse.movies_hub_configured=1 \
+    arctic_fuse.plex_entry_configured=1 \
+    arctic_fuse.custom_1104_disabled=1 \
+    arctic_fuse.pvr_hub_configured=1 \
+    arctic_fuse.pvr_surfaces_configured=1 \
+    arctic_fuse.addons_hub_configured=1 \
+    arctic_fuse.option_tiles_configured=1 \
+    arctic_fuse.kodi_defaults_configured=1 \
+    arctic_fuse.home_widgets_configured=1 \
+    arctic_fuse.tv_widgets_configured=1 \
+    arctic_fuse.movie_widgets_configured=1 \
+    arctic_fuse.playlist.TraktPopularTVShows.configured=1 \
+    arctic_fuse.playlist.TraktWeekendBoxOffice.configured=1 \
+    arctic_fuse.playlist.RecentlyReleasedMoviesCurrentAndPreviousYear.configured=1 \
+    arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent=1 \
+    arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1; do
+    assert_contains "${output}" "${expected}" "managed Arctic Fuse state: ${expected}" || return 1
+  done
 }
 
 test_probe_missing_skin_settings_emits_zero() {
@@ -2424,7 +2509,7 @@ test_probe_missing_skin_settings_emits_zero() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.hubs_configured=0" "hubs 0 when settings missing" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" "plex 0" || return 1
-  assert_contains "${output}" "arctic_fuse.settings_tile_configured=0" "settings tile 0" || return 1
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=0" "option tiles 0" || return 1
 }
 
 test_probe_malformed_skin_xml_emits_zero() {
@@ -2463,6 +2548,51 @@ if value:
     node.text = value
 tree.write(path, encoding="UTF-8", xml_declaration=True)
 PYEOF
+}
+
+remove_skin_setting_node() {
+  local skin_file="$1" setting_id="$2"
+  python3 - "${skin_file}" "${setting_id}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id = sys.argv[1:3]
+tree = ET.parse(path)
+root = tree.getroot()
+for parent in root.iter():
+    for node in list(parent):
+        if (node.tag == "setting"
+                and (node.get("id") or "").casefold() == setting_id.casefold()):
+            parent.remove(node)
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+}
+
+set_xml_setting_text() {
+  local path="$1" setting_id="$2" value="$3"
+  python3 - "${path}" "${setting_id}" "${value}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id, value = sys.argv[1:4]
+tree = ET.parse(path)
+matches = [node for node in tree.getroot().iter("setting")
+           if (node.get("id") or "").casefold() == setting_id.casefold()]
+if len(matches) != 1:
+    raise SystemExit("expected one setting: %s" % setting_id)
+matches[0].text = value
+matches[0].attrib.pop("value", None)
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+}
+
+make_arctic_fuse_fixture_unconfigured() {
+  local root="$1"
+  local skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  remove_skin_setting_node "${skin_file}" "HomeSwitcher.1107.Toggle"
+  remove_skin_setting_node "${skin_file}" "optionstiles.03.include"
+  remove_skin_setting_node "${skin_file}" "optionstiles.03.path"
+  remove_skin_setting_node "${skin_file}" "optionstiles.03.target"
 }
 
 # Moves one managed setting out of the root and into a <category>, which Kodi
@@ -2561,7 +2691,7 @@ test_probe_case_variant_settings_tile_duplicate_emits_zero() {
   append_skin_setting_node "${skin_file}" "OptionsTiles.02.Include" "string" "Power"
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.settings_tile_configured=0" \
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=0" \
     "a case-variant settings tile duplicate → settings tile 0" || return 1
 }
 
@@ -2610,6 +2740,124 @@ test_probe_reports_each_hub_observation_independently() {
     "Add-ons stays ok while PVR fails" || return 1
   assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
     "the aggregate hub verdict still fails" || return 1
+}
+
+test_probe_rejects_stale_youtube_movie_shortcut() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "homeswitcher.1102.shortcut.path" \
+    "string" "RunAddon(plugin.video.youtube)"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.movies_hub_configured=0" \
+    "a stale YouTube shortcut makes the Movies hub mismatch" || return 1
+}
+
+test_probe_rejects_enabled_custom_1104() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "HOMESWITCHER.1104.TOGGLE" "string" "true"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=0" \
+    "an enabled custom slot is not the managed disabled state" || return 1
+}
+
+test_probe_rejects_plex_in_the_wrong_slot() {
+  local dir root bin_dir output skin_file suffix
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  for suffix in Name Toggle Icon Shortcut.Path; do
+    remove_skin_setting_node "${skin_file}" "HomeSwitcher.1103.${suffix}"
+  done
+  append_skin_setting_node "${skin_file}" "HomeSwitcher.1104.Name" "string" "Plex"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" \
+    "Plex outside slot 1103 is rejected" || return 1
+}
+
+test_probe_accepts_unconfigured_pvr_and_weather_absence() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  make_arctic_fuse_fixture_unconfigured "${root}"
+
+  output="$(run_arctic_fuse_probe_unconfigured "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=1" \
+    "an unconfigured PVR requires no hub toggle" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_surfaces_configured=1" \
+    "an unconfigured PVR still requires no stale disable flags" || return 1
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=1" \
+    "unconfigured Weather requires no Weather tile" || return 1
+}
+
+test_probe_rejects_pvr_toggle_when_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+
+  output="$(run_arctic_fuse_probe_unconfigured "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.pvr_hub_configured=0" \
+    "an unconfigured PVR must not retain its hub toggle" || return 1
+}
+
+test_probe_rejects_pvr_disable_flag() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "hub.1107.disablesearch" "string" "true"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.pvr_surfaces_configured=0" \
+    "a PVR native-surface disable flag is rejected" || return 1
+}
+
+test_probe_rejects_missing_configured_weather_tile() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  remove_skin_setting_node "${skin_file}" "optionstiles.03.include"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=0" \
+    "configured Weather requires the Weather option tile" || return 1
+}
+
+test_probe_rejects_weather_tile_when_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  remove_skin_setting_node \
+    "${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml" \
+    "HomeSwitcher.1107.Toggle"
+
+  output="$(run_arctic_fuse_probe_unconfigured "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=0" \
+    "unconfigured Weather must not retain its option tile" || return 1
 }
 
 test_probe_malformed_json_emits_zero_for_home_widgets() {
@@ -2725,6 +2973,51 @@ JSON
     "unexpected entry → 0" || return 1
 }
 
+test_probe_reordered_tv_widgets_emits_zero() {
+  local dir root bin_dir output path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  path="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json"
+  python3 - "${path}" <<'PYEOF'
+import json
+import sys
+with open(sys.argv[1]) as handle:
+    widgets = json.load(handle)
+widgets[0], widgets[1] = widgets[1], widgets[0]
+with open(sys.argv[1], "w") as handle:
+    json.dump(widgets, handle)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.tv_widgets_configured=0" \
+    "TV widget order is exact" || return 1
+}
+
+test_probe_extra_movie_widget_emits_zero() {
+  local dir root bin_dir output path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  path="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json"
+  python3 - "${path}" <<'PYEOF'
+import json
+import sys
+with open(sys.argv[1]) as handle:
+    widgets = json.load(handle)
+widgets.append({"guid": "stale", "icon": "", "label": "YouTube",
+                "path": "RunAddon(plugin.video.youtube)", "target": ""})
+with open(sys.argv[1], "w") as handle:
+    json.dump(widgets, handle)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.movie_widgets_configured=0" \
+    "an extra Movies widget is rejected" || return 1
+}
+
 test_probe_missing_playlist_file_emits_zero() {
   local dir root bin_dir output
   dir="$(make_scratch_dir)"
@@ -2772,6 +3065,22 @@ test_probe_incorrect_playlist_rule_emits_zero() {
     "old-style firstaired rules → 0" || return 1
 }
 
+test_probe_wrong_trakt_tag_emits_zero() {
+  local dir root bin_dir output playlists_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  playlists_dir="${root}/.kodi/userdata/playlists/video"
+  write_fixture_xsp "${playlists_dir}/TraktPopularTVShows.xsp" tvshows \
+    "Trakt Popular TV Shows" "all" 25 "dateadded" "descending" \
+    "tag|contains|trakt-trending"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.TraktPopularTVShows.configured=0" \
+    "the Trakt popular tag is exact" || return 1
+}
+
 test_probe_recent_movie_playlist_with_wrong_bounds_emits_zero() {
   local dir root bin_dir output playlists_dir current_year
   dir="$(make_scratch_dir)"
@@ -2786,7 +3095,7 @@ test_probe_recent_movie_playlist_with_wrong_bounds_emits_zero() {
     "year|greaterthan|$((current_year - 1))" "year|lessthan|$((current_year + 1))"
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=0" \
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentAndPreviousYear.configured=0" \
     "wrong year bounds → 0" || return 1
 }
 
@@ -2806,6 +3115,35 @@ test_probe_obsolete_movie_playlist_emits_absent_zero() {
     "obsolete playlist present → absent=0" || return 1
 }
 
+test_probe_current_year_migration_playlist_emits_absent_zero() {
+  local dir root bin_dir output playlists_dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  playlists_dir="${root}/.kodi/userdata/playlists/video"
+  printf '<smartplaylist type="movies"><name>stale</name></smartplaylist>\n' \
+    > "${playlists_dir}/RecentlyReleasedMoviesCurrentYear.xsp"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" \
+    "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent=0" \
+    "the superseded current-year playlist must be absent" || return 1
+}
+
+test_probe_wrong_sound_skin_emits_kodi_defaults_zero() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  set_xml_setting_text "${root}/.kodi/userdata/guisettings.xml" \
+    "lookandfeel.soundskin" "resource.uisounds.default"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.kodi_defaults_configured=0" \
+    "the selected sound skin is part of Kodi defaults" || return 1
+}
 # --- Arctic Fuse comparator tests ------------------------------------------
 
 test_arctic_fuse_complete_state_verifies() {
@@ -2829,8 +3167,32 @@ test_arctic_fuse_complete_state_verifies() {
   assert_contains "${output}" "arctic_fuse.home.status=ok" "home status" || return 1
   assert_contains "${output}" "arctic_fuse.power.status=ok" "power status" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry.status=ok" "plex entry status" || return 1
+  assert_contains "${output}" "addon.resource.uisounds.fromashes.verification=ok" \
+    "From Ashes is verified by the generic deployed-add-on contract" || return 1
   assert_contains "${output}" "metadata.omdb.status=ok" "omdb status" || return 1
   assert_contains "${output}" "metadata.mdblist.status=ok" "mdblist status" || return 1
+}
+
+test_missing_from_ashes_manifest_entry_fails_verification() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  grep -v $'\tresource.uisounds.fromashes\t' "${manifest}" > "${manifest}.edit"
+  mv "${manifest}.edit" "${manifest}"
+
+  set +e
+  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a selected sound dependency absent from the manifest must fail" || return 1
+  assert_contains "${output}" "arctic_fuse.from_ashes_manifest.status=mismatch" \
+    "the report names the missing From Ashes deployment" || return 1
 }
 
 test_comparator_home_widgets_zero_fails_verification() {
@@ -2982,7 +3344,7 @@ test_comparator_settings_tile_zero_fails_verification() {
   write_configured_config "${config}"
   write_manifest "${manifest}"
   write_pass_observations "${observations}"
-  set_observation "${observations}" "arctic_fuse.settings_tile_configured" "0"
+  set_observation "${observations}" "arctic_fuse.option_tiles_configured" "0"
 
   set +e
   output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
@@ -3050,7 +3412,9 @@ test_comparator_obsolete_playlist_present_fails_verification() {
   set -e
   assert_failure "${rc}" "an obsolete playlist still present must fail verification" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist_migration" "migration surface named" || return 1
+  assert_contains "${output}" \
+    "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent.status=mismatch" \
+    "migration surface named" || return 1
 }
 
 test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification() {
@@ -3122,7 +3486,7 @@ test_each_ratings_key_presence_is_verified_separately() {
 # --- Report content for Arctic Fuse surfaces --------------------------------
 
 test_report_names_every_arctic_fuse_surface() {
-  local dir config manifest observations report
+  local dir config manifest observations report contents expected
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
   config="${dir}/provision.conf"
@@ -3136,12 +3500,26 @@ test_report_names_every_arctic_fuse_surface() {
     OMDB_API_KEY=omdb-key MDBLIST_API_KEY=mdblist-key \
     run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
   [[ -f "${report}" ]] || { printf 'no report\n' >&2; return 1; }
-  assert_contains "$(cat "${report}")" "arctic_fuse.status=ok" "arctic fuse status" || return 1
-  assert_contains "$(cat "${report}")" "arctic_fuse.home.status=ok" "home status" || return 1
-  assert_contains "$(cat "${report}")" "arctic_fuse.power.status=ok" "power status" || return 1
-  assert_contains "$(cat "${report}")" "arctic_fuse.plex_entry.status=ok" "plex entry" || return 1
-  assert_contains "$(cat "${report}")" "metadata.omdb.status=ok" "omdb" || return 1
-  assert_contains "$(cat "${report}")" "metadata.mdblist.status=ok" "mdblist" || return 1
+  contents="$(cat "${report}")"
+  for expected in \
+    arctic_fuse.tv_hub.status=ok \
+    arctic_fuse.movies_hub.status=ok \
+    arctic_fuse.plex_entry.status=ok \
+    arctic_fuse.custom_1104_disabled.status=ok \
+    arctic_fuse.pvr_hub.status=ok \
+    arctic_fuse.pvr_surfaces.status=ok \
+    arctic_fuse.addons_hub.status=ok \
+    arctic_fuse.option_tiles.status=ok \
+    arctic_fuse.kodi_defaults.status=ok \
+    arctic_fuse.home.status=ok \
+    arctic_fuse.tv.status=ok \
+    arctic_fuse.movies.status=ok \
+    arctic_fuse.from_ashes_manifest.status=ok \
+    arctic_fuse.status=ok; do
+    assert_contains "${contents}" "${expected}" "report surface: ${expected}" || return 1
+  done
+  assert_contains "${contents}" "metadata.omdb.status=ok" "omdb" || return 1
+  assert_contains "${contents}" "metadata.mdblist.status=ok" "mdblist" || return 1
 }
 
 test_report_never_contains_ratings_key_values_or_managed_file_contents() {
@@ -3240,6 +3618,14 @@ run_all_tests \
   test_probe_case_variant_settings_tile_duplicate_emits_zero \
   test_probe_managed_setting_only_inside_a_category_emits_zero \
   test_probe_reports_each_hub_observation_independently \
+  test_probe_rejects_stale_youtube_movie_shortcut \
+  test_probe_rejects_enabled_custom_1104 \
+  test_probe_rejects_plex_in_the_wrong_slot \
+  test_probe_accepts_unconfigured_pvr_and_weather_absence \
+  test_probe_rejects_pvr_toggle_when_unconfigured \
+  test_probe_rejects_pvr_disable_flag \
+  test_probe_rejects_missing_configured_weather_tile \
+  test_probe_rejects_weather_tile_when_unconfigured \
   test_probe_malformed_json_emits_zero_for_home_widgets \
   test_probe_malformed_json_emits_zero_for_power_menu \
   test_probe_missing_home_widgets_file_emits_zero \
@@ -3247,12 +3633,18 @@ run_all_tests \
   test_probe_reordered_power_menu_emits_zero \
   test_probe_duplicate_power_menu_entry_emits_zero \
   test_probe_unexpected_home_widget_entry_emits_zero \
+  test_probe_reordered_tv_widgets_emits_zero \
+  test_probe_extra_movie_widget_emits_zero \
   test_probe_missing_playlist_file_emits_zero \
   test_probe_malformed_playlist_xml_emits_zero \
   test_probe_incorrect_playlist_rule_emits_zero \
+  test_probe_wrong_trakt_tag_emits_zero \
   test_probe_recent_movie_playlist_with_wrong_bounds_emits_zero \
   test_probe_obsolete_movie_playlist_emits_absent_zero \
+  test_probe_current_year_migration_playlist_emits_absent_zero \
+  test_probe_wrong_sound_skin_emits_kodi_defaults_zero \
   test_arctic_fuse_complete_state_verifies \
+  test_missing_from_ashes_manifest_entry_fails_verification \
   test_comparator_home_widgets_zero_fails_verification \
   test_comparator_power_menu_zero_fails_verification \
   test_arctic_fuse_hub_mismatch_fails_verification \
