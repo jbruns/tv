@@ -409,7 +409,7 @@ inputstream.ffmpegdirect
 plugin.service.emby-next-gen
 plugin.video.themoviedb.helper
 pvr.nextpvr
-repository.beta.emby.kodi
+repository.emby.kodi
 repository.dontpanic
 repository.jurialmunkey
 script.artistslideshow
@@ -497,7 +497,8 @@ test_production_config_carries_no_secret_values() {
 test_production_config_locks_primary_addon_versions() {
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
-  assert_artifact_version "plugin.service.emby-next-gen" "12.4.23"
+  assert_artifact_version "repository.emby.kodi" "1.0.8"
+  assert_artifact_version "plugin.service.emby-next-gen" "11.1.27"
   assert_artifact_version "script.plexmod" "1.14.1-beta1"
   assert_artifact_version "skin.arctic.fuse.3" "3.2.16"
   assert_artifact_version "plugin.video.themoviedb.helper" "6.17.1"
@@ -508,6 +509,18 @@ test_production_config_locks_primary_addon_versions() {
   # addon.xml on this platform declares 21.3.2.1. The Kodi Omega mirror
   # publishes no Linux/arm build at all.
   assert_artifact_version "pvr.nextpvr" "21.3.2.1"
+}
+
+test_production_config_uses_only_stable_emby_sources() {
+  local body
+  body="$(< "${PRODUCTION_CONFIG}")"
+  assert_contains "${body}" \
+    "https://embydata.com/downloads/addons/xbmb3c/multi-repo/release/v21_omega/" \
+    "Emby artifacts come from the stable Omega release tree"
+  assert_not_contains "${body}" "repository.beta.emby.kodi" \
+    "the beta Emby repository is absent"
+  assert_not_contains "${body}" "/multi-repo/beta/" \
+    "the beta Emby artifact tree is absent"
 }
 
 test_production_config_locks_arctic_fuse_supported_optional_addons() {
@@ -683,6 +696,7 @@ run_all_tests \
   test_production_config_sets_pacific_english_us_baseline \
   test_production_config_carries_no_secret_values \
   test_production_config_locks_primary_addon_versions \
+  test_production_config_uses_only_stable_emby_sources \
   test_production_config_locks_arctic_fuse_supported_optional_addons \
   test_production_config_matches_the_reviewed_artifact_id_set \
   test_production_config_records_immutable_upstream_sources \

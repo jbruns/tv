@@ -21,7 +21,7 @@ addon_record() {
     weather.ha) printf '%s\n' 'weather.ha|0.0.6.6|https://example.test/weather.ha.zip|deadbeef' ;;
     pvr.nextpvr) printf '%s\n' 'pvr.nextpvr|21.3.2.1|https://example.test/pvr.nextpvr.zip|deadbeef' ;;
     script.plexmod) printf '%s\n' 'script.plexmod|1.14.1-beta1|https://example.test/script.plexmod.zip|deadbeef' ;;
-    plugin.service.emby-next-gen) printf '%s\n' 'plugin.service.emby-next-gen|12.4.23|https://example.test/plugin.service.emby-next-gen.zip|deadbeef' ;;
+    plugin.service.emby-next-gen) printf '%s\n' 'plugin.service.emby-next-gen|11.1.27|https://example.test/plugin.service.emby-next-gen.zip|deadbeef' ;;
     *)
       printf 'unknown fixture add-on: %s\n' "$1" >&2
       return 1
@@ -1470,7 +1470,7 @@ EMBY_USERNAME=media-user
 CONFIG
 
   write_introspection_response "${dir}/stub/response-1.json"
-  write_addon_details_response "${dir}/stub/response-2.json" "plugin.service.emby-next-gen" "12.4.23"
+  write_addon_details_response "${dir}/stub/response-2.json" "plugin.service.emby-next-gen" "11.1.27"
   printf 'absent\n' > "${dir}/stub/response-3.json"
   write_gui_state_response "${dir}/stub/response-4.json" "Videos" "[..]"
   printf '%s\n' '{"jsonrpc":"2.0","id":"jsonrpc-notifyall","result":"OK"}' > "${dir}/stub/response-5.json"
@@ -1530,7 +1530,7 @@ EMBY_SERVER_URL="https://emby.example.test"
 EMBY_USERNAME="media-user"
 LOCALE_LANGUAGE="resource.language.en_us"
 ADDON_ARTIFACTS=("$(addon_record plugin.service.emby-next-gen)")
-coreelec_postdeploy_addon_version() { printf '12.4.23\n'; }
+coreelec_postdeploy_addon_version() { printf '11.1.27\n'; }
 coreelec_postdeploy_emby_state() { printf 'absent\n'; }
 coreelec_postdeploy_guided_poll_limit() { printf '2\n'; }
 coreelec_postdeploy_guided_poll_interval_seconds() { printf '0\n'; }
@@ -1569,7 +1569,7 @@ EMBY_USERNAME="media-user"
 LOCALE_LANGUAGE="resource.language.en_us"
 ADDON_ARTIFACTS=("$(addon_record plugin.service.emby-next-gen)")
 gui_calls=0
-coreelec_postdeploy_addon_version() { printf '12.4.23\n'; }
+coreelec_postdeploy_addon_version() { printf '11.1.27\n'; }
 coreelec_postdeploy_emby_state() { printf 'absent\n'; }
 capture_gui_state() {
   gui_calls=\$((gui_calls + 1))

@@ -62,10 +62,10 @@ write_manifest() {
 2	weather.ha	0.0.6.6	2.zip
 3	pvr.nextpvr	21.3.2.1	3.zip
 4	script.plexmod	1.14.1-beta1	4.zip
-6	plugin.service.emby-next-gen	12.4.23	6.zip
+6	plugin.service.emby-next-gen	11.1.27	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
 8	resource.language.en_us	11.0.82	8.zip
-9	repository.beta.emby.kodi	1.0.11	9.zip
+9	repository.emby.kodi	1.0.8	9.zip
 10	repository.dontpanic	0.2.10	10.zip
 11	repository.jurialmunkey	3.4	11.zip
 12	script.artistslideshow	4.2.0	12.zip
@@ -138,7 +138,7 @@ addon.script.plexmod.version=1.14.1-beta1
 addon.script.plexmod.enabled=1
 addon.script.plexmod.enable_attempted=0
 addon.plugin.service.emby-next-gen.installed=1
-addon.plugin.service.emby-next-gen.version=12.4.23
+addon.plugin.service.emby-next-gen.version=11.1.27
 addon.plugin.service.emby-next-gen.enabled=1
 addon.plugin.service.emby-next-gen.enable_attempted=0
 addon.plugin.video.themoviedb.helper.installed=1
@@ -149,10 +149,10 @@ addon.resource.language.en_us.installed=1
 addon.resource.language.en_us.version=11.0.82
 addon.resource.language.en_us.enabled=1
 addon.resource.language.en_us.enable_attempted=0
-addon.repository.beta.emby.kodi.installed=1
-addon.repository.beta.emby.kodi.version=1.0.11
-addon.repository.beta.emby.kodi.enabled=1
-addon.repository.beta.emby.kodi.enable_attempted=0
+addon.repository.emby.kodi.installed=1
+addon.repository.emby.kodi.version=1.0.8
+addon.repository.emby.kodi.enabled=1
+addon.repository.emby.kodi.enable_attempted=0
 addon.repository.dontpanic.installed=1
 addon.repository.dontpanic.version=0.2.10
 addon.repository.dontpanic.enabled=1
@@ -383,9 +383,9 @@ test_all_expected_addon_versions_are_verified() {
   set -e
   assert_success "${rc}" "a matching device must verify" || return 1
   assert_contains "${output}" "verification_result=pass" "result line present" || return 1
-  assert_contains "${output}" "addon.plugin.service.emby-next-gen.requested_version=12.4.23" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.requested_version=11.1.27" \
     "requested version is reported" || return 1
-  assert_contains "${output}" "addon.plugin.service.emby-next-gen.observed_version=12.4.23" \
+  assert_contains "${output}" "addon.plugin.service.emby-next-gen.observed_version=11.1.27" \
     "observed version is reported" || return 1
   assert_contains "${output}" "addon.script.plexmod.observed_version=1.14.1-beta1" \
     "pre-release version round-trips" || return 1
@@ -1637,7 +1637,7 @@ batch.append({"jsonrpc": "2.0", "id": "addon:weather.ha",
 batch.append({"jsonrpc": "2.0", "id": "addon:plugin.service.emby-next-gen",
               "result": {"addon": {"addonid": "plugin.service.emby-next-gen",
                                    "enabled": pm4k_enabled,
-                                   "version": "12.4.23"}}})
+                                   "version": "11.1.27"}}})
 batch.append({"jsonrpc": "2.0", "id": "addon:script.missing",
               "error": {"code": -32602, "message": "Invalid params."}})
 with open(path, "w") as handle:
@@ -2080,7 +2080,7 @@ test_remote_verify_probe_converges_on_dependency_ordered_enables() {
   bin_dir="$(install_kodi_addon_state_stub "${dir}")"
   request="${dir}/request.conf"
   write_stub_addons "${dir}/stub/addons.json" <<'ADDONS'
-plugin.service.emby-next-gen|12.4.23|script.module.requests
+plugin.service.emby-next-gen|11.1.27|script.module.requests
 script.module.requests|2.31.0|script.module.certifi
 script.module.certifi|2023.5.7|
 ADDONS

@@ -614,7 +614,7 @@ assist_emby_login() {
   local url_sent=0 username_sent=0 password_sent=0 signin_selected=0
 
   pinned_version="$(coreelec_postdeploy_pinned_addon_version "plugin.service.emby-next-gen" 2>/dev/null || true)"
-  if [[ "${pinned_version}" != "12.4.23" ]]; then
+  if [[ "${pinned_version}" != "11.1.27" ]]; then
     coreelec_postdeploy_emby_fail "version-mismatch"
     return 0
   fi
