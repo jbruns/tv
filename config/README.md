@@ -142,8 +142,9 @@ provision YouTube.
 - Movies uses `skinvariables-shortcut-1102widgets.json` with widgets in
   order: In-Progress Movies, Recently Released Movies, Trakt Weekend Box
   Office, and New Movies.
-- Managed skin settings are normalized to one canonical root node per setting
-  ID, with other case variants removed before verification.
+- Managed skin and Kodi settings are normalized to one canonical root node per
+  setting ID, with nested copies and other case variants removed before
+  verification.
 - `RecentlyAiredEpisodes30Days.xsp` is the rolling previous 30 days with
   future dates excluded.
 - `TraktPopularTVShows.xsp` and `TraktWeekendBoxOffice.xsp` are tag-driven
@@ -158,7 +159,12 @@ provision YouTube.
   `RecentlyReleasedMovies90Days.xsp` are removed during provisioning.
 - The Weather tile and the built-in PVR hub are conditional: Weather appears
   only when Home Assistant weather is fully configured, and PVR appears only
-  when NextPVR host and PIN are configured.
-- The five managed Kodi defaults are `locale.language`, `locale.country`,
+  when NextPVR host and PIN are configured. The Weather tile's `path` and
+  `target` fields are removed in both configurations.
+- The regional baseline settings are `locale.language`, `locale.country`,
   `locale.keyboardlayouts`, `locale.timezonecountry`, and `locale.timezone`.
+- The five managed Arctic Fuse 3 Kodi behavior defaults are separate from that
+  baseline: `videolibrary.flattentvshows`, `videolibrary.ignorevideoextras`,
+  `videolibrary.ignorevideoversions`, `input.enablemouse`, and
+  `lookandfeel.soundskin`.
 - `lookandfeel.soundskin` is pinned to `resource.uisounds.fromashes`.
