@@ -56,6 +56,29 @@ assert_failure() {
   return 0
 }
 
+assert_manifest_rows_are_sequential() {
+  local manifest="$1"
+  local expected=1
+  local index id version filename extra
+  while IFS=$'\t' read -r index id version filename extra; do
+    [[ -n "${index}" ]] || continue
+    if [[ -n "${extra}" ]]; then
+      printf 'assert_manifest_rows_are_sequential: expected four tab-separated fields (line starts %q)\n' "${index}" >&2
+      return 1
+    fi
+    if [[ "${index}" != "${expected}" ]]; then
+      printf 'assert_manifest_rows_are_sequential: expected index %s, got %s for %s\n' "${expected}" "${index}" "${id}" >&2
+      return 1
+    fi
+    if [[ "${filename}" != "${expected}.zip" ]]; then
+      printf 'assert_manifest_rows_are_sequential: expected filename %s.zip, got %s for %s\n' "${expected}" "${filename}" "${id}" >&2
+      return 1
+    fi
+    expected=$((expected + 1))
+  done < "${manifest}"
+  return 0
+}
+
 # Creates an isolated scratch directory under the repository working tree
 # (never under a system temp directory) so fixture files never escape the
 # project and are always cleaned up by the caller.

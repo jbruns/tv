@@ -74,32 +74,46 @@ write_manifest() {
 14	resource.images.weatherfanart.multi	0.0.6	14.zip
 15	resource.images.moviecountryicons.maps	0.0.1	15.zip
 16	resource.images.studios.white	0.0.34	16.zip
-18	inputstream.adaptive	21.5.24.1	18.zip
-19	inputstream.ffmpegdirect	21.3.8.1	19.zip
-20	resource.font.robotocjksc	0.0.3	20.zip
-21	resource.images.studios.coloured	0.0.24	21.zip
-22	resource.images.weathericons.white	0.0.6	22.zip
-23	script.module.addon.signals	0.0.6+matrix.1	23.zip
-24	script.module.certifi	2023.5.7	24.zip
-25	script.module.chardet	5.1.0	25.zip
-26	script.module.defusedxml	0.6.0+matrix.1	26.zip
-27	script.module.dateutil	2.8.2	27.zip
-28	script.module.future	1.0.0+matrix.1	28.zip
-29	script.module.idna	3.10.0	29.zip
-30	script.module.infotagger	0.0.9	30.zip
-31	script.module.inputstreamhelper	0.8.5	31.zip
-32	script.module.iso8601	2.0.0	32.zip
-33	script.module.jurialmunkey	0.2.35	33.zip
-34	script.module.kodi-six	0.1.3.1	34.zip
-35	script.module.pysocks	1.7.0+matrix.1	35.zip
-36	script.module.qrcode	6.1.0+matrix.3	36.zip
-37	script.module.requests	2.31.0	37.zip
-38	script.module.six	1.16.0+matrix.1	38.zip
-39	script.module.urllib3	2.2.3	39.zip
-40	script.module.yaml	6.0.1	40.zip
-41	script.skinvariables	2.2.2	41.zip
-42	script.texturemaker	0.2.11	42.zip
+17	inputstream.adaptive	21.5.24.1	17.zip
+18	inputstream.ffmpegdirect	21.3.8.1	18.zip
+19	resource.font.robotocjksc	0.0.3	19.zip
+20	resource.images.studios.coloured	0.0.24	20.zip
+21	resource.images.weathericons.white	0.0.6	21.zip
+22	script.module.addon.signals	0.0.6+matrix.1	22.zip
+23	script.module.certifi	2023.5.7	23.zip
+24	script.module.chardet	5.1.0	24.zip
+25	script.module.defusedxml	0.6.0+matrix.1	25.zip
+26	script.module.dateutil	2.8.2	26.zip
+27	script.module.future	1.0.0+matrix.1	27.zip
+28	script.module.idna	3.10.0	28.zip
+29	script.module.infotagger	0.0.9	29.zip
+30	script.module.inputstreamhelper	0.8.5	30.zip
+31	script.module.iso8601	2.0.0	31.zip
+32	script.module.jurialmunkey	0.2.35	32.zip
+33	script.module.kodi-six	0.1.3.1	33.zip
+34	script.module.pysocks	1.7.0+matrix.1	34.zip
+35	script.module.qrcode	6.1.0+matrix.3	35.zip
+36	script.module.requests	2.31.0	36.zip
+37	script.module.six	1.16.0+matrix.1	37.zip
+38	script.module.urllib3	2.2.3	38.zip
+39	script.module.yaml	6.0.1	39.zip
+40	script.skinvariables	2.2.2	40.zip
+41	script.texturemaker	0.2.11	41.zip
 MANIFEST
+}
+
+test_reviewed_manifest_fixture_uses_sequential_indices_and_filenames() {
+  local dir manifest
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  manifest="${dir}/deploy.tsv"
+  write_manifest "${manifest}"
+
+  assert_manifest_rows_are_sequential "${manifest}" || return 1
+  assert_eq "41" "$(tail -n 1 "${manifest}" | cut -f1)" \
+    "the reviewed fixture ends at the 41st artifact" || return 1
+  assert_eq "41.zip" "$(tail -n 1 "${manifest}" | cut -f4)" \
+    "the reviewed fixture names the tail artifact with 41.zip" || return 1
 }
 
 # What the remote probe reports when the device matches the request exactly.
@@ -3666,6 +3680,7 @@ test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment() {
 }
 
 run_all_tests \
+  test_reviewed_manifest_fixture_uses_sequential_indices_and_filenames \
   test_all_expected_addon_versions_are_verified \
   test_disabled_addon_is_failure \
   test_unresolved_enables_are_named_in_the_report \
