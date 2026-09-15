@@ -29,7 +29,7 @@ old Arctic Fuse 2 profile.
 - Keep Plex as a direct custom hub entry.
 - Use Arctic Fuse 3's built-in PVR hub only when NextPVR is configured.
 - Restore the two useful Trakt-tag playlists.
-- Replace calendar-based recent-movie behavior with a rolling 12-month window.
+- Expand recent movies to the current and previous premiere years.
 - Manage useful option tiles and shared Kodi library/input preferences.
 - Pin and provision a Kodi 21-compatible From Ashes UI sound add-on.
 - Preserve transactional deployment, rollback, idempotence, and exact
@@ -88,7 +88,7 @@ The Movies hub uses Arctic Fuse 3's supported
 `skinvariables-shortcut-1102widgets.json` node with this ordered content:
 
 1. In-Progress Movies (previous 90 days)
-2. Recently Released Movies (rolling previous 12 months)
+2. Recently Released Movies (current and previous premiere years)
 3. Trakt Weekend Box Office
 4. New Movies
 
@@ -146,18 +146,21 @@ exact signatures.
 - Limit: 25
 - Order: `dateadded` descending
 
-#### `RecentlyReleasedMovies12Months.xsp`
+#### `RecentlyReleasedMoviesCurrentAndPreviousYear.xsp`
 
 - Type: `movies`
 - Match: all
-- Rule: premiere/release date is within the previous 12 months
-- Rule: premiere/release date is not in the future
+- Rule: `year greaterthan current year - 2`
+- Rule: `year lessthan current year + 1`
 - Limit: 50
-- Order: premiere/release date descending
+- Order: `year` descending
 
-The implementation must use the Kodi 21 smart-playlist field name and
-operators that represent this behavior. Tests will lock the resulting XSP
-signature.
+Kodi 21 maps the movie smart-playlist `year` field to the database premiere
+column but exposes it as a numeric field. It cannot express a rolling
+month-level premiere-date window. The two numeric bounds include the complete
+current and previous calendar years while excluding future years. Tests will
+lock the resulting XSP signature using the device year captured during
+provisioning.
 
 ### Playlist migrations
 
@@ -210,9 +213,16 @@ replace `guisettings.xml` wholesale and does not enable unknown sources.
 
 ## From Ashes Sound Dependency
 
-The implementation will identify the newest authoritative release of
-`resource.uisounds.fromashes` that is explicitly compatible with Kodi 21.
-That artifact will be added to the normal add-on lock with:
+Kodi's authoritative Omega repository publishes
+`resource.uisounds.fromashes` 3.0.01 at:
+
+`https://mirrors.kodi.tv/addons/omega/resource.uisounds.fromashes/resource.uisounds.fromashes-3.0.01.zip`
+
+The ZIP has SHA-256
+`63fb3d37196cecf617eabde5f3c1a4b3795ee4f48ee15a242d43dbe65915d5a7`,
+one `resource.uisounds.fromashes/` top-level directory, matching add-on ID and
+version, and only the platform-independent `kodi.resource` 1.0.0 dependency.
+It will be added to the normal add-on lock with:
 
 - exact add-on ID;
 - exact version;
@@ -249,7 +259,7 @@ The new managed paths are:
 - the `1101widgets` node;
 - the `1102widgets` node;
 - the two Trakt playlists; and
-- the rolling 12-month movie playlist.
+- the current-and-previous-year movie playlist.
 
 The existing Home widget and power-menu nodes remain managed. The built-in PVR
 hub does not require a new widget node.
@@ -359,8 +369,8 @@ the repository, staged, or committed.
   NextPVR is configured.
 - Both Trakt playlists are provisioned and clearly document their Emby tag
   dependency.
-- Recently Released Movies always means the rolling previous 12 months and
-  excludes future releases.
+- Recently Released Movies includes the current and previous premiere years
+  and excludes future years.
 - Option tiles and Kodi defaults converge exactly for both conditional
   configurations.
 - From Ashes is installed from a pinned, validated Kodi 21-compatible artifact
