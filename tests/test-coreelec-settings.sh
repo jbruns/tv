@@ -274,6 +274,17 @@ test_regional_settings_are_created() {
   assert_eq "United States" "$(xml_setting "${settings}" locale.timezonecountry)" "locale.timezonecountry"
   assert_eq "America/Los_Angeles" "$(xml_setting "${settings}" locale.timezone)" "locale.timezone"
   assert_eq "skin.arctic.fuse.3" "$(xml_setting "${settings}" lookandfeel.skin)" "skin is Arctic Fuse 3"
+  assert_eq "1" "$(xml_setting "${settings}" videolibrary.flattentvshows)" \
+    "TV seasons are flattened"
+  assert_eq "true" "$(xml_setting "${settings}" videolibrary.ignorevideoextras)" \
+    "video extras are ignored"
+  assert_eq "true" "$(xml_setting "${settings}" videolibrary.ignorevideoversions)" \
+    "video versions are ignored"
+  assert_eq "false" "$(xml_setting "${settings}" input.enablemouse)" \
+    "mouse input is disabled"
+  assert_eq "resource.uisounds.fromashes" \
+    "$(xml_setting "${settings}" lookandfeel.soundskin)" \
+    "From Ashes is the selected sound skin"
   assert_eq "1" "$(xml_setting "${settings}" general.addonupdates)" "add-on updates notify only"
   assert_eq "TIMEZONE=America/Los_Angeles" "$(cat "${root}/.cache/timezone")" "timezone cache"
 }
@@ -285,6 +296,25 @@ test_duplicate_settings_are_collapsed() {
   root="${dir}/storage"
   payload="${dir}/payload.conf"
   seed_guisettings "${root}"
+  python3 - "$(guisettings_path "${root}")" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+root = tree.getroot()
+for setting_id, value in (
+    ("videolibrary.flattentvshows", "0"),
+    ("videolibrary.ignorevideoextras", "false"),
+    ("videolibrary.ignorevideoversions", "false"),
+    ("input.enablemouse", "true"),
+    ("lookandfeel.soundskin", "resource.uisounds.default"),
+    ("LOOKANDFEEL.SOUNDSKIN", "stale-case-variant"),
+):
+    node = ET.SubElement(root, "setting", {"id": setting_id})
+    node.text = value
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
   write_base_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
@@ -292,6 +322,27 @@ test_duplicate_settings_are_collapsed() {
   assert_eq "1" "$(xml_setting_count "${settings}" locale.timezone)" "one locale.timezone node remains"
   assert_eq "America/Los_Angeles" "$(xml_setting "${settings}" locale.timezone)" "surviving node carries the new value"
   assert_eq "1" "$(xml_setting_count "${settings}" lookandfeel.skin)" "one lookandfeel.skin node remains"
+  assert_eq "1" "$(xml_setting_count "${settings}" videolibrary.flattentvshows)" \
+    "one videolibrary.flattentvshows node remains"
+  assert_eq "1" "$(xml_setting "${settings}" videolibrary.flattentvshows)" \
+    "videolibrary.flattentvshows converges to the managed value"
+  assert_eq "1" "$(xml_setting_count "${settings}" videolibrary.ignorevideoextras)" \
+    "one videolibrary.ignorevideoextras node remains"
+  assert_eq "true" "$(xml_setting "${settings}" videolibrary.ignorevideoextras)" \
+    "videolibrary.ignorevideoextras converges to the managed value"
+  assert_eq "1" "$(xml_setting_count "${settings}" videolibrary.ignorevideoversions)" \
+    "one videolibrary.ignorevideoversions node remains"
+  assert_eq "true" "$(xml_setting "${settings}" videolibrary.ignorevideoversions)" \
+    "videolibrary.ignorevideoversions converges to the managed value"
+  assert_eq "1" "$(xml_setting_count "${settings}" input.enablemouse)" \
+    "one input.enablemouse node remains"
+  assert_eq "false" "$(xml_setting "${settings}" input.enablemouse)" \
+    "input.enablemouse converges to the managed value"
+  assert_eq "1" "$(xml_setting_count "${settings}" lookandfeel.soundskin)" \
+    "one lookandfeel.soundskin node remains"
+  assert_eq "resource.uisounds.fromashes" \
+    "$(xml_setting "${settings}" lookandfeel.soundskin)" \
+    "lookandfeel.soundskin converges to the managed value"
 }
 
 test_existing_unmanaged_settings_are_preserved() {
@@ -301,12 +352,31 @@ test_existing_unmanaged_settings_are_preserved() {
   root="${dir}/storage"
   payload="${dir}/payload.conf"
   seed_guisettings "${root}"
+  python3 - "$(guisettings_path "${root}")" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+root = tree.getroot()
+for setting_id, value in (
+    ("unmanaged.custom.preference", "keep-me"),
+    ("unmanaged.custom.secondary", "still-here"),
+):
+    node = ET.SubElement(root, "setting", {"id": setting_id})
+    node.text = value
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
   write_base_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
   settings="$(guisettings_path "${root}")"
   assert_eq "2" "$(xml_setting "${settings}" audiooutput.channels)" "unmanaged setting is untouched"
   assert_eq "1" "$(xml_setting_count "${settings}" audiooutput.channels)" "unmanaged setting is not duplicated"
+  assert_eq "keep-me" "$(xml_setting "${settings}" unmanaged.custom.preference)" \
+    "custom unmanaged setting is preserved"
+  assert_eq "still-here" "$(xml_setting "${settings}" unmanaged.custom.secondary)" \
+    "second unmanaged setting is preserved"
 }
 
 test_second_run_is_byte_identical() {
@@ -1030,12 +1100,35 @@ test_arctic_fuse_hubs_and_options_tray_are_converged() {
     <setting id="unrelated.keep">yes</setting>
     <setting id="HomeSwitcher.1101.Toggle">false</setting>
     <setting id="homeswitcher.1101.toggle">stale-case-variant</setting>
+    <setting id="HomeSwitcher.1101.Shortcut.Path">old-shortcut-path</setting>
     <setting id="HomeSwitcher.1101.Shortcut.Target">oldplex</setting>
     <setting id="HomeSwitcher.1101.Spotlight.Path">old-spotlight</setting>
+    <setting id="HomeSwitcher.1102.Name">YouTube</setting>
+    <setting id="HomeSwitcher.1102.Toggle">true</setting>
+    <setting id="HomeSwitcher.1102.Shortcut.Path">RunAddon(plugin.video.youtube)</setting>
+    <setting id="HomeSwitcher.1102.Shortcut.Target">videos</setting>
+    <setting id="HomeSwitcher.1103.Shortcut.Target">videos</setting>
+    <setting id="HomeSwitcher.1103.Spotlight.Label">Old Plex Spotlight</setting>
+    <setting id="HomeSwitcher.1103.Spotlight.Path">old-plex-spotlight</setting>
+    <setting id="HomeSwitcher.1103.Spotlight.Target">videos</setting>
+    <setting id="HomeSwitcher.1104.Name">YouTube</setting>
+    <setting id="HomeSwitcher.1104.Toggle">true</setting>
+    <setting id="HomeSwitcher.1104.Icon">old-1104-icon</setting>
+    <setting id="HomeSwitcher.1104.Mode">Standard</setting>
+    <setting id="HomeSwitcher.1104.Shortcut.Path">RunAddon(plugin.video.youtube)</setting>
+    <setting id="HomeSwitcher.1104.Shortcut.Target">videos</setting>
+    <setting id="HomeSwitcher.1104.Spotlight.Label">Old 1104 Spotlight</setting>
+    <setting id="HomeSwitcher.1104.Spotlight.Path">old-1104-spotlight</setting>
+    <setting id="HomeSwitcher.1104.Spotlight.Target">videos</setting>
+    <setting id="HomeSwitcher.1107.Toggle">false</setting>
+    <setting id="Hub.1107.DisableSearch">true</setting>
+    <setting id="Hub.1107.DisableChannels">true</setting>
+    <setting id="Hub.1107.DisableGroups">true</setting>
+    <setting id="Hub.1107.DisableRecordings">true</setting>
 </settings>
 XML
 
-  write_base_payload "${payload}"
+  write_full_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
   skin_file="$(skin_settings_path "${root}")"
@@ -1045,26 +1138,99 @@ XML
   assert_eq "1" "$(xml_setting_count "${skin_file}" "unrelated.keep")" "unrelated.keep not duplicated"
 
   # Canonical settings
-  assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" "1101.Name"
+  assert_eq "TV Shows" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" "1101.Name"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Toggle")" "1101.Toggle"
-  assert_eq "special://home/addons/script.plexmod/icon2.png" \
+  assert_eq "special://skin/extras/icons/tv.png" \
     "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Icon")" "1101.Icon"
+  assert_eq "Movies" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" "1102.Name"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Toggle")" "1102.Toggle"
+  assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1103.Name")" "1103.Name"
   assert_eq "RunAddon(script.plexmod)" \
-    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Path")" "1101.Shortcut.Path"
-
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1103.Shortcut.Path")" "1103.Shortcut.Path"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" "1107.Toggle"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" "1108.Toggle"
+  assert_eq "NowPlaying" "$(xml_setting "${skin_file}" "optionstiles.01.include")" "optionstiles.01"
   assert_eq "Settings" "$(xml_setting "${skin_file}" "optionstiles.02.include")" "optionstiles.02"
+  assert_eq "Weather" "$(xml_setting "${skin_file}" "optionstiles.03.include")" "optionstiles.03"
+  assert_eq "SystemInfo" "$(xml_setting "${skin_file}" "optionstiles.04.include")" "optionstiles.04"
 
   # Duplicate/case-variant collapsed — only 1 node for 1101.Toggle
   assert_eq "1" "$(xml_setting_count "${skin_file}" "HomeSwitcher.1101.Toggle")" \
     "duplicate 1101.Toggle collapsed"
 
-  # Stale settings must be absent
-  skin_setting_absent "${root}" "HomeSwitcher.1101.Shortcut.Target" \
-    || { printf '1101.Shortcut.Target must be absent\n' >&2; return 1; }
-  skin_setting_absent "${root}" "HomeSwitcher.1101.Spotlight.Path" \
-    || { printf '1101.Spotlight.Path must be absent\n' >&2; return 1; }
+  # Managed custom hubs own these slot shapes exactly.
+  for setting_id in \
+    "HomeSwitcher.1101.Shortcut.Path" \
+    "HomeSwitcher.1101.Shortcut.Target" \
+    "HomeSwitcher.1102.Shortcut.Path" \
+    "HomeSwitcher.1102.Shortcut.Target" \
+    "HomeSwitcher.1103.Shortcut.Target" \
+    "HomeSwitcher.1103.Spotlight.Label" \
+    "HomeSwitcher.1103.Spotlight.Path" \
+    "HomeSwitcher.1103.Spotlight.Target" \
+    "HomeSwitcher.1104.Name" \
+    "HomeSwitcher.1104.Toggle" \
+    "HomeSwitcher.1104.Icon" \
+    "HomeSwitcher.1104.Mode" \
+    "HomeSwitcher.1104.Shortcut.Path" \
+    "HomeSwitcher.1104.Shortcut.Target" \
+    "HomeSwitcher.1104.Spotlight.Label" \
+    "HomeSwitcher.1104.Spotlight.Path" \
+    "HomeSwitcher.1104.Spotlight.Target" \
+    "Hub.1107.DisableSearch" \
+    "Hub.1107.DisableChannels" \
+    "Hub.1107.DisableGroups" \
+    "Hub.1107.DisableRecordings"; do
+    skin_setting_absent "${root}" "${setting_id}" \
+      || { printf '%s must be absent\n' "${setting_id}" >&2; return 1; }
+  done
+}
+
+test_arctic_fuse_pvr_and_weather_are_absent_when_unconfigured() {
+  local dir root payload skin_file setting_id
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  cat > "$(skin_settings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings>
+    <setting id="HomeSwitcher.1107.Toggle">true</setting>
+    <setting id="optionstiles.03.include">Weather</setting>
+    <setting id="optionstiles.03.path">stale-weather-path</setting>
+    <setting id="optionstiles.03.target">stale-weather-target</setting>
+</settings>
+XML
+
+  write_full_payload "${payload}"
+  append_payload_entry "${payload}" "NEXTPVR_HOST" ""
+  append_payload_entry "${payload}" "HAVE_NEXTPVR_PIN" "0"
+  append_payload_entry "${payload}" "HOME_ASSISTANT_URL" ""
+  append_payload_entry "${payload}" "HOME_ASSISTANT_WEATHER_ENTITY" ""
+  append_payload_entry "${payload}" "HAVE_HOME_ASSISTANT_TOKEN" "0"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  skin_file="$(skin_settings_path "${root}")"
+
+  skin_setting_absent "${root}" "HomeSwitcher.1107.Toggle" \
+    || { printf 'HomeSwitcher.1107.Toggle must be absent\n' >&2; return 1; }
+  for setting_id in \
+    "optionstiles.03.include" \
+    "optionstiles.03.path" \
+    "optionstiles.03.target"; do
+    skin_setting_absent "${root}" "${setting_id}" \
+      || { printf '%s must be absent\n' "${setting_id}" >&2; return 1; }
+  done
+
+  assert_eq "TV Shows" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" "1101.Name survives"
+  assert_eq "Movies" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" "1102.Name survives"
+  assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1103.Name")" "1103.Name survives"
+  assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" "1108.Toggle survives"
+  assert_eq "NowPlaying" "$(xml_setting "${skin_file}" "optionstiles.01.include")" "optionstiles.01 survives"
+  assert_eq "Settings" "$(xml_setting "${skin_file}" "optionstiles.02.include")" "optionstiles.02 survives"
+  assert_eq "SystemInfo" "$(xml_setting "${skin_file}" "optionstiles.04.include")" "optionstiles.04 survives"
 }
 
 # Kodi reads only the direct `<setting>` children of a skin settings root,
@@ -1073,7 +1239,7 @@ XML
 # still look converged, so convergence must promote every managed setting to
 # exactly one canonical root node and leave unmanaged nesting alone.
 test_arctic_fuse_managed_settings_are_promoted_to_root_nodes() {
-  local dir root payload skin_file first second
+  local dir root payload skin_file first second setting_id
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
@@ -1085,36 +1251,111 @@ test_arctic_fuse_managed_settings_are_promoted_to_root_nodes() {
 <settings>
     <category id="hubs">
         <setting id="HomeSwitcher.1101.Name">Old Plex</setting>
+        <setting id="HomeSwitcher.1102.Name">YouTube</setting>
+        <setting id="HomeSwitcher.1103.Name">Old Plex</setting>
         <setting id="HomeSwitcher.1107.Toggle">false</setting>
         <setting id="homeswitcher.1108.toggle">stale-case-variant</setting>
+        <setting id="optionstiles.01.include">Old NowPlaying</setting>
+        <setting id="optionstiles.02.include">Old Settings</setting>
+        <setting id="optionstiles.03.include">Old Weather</setting>
+        <setting id="optionstiles.04.include">Old SystemInfo</setting>
+        <setting id="HomeSwitcher.1101.Shortcut.Path">oldplex</setting>
         <setting id="HomeSwitcher.1101.Shortcut.Target">videos</setting>
+        <setting id="HomeSwitcher.1102.Shortcut.Path">RunAddon(plugin.video.youtube)</setting>
+        <setting id="HomeSwitcher.1102.Shortcut.Target">videos</setting>
+        <setting id="HomeSwitcher.1103.Shortcut.Target">videos</setting>
+        <setting id="HomeSwitcher.1103.Spotlight.Label">Old Plex Spotlight</setting>
+        <setting id="HomeSwitcher.1103.Spotlight.Path">old-plex-spotlight</setting>
+        <setting id="HomeSwitcher.1103.Spotlight.Target">videos</setting>
+        <setting id="HomeSwitcher.1104.Name">Stale 1104</setting>
+        <setting id="HomeSwitcher.1104.Toggle">true</setting>
+        <setting id="HomeSwitcher.1104.Icon">old-icon</setting>
+        <setting id="HomeSwitcher.1104.Mode">Standard</setting>
+        <setting id="HomeSwitcher.1104.Shortcut.Path">old-1104-path</setting>
+        <setting id="HomeSwitcher.1104.Shortcut.Target">videos</setting>
+        <setting id="HomeSwitcher.1104.Spotlight.Label">Old 1104 Spotlight</setting>
+        <setting id="HomeSwitcher.1104.Spotlight.Path">old-1104-spotlight</setting>
+        <setting id="HomeSwitcher.1104.Spotlight.Target">videos</setting>
+        <setting id="Hub.1107.DisableSearch">true</setting>
+        <setting id="Hub.1107.DisableChannels">true</setting>
+        <setting id="Hub.1107.DisableGroups">true</setting>
+        <setting id="Hub.1107.DisableRecordings">true</setting>
         <setting id="unrelated.nested.keep">yes</setting>
     </category>
 </settings>
 XML
 
-  write_base_payload "${payload}"
+  write_full_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
   skin_file="$(skin_settings_path "${root}")"
 
   # Each managed setting converges to exactly one node, and that node is a
   # direct child of the settings root.
-  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Name")" \
-    "1101.Name is one root node"
-  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1107.Toggle")" \
-    "1107.Toggle is one root node"
-  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1108.Toggle")" \
-    "1108.Toggle is one root node"
-  assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" \
+  for setting_id in \
+    "HomeSwitcher.1101.Name" \
+    "HomeSwitcher.1101.Toggle" \
+    "HomeSwitcher.1101.Icon" \
+    "HomeSwitcher.1101.Mode" \
+    "HomeSwitcher.1101.Spotlight.Label" \
+    "HomeSwitcher.1101.Spotlight.Path" \
+    "HomeSwitcher.1101.Spotlight.Target" \
+    "HomeSwitcher.1102.Name" \
+    "HomeSwitcher.1102.Toggle" \
+    "HomeSwitcher.1102.Icon" \
+    "HomeSwitcher.1102.Mode" \
+    "HomeSwitcher.1102.Spotlight.Label" \
+    "HomeSwitcher.1102.Spotlight.Path" \
+    "HomeSwitcher.1102.Spotlight.Target" \
+    "HomeSwitcher.1103.Name" \
+    "HomeSwitcher.1103.Toggle" \
+    "HomeSwitcher.1103.Icon" \
+    "HomeSwitcher.1103.Shortcut.Path" \
+    "HomeSwitcher.1107.Toggle" \
+    "HomeSwitcher.1108.Toggle" \
+    "optionstiles.01.include" \
+    "optionstiles.02.include" \
+    "optionstiles.03.include" \
+    "optionstiles.04.include"; do
+    assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "${setting_id}")" \
+      "${setting_id} is one root node"
+  done
+  assert_eq "TV Shows" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" \
     "promoted 1101.Name carries the managed value"
+  assert_eq "Movies" "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" \
+    "promoted 1102.Name carries the managed value"
+  assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1103.Name")" \
+    "promoted 1103.Name carries the managed value"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" \
     "promoted 1107.Toggle carries the managed value"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" \
     "promoted 1108.Toggle carries the managed value"
 
   # Removed managed settings are gone from every scope.
-  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Shortcut.Target")" \
-    "nested 1101.Shortcut.Target is removed everywhere"
+  for setting_id in \
+    "HomeSwitcher.1101.Shortcut.Path" \
+    "HomeSwitcher.1101.Shortcut.Target" \
+    "HomeSwitcher.1102.Shortcut.Path" \
+    "HomeSwitcher.1102.Shortcut.Target" \
+    "HomeSwitcher.1103.Shortcut.Target" \
+    "HomeSwitcher.1103.Spotlight.Label" \
+    "HomeSwitcher.1103.Spotlight.Path" \
+    "HomeSwitcher.1103.Spotlight.Target" \
+    "HomeSwitcher.1104.Name" \
+    "HomeSwitcher.1104.Toggle" \
+    "HomeSwitcher.1104.Icon" \
+    "HomeSwitcher.1104.Mode" \
+    "HomeSwitcher.1104.Shortcut.Path" \
+    "HomeSwitcher.1104.Shortcut.Target" \
+    "HomeSwitcher.1104.Spotlight.Label" \
+    "HomeSwitcher.1104.Spotlight.Path" \
+    "HomeSwitcher.1104.Spotlight.Target" \
+    "Hub.1107.DisableSearch" \
+    "Hub.1107.DisableChannels" \
+    "Hub.1107.DisableGroups" \
+    "Hub.1107.DisableRecordings"; do
+    assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "${setting_id}")" \
+      "${setting_id} is removed everywhere"
+  done
 
   # Unmanaged nested state is left exactly where the skin put it.
   assert_eq "1 0" "$(skin_setting_scope_counts "${root}" "unrelated.nested.keep")" \
@@ -1133,7 +1374,7 @@ test_arctic_fuse_home_widgets_are_exact_and_ordered() {
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
   payload="${dir}/payload.conf"
-  write_base_payload "${payload}"
+  write_full_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
   home_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-homewidgets.json")"
@@ -1161,7 +1402,7 @@ test_arctic_fuse_power_menu_is_coreelec_appropriate() {
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
   payload="${dir}/payload.conf"
-  write_base_payload "${payload}"
+  write_full_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
   power_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-powermenu.json")"
@@ -1346,7 +1587,7 @@ test_arctic_fuse_managed_settings_carry_type_string() {
 </settings>
 XML
 
-  write_base_payload "${payload}"
+  write_full_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
   skin_file="$(skin_settings_path "${root}")"
@@ -1356,10 +1597,27 @@ XML
     "HomeSwitcher.1101.Name" \
     "HomeSwitcher.1101.Toggle" \
     "HomeSwitcher.1101.Icon" \
-    "HomeSwitcher.1101.Shortcut.Path" \
+    "HomeSwitcher.1101.Mode" \
+    "HomeSwitcher.1101.Spotlight.Label" \
+    "HomeSwitcher.1101.Spotlight.Path" \
+    "HomeSwitcher.1101.Spotlight.Target" \
+    "HomeSwitcher.1102.Name" \
+    "HomeSwitcher.1102.Toggle" \
+    "HomeSwitcher.1102.Icon" \
+    "HomeSwitcher.1102.Mode" \
+    "HomeSwitcher.1102.Spotlight.Label" \
+    "HomeSwitcher.1102.Spotlight.Path" \
+    "HomeSwitcher.1102.Spotlight.Target" \
+    "HomeSwitcher.1103.Name" \
+    "HomeSwitcher.1103.Toggle" \
+    "HomeSwitcher.1103.Icon" \
+    "HomeSwitcher.1103.Shortcut.Path" \
     "HomeSwitcher.1107.Toggle" \
     "HomeSwitcher.1108.Toggle" \
-    "optionstiles.02.include"; do
+    "optionstiles.01.include" \
+    "optionstiles.02.include" \
+    "optionstiles.03.include" \
+    "optionstiles.04.include"; do
     assert_eq "string" "$(xml_setting_type "${skin_file}" "${setting_id}")" \
       "${setting_id} must have type=\"string\""
   done
@@ -1467,6 +1725,7 @@ run_all_tests \
   test_remote_payload_upload_replaces_a_permissive_file \
   test_remote_backup_directory_is_private \
   test_arctic_fuse_hubs_and_options_tray_are_converged \
+  test_arctic_fuse_pvr_and_weather_are_absent_when_unconfigured \
   test_arctic_fuse_managed_settings_are_promoted_to_root_nodes \
   test_arctic_fuse_home_widgets_are_exact_and_ordered \
   test_arctic_fuse_power_menu_is_coreelec_appropriate \

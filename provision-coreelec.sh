@@ -553,12 +553,17 @@ def main(argv):
     kodi_values = {
         "general.addonupdates":
             "0" if config("ADDON_UPDATE_MODE") == "auto" else "1",
+        "input.enablemouse": "false",
         "locale.country": config("LOCALE_COUNTRY"),
         "locale.keyboardlayouts": config("KEYBOARD_LAYOUT"),
         "locale.language": config("LOCALE_LANGUAGE"),
         "locale.timezone": config("TIMEZONE"),
         "locale.timezonecountry": config("TIMEZONE_COUNTRY"),
         "lookandfeel.skin": SKIN_ID,
+        "lookandfeel.soundskin": "resource.uisounds.fromashes",
+        "videolibrary.flattentvshows": "1",
+        "videolibrary.ignorevideoextras": "true",
+        "videolibrary.ignorevideoversions": "true",
         "videoplayer.adjustrefreshrate": "2",
         "videoplayer.usedisplayasclock": "false",
     }
@@ -683,20 +688,66 @@ def main(argv):
             parent.remove(node)
 
     # Hub toggles and shortcuts
-    set_skin_setting("HomeSwitcher.1101.Name", "Plex")
+    set_skin_setting("HomeSwitcher.1101.Name", "TV Shows")
     set_skin_setting("HomeSwitcher.1101.Toggle", "true")
     set_skin_setting("HomeSwitcher.1101.Icon",
-                     "special://home/addons/script.plexmod/icon2.png")
-    set_skin_setting("HomeSwitcher.1101.Shortcut.Path",
-                     "RunAddon(script.plexmod)")
-
-    set_skin_setting("HomeSwitcher.1107.Toggle", "true")
-    set_skin_setting("HomeSwitcher.1108.Toggle", "true")
-    set_skin_setting("optionstiles.02.include", "Settings")
-
-    # Remove stale direct-hub state
+                     "special://skin/extras/icons/tv.png")
+    set_skin_setting("HomeSwitcher.1101.Mode", "Standard")
+    set_skin_setting("HomeSwitcher.1101.Spotlight.Label",
+                     "Random TV Shows")
+    set_skin_setting("HomeSwitcher.1101.Spotlight.Path",
+                     "special://skin/extras/playlists/RandomTvShows.xsp")
+    set_skin_setting("HomeSwitcher.1101.Spotlight.Target", "videos")
+    remove_skin_setting("HomeSwitcher.1101.Shortcut.Path")
     remove_skin_setting("HomeSwitcher.1101.Shortcut.Target")
-    remove_skin_setting("HomeSwitcher.1101.Spotlight.Path")
+
+    set_skin_setting("HomeSwitcher.1102.Name", "Movies")
+    set_skin_setting("HomeSwitcher.1102.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1102.Icon",
+                     "special://skin/extras/icons/film.png")
+    set_skin_setting("HomeSwitcher.1102.Mode", "Standard")
+    set_skin_setting("HomeSwitcher.1102.Spotlight.Label",
+                     "Random Movies")
+    set_skin_setting("HomeSwitcher.1102.Spotlight.Path",
+                     "special://skin/extras/playlists/RandomMovies.xsp")
+    set_skin_setting("HomeSwitcher.1102.Spotlight.Target", "videos")
+    remove_skin_setting("HomeSwitcher.1102.Shortcut.Path")
+    remove_skin_setting("HomeSwitcher.1102.Shortcut.Target")
+
+    set_skin_setting("HomeSwitcher.1103.Name", "Plex")
+    set_skin_setting("HomeSwitcher.1103.Toggle", "true")
+    set_skin_setting("HomeSwitcher.1103.Icon",
+                     "special://home/addons/script.plexmod/icon2.png")
+    set_skin_setting("HomeSwitcher.1103.Shortcut.Path",
+                     "RunAddon(script.plexmod)")
+    for suffix in ("Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
+                   "Spotlight.Target"):
+        remove_skin_setting("HomeSwitcher.1103." + suffix)
+
+    for suffix in ("Name", "Toggle", "Icon", "Mode", "Shortcut.Path",
+                   "Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
+                   "Spotlight.Target"):
+        remove_skin_setting("HomeSwitcher.1104." + suffix)
+
+    if nextpvr_configured:
+        set_skin_setting("HomeSwitcher.1107.Toggle", "true")
+        for suffix in ("DisableSearch", "DisableChannels",
+                       "DisableGroups", "DisableRecordings"):
+            remove_skin_setting("Hub.1107." + suffix)
+    else:
+        remove_skin_setting("HomeSwitcher.1107.Toggle")
+
+    set_skin_setting("HomeSwitcher.1108.Toggle", "true")
+    set_skin_setting("optionstiles.01.include", "NowPlaying")
+    set_skin_setting("optionstiles.02.include", "Settings")
+    set_skin_setting("optionstiles.04.include", "SystemInfo")
+
+    if weather_configured:
+        set_skin_setting("optionstiles.03.include", "Weather")
+    else:
+        remove_skin_setting("optionstiles.03.include")
+        remove_skin_setting("optionstiles.03.path")
+        remove_skin_setting("optionstiles.03.target")
 
     write_xml_atomic(skin_settings_path, skin_tree)
 
