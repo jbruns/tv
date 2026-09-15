@@ -98,12 +98,13 @@ write_base_payload() {
   write_scoped_base_payload "$1" 1 1 1 1 1
 }
 
-# Every managed value present, so each optional branch of the transformer runs.
-# CEC_TV_OFF_ACTION is included here too (not just in write_base_payload)
-# because the transformer requires it whenever CEC is selected, and this
-# fixture must stay a superset of the base payload rather than a divergent one.
-write_full_payload() {
-  write_payload "$1" <<'ENTRIES'
+# Every managed value present, so each selected optional branch of the
+# transformer runs. CEC_TV_OFF_ACTION is included here too because the
+# transformer requires it whenever CEC is selected.
+write_scoped_full_payload() {
+  local file="$1" apply_core="$2" apply_cec="$3" apply_addons="$4"
+  local apply_services="$5" apply_skin="$6"
+  write_payload "${file}" <<ENTRIES
 TIMEZONE=America/Los_Angeles
 TIMEZONE_COUNTRY=United States
 LOCALE_LANGUAGE=resource.language.en_us
@@ -130,12 +131,16 @@ NEXTPVR_PROTOCOL=http
 NEXTPVR_INSTANCE_NAME=Living Room NextPVR
 NEXTPVR_PIN=nextpvr-pin-secret
 HAVE_NEXTPVR_PIN=1
-APPLY_COMPONENT_CORE=1
-APPLY_COMPONENT_CEC=1
-APPLY_COMPONENT_ADDONS=1
-APPLY_COMPONENT_SERVICES=1
-APPLY_COMPONENT_SKIN=1
+APPLY_COMPONENT_CORE=${apply_core}
+APPLY_COMPONENT_CEC=${apply_cec}
+APPLY_COMPONENT_ADDONS=${apply_addons}
+APPLY_COMPONENT_SERVICES=${apply_services}
+APPLY_COMPONENT_SKIN=${apply_skin}
 ENTRIES
+}
+
+write_full_payload() {
+  write_scoped_full_payload "$1" 1 1 1 1 1
 }
 
 guisettings_path() {
@@ -2087,56 +2092,61 @@ test_arctic_fuse_second_run_is_byte_identical() {
   assert_eq "${first}" "${second}" "a second run (with skin state) rewrites nothing"
 }
 
-test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
-  local dir root payload managed_output written backup line relative
+test_each_scoped_backup_covers_transformer_applied_paths() {
+  local dir scope flags backup_scope root payload written backup_program backup
+  local line relative plex_settings
+  local apply_core apply_cec apply_addons apply_services apply_skin
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
-  root="${dir}/storage"
-  payload="${dir}/payload.conf"
-  write_full_payload "${payload}"
-  written="$(run_transform "${root}" "${payload}")"
 
-  # Check that coreelec_managed_settings_paths_block lists the skin settings,
-  # every managed node JSON file, new playlists, and removed migration paths.
-  managed_output="$(bash "${PROVISIONER}" --emit-remote-script backup "${root}")"
-
-  assert_contains "${managed_output}" ".kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml" \
-    "skin settings in managed paths"
-  assert_contains "${managed_output}" "skinvariables-shortcut-homewidgets.json" \
-    "home widgets in managed paths"
-  assert_contains "${managed_output}" "skinvariables-shortcut-1101widgets.json" \
-    "TV widgets in managed paths"
-  assert_contains "${managed_output}" "skinvariables-shortcut-1102widgets.json" \
-    "Movies widgets in managed paths"
-  assert_contains "${managed_output}" "skinvariables-shortcut-powermenu.json" \
-    "power menu in managed paths"
-  assert_contains "${managed_output}" "InProgressMovies90Days.xsp" "IPM in managed paths"
-  assert_contains "${managed_output}" "InProgressShows90Days.xsp" "IPS in managed paths"
-  assert_contains "${managed_output}" "RecentlyAiredEpisodes30Days.xsp" "RAE in managed paths"
-  assert_contains "${managed_output}" "RecentlyReleasedMovies90Days.xsp" "RRM90 in managed paths"
-  assert_contains "${managed_output}" "RecentlyReleasedMoviesCurrentYear.xsp" "RRMCY in managed paths"
-  assert_contains "${managed_output}" "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp" \
-    "RRMCAPY in managed paths"
-  assert_contains "${managed_output}" "TraktPopularTVShows.xsp" "TPTS in managed paths"
-  assert_contains "${managed_output}" "TraktWeekendBoxOffice.xsp" "TWBO in managed paths"
-  assert_contains "${managed_output}" "NewShows.xsp" "NS in managed paths"
-  assert_contains "${managed_output}" "NewMovies.xsp" "NM in managed paths"
-
-  # Containment is not enough: a path the transformer starts writing but that
-  # nobody adds to the backup set would still satisfy every assertion above.
-  # Running the real backup program the device receives, over the tree the
-  # real transformer just wrote, cross-checks the two sets against each other,
-  # so a newly managed path cannot be left out of the transaction snapshot.
-  backup="$(umask 022; printf '%s\n' "${managed_output}" | sh -s)"
-  while IFS= read -r line; do
-    [[ "${line}" == "settings applied: "* ]] || continue
-    relative="${line#settings applied: }"
-    relative="${relative#"${root}/"}"
-    if [[ ! -f "${backup}/${relative}" ]]; then
-      printf 'the transaction backup does not capture %s\n' "${relative}" >&2
-      return 1
+  while IFS='|' read -r scope flags backup_scope; do
+    [[ -n "${scope}" ]] || continue
+    root="${dir}/${scope}/storage"
+    payload="${dir}/${scope}/payload.conf"
+    mkdir -p "$(dirname "${payload}")"
+    # A non-default filename proves CEC coverage comes from dynamic discovery.
+    # Failure output names only the scope, never the adapter filename.
+    if [[ "${scope}" == "cec" ]]; then
+      mkdir -p "${root}/.kodi/userdata/peripheral_data"
+      printf '<settings><setting id="standby_pc_on_tv_standby" value="13011" /></settings>\n' \
+        > "${root}/.kodi/userdata/peripheral_data/review-dynamic-CEC.xml"
     fi
-  done <<< "${written}"
+    IFS=',' read -r apply_core apply_cec apply_addons apply_services apply_skin \
+      <<< "${flags}"
+    if [[ "${apply_services}" == "1" ]]; then
+      plex_settings="$(addon_data_path "${root}" script.plexmod)/settings.xml"
+      mkdir -p "$(dirname "${plex_settings}")"
+      cat > "${plex_settings}" <<'XML'
+<settings version="2">
+    <setting id="local_mode">true</setting>
+    <setting id="unmanaged_setting">preserved</setting>
+</settings>
+XML
+    fi
+    write_scoped_full_payload "${payload}" \
+      "${apply_core}" "${apply_cec}" "${apply_addons}" "${apply_services}" "${apply_skin}"
+    written="$(run_transform "${root}" "${payload}")"
+    backup_program="$(bash "${PROVISIONER}" \
+      --emit-remote-script backup "${root}" "${backup_scope}")"
+    backup="$(umask 022; printf '%s\n' "${backup_program}" | sh -s)"
+
+    while IFS= read -r line; do
+      [[ "${line}" == "settings applied: "* ]] || continue
+      relative="${line#settings applied: }"
+      relative="${relative#"${root}/"}"
+      if [[ ! -f "${backup}/${relative}" ]]; then
+        printf 'the %s backup does not capture a transformer-applied path\n' \
+          "${scope}" >&2
+        return 1
+      fi
+    done <<< "${written}"
+  done <<'SCOPES'
+core|1,0,0,0,0|core
+cec|0,1,0,0,0|cec
+services|0,0,1,1,0|addons,services
+skin|1,0,1,0,1|core,addons,skin
+baseline|1,1,1,1,1|baseline
+SCOPES
 }
 
 test_arctic_fuse_managed_settings_carry_type_string() {
@@ -2331,6 +2341,6 @@ run_all_tests \
   test_arctic_fuse_convergence_preserves_unmanaged_skinvariables_nodes \
   test_arctic_fuse_second_run_is_byte_identical \
   test_arctic_fuse_managed_settings_carry_type_string \
-  test_arctic_fuse_managed_paths_are_listed_in_backup_block \
+  test_each_scoped_backup_covers_transformer_applied_paths \
   test_arctic_fuse_replaces_obsolete_recently_released_playlists \
   test_arctic_fuse_failed_write_cleans_temporary_files
