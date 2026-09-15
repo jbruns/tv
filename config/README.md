@@ -129,11 +129,13 @@ downloads and verifies all 41 over HTTPS.
 The shared baseline manages the following Arctic Fuse state. It does not
 provision YouTube.
 
-- `HomeSwitcher.1101.*` opens `script.plexmod`.
+- `HomeSwitcher.1101.*` is the TV Shows hub, `HomeSwitcher.1102.*` is the
+  Movies hub, and `HomeSwitcher.1103.*` opens `script.plexmod`.
 - The managed top-level order after Home is TV Shows, Movies, Plex,
   conditional PVR, Add-ons.
-- Home retains its four managed widgets in order: In-Progress Movies,
-  In-Progress Shows, Recently Aired Shows, and Recently Released Movies.
+- Home retains its six managed widgets in order: In-Progress Movies,
+  In-Progress Shows, Recently Aired Shows, Recently Released Movies, New
+  Shows, and New Movies.
 - TV Shows uses `skinvariables-shortcut-1101widgets.json` with widgets in
   order: In-Progress Shows, Recently Aired Shows, Trakt Popular TV Shows, and
   New Shows.
@@ -152,8 +154,8 @@ provision YouTube.
   semantics: `year > current year - 2` and `year < current year + 1`. That
   includes the current and previous calendar years while excluding future
   years.
-- `RecentlyReleasedMoviesCurrent&#8203;Year.xsp` and
-  `RecentlyReleasedMovies90&#8203;Days.xsp` are removed during provisioning.
+- `RecentlyReleasedMoviesCurrentYear.xsp` and
+  `RecentlyReleasedMovies90Days.xsp` are removed during provisioning.
 - The Weather tile and the built-in PVR hub are conditional: Weather appears
   only when Home Assistant weather is fully configured, and PVR appears only
   when NextPVR host and PIN are configured.
