@@ -2524,6 +2524,34 @@ test_probe_malformed_skin_xml_emits_zero() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.hubs_configured=0" "malformed XML → hubs 0" || return 1
   assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" "malformed XML → plex 0" || return 1
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=0" \
+    "malformed XML cannot prove custom 1104 absent" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_surfaces_configured=0" \
+    "malformed XML cannot prove PVR disable flags absent" || return 1
+}
+
+test_probe_wrong_skin_xml_root_invalidates_absence_checks() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  python3 - "${skin_file}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1])
+tree.getroot().tag = "not-settings"
+tree.write(sys.argv[1], encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=0" \
+    "a wrong root cannot prove custom 1104 absent" || return 1
+  assert_contains "${output}" "arctic_fuse.pvr_surfaces_configured=0" \
+    "a wrong root cannot prove PVR disable flags absent" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "the aggregate rejects the wrong-root skin document" || return 1
 }
 
 # --- Managed skin settings: case-insensitive exact state --------------------
@@ -2772,20 +2800,34 @@ test_probe_rejects_enabled_custom_1104() {
 }
 
 test_probe_rejects_plex_in_the_wrong_slot() {
-  local dir root bin_dir output skin_file suffix
+  local dir root bin_dir output skin_file setting_spec setting_id value
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
   root="$(make_arctic_fuse_fixture_root "${dir}")"
   bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
   skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
-  for suffix in Name Toggle Icon Shortcut.Path; do
-    remove_skin_setting_node "${skin_file}" "HomeSwitcher.1103.${suffix}"
+  for setting_spec in \
+    "Name|Plex" \
+    "Toggle|true" \
+    "Icon|special://home/addons/script.plexmod/icon2.png" \
+    "Mode|Standard" \
+    "Shortcut.Path|RunAddon(script.plexmod)" \
+    "Shortcut.Target|videos" \
+    "Spotlight.Label|Plex" \
+    "Spotlight.Path|RunAddon(script.plexmod)" \
+    "Spotlight.Target|videos"; do
+    IFS='|' read -r setting_id value <<< "${setting_spec}"
+    append_skin_setting_node "${skin_file}" "HomeSwitcher.1104.${setting_id}" \
+      "string" "${value}"
   done
-  append_skin_setting_node "${skin_file}" "HomeSwitcher.1104.Name" "string" "Plex"
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" \
-    "Plex outside slot 1103 is rejected" || return 1
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=1" \
+    "the valid Plex entry in slot 1103 remains configured" || return 1
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=0" \
+    "stale Plex values in slot 1104 are rejected" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "stale Plex values in slot 1104 fail the aggregate" || return 1
 }
 
 test_probe_accepts_unconfigured_pvr_and_weather_absence() {
@@ -2795,12 +2837,15 @@ test_probe_accepts_unconfigured_pvr_and_weather_absence() {
   root="$(make_arctic_fuse_fixture_root "${dir}")"
   bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
   make_arctic_fuse_fixture_unconfigured "${root}"
+  append_skin_setting_node \
+    "${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml" \
+    "Hub.1107.DisableSearch" "string" "true"
 
   output="$(run_arctic_fuse_probe_unconfigured "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.pvr_hub_configured=1" \
     "an unconfigured PVR requires no hub toggle" || return 1
   assert_contains "${output}" "arctic_fuse.pvr_surfaces_configured=1" \
-    "an unconfigured PVR still requires no stale disable flags" || return 1
+    "an unconfigured PVR preserves pre-existing native-surface flags" || return 1
   assert_contains "${output}" "arctic_fuse.option_tiles_configured=1" \
     "unconfigured Weather requires no Weather tile" || return 1
 }
@@ -3046,6 +3091,66 @@ test_probe_malformed_playlist_xml_emits_zero() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.playlist.InProgressShows90Days.configured=0" \
     "malformed playlist XML → 0" || return 1
+}
+
+test_probe_wrong_playlist_root_emits_zero() {
+  local dir root bin_dir output path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  path="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+  python3 - "${path}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1])
+tree.getroot().tag = "playlist"
+tree.write(sys.argv[1], encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=0" \
+    "a managed playlist requires the smartplaylist root" || return 1
+}
+
+test_probe_duplicate_playlist_scalar_emits_zero() {
+  local dir root bin_dir output path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  path="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+  python3 - "${path}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1])
+ET.SubElement(tree.getroot(), "name").text = "New Movies"
+tree.write(sys.argv[1], encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=0" \
+    "a duplicate playlist name is rejected" || return 1
+}
+
+test_probe_unknown_playlist_element_emits_zero() {
+  local dir root bin_dir output path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  path="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+  python3 - "${path}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1])
+ET.SubElement(tree.getroot(), "group").text = "none"
+tree.write(sys.argv[1], encoding="UTF-8", xml_declaration=True)
+PYEOF
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=0" \
+    "an unknown playlist element is rejected" || return 1
 }
 
 test_probe_incorrect_playlist_rule_emits_zero() {
@@ -3611,6 +3716,7 @@ run_all_tests \
   test_probe_arctic_fuse_valid_baseline_emits_all_ones \
   test_probe_missing_skin_settings_emits_zero \
   test_probe_malformed_skin_xml_emits_zero \
+  test_probe_wrong_skin_xml_root_invalidates_absence_checks \
   test_probe_case_variant_pvr_toggle_duplicate_emits_zero \
   test_probe_case_variant_addons_toggle_duplicate_emits_zero \
   test_probe_case_variant_plex_shortcut_duplicate_emits_zero \
@@ -3637,6 +3743,9 @@ run_all_tests \
   test_probe_extra_movie_widget_emits_zero \
   test_probe_missing_playlist_file_emits_zero \
   test_probe_malformed_playlist_xml_emits_zero \
+  test_probe_wrong_playlist_root_emits_zero \
+  test_probe_duplicate_playlist_scalar_emits_zero \
+  test_probe_unknown_playlist_element_emits_zero \
   test_probe_incorrect_playlist_rule_emits_zero \
   test_probe_wrong_trakt_tag_emits_zero \
   test_probe_recent_movie_playlist_with_wrong_bounds_emits_zero \

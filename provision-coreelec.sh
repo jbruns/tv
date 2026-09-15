@@ -2309,7 +2309,9 @@ def main(argv):
         try:
             root = ET.parse(path).getroot()
         except Exception:
-            return []
+            return None
+        if root.tag != "settings":
+            return None
         wanted = setting_id.casefold()
         # The list is kept alive for the whole call so the identities in
         # `at_root` cannot be reused by a later object.
@@ -2331,35 +2333,75 @@ def main(argv):
     def managed_setting_is(setting_id, expected):
         """One canonical root string setting is the complete managed state."""
         matches = xml_setting_matches(skin_settings_path, setting_id)
-        return matches == [(setting_id, "string", expected, True)]
+        return matches is not None and matches == [
+            (setting_id, "string", expected, True)]
 
     def managed_setting_is_unset(setting_id):
         """A disabled managed setting has no case variant anywhere."""
-        return not xml_setting_matches(skin_settings_path, setting_id)
+        matches = xml_setting_matches(skin_settings_path, setting_id)
+        return matches is not None and not matches
 
     def kodi_setting_is(setting_id, expected):
         matches = xml_setting_matches(guisettings_path, setting_id)
-        return matches == [(setting_id, "", expected, True)]
+        return matches is not None and matches == [
+            (setting_id, "", expected, True)]
 
     def smart_playlist_signature(path):
         try:
             root = ET.parse(path).getroot()
         except Exception:
             return None
+        if root.tag != "smartplaylist" or set(root.attrib) != set(("type",)):
+            return None
+        children = list(root)
+        if any(node.tag not in ("name", "match", "rule", "limit", "order")
+               for node in children):
+            return None
+
+        def scalar(name):
+            nodes = root.findall(name)
+            if (len(nodes) != 1 or nodes[0].attrib
+                    or list(nodes[0])):
+                return None
+            return nodes[0].text or ""
+
+        name = scalar("name")
+        match = scalar("match")
+        limit = scalar("limit")
+        order_nodes = root.findall("order")
+        if (name is None or match is None or limit is None
+                or len(order_nodes) != 1):
+            return None
+        order_node = order_nodes[0]
+        if set(order_node.attrib) != set(("direction",)) or list(order_node):
+            return None
+
+        rules = []
+        for node in root.findall("rule"):
+            if set(node.attrib) != set(("field", "operator")):
+                return None
+            values = list(node)
+            if len(values) > 1:
+                return None
+            if values:
+                value_node = values[0]
+                if (value_node.tag != "value" or value_node.attrib
+                        or list(value_node)):
+                    return None
+                value = value_node.text or ""
+            else:
+                value = ""
+            rules.append((
+                node.get("field"), node.get("operator"), value))
         return {
             "type": root.get("type"),
-            "name": root.findtext("name") or "",
-            "match": root.findtext("match") or "",
-            "limit": root.findtext("limit") or "",
-            "rules": [
-                (node.get("field"), node.get("operator"),
-                 node.findtext("value") or "")
-                for node in root.findall("rule")
-            ],
+            "name": name,
+            "match": match,
+            "limit": limit,
+            "rules": rules,
             "order": (
-                root.findtext("order") or "",
-                (root.find("order").get("direction")
-                 if root.find("order") is not None else ""),
+                order_node.text or "",
+                order_node.get("direction"),
             ),
         }
 
@@ -2433,11 +2475,13 @@ def main(argv):
     else:
         pvr_hub_ok = managed_setting_is_unset(
             "HomeSwitcher.1107.Toggle")
-    pvr_surfaces_ok = all(
-        managed_setting_is_unset("Hub.1107." + suffix)
-        for suffix in (
-            "DisableSearch", "DisableChannels",
-            "DisableGroups", "DisableRecordings"))
+    pvr_surfaces_ok = (
+        all(
+            managed_setting_is_unset("Hub.1107." + suffix)
+            for suffix in (
+                "DisableSearch", "DisableChannels",
+                "DisableGroups", "DisableRecordings"))
+        if nextpvr_expected else True)
     addons_hub_ok = managed_setting_is("HomeSwitcher.1108.Toggle", "true")
 
     observe("arctic_fuse.tv_hub_configured", 1 if tv_hub_ok else 0)
