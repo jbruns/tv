@@ -125,12 +125,10 @@ password and for the passphrase of the dedicated administrator key.
 Configuration precedence is: built-in defaults, then the selected --config
 file, then explicit CLI options, then secrets sourced from the repository
 .env file (KODI_WEB_PASSWORD, OMDB_API_KEY, MDBLIST_API_KEY,
-HOME_ASSISTANT_TOKEN, NEXTPVR_PIN, PLEX_TOKEN, and EMBY_PASSWORD). None may appear
+HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN, NEXTPVR_HOST, and NEXTPVR_PIN). None may appear
 in the config file, and TARGET is never a config-file key. See
 config/README.md for every supported key, the repeated ADDON_ARTIFACT
 grammar, and the full secret list.
-EMBY_PASSWORD is consumed only by configure-coreelec-addons.sh --interactive;
-this transactional provisioner validates and redacts it but never uses it.
 
 This script deliberately does not configure audio codecs or the display mode
 whitelist (room-specific, live HDMI-dependent), and it cannot perform Emby
@@ -458,6 +456,21 @@ def set_addon_setting(path, setting_id, value, version=2):
                             flat=(version == 1))
 
 
+def remove_addon_setting(path, setting_id):
+    if not os.path.exists(path):
+        return
+    document = ADDON_DOCUMENTS.get(path)
+    if document is None:
+        tree = ET.parse(path)
+        root = tree.getroot()
+        if root.tag != "settings":
+            fail("unexpected root element in %s" % path)
+        document = (tree, root)
+        ADDON_DOCUMENTS[path] = document
+    for parent, node in _setting_nodes(document[1], setting_id):
+        parent.remove(node)
+
+
 def commit_addon_settings():
     for path in sorted(ADDON_DOCUMENTS):
         write_xml_atomic(path, ADDON_DOCUMENTS[path][0])
@@ -535,7 +548,6 @@ def main(argv):
                               and config("HOME_ASSISTANT_WEATHER_ENTITY")
                               and have("HOME_ASSISTANT_TOKEN"))
     nextpvr_configured = bool(config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
-    plex_configured = bool(config("PLEX_SERVER_HOST") and have("PLEX_TOKEN"))
 
     # --- Kodi guisettings ---------------------------------------------------
     kodi_values = {
@@ -606,28 +618,12 @@ def main(argv):
         # permanently and Kodi disables the add-on itself.
         set_addon_setting(instance, "kodi_addon_instance_enabled", "false")
 
-    # --- PM4K local mode ----------------------------------------------------
-    if plex_configured:
-        plex_settings = addon_file("script.plexmod", "settings.xml")
-        try:
-            port = int(config("PLEX_SERVER_PORT") or "32400")
-        except ValueError:
-            fail("PLEX_SERVER_PORT is not numeric")
-        server = {
-            "connection": config("PLEX_SERVER_HOST"),
-            "port": port,
-            "token": secret("PLEX_TOKEN"),
-            "name": config("PLEX_SERVER_NAME") or None,
-        }
-        set_addon_setting(plex_settings, "allow_insecure", "always")
-        set_addon_setting(plex_settings, "local_mode", "true")
-        set_addon_setting(plex_settings, "local_servers_json",
-                          json.dumps([server], sort_keys=True))
-        profiles = [entry for entry in config("PLEX_PROFILE_IDS").split(",")
-                    if entry]
-        if profiles:
-            set_addon_setting(plex_settings, "local_profiles_json",
-                              json.dumps(profiles))
+    # Local Plex is no longer supported. Remove only settings previously
+    # managed by this provisioner so existing devices migrate to account link.
+    plex_settings = addon_file("script.plexmod", "settings.xml")
+    for setting_id in ("allow_insecure", "local_mode", "local_servers_json",
+                       "local_profiles_json"):
+        remove_addon_setting(plex_settings, setting_id)
 
     # --- Home Assistant Weather --------------------------------------------
     if weather_configured:
@@ -2185,23 +2181,6 @@ def main(argv):
             matched = matched and values.get("port") == config("NEXTPVR_PORT")
         observe("addon_settings.pvr.nextpvr.configured", 1 if matched else 0)
 
-    if have("PLEX_TOKEN") and config("PLEX_SERVER_HOST"):
-        values = read_settings(
-            addon_data("script.plexmod", "settings.xml")) or {}
-        matched = ("%s" % values.get("local_mode", "")).lower() == "true"
-        try:
-            servers = json.loads(values.get("local_servers_json") or "[]")
-        except ValueError:
-            servers = []
-        if not isinstance(servers, list):
-            servers = []
-        matched = matched and any(
-            isinstance(server, dict)
-            and server.get("connection") == config("PLEX_SERVER_HOST")
-            and bool(server.get("token"))
-            for server in servers)
-        observe("addon_settings.script.plexmod.configured", 1 if matched else 0)
-
     if have("OMDB_API_KEY") or have("MDBLIST_API_KEY"):
         values = read_settings(
             addon_data("plugin.video.themoviedb.helper", "settings.xml")) or {}
@@ -2852,10 +2831,6 @@ coreelec_nextpvr_configured() {
   [[ -n "${NEXTPVR_HOST}" && -n "${NEXTPVR_PIN:-}" ]]
 }
 
-coreelec_plex_configured() {
-  [[ -n "${PLEX_SERVER_HOST}" && -n "${PLEX_TOKEN:-}" ]]
-}
-
 coreelec_tmdb_helper_configured() {
   [[ -n "${OMDB_API_KEY:-}" && -n "${MDBLIST_API_KEY:-}" ]]
 }
@@ -2896,13 +2871,7 @@ classify_addon_status() {
         printf 'installed-unconfigured\n'
       fi
       ;;
-    script.plexmod)
-      if coreelec_plex_configured; then
-        printf 'configured\n'
-      else
-        printf 'installed-unconfigured\n'
-      fi
-      ;;
+    script.plexmod) printf 'installed-manual\n' ;;
     plugin.video.themoviedb.helper)
       if coreelec_tmdb_helper_configured; then
         printf 'configured\n'
@@ -3098,8 +3067,6 @@ verify_remote_baseline() {
     "weather.ha" coreelec_weather_configured || failures=$((failures + 1))
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "pvr.nextpvr" coreelec_nextpvr_configured || failures=$((failures + 1))
-  coreelec_verify_addon_settings "${observations}" "${manifest}" \
-    "script.plexmod" coreelec_plex_configured || failures=$((failures + 1))
 
   # Split ratings-key verification: each key is independently fatal.
   local arctic_fuse_failures=0
@@ -3197,10 +3164,10 @@ coreelec_secret_value() {
     KODI_WEB_PASSWORD) printf '%s' "${KODI_WEB_PASSWORD:-}" ;;
     OMDB_API_KEY) printf '%s' "${OMDB_API_KEY:-}" ;;
     MDBLIST_API_KEY) printf '%s' "${MDBLIST_API_KEY:-}" ;;
+    HOME_ASSISTANT_URL) printf '%s' "${HOME_ASSISTANT_URL:-}" ;;
     HOME_ASSISTANT_TOKEN) printf '%s' "${HOME_ASSISTANT_TOKEN:-}" ;;
+    NEXTPVR_HOST) printf '%s' "${NEXTPVR_HOST:-}" ;;
     NEXTPVR_PIN) printf '%s' "${NEXTPVR_PIN:-}" ;;
-    PLEX_TOKEN) printf '%s' "${PLEX_TOKEN:-}" ;;
-    EMBY_PASSWORD) printf '%s' "${EMBY_PASSWORD:-}" ;;
     *) die "Internal error: unknown secret name: $1" ;;
   esac
 }
@@ -3210,10 +3177,10 @@ coreelec_secret_names() {
 KODI_WEB_PASSWORD
 OMDB_API_KEY
 MDBLIST_API_KEY
+HOME_ASSISTANT_URL
 HOME_ASSISTANT_TOKEN
+NEXTPVR_HOST
 NEXTPVR_PIN
-PLEX_TOKEN
-EMBY_PASSWORD
 SECRET_NAMES
 }
 
@@ -3235,20 +3202,11 @@ coreelec_config_fingerprint() {
     printf 'LOCALE_COUNTRY=%s\n' "${LOCALE_COUNTRY}"
     printf 'KEYBOARD_LAYOUT=%s\n' "${KEYBOARD_LAYOUT}"
     printf 'ADDON_UPDATE_MODE=%s\n' "${ADDON_UPDATE_MODE}"
-    printf 'HOME_ASSISTANT_URL=%s\n' "${HOME_ASSISTANT_URL}"
     printf 'HOME_ASSISTANT_WEATHER_ENTITY=%s\n' "${HOME_ASSISTANT_WEATHER_ENTITY}"
     printf 'HOME_ASSISTANT_SUN_ENTITY=%s\n' "${HOME_ASSISTANT_SUN_ENTITY}"
-    printf 'NEXTPVR_HOST=%s\n' "${NEXTPVR_HOST}"
     printf 'NEXTPVR_PORT=%s\n' "${NEXTPVR_PORT}"
     printf 'NEXTPVR_PROTOCOL=%s\n' "${NEXTPVR_PROTOCOL}"
     printf 'NEXTPVR_INSTANCE_NAME=%s\n' "${NEXTPVR_INSTANCE_NAME}"
-    printf 'PLEX_SERVER_HOST=%s\n' "${PLEX_SERVER_HOST}"
-    printf 'PLEX_SERVER_PORT=%s\n' "${PLEX_SERVER_PORT}"
-    printf 'PLEX_SERVER_NAME=%s\n' "${PLEX_SERVER_NAME}"
-    printf 'PLEX_PROFILE_IDS=%s\n' "${PLEX_PROFILE_IDS}"
-    printf 'EMBY_SERVER_URL=%s\n' "${EMBY_SERVER_URL}"
-    printf 'EMBY_USERNAME=%s\n' "${EMBY_USERNAME}"
-    printf 'EMBY_ALLOW_LOCAL_HTTP=%s\n' "${EMBY_ALLOW_LOCAL_HTTP}"
     for record in ${ADDON_ARTIFACTS[@]+"${ADDON_ARTIFACTS[@]}"}; do
       printf 'ADDON_ARTIFACT=%s\n' "${record}"
     done
@@ -3266,9 +3224,9 @@ coreelec_report_manual_actions() {
     number=$((number + 1))
     printf 'manual_action.%s=Emby: select the server and sign in from Kodi; Emby Next Gen stores server and user state in its own database and cannot be preseeded.\n' "${number}"
   fi
-  if coreelec_manifest_contains "${manifest}" "script.plexmod" && ! coreelec_plex_configured; then
+  if coreelec_manifest_contains "${manifest}" "script.plexmod"; then
     number=$((number + 1))
-    printf 'manual_action.%s=Plex: link the account in PM4K or set PLEX_SERVER_HOST and PLEX_TOKEN to configure local mode.\n' "${number}"
+    printf 'manual_action.%s=Plex: link the account in PM4K at https://plex.tv/link.\n' "${number}"
   fi
   if coreelec_manifest_contains "${manifest}" "pvr.nextpvr" && ! coreelec_nextpvr_configured; then
     number=$((number + 1))
@@ -3798,10 +3756,6 @@ coreelec_settings_payload() {
   coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
   coreelec_settings_payload_entry NEXTPVR_PROTOCOL "${NEXTPVR_PROTOCOL}"
   coreelec_settings_payload_entry NEXTPVR_INSTANCE_NAME "${NEXTPVR_INSTANCE_NAME}"
-  coreelec_settings_payload_entry PLEX_SERVER_HOST "${PLEX_SERVER_HOST}"
-  coreelec_settings_payload_entry PLEX_SERVER_PORT "${PLEX_SERVER_PORT}"
-  coreelec_settings_payload_entry PLEX_SERVER_NAME "${PLEX_SERVER_NAME}"
-  coreelec_settings_payload_entry PLEX_PROFILE_IDS "${PLEX_PROFILE_IDS}"
   # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; there is
   # no configuration knob for it, so the value is a literal rather than a
   # variable.
@@ -3812,7 +3766,6 @@ coreelec_settings_payload() {
   coreelec_settings_payload_secret MDBLIST_API_KEY "${MDBLIST_API_KEY:-}"
   coreelec_settings_payload_secret HOME_ASSISTANT_TOKEN "${HOME_ASSISTANT_TOKEN:-}"
   coreelec_settings_payload_secret NEXTPVR_PIN "${NEXTPVR_PIN:-}"
-  coreelec_settings_payload_secret PLEX_TOKEN "${PLEX_TOKEN:-}"
 }
 
 upload_kodi_settings_payload() {
@@ -3930,7 +3883,6 @@ apply_kodi_baseline() {
   [[ -n "${OMDB_API_KEY:-}" || -n "${MDBLIST_API_KEY:-}" ]] && info "TMDb Helper metadata keys will be configured"
   [[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && info "Home Assistant weather will be configured"
   [[ -n "${NEXTPVR_PIN:-}" ]] && info "NextPVR client instance will be configured"
-  [[ -n "${PLEX_TOKEN:-}" ]] && info "PM4K local mode will be configured"
 
   # The bundle is staged first and the secret payload last, immediately before
   # the deploy that consumes it. Staging is the step most likely to fail (it
@@ -3998,13 +3950,10 @@ coreelec_verify_request() {
   coreelec_settings_payload_entry HOME_ASSISTANT_WEATHER_ENTITY "${HOME_ASSISTANT_WEATHER_ENTITY}"
   coreelec_settings_payload_entry NEXTPVR_HOST "${NEXTPVR_HOST}"
   coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
-  coreelec_settings_payload_entry PLEX_SERVER_HOST "${PLEX_SERVER_HOST}"
   coreelec_settings_payload_entry HAVE_HOME_ASSISTANT_TOKEN \
     "$([[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && printf '1' || printf '0')"
   coreelec_settings_payload_entry HAVE_NEXTPVR_PIN \
     "$([[ -n "${NEXTPVR_PIN:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_PLEX_TOKEN \
-    "$([[ -n "${PLEX_TOKEN:-}" ]] && printf '1' || printf '0')"
   coreelec_settings_payload_entry HAVE_OMDB_API_KEY \
     "$([[ -n "${OMDB_API_KEY:-}" ]] && printf '1' || printf '0')"
   coreelec_settings_payload_entry HAVE_MDBLIST_API_KEY \

@@ -117,12 +117,6 @@ NEXTPVR_PROTOCOL=http
 NEXTPVR_INSTANCE_NAME=Living Room NextPVR
 NEXTPVR_PIN=nextpvr-pin-secret
 HAVE_NEXTPVR_PIN=1
-PLEX_SERVER_HOST=plex.example.lan
-PLEX_SERVER_PORT=32400
-PLEX_SERVER_NAME=Basement Plex
-PLEX_PROFILE_IDS=11,22
-PLEX_TOKEN=plex-token-secret
-HAVE_PLEX_TOKEN=1
 ENTRIES
 }
 
@@ -636,23 +630,32 @@ test_weather_provider_changes_only_when_configured() {
   assert_eq "weather.ha" "$(xml_setting "${settings}" weather.addon)" "provider switches once fully configured"
 }
 
-test_pm4k_local_mode_json_is_valid() {
-  local dir root payload settings servers profiles
+test_pm4k_local_mode_settings_are_removed() {
+  local dir root payload settings setting_id
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
   payload="${dir}/payload.conf"
-  write_full_payload "${payload}"
+  settings="$(addon_data_path "${root}" script.plexmod)/settings.xml"
+  mkdir -p "$(dirname "${settings}")"
+  cat > "${settings}" <<'XML'
+<settings version="2">
+    <setting id="allow_insecure">always</setting>
+    <setting id="local_mode">true</setting>
+    <setting id="local_servers_json">[{"token":"legacy-secret"}]</setting>
+    <setting id="local_profiles_json">["11"]</setting>
+    <setting id="unmanaged_setting">preserved</setting>
+</settings>
+XML
+  write_base_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
-  settings="$(addon_data_path "${root}" script.plexmod)/settings.xml"
-  servers="$(xml_setting "${settings}" local_servers_json | canonical_json)"
-  assert_eq '[{"connection": "plex.example.lan", "name": "Basement Plex", "port": 32400, "token": "plex-token-secret"}]' \
-    "${servers}" "local server entry"
-  profiles="$(xml_setting "${settings}" local_profiles_json | canonical_json)"
-  assert_eq '["11", "22"]' "${profiles}" "selected profile ids"
-  assert_eq "true" "$(xml_setting "${settings}" local_mode)" "local mode enabled"
-  assert_eq "always" "$(xml_setting "${settings}" allow_insecure)" "insecure LAN connections allowed"
+  for setting_id in allow_insecure local_mode local_servers_json local_profiles_json; do
+    assert_eq "0" "$(xml_setting_count "${settings}" "${setting_id}")" \
+      "legacy PM4K ${setting_id} is removed" || return 1
+  done
+  assert_eq "preserved" "$(xml_setting "${settings}" unmanaged_setting)" \
+    "unmanaged PM4K settings are preserved"
 }
 
 test_absent_optional_secrets_do_not_create_secret_settings() {
@@ -743,8 +746,7 @@ test_transformer_output_never_reveals_secrets() {
     "omdb-api-key-secret" \
     "mdblist-api-key-secret" \
     "home-assistant-token-secret" \
-    "nextpvr-pin-secret" \
-    "plex-token-secret"; do
+    "nextpvr-pin-secret"; do
     assert_not_contains "${output}" "${secret}" "transformer output leaks a secret"
   done
 }
@@ -1452,7 +1454,7 @@ run_all_tests \
   test_nextpvr_uses_instance_settings_format \
   test_home_assistant_weather_uses_flat_settings_format \
   test_weather_provider_changes_only_when_configured \
-  test_pm4k_local_mode_json_is_valid \
+  test_pm4k_local_mode_settings_are_removed \
   test_absent_optional_secrets_do_not_create_secret_settings \
   test_absent_nextpvr_secret_preserves_an_existing_instance \
   test_payload_values_survive_hostile_characters \

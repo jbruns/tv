@@ -34,10 +34,10 @@ The real `.env` is gitignored. None of the reserved keys below may appear in
 - `KODI_WEB_PASSWORD`
 - `OMDB_API_KEY`
 - `MDBLIST_API_KEY`
+- `HOME_ASSISTANT_URL`
 - `HOME_ASSISTANT_TOKEN`
+- `NEXTPVR_HOST`
 - `NEXTPVR_PIN`
-- `PLEX_TOKEN`
-- `EMBY_PASSWORD`
 - `TMDB_API_KEY` — reserved and rejected, but not a usable `.env` input
 
 Secret requirements:
@@ -49,9 +49,6 @@ Secret requirements:
   `--check-artifacts`.
 - `HOME_ASSISTANT_TOKEN` requires `HOME_ASSISTANT_URL`.
 - `NEXTPVR_PIN` requires `NEXTPVR_HOST`.
-- `PLEX_TOKEN` requires `PLEX_SERVER_HOST`.
-- `EMBY_PASSWORD` requires `EMBY_SERVER_URL` and `EMBY_USERNAME`, and is used
-  only by `configure-coreelec-addons.sh --interactive`.
 
 ## Grammar (strict, never shell)
 
@@ -101,20 +98,11 @@ expansion, so shell metacharacters in a value are inert data.
 | `LOCALE_COUNTRY` | `USA (12h)` | free-text display charset |
 | `KEYBOARD_LAYOUT` | `English QWERTY` | free-text display charset |
 | `ADDON_UPDATE_MODE` | `notify` | `notify` or `auto` |
-| `HOME_ASSISTANT_URL` | unset | `https://...` |
 | `HOME_ASSISTANT_WEATHER_ENTITY` | unset | identifier charset |
 | `HOME_ASSISTANT_SUN_ENTITY` | unset | identifier charset |
-| `NEXTPVR_HOST` | unset | host charset |
 | `NEXTPVR_PORT` | unset | `1`-`65535` |
 | `NEXTPVR_PROTOCOL` | unset | `http` or `https` |
 | `NEXTPVR_INSTANCE_NAME` | unset | free-text display charset |
-| `PLEX_SERVER_HOST` | unset | host charset |
-| `PLEX_SERVER_PORT` | unset | `1`-`65535` |
-| `PLEX_SERVER_NAME` | unset | free-text display charset |
-| `PLEX_PROFILE_IDS` | unset | comma-separated numeric IDs |
-| `EMBY_SERVER_URL` | unset | `https://...`; `http://...` only for RFC1918/loopback with `EMBY_ALLOW_LOCAL_HTTP=1` |
-| `EMBY_USERNAME` | unset | non-empty |
-| `EMBY_ALLOW_LOCAL_HTTP` | `0` | `0` or `1` |
 | `ADDON_ARTIFACT` | (40 records shipped) | repeatable, see below |
 
 ### Add-on artifact lock

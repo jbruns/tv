@@ -146,52 +146,6 @@ coreelec_config_ipv4_is_private_or_loopback() {
   return 1
 }
 
-coreelec_config_validate_emby_url() {
-  local value="$1" remainder authority host suffix port=""
-  case "${value}" in
-    https://*) remainder="${value#https://}" ;;
-    http://*) remainder="${value#http://}" ;;
-    *) die "EMBY_SERVER_URL must be an https:// URL" ;;
-  esac
-  case "${value}" in
-    *[[:space:]]*|*'@'*) die "EMBY_SERVER_URL contains unsupported URL syntax" ;;
-  esac
-  authority="${remainder%%/*}"
-  [[ -n "${authority}" ]] || die "EMBY_SERVER_URL must include a host"
-  case "${authority}" in
-    \[*\]*)
-      host="${authority%%]*}"
-      host="${host#[}"
-      suffix="${authority#*]}"
-      case "${suffix}" in
-        "") ;;
-        :*) port="${suffix#:}" ;;
-        *) die "EMBY_SERVER_URL contains unsupported URL syntax" ;;
-      esac
-      case "${port}" in *[!0-9]*) die "EMBY_SERVER_URL has an invalid port" ;; esac
-      ;;
-    *:*)
-      host="${authority%%:*}"
-      port="${authority#*:}"
-      case "${port}" in ""|*[!0-9]*) die "EMBY_SERVER_URL has an invalid port" ;; esac
-      ;;
-    *) host="${authority}" ;;
-  esac
-  [[ -n "${host}" ]] || die "EMBY_SERVER_URL must include a host"
-  [[ -z "${port}" ]] || validate_port "EMBY_SERVER_URL port" "${port}"
-
-  case "${value}" in
-    https://*) return 0 ;;
-  esac
-  [[ "${EMBY_ALLOW_LOCAL_HTTP}" == "1" ]] \
-    || die "EMBY_SERVER_URL requires https unless EMBY_ALLOW_LOCAL_HTTP=1 is set"
-  case "${host}" in
-    localhost|::1) return 0 ;;
-  esac
-  coreelec_config_ipv4_is_private_or_loopback "${host}" \
-    || die "EMBY_SERVER_URL HTTP host must be RFC1918 or loopback"
-}
-
 coreelec_config_validate_enum() {
   local label="$1" value="$2"
   shift 2
@@ -240,23 +194,14 @@ coreelec_config_defaults() {
   KEYBOARD_LAYOUT="English QWERTY"
   ADDON_UPDATE_MODE="notify"
 
-  HOME_ASSISTANT_URL=""
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-}"
   HOME_ASSISTANT_WEATHER_ENTITY=""
   HOME_ASSISTANT_SUN_ENTITY=""
 
-  NEXTPVR_HOST=""
+  NEXTPVR_HOST="${NEXTPVR_HOST:-}"
   NEXTPVR_PORT=""
   NEXTPVR_PROTOCOL=""
   NEXTPVR_INSTANCE_NAME=""
-
-  PLEX_SERVER_HOST=""
-  PLEX_SERVER_PORT=""
-  PLEX_SERVER_NAME=""
-  PLEX_PROFILE_IDS=""
-
-  EMBY_SERVER_URL=""
-  EMBY_USERNAME=""
-  EMBY_ALLOW_LOCAL_HTTP="0"
 
   ADDON_ARTIFACTS=()
 
@@ -277,7 +222,7 @@ coreelec_config_assign() {
   fi
 
   case "${key}" in
-    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|HOME_ASSISTANT_TOKEN|NEXTPVR_PIN|PLEX_TOKEN|EMBY_PASSWORD|TMDB_API_KEY)
+    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|HOME_ASSISTANT_URL|HOME_ASSISTANT_TOKEN|NEXTPVR_HOST|NEXTPVR_PIN|TMDB_API_KEY)
       die "${location}: ${key} is a secret and must be supplied only as an environment variable"
       ;;
   esac
@@ -352,10 +297,6 @@ coreelec_config_assign() {
       coreelec_config_validate_enum "ADDON_UPDATE_MODE" "${value}" "notify" "auto"
       ADDON_UPDATE_MODE="${value}"
       ;;
-    HOME_ASSISTANT_URL)
-      coreelec_config_validate_url "HOME_ASSISTANT_URL" "${value}"
-      HOME_ASSISTANT_URL="${value}"
-      ;;
     HOME_ASSISTANT_WEATHER_ENTITY)
       validate_identifier "HOME_ASSISTANT_WEATHER_ENTITY" "${value}"
       HOME_ASSISTANT_WEATHER_ENTITY="${value}"
@@ -363,10 +304,6 @@ coreelec_config_assign() {
     HOME_ASSISTANT_SUN_ENTITY)
       validate_identifier "HOME_ASSISTANT_SUN_ENTITY" "${value}"
       HOME_ASSISTANT_SUN_ENTITY="${value}"
-      ;;
-    NEXTPVR_HOST)
-      validate_host "${value}" "NEXTPVR_HOST"
-      NEXTPVR_HOST="${value}"
       ;;
     NEXTPVR_PORT)
       validate_port "NEXTPVR_PORT" "${value}"
@@ -379,34 +316,6 @@ coreelec_config_assign() {
     NEXTPVR_INSTANCE_NAME)
       coreelec_config_validate_text "NEXTPVR_INSTANCE_NAME" "${value}"
       NEXTPVR_INSTANCE_NAME="${value}"
-      ;;
-    PLEX_SERVER_HOST)
-      validate_host "${value}" "PLEX_SERVER_HOST"
-      PLEX_SERVER_HOST="${value}"
-      ;;
-    PLEX_SERVER_PORT)
-      validate_port "PLEX_SERVER_PORT" "${value}"
-      PLEX_SERVER_PORT="${value}"
-      ;;
-    PLEX_SERVER_NAME)
-      coreelec_config_validate_text "PLEX_SERVER_NAME" "${value}"
-      PLEX_SERVER_NAME="${value}"
-      ;;
-    PLEX_PROFILE_IDS)
-      coreelec_config_validate_id_list "PLEX_PROFILE_IDS" "${value}"
-      PLEX_PROFILE_IDS="${value}"
-      ;;
-    EMBY_SERVER_URL)
-      [[ -n "${value}" ]] || die "EMBY_SERVER_URL must not be empty"
-      EMBY_SERVER_URL="${value}"
-      ;;
-    EMBY_USERNAME)
-      [[ -n "${value}" ]] || die "EMBY_USERNAME must not be empty"
-      EMBY_USERNAME="${value}"
-      ;;
-    EMBY_ALLOW_LOCAL_HTTP)
-      coreelec_config_validate_bool "EMBY_ALLOW_LOCAL_HTTP" "${value}"
-      EMBY_ALLOW_LOCAL_HTTP="${value}"
       ;;
     ADDON_ARTIFACT)
       [[ -n "${value}" ]] || die "${location}: ADDON_ARTIFACT must not be empty"
@@ -458,21 +367,17 @@ coreelec_config_validate() {
     die "KODI_WEB_PASSWORD must be set in the shared .env file when APPLY_KODI=1"
   fi
 
+  if [[ -n "${HOME_ASSISTANT_URL:-}" ]]; then
+    coreelec_config_validate_url "HOME_ASSISTANT_URL" "${HOME_ASSISTANT_URL}"
+  fi
+  if [[ -n "${NEXTPVR_HOST:-}" ]]; then
+    validate_host "${NEXTPVR_HOST}" "NEXTPVR_HOST"
+  fi
   if [[ -n "${HOME_ASSISTANT_TOKEN:-}" && -z "${HOME_ASSISTANT_URL:-}" ]]; then
     die "HOME_ASSISTANT_TOKEN requires HOME_ASSISTANT_URL to be configured"
   fi
   if [[ -n "${NEXTPVR_PIN:-}" && -z "${NEXTPVR_HOST:-}" ]]; then
     die "NEXTPVR_PIN requires NEXTPVR_HOST to be configured"
-  fi
-  if [[ -n "${PLEX_TOKEN:-}" && -z "${PLEX_SERVER_HOST:-}" ]]; then
-    die "PLEX_TOKEN requires PLEX_SERVER_HOST to be configured"
-  fi
-  if [[ -n "${EMBY_SERVER_URL:-}" ]]; then
-    coreelec_config_validate_emby_url "${EMBY_SERVER_URL}"
-  fi
-  if [[ -n "${EMBY_PASSWORD:-}" \
-     && ( -z "${EMBY_SERVER_URL:-}" || -z "${EMBY_USERNAME:-}" ) ]]; then
-    die "EMBY_PASSWORD requires EMBY_SERVER_URL and EMBY_USERNAME to be configured"
   fi
 
   return 0

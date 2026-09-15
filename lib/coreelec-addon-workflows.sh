@@ -41,10 +41,10 @@ coreelec_postdeploy_addon_interaction_level() {
       printf 'fully-unattended\n'
       ;;
     script.plexmod)
-      printf 'fully-unattended / guided (--interactive)\n'
+      printf 'guided (--interactive)\n'
       ;;
     plugin.service.emby-next-gen)
-      printf 'guided (--interactive)\n'
+      printf 'manual\n'
       ;;
     *)
       die "No post-deployment workflow is defined for add-on: $1"
@@ -57,10 +57,10 @@ coreelec_postdeploy_secret_names() {
 KODI_WEB_PASSWORD
 OMDB_API_KEY
 MDBLIST_API_KEY
+HOME_ASSISTANT_URL
 HOME_ASSISTANT_TOKEN
+NEXTPVR_HOST
 NEXTPVR_PIN
-PLEX_TOKEN
-EMBY_PASSWORD
 SECRETS
 }
 
@@ -69,10 +69,10 @@ coreelec_postdeploy_secret_value() {
     KODI_WEB_PASSWORD) printf '%s' "${KODI_WEB_PASSWORD:-}" ;;
     OMDB_API_KEY) printf '%s' "${OMDB_API_KEY:-}" ;;
     MDBLIST_API_KEY) printf '%s' "${MDBLIST_API_KEY:-}" ;;
+    HOME_ASSISTANT_URL) printf '%s' "${HOME_ASSISTANT_URL:-}" ;;
     HOME_ASSISTANT_TOKEN) printf '%s' "${HOME_ASSISTANT_TOKEN:-}" ;;
+    NEXTPVR_HOST) printf '%s' "${NEXTPVR_HOST:-}" ;;
     NEXTPVR_PIN) printf '%s' "${NEXTPVR_PIN:-}" ;;
-    PLEX_TOKEN) printf '%s' "${PLEX_TOKEN:-}" ;;
-    EMBY_PASSWORD) printf '%s' "${EMBY_PASSWORD:-}" ;;
     *)
       die "Unknown secret requested: $1"
       ;;
@@ -82,17 +82,6 @@ coreelec_postdeploy_secret_value() {
 coreelec_prepare_kodi_web_password() {
   [[ -n "${KODI_WEB_PASSWORD:-}" ]] \
     || die "KODI_WEB_PASSWORD must be set in the shared .env file"
-}
-
-coreelec_prepare_emby_password() {
-  if [[ -n "${EMBY_PASSWORD:-}" ]]; then
-    return 0
-  fi
-  [[ -t 0 ]] || return 1
-  printf 'Emby password for %s: ' "${EMBY_USERNAME}" >&2
-  IFS= read -r -s EMBY_PASSWORD
-  printf '\n' >&2
-  [[ -n "${EMBY_PASSWORD}" ]]
 }
 
 coreelec_trim_surrounding_whitespace() {
@@ -533,11 +522,11 @@ authorize_pm4k_account() {
 }
 
 coreelec_postdeploy_emby_state() {
-  local remote_command
+  local server_url="$1" remote_command
   remote_command="$(cat <<'EOF'
 set -eu
 IFS= read -r server_url || exit 1
-EMBY_SERVER_URL="${server_url}" python3 - <<'PYEOF'
+EMBY_STATE_SERVER_URL="${server_url}" python3 - <<'PYEOF'
 import glob
 import json
 import os
@@ -576,7 +565,7 @@ if os.path.basename(paths[0]) != expected_name:
     raise SystemExit(0)
 
 request = urllib.request.Request(
-    os.environ["EMBY_SERVER_URL"].rstrip("/") + "/System/Info",
+    os.environ["EMBY_STATE_SERVER_URL"].rstrip("/") + "/System/Info",
     headers={"X-Emby-Token": token, "Accept": "application/json"})
 try:
     with urllib.request.urlopen(request, timeout=10) as response:
@@ -608,7 +597,7 @@ sys.stdout.write("configured\n")
 PYEOF
 EOF
 )"
-  printf '%s\n' "${EMBY_SERVER_URL}" \
+  printf '%s\n' "${server_url}" \
     | coreelec_ssh_command "${remote_command}"
 }
 
@@ -618,6 +607,7 @@ coreelec_postdeploy_emby_fail() {
 }
 
 assist_emby_login() {
+  local server_url="${1:-}" username="${2:-}" password="${3:-}"
   local pinned_version state launch_response attempts attempt interval_seconds
   local pre_notification_window pre_notification_control
   local gui_input_sent=0 add_server_selected=0 manual_server_selected=0
@@ -637,16 +627,16 @@ assist_emby_login() {
     coreelec_postdeploy_emby_fail "locale-mismatch"
     return 0
   fi
-  if [[ -z "${EMBY_SERVER_URL:-}" || -z "${EMBY_USERNAME:-}" ]]; then
+  if [[ -z "${server_url}" || -z "${username}" ]]; then
     coreelec_postdeploy_emby_fail "not-configured"
     return 0
   fi
-  if ! coreelec_prepare_emby_password; then
+  if [[ -z "${password}" ]]; then
     coreelec_postdeploy_emby_fail "password-required"
     return 0
   fi
 
-  state="$(coreelec_postdeploy_emby_state 2>/dev/null || true)"
+  state="$(coreelec_postdeploy_emby_state "${server_url}" 2>/dev/null || true)"
   case "${state}" in
     configured)
       coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
@@ -689,7 +679,7 @@ assist_emby_login() {
   interval_seconds="$(coreelec_postdeploy_guided_poll_interval_seconds)"
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     if (( signin_selected == 1 )); then
-      state="$(coreelec_postdeploy_emby_state 2>/dev/null || true)"
+      state="$(coreelec_postdeploy_emby_state "${server_url}" 2>/dev/null || true)"
       case "${state}" in
         configured)
           coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
@@ -758,7 +748,7 @@ assist_emby_login() {
           return 0
         fi
         coreelec_postdeploy_send_text_if_expected \
-          "Manage servers" "Host" "${EMBY_SERVER_URL}" || {
+          "Manage servers" "Host" "${server_url}" || {
             coreelec_postdeploy_emby_fail "unexpected-dialog"
             return 0
           }
@@ -771,7 +761,7 @@ assist_emby_login() {
           return 0
         fi
         coreelec_postdeploy_send_text_if_expected \
-          "Please sign in" "Username" "${EMBY_USERNAME}" || {
+          "Please sign in" "Username" "${username}" || {
             coreelec_postdeploy_emby_fail "unexpected-dialog"
             return 0
           }
@@ -784,7 +774,7 @@ assist_emby_login() {
           return 0
         fi
         coreelec_postdeploy_send_text_if_expected \
-          "Please sign in" "Password" "${EMBY_PASSWORD}" || {
+          "Please sign in" "Password" "${password}" || {
             coreelec_postdeploy_emby_fail "unexpected-dialog"
             return 0
           }
@@ -845,12 +835,6 @@ coreelec_postdeploy_weather_ready() {
 coreelec_postdeploy_nextpvr_ready() {
   [[ -n "${NEXTPVR_HOST:-}" && -n "${NEXTPVR_PORT:-}" \
      && -n "${NEXTPVR_PROTOCOL:-}" && -n "${NEXTPVR_PIN:-}" ]]
-}
-
-coreelec_postdeploy_pm4k_local_ready() {
-  [[ -n "${PLEX_SERVER_HOST:-}" && -n "${PLEX_SERVER_PORT:-}" \
-     && -n "${PLEX_SERVER_NAME:-}" && -n "${PLEX_PROFILE_IDS:-}" \
-     && -n "${PLEX_TOKEN:-}" ]]
 }
 
 coreelec_postdeploy_observe() {
@@ -1315,114 +1299,6 @@ check_nextpvr() {
   printf 'configured\n'
 }
 
-check_pm4k_local() {
-  local identity_response identity_transport identity_status identity_body machine_id
-  local root_response root_transport root_status root_body root_name kodi_response
-  if ! coreelec_postdeploy_pm4k_local_ready; then
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "not-configured"
-    printf 'skipped\n'
-    return 0
-  fi
-
-  identity_response="$(
-    coreelec_postdeploy_http_request \
-      "GET" \
-      "http://${PLEX_SERVER_HOST}:${PLEX_SERVER_PORT}/identity" \
-      '{"Accept":"application/json"}'
-  )"
-  identity_transport="$(coreelec_postdeploy_http_field "${identity_response}" "transport")"
-  identity_status="$(coreelec_postdeploy_http_field "${identity_response}" "http_status")"
-  identity_body="$(coreelec_postdeploy_http_field "${identity_response}" "body")"
-  coreelec_postdeploy_observe "service.script.plexmod.identity_http_status" "${identity_status}"
-  if [[ "${identity_transport}" != "ok" ]]; then
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "transport"
-    printf 'failed\n'
-    return 0
-  fi
-  case "${identity_status}" in
-    401|403)
-      coreelec_postdeploy_observe "service.script.plexmod.failure" "unauthorized"
-      printf 'authorization-required\n'
-      return 0
-      ;;
-    200) ;;
-    *)
-      coreelec_postdeploy_observe "service.script.plexmod.failure" "http-status"
-      printf 'failed\n'
-      return 0
-      ;;
-  esac
-  if ! machine_id="$(coreelec_postdeploy_json_string_field "${identity_body}" "MediaContainer.machineIdentifier" 2>/dev/null)"; then
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "malformed-payload"
-    printf 'failed\n'
-    return 0
-  fi
-
-  root_response="$(
-    coreelec_postdeploy_http_request \
-      "GET" \
-      "http://${PLEX_SERVER_HOST}:${PLEX_SERVER_PORT}/" \
-      "$(PLEX_TOKEN_VALUE="${PLEX_TOKEN:-}" python3 - <<'PYEOF'
-import json
-import os
-import sys
-
-token = os.environ["PLEX_TOKEN_VALUE"]
-sys.stdout.write(json.dumps({
-    "Accept": "application/json",
-    "X-Plex-Token": token,
-}, separators=(",", ":")))
-PYEOF
-)"
-  )"
-  root_transport="$(coreelec_postdeploy_http_field "${root_response}" "transport")"
-  root_status="$(coreelec_postdeploy_http_field "${root_response}" "http_status")"
-  root_body="$(coreelec_postdeploy_http_field "${root_response}" "body")"
-  coreelec_postdeploy_observe "service.script.plexmod.root_http_status" "${root_status}"
-  if [[ "${root_transport}" != "ok" ]]; then
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "transport"
-    printf 'failed\n'
-    return 0
-  fi
-  case "${root_status}" in
-    401|403)
-      coreelec_postdeploy_observe "service.script.plexmod.failure" "unauthorized"
-      printf 'authorization-required\n'
-      return 0
-      ;;
-    200) ;;
-    *)
-      coreelec_postdeploy_observe "service.script.plexmod.failure" "http-status"
-      printf 'failed\n'
-      return 0
-      ;;
-  esac
-  if ! root_name="$(coreelec_postdeploy_json_string_field "${root_body}" "MediaContainer.friendlyName" 2>/dev/null)"; then
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "malformed-payload"
-    printf 'failed\n'
-    return 0
-  fi
-  if [[ "${root_name}" != "${PLEX_SERVER_NAME}" ]]; then
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "identity-mismatch"
-    printf 'failed\n'
-    return 0
-  fi
-  coreelec_postdeploy_observe "service.script.plexmod.identity_machine_id" "${machine_id}"
-
-  kodi_response="$(kodi_rpc "Addons.ExecuteAddon" '{"addonid":"script.plexmod"}')" || {
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "transport"
-    printf 'failed\n'
-    return 0
-  }
-  if ! coreelec_postdeploy_kodi_call_ok "${kodi_response}"; then
-    coreelec_postdeploy_observe "service.script.plexmod.failure" "kodi-rpc"
-    printf 'failed\n'
-    return 0
-  fi
-  coreelec_postdeploy_observe "service.script.plexmod.kodi_execute" "ok"
-  printf 'configured\n'
-}
-
 run_addon_workflow() {
   case "$1" in
     weather.ha)
@@ -1440,20 +1316,14 @@ run_addon_workflow() {
       fi
       ;;
     script.plexmod)
-      if coreelec_postdeploy_pm4k_local_ready; then
-        check_pm4k_local
-      elif [[ "${INTERACTIVE:-0}" == "1" ]]; then
+      if [[ "${INTERACTIVE:-0}" == "1" ]]; then
         authorize_pm4k_account
       else
         printf 'authorization-required\n'
       fi
       ;;
     plugin.service.emby-next-gen)
-      if [[ "${INTERACTIVE:-0}" == "1" ]]; then
-        assist_emby_login
-      else
-        printf 'authorization-required\n'
-      fi
+      printf 'authorization-required\n'
       ;;
     *)
       die "No post-deployment workflow is defined for add-on: $1"

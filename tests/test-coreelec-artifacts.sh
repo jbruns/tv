@@ -1974,7 +1974,7 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
   # inventory block that the Task 6 fixtures deliberately skip.
   for name in coreelec_report_path coreelec_manifest_contains \
     coreelec_weather_configured coreelec_nextpvr_configured \
-    coreelec_plex_configured coreelec_secret_names coreelec_secret_value \
+    coreelec_secret_names coreelec_secret_value \
     coreelec_config_fingerprint coreelec_report_manual_actions \
     coreelec_report_render coreelec_report_redaction_check \
     coreelec_write_report_file coreelec_remote_inventory write_audit_report; do
@@ -2015,10 +2015,6 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
   NEXTPVR_PORT=""
   NEXTPVR_PROTOCOL=""
   NEXTPVR_INSTANCE_NAME=""
-  PLEX_SERVER_HOST=""
-  PLEX_SERVER_PORT=""
-  PLEX_SERVER_NAME=""
-  PLEX_PROFILE_IDS=""
   ADDON_ARTIFACTS=()
   mkdir -p "${ARTIFACT_STAGE_DIR}"
   printf '1\tscript.plexmod\t1.14.1-beta1\t1.zip\n' > "${ARTIFACT_STAGE_DIR}/deploy.tsv"

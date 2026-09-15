@@ -47,15 +47,19 @@ test_env_loader_sources_and_exports_shared_values() {
   env_file="${dir}/.env"
   cat > "${env_file}" <<'ENV'
 KODI_WEB_PASSWORD='value with spaces # and symbols'
+HOME_ASSISTANT_URL='https://homeassistant.example.lan:8123'
+NEXTPVR_HOST='nextpvr.example.lan'
 ENV
 
   output="$(
     coreelec_env_load "${env_file}"
-    sh -c 'printf "%s" "${KODI_WEB_PASSWORD}"'
+    sh -c 'printf "%s|%s|%s" "${KODI_WEB_PASSWORD}" "${HOME_ASSISTANT_URL}" "${NEXTPVR_HOST}"'
   )"
 
-  assert_eq "value with spaces # and symbols" "${output}" \
-    "the shared environment value is sourced and exported to child tools"
+  assert_eq \
+    "value with spaces # and symbols|https://homeassistant.example.lan:8123|nextpvr.example.lan" \
+    "${output}" \
+    "the shared environment values are sourced and exported to child tools"
 }
 
 test_env_loader_preserves_existing_allexport_mode() {
@@ -107,6 +111,23 @@ test_env_loader_does_not_fall_back_to_ambient_secrets() {
   assert_eq "" "${KODI_WEB_PASSWORD}" "the shared file is the authoritative secret source"
 }
 
+test_env_loader_does_not_import_removed_service_credentials() {
+  local dir env_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  env_file="${dir}/.env"
+  cat > "${env_file}" <<'ENV'
+PLEX_TOKEN='removed-plex-token'
+EMBY_PASSWORD='removed-emby-password'
+ENV
+  unset PLEX_TOKEN EMBY_PASSWORD
+
+  coreelec_env_load "${env_file}"
+
+  assert_eq "" "${PLEX_TOKEN:-}" "the removed Plex token is not imported" || return 1
+  assert_eq "" "${EMBY_PASSWORD:-}" "the removed Emby password is not imported"
+}
+
 test_secret_consuming_entry_points_require_the_shared_environment_file() {
   local dir script output rc
   dir="$(make_scratch_dir)"
@@ -156,5 +177,6 @@ run_all_tests \
   test_env_loader_preserves_existing_allexport_mode \
   test_env_loader_does_not_override_non_secret_script_state \
   test_env_loader_does_not_fall_back_to_ambient_secrets \
+  test_env_loader_does_not_import_removed_service_credentials \
   test_secret_consuming_entry_points_require_the_shared_environment_file \
   test_addon_cli_loads_the_repository_environment_file

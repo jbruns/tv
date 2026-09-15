@@ -42,22 +42,15 @@ ADDON_UPDATE_MODE=notify
 CONFIG
 }
 
-# The same baseline plus every optional integration's non-secret half. The
-# secret half arrives from the environment, exactly as in production.
+# The same baseline plus every optional integration's non-secret half.
 write_configured_config() {
   write_base_config "$1"
   cat >> "$1" <<'CONFIG'
-HOME_ASSISTANT_URL=https://homeassistant.example.lan:8123
 HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
 HOME_ASSISTANT_SUN_ENTITY=sun.sun
-NEXTPVR_HOST=nextpvr.example.lan
 NEXTPVR_PORT=8866
 NEXTPVR_PROTOCOL=http
 NEXTPVR_INSTANCE_NAME=Living Room NextPVR
-PLEX_SERVER_HOST=plex.example.lan
-PLEX_SERVER_PORT=32400
-PLEX_SERVER_NAME=Basement Plex
-PLEX_PROFILE_IDS=11,22
 CONFIG
 }
 
@@ -328,13 +321,17 @@ set_observation() {
 # Runs the host-side comparator over a fixture observation set.
 run_verify() {
   local config="$1" observations="$2" manifest="$3"
-  bash "${PROVISIONER}" --config "${config}" \
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" \
     --verify-fixture "${observations}" "${manifest}"
 }
 
 run_classify() {
   local config="$1" addon_id="$2"
-  bash "${PROVISIONER}" --config "${config}" --classify-addon "${addon_id}"
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --classify-addon "${addon_id}"
 }
 
 # Renders a full report through the production writer, minus the remote
@@ -342,7 +339,9 @@ run_classify() {
 run_report() {
   local config="$1" directory="$2" observations="$3" manifest="$4"
   local reachable="${5:-unknown}"
-  bash "${PROVISIONER}" --config "${config}" \
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" \
     --report-fixture "${directory}" "${observations}" "${manifest}" "${reachable}"
 }
 
@@ -351,7 +350,9 @@ run_report() {
 run_conclude() {
   local config="$1" observations="$2" manifest="$3"
   local finalize_status="$4" rollback_status="$5" log="$6"
-  bash "${PROVISIONER}" --config "${config}" \
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" \
     --conclude-fixture "${observations}" "${manifest}" \
     "${finalize_status}" "${rollback_status}" "${log}"
 }
@@ -920,7 +921,7 @@ test_emby_is_classified_manual() {
     "Emby always needs interactive server/user login" || return 1
 }
 
-test_configured_nextpvr_ha_and_pm4k_are_classified_configured() {
+test_configured_nextpvr_and_ha_are_classified_configured() {
   local dir config
   dir="$(make_scratch_dir)"
   trap 'rm -rf "${dir}"' RETURN
@@ -933,9 +934,9 @@ test_configured_nextpvr_ha_and_pm4k_are_classified_configured() {
   assert_eq "configured" \
     "$(HOME_ASSISTANT_TOKEN=ha-token run_classify "${config}" weather.ha)" \
     "Home Assistant Weather with URL, entity and token is configured" || return 1
-  assert_eq "configured" \
-    "$(PLEX_TOKEN=plex-token run_classify "${config}" script.plexmod)" \
-    "PM4K local mode with host and token is configured" || return 1
+  assert_eq "installed-manual" \
+    "$(run_classify "${config}" script.plexmod)" \
+    "PM4K always requires interactive Plex account linking" || return 1
   assert_eq "configured" \
     "$(OMDB_API_KEY=omdb MDBLIST_API_KEY=mdblist run_classify "${config}" plugin.video.themoviedb.helper)" \
     "TMDb Helper with both metadata keys is configured" || return 1
@@ -954,14 +955,14 @@ test_missing_optional_values_are_classified_unconfigured() {
 
   # No secrets and no service settings at all.
   write_base_config "${config}"
-  for addon_id in pvr.nextpvr weather.ha script.plexmod plugin.video.themoviedb.helper; do
+  for addon_id in pvr.nextpvr weather.ha plugin.video.themoviedb.helper; do
     assert_eq "installed-unconfigured" "$(run_classify "${config}" "${addon_id}")" \
       "${addon_id} without configuration is unconfigured" || return 1
   done
 
   # Non-secret halves present, secret halves missing: still unconfigured.
   write_configured_config "${config}"
-  for addon_id in pvr.nextpvr weather.ha script.plexmod; do
+  for addon_id in pvr.nextpvr weather.ha; do
     assert_eq "installed-unconfigured" "$(run_classify "${config}" "${addon_id}")" \
       "${addon_id} without its secret is unconfigured" || return 1
   done
@@ -1135,15 +1136,15 @@ test_report_lists_manual_actions_in_order() {
 
   # Configured integrations drop out; the always-manual ones remain.
   write_configured_config "${config}"
-  report="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=nextpvr-pin-value PLEX_TOKEN=plex-token-value \
+  report="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=nextpvr-pin-value \
     run_report "${config}" "${dir}/out2" "${observations}" "${manifest}")"
   actions="$(grep '^manual_action\.' "${report}")"
   assert_contains "${actions}" "manual_action.1=Emby" "Emby stays manual" || return 1
-  assert_not_contains "${actions}" "=Plex" "configured PM4K needs no manual Plex step" || return 1
+  assert_contains "${actions}" "manual_action.2=Plex" "Plex linking stays manual" || return 1
   assert_not_contains "${actions}" "=NextPVR" "configured NextPVR needs no manual step" || return 1
   assert_not_contains "${actions}" "=Home Assistant Weather" \
     "configured weather needs no manual step" || return 1
-  assert_eq "1" "$(report_line "${report}" manual_actions)" \
+  assert_eq "2" "$(report_line "${report}" manual_actions)" \
     "manual action numbering stays contiguous" || return 1
 }
 
@@ -3176,7 +3177,7 @@ run_all_tests \
   test_english_us_values_are_verified \
   test_selected_subset_verifies_only_the_selected_addons \
   test_emby_is_classified_manual \
-  test_configured_nextpvr_ha_and_pm4k_are_classified_configured \
+  test_configured_nextpvr_and_ha_are_classified_configured \
   test_missing_optional_values_are_classified_unconfigured \
   test_report_lists_secret_presence_without_secret_values \
   test_audit_report_records_cec_ignore_without_adapter_filename \

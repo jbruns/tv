@@ -378,9 +378,9 @@ test_help_lists_supported_addons_and_interaction_levels() {
   output="$(bash "${CLI_SCRIPT}" --help)"
   assert_contains "${output}" "Supported post-deployment add-ons:" "help lists supported add-ons" || return 1
   assert_contains "${output}" "weather.ha                 fully-unattended" "weather.ha interaction level" || return 1
-  assert_contains "${output}" "script.plexmod             fully-unattended / guided (--interactive)" \
+  assert_contains "${output}" "script.plexmod             guided (--interactive)" \
     "Plex interaction level" || return 1
-  assert_contains "${output}" "plugin.service.emby-next-gen guided (--interactive)" "Emby interaction level" || return 1
+  assert_contains "${output}" "plugin.service.emby-next-gen manual" "Emby interaction level" || return 1
 }
 
 test_kodi_password_must_come_from_shared_environment() {
@@ -409,9 +409,9 @@ assert_dry_run_makes_no_ssh_calls() (
     weather.ha pvr.nextpvr script.plexmod plugin.service.emby-next-gen
   write_shared_env_file "${env_file}" \
     'KODI_WEB_PASSWORD=dry-run-kodi-secret' \
+    'HOME_ASSISTANT_URL=https://ha.example.test' \
     'HOME_ASSISTANT_TOKEN=dry-run-home-assistant-secret'
   cat >> "${config}" <<'CONFIG'
-HOME_ASSISTANT_URL=https://ha.example.test
 HOME_ASSISTANT_WEATHER_ENTITY=weather.forecast_home
 CONFIG
   bin_dir="$(install_ssh_stub "${dir}")"
@@ -561,6 +561,28 @@ test_default_run_never_starts_account_authorization() {
   assert_not_contains "${output}" "Input.ExecuteAction" "default run never attempts guided input" || return 1
 }
 
+test_removed_service_inputs_never_enable_automated_login_paths() {
+  local output
+
+  INTERACTIVE="0"
+  PLEX_SERVER_HOST="plex.example.lan"
+  PLEX_SERVER_PORT="32400"
+  PLEX_SERVER_NAME="Basement Plex"
+  PLEX_PROFILE_IDS="11,22"
+  PLEX_TOKEN="removed-plex-token"
+  output="$(run_addon_workflow script.plexmod)"
+  assert_eq "authorization-required" "${output}" \
+    "Plex always requires account linking when interactive guidance is disabled" || return 1
+
+  INTERACTIVE="1"
+  EMBY_SERVER_URL="https://emby.example.test"
+  EMBY_USERNAME="media-user"
+  EMBY_PASSWORD="removed-emby-password"
+  output="$(run_addon_workflow plugin.service.emby-next-gen)"
+  assert_eq "authorization-required" "${output}" \
+    "Emby always defers server selection and sign-in to the add-on UI"
+}
+
 test_requested_addon_must_be_in_the_pinned_manifest() {
   local dir config env_file output rc
   dir="$(make_scratch_dir)"
@@ -653,19 +675,15 @@ test_every_remote_script_is_one_ssh_argument() {
   KODI_PORT="8080"
   KODI_USER="homeassistant"
   KODI_WEB_PASSWORD="kodi-web-password-secret"
-  EMBY_SERVER_URL="https://emby.example.test"
-
   COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
     kodi_rpc "JSONRPC.Introspect" '{"getdescriptions":false,"getmetadata":false}' >/dev/null
   COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
     coreelec_postdeploy_read_addon_data_file "script.plexmod" "settings.xml" >/dev/null
   COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
-    coreelec_postdeploy_emby_state >/dev/null
-  COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
     coreelec_postdeploy_http_request "GET" "https://service.example.test/status" '{}' >/dev/null
 
-  assert_eq "4" "$(ssh_call_count "${dir}")" "all four SSH transport paths were exercised" || return 1
-  for call in 1 2 3 4; do
+  assert_eq "3" "$(ssh_call_count "${dir}")" "all supported SSH transport paths were exercised" || return 1
+  for call in 1 2 3; do
     assert_single_remote_script_argument "${dir}" "${call}" "coreelec-theater" || return 1
   done
 }
@@ -1610,6 +1628,7 @@ run_all_tests \
   test_interactive_dry_run_makes_zero_ssh_calls \
   test_report_creation_uses_private_umask_before_chmod \
   test_default_run_never_starts_account_authorization \
+  test_removed_service_inputs_never_enable_automated_login_paths \
   test_requested_addon_must_be_in_the_pinned_manifest \
   test_introspection_rejects_a_missing_required_method \
   test_introspection_requires_addons_getaddondetails \
@@ -1631,14 +1650,8 @@ run_all_tests \
   test_weather_check_reports_unauthorized_without_echoing_token \
   test_nextpvr_check_uses_the_configured_protocol_host_port_and_pin \
   test_nextpvr_check_requires_a_successful_session_login \
-  test_pm4k_local_check_requires_identity_and_token_authorized_root \
-  test_pm4k_local_check_skips_when_local_configuration_is_absent \
-  test_service_checks_do_not_modify_addon_settings \
   test_pm4k_launch_uses_addons_executeaddon \
   test_pm4k_selects_sign_in_only_when_expected_control_is_focused \
   test_guided_flow_times_out_as_manual_required \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
-  test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
-  test_emby_password_never_appears_in_argv_log_or_report \
-  test_emby_assistant_does_not_act_on_an_unchanged_pre_notification_dialog \
-  test_emby_assistant_stops_on_each_unexpected_dialog
+  test_guided_flow_refuses_addon_version_mismatch_before_private_steps

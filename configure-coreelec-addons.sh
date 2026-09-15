@@ -61,15 +61,15 @@ Options:
 Supported post-deployment add-ons:
   weather.ha                 fully-unattended
   pvr.nextpvr                fully-unattended
-  script.plexmod             fully-unattended / guided (--interactive)
-  plugin.service.emby-next-gen guided (--interactive)
+  script.plexmod             guided (--interactive)
+  plugin.service.emby-next-gen manual
 
-The default run performs non-interactive checks only. Use --interactive
-before any PM4K account or Emby GUI workflow.
+The default run performs non-interactive checks only. Use --interactive for
+guided PM4K account linking. Emby server selection and sign-in remain manual.
 This command sources shared secrets from the repository-root .env file.
-It does not write Home Assistant, NextPVR, or PM4K local-mode
-settings. Supply those values to provision-coreelec.sh first, then use this
-command to validate them. See config/README.md for the complete input matrix.
+It does not write Home Assistant or NextPVR settings. Supply those values to
+provision-coreelec.sh first, then use this command to validate them. See
+config/README.md for the complete input matrix.
 Dry-run makes zero SSH/device calls and transmits no secrets, including when
 combined with --interactive.
 USAGE
@@ -179,21 +179,6 @@ EOF
   (( selected_any == 1 )) || die "No supported pinned add-ons were selected for post-deployment configuration"
 }
 
-prepare_interactive_secrets() {
-  local addon_id
-  [[ "${INTERACTIVE}" == "1" ]] || return 0
-  [[ "${DRY_RUN}" != "1" ]] || return 0
-  [[ -n "${EMBY_SERVER_URL:-}" && -n "${EMBY_USERNAME:-}" ]] || return 0
-  while IFS= read -r addon_id; do
-    if [[ "${addon_id}" == "plugin.service.emby-next-gen" ]]; then
-      coreelec_prepare_emby_password || true
-      return 0
-    fi
-  done <<EOF
-$(coreelec_postdeploy_selected_addons)
-EOF
-}
-
 selected_addons_csv() {
   local addon_id output=""
   while IFS= read -r addon_id; do
@@ -273,7 +258,6 @@ main() {
   [[ -n "${TARGET}" ]] || die "--target is required"
   coreelec_config_validate
   validate_selected_addons
-  prepare_interactive_secrets
 
   if [[ "${DRY_RUN}" != "1" ]]; then
     coreelec_prepare_kodi_web_password

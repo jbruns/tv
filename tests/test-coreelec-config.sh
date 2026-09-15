@@ -160,6 +160,51 @@ test_kodi_password_in_config_is_rejected_as_a_secret() {
   assert_not_contains "${output}" "super-secret-value" "error must not leak the password"
 }
 
+test_service_locations_in_config_are_rejected_as_secrets() {
+  local dir file key value rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+
+  for key in HOME_ASSISTANT_URL NEXTPVR_HOST; do
+    case "${key}" in
+      HOME_ASSISTANT_URL) value="https://homeassistant.example.lan:8123" ;;
+      NEXTPVR_HOST) value="nextpvr.example.lan" ;;
+    esac
+    printf '%s=%s\n' "${key}" "${value}" > "${file}"
+    coreelec_config_defaults
+    set +e
+    output="$(coreelec_config_load "${file}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "${key} in config must be rejected" || return 1
+    assert_contains "${output}" "${key}" "error names ${key}" || return 1
+    assert_contains "${output}" "secret" "error identifies the shared secret boundary" || return 1
+    assert_not_contains "${output}" "${value}" "error must not leak ${key}" || return 1
+  done
+}
+
+test_removed_local_service_inputs_are_unknown() {
+  local dir file key rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+
+  for key in \
+    PLEX_SERVER_HOST PLEX_SERVER_PORT PLEX_SERVER_NAME PLEX_PROFILE_IDS \
+    PLEX_TOKEN EMBY_SERVER_URL EMBY_USERNAME EMBY_ALLOW_LOCAL_HTTP EMBY_PASSWORD; do
+    printf '%s=removed-value\n' "${key}" > "${file}"
+    coreelec_config_defaults
+    set +e
+    output="$(coreelec_config_load "${file}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "${key} must no longer be accepted" || return 1
+    assert_contains "${output}" "unknown configuration key: ${key}" \
+      "${key} is outside the supported input contract" || return 1
+  done
+}
+
 test_cli_value_overrides_config_value() {
   local dir file
   dir="$(make_scratch_dir)"
@@ -198,6 +243,28 @@ test_service_secret_without_endpoint_is_rejected() {
   assert_failure "${rc}" "NEXTPVR_PIN without NEXTPVR_HOST must be rejected"
   assert_contains "${output}" "NEXTPVR_HOST" "error names the required companion value"
   assert_not_contains "${output}" "1234" "error must not leak the secret value"
+}
+
+test_service_location_secrets_are_validated() {
+  local rc output
+
+  coreelec_config_defaults
+  set +e
+  output="$(HOME_ASSISTANT_URL="not-a-url" coreelec_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an invalid Home Assistant URL must be rejected" || return 1
+  assert_contains "${output}" "HOME_ASSISTANT_URL" "the invalid URL is identified" || return 1
+  assert_not_contains "${output}" "not-a-url" "the secret URL value is not echoed" || return 1
+
+  coreelec_config_defaults
+  set +e
+  output="$(NEXTPVR_HOST='bad host' coreelec_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an invalid NextPVR host must be rejected" || return 1
+  assert_contains "${output}" "NEXTPVR_HOST" "the invalid host is identified" || return 1
+  assert_not_contains "${output}" "bad host" "the secret host value is not echoed"
 }
 
 test_missing_optional_secrets_are_allowed() {
@@ -604,15 +671,15 @@ run_all_tests \
   test_shell_syntax_is_data_not_executed \
   test_secret_key_in_config_is_rejected \
   test_kodi_password_in_config_is_rejected_as_a_secret \
+  test_service_locations_in_config_are_rejected_as_secrets \
+  test_removed_local_service_inputs_are_unknown \
   test_cli_value_overrides_config_value \
   test_target_is_not_loaded_from_shared_config \
   test_service_secret_without_endpoint_is_rejected \
+  test_service_location_secrets_are_validated \
   test_missing_optional_secrets_are_allowed \
   test_kodi_baseline_requires_password_from_shared_environment \
-  test_emby_url_requires_https_unless_local_http_is_explicitly_allowed \
   test_private_ipv4_validation_does_not_expand_pathnames \
-  test_emby_password_requires_server_and_username \
-  test_emby_password_is_rejected_in_config \
   test_production_config_sets_pacific_english_us_baseline \
   test_production_config_carries_no_secret_values \
   test_production_config_locks_primary_addon_versions \
