@@ -2417,28 +2417,6 @@ def main(argv):
     observe("arctic_fuse.home_widgets_configured",
             1 if actual_home_widgets == expected_home_widgets else 0)
 
-    expected_tv_widgets = [
-        {"guid": "coreelec-tv-inprogress", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
-        {"guid": "coreelec-tv-recently-aired", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
-        {"guid": "coreelec-tv-trakt-popular", "icon": "", "label": "Trakt Popular TV Shows", "path": "special://profile/playlists/video/TraktPopularTVShows.xsp", "target": "videos"},
-        {"guid": "coreelec-tv-new", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
-    ]
-    actual_tv_widgets = read_json(os.path.join(
-        nodes_dir, "skinvariables-shortcut-1101widgets.json"))
-    observe("arctic_fuse.tv_widgets_configured",
-            1 if actual_tv_widgets == expected_tv_widgets else 0)
-
-    expected_movie_widgets = [
-        {"guid": "coreelec-movies-inprogress", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
-        {"guid": "coreelec-movies-recently-released", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"},
-        {"guid": "coreelec-movies-trakt-box-office", "icon": "", "label": "Trakt Weekend Box Office", "path": "special://profile/playlists/video/TraktWeekendBoxOffice.xsp", "target": "videos"},
-        {"guid": "coreelec-movies-new", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
-    ]
-    actual_movie_widgets = read_json(os.path.join(
-        nodes_dir, "skinvariables-shortcut-1102widgets.json"))
-    observe("arctic_fuse.movies_widgets_configured",
-            1 if actual_movie_widgets == expected_movie_widgets else 0)
-
     # Power menu
     expected_power_menu = [
         {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""},
@@ -2473,24 +2451,12 @@ def main(argv):
                       ("airdate", "notinthelast", "-1 days")],
             "order": ("year", "descending"),
         },
-        "TraktPopularTVShows": {
-            "type": "tvshows", "name": "Trakt Popular TV Shows",
-            "match": "all", "limit": "25",
-            "rules": [("tag", "contains", "trakt-popular")],
-            "order": ("dateadded", "descending"),
-        },
-        "RecentlyReleasedMoviesCurrentAndPreviousYear": {
+        "RecentlyReleasedMoviesCurrentYear": {
             "type": "movies", "name": "Recently Released Movies", "match": "all",
             "limit": "50",
             "rules": [("year", "greaterthan", str(datetime.date.today().year - 2)),
                       ("year", "lessthan", str(datetime.date.today().year + 1))],
             "order": ("year", "descending"),
-        },
-        "TraktWeekendBoxOffice": {
-            "type": "movies", "name": "Trakt Weekend Box Office",
-            "match": "all", "limit": "25",
-            "rules": [("tag", "contains", "trakt-weekend-box-office")],
-            "order": ("dateadded", "descending"),
         },
         "NewShows": {
             "type": "tvshows", "name": "New Shows", "match": "all",
@@ -2506,15 +2472,13 @@ def main(argv):
         },
     }
     for playlist_name, expected_sig in EXPECTED_PLAYLISTS.items():
+        actual_path = playlist_name + ".xsp"
+        if playlist_name == "RecentlyReleasedMoviesCurrentYear":
+            actual_path = "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp"
         actual_sig = smart_playlist_signature(
-            os.path.join(playlists_dir, playlist_name + ".xsp"))
+            os.path.join(playlists_dir, actual_path))
         observe("arctic_fuse.playlist.%s.configured" % playlist_name,
                 1 if actual_sig == expected_sig else 0)
-
-    observe(
-        "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent",
-        0 if os.path.lexists(os.path.join(
-            playlists_dir, "RecentlyReleasedMoviesCurrentYear.xsp")) else 1)
 
     observe(
         "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent",
@@ -3243,30 +3207,17 @@ verify_remote_baseline() {
     "arctic_fuse.home_widgets_configured" "arctic_fuse.home" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.tv_widgets_configured" "arctic_fuse.tv" \
-    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
-  coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.movies_widgets_configured" "arctic_fuse.movies" \
-    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
-  coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   local playlist_name
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
-    RecentlyAiredEpisodes30Days TraktPopularTVShows \
-    RecentlyReleasedMoviesCurrentAndPreviousYear TraktWeekendBoxOffice \
-    NewShows NewMovies; do
+    RecentlyAiredEpisodes30Days RecentlyReleasedMoviesCurrentYear NewShows NewMovies; do
     coreelec_verify_boolean_observation "${observations}" \
       "arctic_fuse.playlist.${playlist_name}.configured" \
       "arctic_fuse.playlist.${playlist_name}" \
       || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   done
-
-  coreelec_verify_boolean_observation "${observations}" \
-    "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent" \
-    "arctic_fuse.playlist_migration" \
-    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent" \

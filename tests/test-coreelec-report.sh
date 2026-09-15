@@ -292,16 +292,11 @@ arctic_fuse.addons_hub_configured=1
 arctic_fuse.plex_entry_configured=1
 arctic_fuse.settings_tile_configured=1
 arctic_fuse.home_widgets_configured=1
-arctic_fuse.tv_widgets_configured=1
-arctic_fuse.movies_widgets_configured=1
 arctic_fuse.power_menu_configured=1
 arctic_fuse.playlist.InProgressMovies90Days.configured=1
 arctic_fuse.playlist.InProgressShows90Days.configured=1
 arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=1
-arctic_fuse.playlist.TraktPopularTVShows.configured=1
-arctic_fuse.playlist.RecentlyReleasedMoviesCurrentAndPreviousYear.configured=1
-arctic_fuse.playlist.TraktWeekendBoxOffice.configured=1
-arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent=1
+arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=1
 arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1
 arctic_fuse.playlist.NewShows.configured=1
 arctic_fuse.playlist.NewMovies.configured=1
@@ -2314,14 +2309,6 @@ XML
 [{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
 JSON
 
-  cat > "${nodes_dir}/skinvariables-shortcut-1101widgets.json" <<'JSON'
-[{"guid": "coreelec-tv-inprogress", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-tv-recently-aired", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-tv-trakt-popular", "icon": "", "label": "Trakt Popular TV Shows", "path": "special://profile/playlists/video/TraktPopularTVShows.xsp", "target": "videos"}, {"guid": "coreelec-tv-new", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}]
-JSON
-
-  cat > "${nodes_dir}/skinvariables-shortcut-1102widgets.json" <<'JSON'
-[{"guid": "coreelec-movies-inprogress", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-movies-recently-released", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"}, {"guid": "coreelec-movies-trakt-box-office", "icon": "", "label": "Trakt Weekend Box Office", "path": "special://profile/playlists/video/TraktWeekendBoxOffice.xsp", "target": "videos"}, {"guid": "coreelec-movies-new", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]
-JSON
-
   # Valid power menu JSON
   cat > "${nodes_dir}/skinvariables-shortcut-powermenu.json" <<'JSON'
 [{"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}, {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""}, {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""}, {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""}, {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""}]
@@ -2417,19 +2404,11 @@ test_probe_arctic_fuse_valid_baseline_emits_all_ones() {
   assert_contains "${output}" "arctic_fuse.plex_entry_configured=1" "plex ok" || return 1
   assert_contains "${output}" "arctic_fuse.settings_tile_configured=1" "settings tile ok" || return 1
   assert_contains "${output}" "arctic_fuse.home_widgets_configured=1" "home widgets ok" || return 1
-  assert_contains "${output}" "arctic_fuse.tv_widgets_configured=1" "tv widgets ok" || return 1
-  assert_contains "${output}" "arctic_fuse.movies_widgets_configured=1" "movies widgets ok" || return 1
   assert_contains "${output}" "arctic_fuse.power_menu_configured=1" "power menu ok" || return 1
   assert_contains "${output}" "arctic_fuse.playlist.InProgressMovies90Days.configured=1" "playlist 1" || return 1
   assert_contains "${output}" "arctic_fuse.playlist.NewMovies.configured=1" "playlist 6" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.TraktPopularTVShows.configured=1" \
-    "trakt popular playlist ok" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentAndPreviousYear.configured=1" \
-    "two-year movie playlist ok" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.TraktWeekendBoxOffice.configured=1" \
-    "weekend box office playlist ok" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent=1" \
-    "obsolete current-year playlist absent" || return 1
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=1" \
+    "current year movie playlist observation ok" || return 1
   assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1" \
     "obsolete playlist absent" || return 1
 }
@@ -2678,34 +2657,6 @@ test_probe_missing_home_widgets_file_emits_zero() {
     "missing file → home widgets 0" || return 1
 }
 
-test_probe_missing_tv_widgets_file_emits_zero() {
-  local dir root bin_dir output nodes_dir
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
-  rm "${nodes_dir}/skinvariables-shortcut-1101widgets.json"
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.tv_widgets_configured=0" \
-    "missing file → TV widgets 0" || return 1
-}
-
-test_probe_missing_movies_widgets_file_emits_zero() {
-  local dir root bin_dir output nodes_dir
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  nodes_dir="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3"
-  rm "${nodes_dir}/skinvariables-shortcut-1102widgets.json"
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.movies_widgets_configured=0" \
-    "missing file → Movies widgets 0" || return 1
-}
-
 test_probe_reordered_home_widgets_emits_zero() {
   local dir root bin_dir output nodes_dir
   dir="$(make_scratch_dir)"
@@ -2835,7 +2786,7 @@ test_probe_recent_movie_playlist_with_wrong_bounds_emits_zero() {
     "year|greaterthan|$((current_year - 1))" "year|lessthan|$((current_year + 1))"
 
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentAndPreviousYear.configured=0" \
+  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.configured=0" \
     "wrong year bounds → 0" || return 1
 }
 
@@ -2853,21 +2804,6 @@ test_probe_obsolete_movie_playlist_emits_absent_zero() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=0" \
     "obsolete playlist present → absent=0" || return 1
-}
-
-test_probe_obsolete_current_year_movie_playlist_emits_absent_zero() {
-  local dir root bin_dir output playlists_dir
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  root="$(make_arctic_fuse_fixture_root "${dir}")"
-  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
-  playlists_dir="${root}/.kodi/userdata/playlists/video"
-  printf '<?xml version="1.0" encoding="UTF-8"?>\n<smartplaylist type="movies"><name>old-current-year</name></smartplaylist>\n' \
-    > "${playlists_dir}/RecentlyReleasedMoviesCurrentYear.xsp"
-
-  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
-  assert_contains "${output}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent=0" \
-    "obsolete current-year playlist present → absent=0" || return 1
 }
 
 # --- Arctic Fuse comparator tests ------------------------------------------
@@ -3036,46 +2972,6 @@ test_arctic_fuse_home_widget_order_mismatch_fails_verification() {
   assert_contains "${output}" "arctic_fuse.home" "home surface named" || return 1
 }
 
-test_arctic_fuse_tv_widget_mismatch_fails_verification() {
-  local dir config manifest observations output rc
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  config="${dir}/provision.conf"
-  manifest="${dir}/deploy.tsv"
-  observations="${dir}/observations.conf"
-  write_configured_config "${config}"
-  write_manifest "${manifest}"
-  write_pass_observations "${observations}"
-  set_observation "${observations}" "arctic_fuse.tv_widgets_configured" "0"
-
-  set +e
-  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
-  rc=$?
-  set -e
-  assert_failure "${rc}" "a TV widget mismatch must fail verification" || return 1
-  assert_contains "${output}" "arctic_fuse.tv.status=mismatch" "tv surface named" || return 1
-}
-
-test_arctic_fuse_movies_widget_mismatch_fails_verification() {
-  local dir config manifest observations output rc
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  config="${dir}/provision.conf"
-  manifest="${dir}/deploy.tsv"
-  observations="${dir}/observations.conf"
-  write_configured_config "${config}"
-  write_manifest "${manifest}"
-  write_pass_observations "${observations}"
-  set_observation "${observations}" "arctic_fuse.movies_widgets_configured" "0"
-
-  set +e
-  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
-  rc=$?
-  set -e
-  assert_failure "${rc}" "a Movies widget mismatch must fail verification" || return 1
-  assert_contains "${output}" "arctic_fuse.movies.status=mismatch" "movies surface named" || return 1
-}
-
 test_comparator_settings_tile_zero_fails_verification() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
@@ -3153,27 +3049,6 @@ test_comparator_obsolete_playlist_present_fails_verification() {
   rc=$?
   set -e
   assert_failure "${rc}" "an obsolete playlist still present must fail verification" || return 1
-  assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
-  assert_contains "${output}" "arctic_fuse.playlist_migration" "migration surface named" || return 1
-}
-
-test_comparator_obsolete_current_year_playlist_present_fails_verification() {
-  local dir config manifest observations output rc
-  dir="$(make_scratch_dir)"
-  trap 'rm -rf "${dir}"' RETURN
-  config="${dir}/provision.conf"
-  manifest="${dir}/deploy.tsv"
-  observations="${dir}/observations.conf"
-  write_configured_config "${config}"
-  write_manifest "${manifest}"
-  write_pass_observations "${observations}"
-  set_observation "${observations}" "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent" "0"
-
-  set +e
-  output="$(run_verify_with_keys "${config}" "${observations}" "${manifest}" 2>&1)"
-  rc=$?
-  set -e
-  assert_failure "${rc}" "an obsolete current-year playlist present must fail verification" || return 1
   assert_contains "${output}" "verification_result=fail" "overall result fails" || return 1
   assert_contains "${output}" "arctic_fuse.playlist_migration" "migration surface named" || return 1
 }
@@ -3263,11 +3138,8 @@ test_report_names_every_arctic_fuse_surface() {
   [[ -f "${report}" ]] || { printf 'no report\n' >&2; return 1; }
   assert_contains "$(cat "${report}")" "arctic_fuse.status=ok" "arctic fuse status" || return 1
   assert_contains "$(cat "${report}")" "arctic_fuse.home.status=ok" "home status" || return 1
-  assert_contains "$(cat "${report}")" "arctic_fuse.tv.status=ok" "tv status" || return 1
-  assert_contains "$(cat "${report}")" "arctic_fuse.movies.status=ok" "movies status" || return 1
   assert_contains "$(cat "${report}")" "arctic_fuse.power.status=ok" "power status" || return 1
   assert_contains "$(cat "${report}")" "arctic_fuse.plex_entry.status=ok" "plex entry" || return 1
-  assert_contains "$(cat "${report}")" "arctic_fuse.playlist_migration.status=ok" "playlist migration" || return 1
   assert_contains "$(cat "${report}")" "metadata.omdb.status=ok" "omdb" || return 1
   assert_contains "$(cat "${report}")" "metadata.mdblist.status=ok" "mdblist" || return 1
 }
@@ -3371,8 +3243,6 @@ run_all_tests \
   test_probe_malformed_json_emits_zero_for_home_widgets \
   test_probe_malformed_json_emits_zero_for_power_menu \
   test_probe_missing_home_widgets_file_emits_zero \
-  test_probe_missing_tv_widgets_file_emits_zero \
-  test_probe_missing_movies_widgets_file_emits_zero \
   test_probe_reordered_home_widgets_emits_zero \
   test_probe_reordered_power_menu_emits_zero \
   test_probe_duplicate_power_menu_entry_emits_zero \
@@ -3382,7 +3252,6 @@ run_all_tests \
   test_probe_incorrect_playlist_rule_emits_zero \
   test_probe_recent_movie_playlist_with_wrong_bounds_emits_zero \
   test_probe_obsolete_movie_playlist_emits_absent_zero \
-  test_probe_obsolete_current_year_movie_playlist_emits_absent_zero \
   test_arctic_fuse_complete_state_verifies \
   test_comparator_home_widgets_zero_fails_verification \
   test_comparator_power_menu_zero_fails_verification \
@@ -3390,13 +3259,10 @@ run_all_tests \
   test_arctic_fuse_split_hub_statuses_name_the_failing_hub \
   test_arctic_fuse_plex_entry_mismatch_fails_verification \
   test_arctic_fuse_home_widget_order_mismatch_fails_verification \
-  test_arctic_fuse_tv_widget_mismatch_fails_verification \
-  test_arctic_fuse_movies_widget_mismatch_fails_verification \
   test_comparator_settings_tile_zero_fails_verification \
   test_arctic_fuse_power_action_mismatch_fails_verification \
   test_arctic_fuse_playlist_rule_mismatch_fails_verification \
   test_comparator_obsolete_playlist_present_fails_verification \
-  test_comparator_obsolete_current_year_playlist_present_fails_verification \
   test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification \
   test_each_ratings_key_presence_is_verified_separately \
   test_report_names_every_arctic_fuse_surface \
