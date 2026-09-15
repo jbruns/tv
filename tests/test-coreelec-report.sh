@@ -3625,6 +3625,10 @@ test_report_names_every_arctic_fuse_surface() {
   done
   assert_contains "${contents}" "metadata.omdb.status=ok" "omdb" || return 1
   assert_contains "${contents}" "metadata.mdblist.status=ok" "mdblist" || return 1
+  assert_eq "41" "$(printf '%s\n' "${contents}" | grep -c '^deployed_addon\.')" \
+    "the report inventories every locked deployed artifact" || return 1
+  assert_contains "${contents}" "deployed_addon.resource.uisounds.fromashes=3.0.01" \
+    "the report includes From Ashes in the generic deployed-add-on inventory" || return 1
 }
 
 test_report_never_contains_ratings_key_values_or_managed_file_contents() {

@@ -61,6 +61,54 @@ build_valid_fixture_zip() {
   build_zip_from_manifest "${zip_path}" "${manifest_file}"
 }
 
+# The reviewed deployment manifest the provisioner resolves before upload:
+# index, add-on ID, pinned version, uploaded archive name.
+write_manifest() {
+  cat > "$1" <<'MANIFEST'
+1	skin.arctic.fuse.3	3.2.16	1.zip
+2	weather.ha	0.0.6.6	2.zip
+3	pvr.nextpvr	21.3.2.1	3.zip
+4	script.plexmod	1.14.1-beta1	4.zip
+5	resource.uisounds.fromashes	3.0.01	5.zip
+6	plugin.service.emby-next-gen	11.1.27	6.zip
+7	plugin.video.themoviedb.helper	6.17.1	7.zip
+8	resource.language.en_us	11.0.82	8.zip
+9	repository.emby.kodi	1.0.8	9.zip
+10	repository.dontpanic	0.2.10	10.zip
+11	repository.jurialmunkey	3.4	11.zip
+12	script.artistslideshow	4.2.0	12.zip
+13	resource.images.arctic.waves	0.0.2	13.zip
+14	resource.images.weatherfanart.multi	0.0.6	14.zip
+15	resource.images.moviecountryicons.maps	0.0.1	15.zip
+16	resource.images.studios.white	0.0.34	16.zip
+18	inputstream.adaptive	21.5.24.1	18.zip
+19	inputstream.ffmpegdirect	21.3.8.1	19.zip
+20	resource.font.robotocjksc	0.0.3	20.zip
+21	resource.images.studios.coloured	0.0.24	21.zip
+22	resource.images.weathericons.white	0.0.6	22.zip
+23	script.module.addon.signals	0.0.6+matrix.1	23.zip
+24	script.module.certifi	2023.5.7	24.zip
+25	script.module.chardet	5.1.0	25.zip
+26	script.module.defusedxml	0.6.0+matrix.1	26.zip
+27	script.module.dateutil	2.8.2	27.zip
+28	script.module.future	1.0.0+matrix.1	28.zip
+29	script.module.idna	3.10.0	29.zip
+30	script.module.infotagger	0.0.9	30.zip
+31	script.module.inputstreamhelper	0.8.5	31.zip
+32	script.module.iso8601	2.0.0	32.zip
+33	script.module.jurialmunkey	0.2.35	33.zip
+34	script.module.kodi-six	0.1.3.1	34.zip
+35	script.module.pysocks	1.7.0+matrix.1	35.zip
+36	script.module.qrcode	6.1.0+matrix.3	36.zip
+37	script.module.requests	2.31.0	37.zip
+38	script.module.six	1.16.0+matrix.1	38.zip
+39	script.module.urllib3	2.2.3	39.zip
+40	script.module.yaml	6.0.1	40.zip
+41	script.skinvariables	2.2.2	41.zip
+42	script.texturemaker	0.2.11	42.zip
+MANIFEST
+}
+
 # Installs a fake `curl` ahead of the real one on PATH that ignores the
 # requested URL and copies a pre-built fixture ZIP to the requested --output
 # path. This lets the download-and-validate pipeline be exercised
@@ -2017,7 +2065,7 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
   NEXTPVR_INSTANCE_NAME=""
   ADDON_ARTIFACTS=()
   mkdir -p "${ARTIFACT_STAGE_DIR}"
-  printf '1\tscript.plexmod\t1.14.1-beta1\t1.zip\n' > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  write_manifest "${ARTIFACT_STAGE_DIR}/deploy.tsv"
   DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
 
   report="$(write_audit_report)"
@@ -2030,7 +2078,7 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
     case "${line}" in
       *=*)
         case "${line%%=*}" in
-          ""|*[!A-Za-z0-9_.]*)
+          ""|*[!A-Za-z0-9_.-]*)
             printf 'report key is not a plain identifier: %s\n' "${line}" >&2
             return 1
             ;;
@@ -2050,8 +2098,12 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
     "the report records the deployment state"
   assert_contains "${body}" "requested_addons=all-locked-artifacts" \
     "a default run records that the whole lock was selected"
-  assert_contains "${body}" "deployed_addon.script.plexmod=1.14.1-beta1" \
-    "each deployed add-on is one key=value line"
+  assert_eq "41" "$(printf '%s\n' "${body}" | grep -c '^deployed_addon\.')" \
+    "the report inventories every locked deployed artifact"
+  assert_contains "${body}" "deployed_addon.resource.uisounds.fromashes=3.0.01" \
+    "the generic deployed-add-on inventory includes From Ashes"
+  assert_contains "${body}" "deployed_addon.script.texturemaker=0.2.11" \
+    "the generic deployed-add-on inventory reaches the end of the lock"
 }
 
 # The managed skin paths added by Task 3 (skin settings, skinvariables nodes,
@@ -2061,7 +2113,12 @@ test_the_audit_report_is_key_value_and_names_the_pending_transaction() {
 # transformer fails mid-run, using the same forced-failure pattern as the
 # existing guisettings rollback test.
 test_automatic_rollback_restores_skin_managed_paths() {
-  local dir root bin_dir rc output home_json playlist_path old_playlist old_playlist_content
+  local dir root bin_dir rc output
+  local tv_widgets_path tv_widgets_content
+  local movie_widgets_path
+  local trakt_playlist_path
+  local current_year_playlist current_year_playlist_content
+  local old_playlist old_playlist_content
 
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
@@ -2070,13 +2127,16 @@ test_automatic_rollback_restores_skin_managed_paths() {
   export REMOTE_CALL_LOG="${dir}/remote-calls.log"
   : > "${REMOTE_CALL_LOG}"
 
-  # Pre-seed a managed home widgets JSON that rollback must restore.
-  home_json="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
-  mkdir -p "$(dirname "${home_json}")"
-  printf '[{"guid":"old-widget"}]\n' > "${home_json}"
-
-  # The NewMovies.xsp playlist does not exist yet; rollback must remove it.
-  playlist_path="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+  tv_widgets_path="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json"
+  tv_widgets_content='[{"guid":"old-tv-widget"}]'
+  movie_widgets_path="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json"
+  trakt_playlist_path="${root}/.kodi/userdata/playlists/video/TraktPopularTVShows.xsp"
+  current_year_playlist="${root}/.kodi/userdata/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp"
+  current_year_playlist_content='<?xml version="1.0"?><smartplaylist type="movies"><name>current-year</name></smartplaylist>'
+  mkdir -p "$(dirname "${tv_widgets_path}")"
+  printf '%s\n' "${tv_widgets_content}" > "${tv_widgets_path}"
+  mkdir -p "$(dirname "${current_year_playlist}")"
+  printf '%s\n' "${current_year_playlist_content}" > "${current_year_playlist}"
 
   # Pre-seed the obsolete movie playlist; rollback must restore its exact content.
   old_playlist="${root}/.kodi/userdata/playlists/video/RecentlyReleasedMovies90Days.xsp"
@@ -2097,14 +2157,29 @@ test_automatic_rollback_restores_skin_managed_paths() {
   assert_failure "${rc}" "a transformer failure must fail the transaction"
 
   # A pre-existing managed file must be restored from the backup.
-  assert_eq '[{"guid":"old-widget"}]' "$(cat "${home_json}")" \
-    "the pre-existing home widgets JSON is restored by the rollback"
-
-  # A newly created managed file must be removed by the rollback.
-  if [ -e "${playlist_path}" ]; then
-    printf 'a newly created playlist must not survive the automatic rollback\n' >&2
+  if [ ! -f "${tv_widgets_path}" ]; then
+    printf 'the pre-existing TV widgets JSON was not restored by rollback\n' >&2
     return 1
   fi
+  assert_eq "${tv_widgets_content}" "$(cat "${tv_widgets_path}")" \
+    "the pre-existing TV widgets JSON is restored byte-for-byte by the rollback"
+
+  # A newly created managed file must be removed by the rollback.
+  if [ -e "${movie_widgets_path}" ]; then
+    printf 'a newly created movie widgets JSON must not survive the automatic rollback\n' >&2
+    return 1
+  fi
+  if [ -e "${trakt_playlist_path}" ]; then
+    printf 'a newly created Trakt playlist must not survive the automatic rollback\n' >&2
+    return 1
+  fi
+
+  if [ ! -f "${current_year_playlist}" ]; then
+    printf 'the removed current-year movie playlist was not restored by rollback\n' >&2
+    return 1
+  fi
+  assert_eq "${current_year_playlist_content}" "$(cat "${current_year_playlist}")" \
+    "the removed current-year movie playlist is restored byte-for-byte by the rollback"
 
   # The obsolete playlist that the transformer deleted must be restored.
   assert_eq "${old_playlist_content}" "$(cat "${old_playlist}")" \
