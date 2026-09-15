@@ -1426,7 +1426,7 @@ test_arctic_fuse_home_widgets_are_exact_and_ordered() {
   home_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-homewidgets.json")"
   [[ -f "${home_json}" ]] || { printf 'home widgets JSON not found\n' >&2; return 1; }
 
-  expected='[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]'
+  expected='[{"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"}, {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}, {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]'
   actual="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.load(open(sys.argv[1])),sort_keys=False))' "${home_json}")"
   assert_eq "${expected}" "${actual}" "home widgets JSON content"
 
@@ -1440,6 +1440,28 @@ test_arctic_fuse_home_widgets_are_exact_and_ordered() {
   assert_not_contains "${raw}" "File manager" "no File manager in home"
   assert_not_contains "${raw}" "Hibernate" "no Hibernate in home"
   assert_not_contains "${raw}" "rebootfromnand" "no rebootfromnand in home"
+}
+
+test_arctic_fuse_hub_widgets_are_exact_and_ordered() {
+  local dir root payload tv_json movies_json expected actual
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  tv_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-1101widgets.json")"
+  [[ -f "${tv_json}" ]] || { printf 'TV widgets JSON not found\n' >&2; return 1; }
+  expected='[{"guid": "coreelec-tv-inprogress", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"}, {"guid": "coreelec-tv-recently-aired", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"}, {"guid": "coreelec-tv-trakt-popular", "icon": "", "label": "Trakt Popular TV Shows", "path": "special://profile/playlists/video/TraktPopularTVShows.xsp", "target": "videos"}, {"guid": "coreelec-tv-new", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"}]'
+  actual="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.load(open(sys.argv[1])),sort_keys=False))' "${tv_json}")"
+  assert_eq "${expected}" "${actual}" "TV widgets JSON content"
+
+  movies_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-1102widgets.json")"
+  [[ -f "${movies_json}" ]] || { printf 'Movies widgets JSON not found\n' >&2; return 1; }
+  expected='[{"guid": "coreelec-movies-inprogress", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"}, {"guid": "coreelec-movies-recently-released", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"}, {"guid": "coreelec-movies-trakt-box-office", "icon": "", "label": "Trakt Weekend Box Office", "path": "special://profile/playlists/video/TraktWeekendBoxOffice.xsp", "target": "videos"}, {"guid": "coreelec-movies-new", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"}]'
+  actual="$(python3 -c 'import json,sys; sys.stdout.write(json.dumps(json.load(open(sys.argv[1])),sort_keys=False))' "${movies_json}")"
+  assert_eq "${expected}" "${actual}" "Movies widgets JSON content"
 }
 
 test_arctic_fuse_power_menu_is_coreelec_appropriate() {
@@ -1469,7 +1491,7 @@ test_arctic_fuse_power_menu_is_coreelec_appropriate() {
 }
 
 test_arctic_fuse_smart_playlists_have_exact_rules() {
-  local dir root payload summary
+  local dir root payload summary current_year lower_bound upper_bound expected_recent
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
@@ -1496,13 +1518,28 @@ test_arctic_fuse_smart_playlists_have_exact_rules() {
     "${summary}" \
     "Recently Aired Shows exact XSP"
 
-  # RecentlyReleasedMoviesCurrentYear.xsp
-  current_year="$(python3 -c 'import datetime; print(datetime.date.today().year)')"
-  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" RecentlyReleasedMoviesCurrentYear.xsp)")"
+  # TraktPopularTVShows.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" TraktPopularTVShows.xsp)")"
   assert_eq \
-    "$(printf '{"limit":"50","match":"all","name":"Recently Released Movies","order":["year","descending"],"rules":[["year","is","%s"]],"type":"movies"}' "${current_year}")" \
+    '{"limit":"25","match":"all","name":"Trakt Popular TV Shows","order":["dateadded","descending"],"rules":[["tag","contains","trakt-popular"]],"type":"tvshows"}' \
     "${summary}" \
+    "Trakt Popular TV Shows exact XSP"
+
+  # RecentlyReleasedMoviesCurrentAndPreviousYear.xsp
+  current_year="$(python3 -c 'import datetime; print(datetime.date.today().year)')"
+  lower_bound="$((current_year - 2))"
+  upper_bound="$((current_year + 1))"
+  expected_recent="$(printf '{"limit":"50","match":"all","name":"Recently Released Movies","order":["year","descending"],"rules":[["year","greaterthan","%s"],["year","lessthan","%s"]],"type":"movies"}' "${lower_bound}" "${upper_bound}")"
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" RecentlyReleasedMoviesCurrentAndPreviousYear.xsp)")"
+  assert_eq "${expected_recent}" "${summary}" \
     "Recently Released Movies exact XSP"
+
+  # TraktWeekendBoxOffice.xsp
+  summary="$(smart_playlist_summary "$(video_playlist_path "${root}" TraktWeekendBoxOffice.xsp)")"
+  assert_eq \
+    '{"limit":"25","match":"all","name":"Trakt Weekend Box Office","order":["dateadded","descending"],"rules":[["tag","contains","trakt-weekend-box-office"]],"type":"movies"}' \
+    "${summary}" \
+    "Trakt Weekend Box Office exact XSP"
 
   # NewShows.xsp
   summary="$(smart_playlist_summary "$(video_playlist_path "${root}" NewShows.xsp)")"
@@ -1516,7 +1553,7 @@ test_arctic_fuse_smart_playlists_have_exact_rules() {
 }
 
 test_arctic_fuse_managed_files_are_private_and_primary_profile_only() {
-  local dir root payload skin_file home_json power_json
+  local dir root payload skin_file home_json tv_json movies_json power_json
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
@@ -1531,13 +1568,20 @@ test_arctic_fuse_managed_files_are_private_and_primary_profile_only() {
   home_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-homewidgets.json")"
   assert_eq "600" "$(file_mode "${home_json}")" "home widgets mode"
 
+  tv_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-1101widgets.json")"
+  assert_eq "600" "$(file_mode "${tv_json}")" "TV widgets mode"
+
+  movies_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-1102widgets.json")"
+  assert_eq "600" "$(file_mode "${movies_json}")" "Movies widgets mode"
+
   power_json="$(skinvariables_node_path "${root}" "skinvariables-shortcut-powermenu.json")"
   assert_eq "600" "$(file_mode "${power_json}")" "power menu mode"
 
   local xsp
   for xsp in InProgressMovies90Days.xsp InProgressShows90Days.xsp \
-    RecentlyAiredEpisodes30Days.xsp RecentlyReleasedMoviesCurrentYear.xsp \
-    NewShows.xsp NewMovies.xsp; do
+    RecentlyAiredEpisodes30Days.xsp TraktPopularTVShows.xsp \
+    RecentlyReleasedMoviesCurrentAndPreviousYear.xsp \
+    TraktWeekendBoxOffice.xsp NewShows.xsp NewMovies.xsp; do
     assert_eq "600" "$(file_mode "$(video_playlist_path "${root}" "${xsp}")")" "${xsp} mode"
   done
 
@@ -1568,6 +1612,10 @@ test_arctic_fuse_convergence_preserves_unmanaged_skinvariables_nodes() {
   write_base_payload "${payload}"
   run_transform "${root}" "${payload}" >/dev/null
 
+  [[ -f "$(skinvariables_node_path "${root}" "skinvariables-shortcut-1101widgets.json")" ]] \
+    || { printf 'TV widgets JSON not found\n' >&2; return 1; }
+  [[ -f "$(skinvariables_node_path "${root}" "skinvariables-shortcut-1102widgets.json")" ]] \
+    || { printf 'Movies widgets JSON not found\n' >&2; return 1; }
   assert_eq '{"unmanaged": true}' "$(cat "${sibling_path}")" "unmanaged sibling unchanged"
 }
 
@@ -1596,13 +1644,17 @@ test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
   run_transform "${root}" "${payload}" >/dev/null
 
   # Check that coreelec_managed_settings_paths_block lists the skin settings,
-  # both node JSON files, and all six XSP files.
+  # every managed node JSON file, new playlists, and removed migration paths.
   managed_output="$(bash "${PROVISIONER}" --emit-remote-script backup "${root}")"
 
   assert_contains "${managed_output}" ".kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml" \
     "skin settings in managed paths"
   assert_contains "${managed_output}" "skinvariables-shortcut-homewidgets.json" \
     "home widgets in managed paths"
+  assert_contains "${managed_output}" "skinvariables-shortcut-1101widgets.json" \
+    "TV widgets in managed paths"
+  assert_contains "${managed_output}" "skinvariables-shortcut-1102widgets.json" \
+    "Movies widgets in managed paths"
   assert_contains "${managed_output}" "skinvariables-shortcut-powermenu.json" \
     "power menu in managed paths"
   assert_contains "${managed_output}" "InProgressMovies90Days.xsp" "IPM in managed paths"
@@ -1610,6 +1662,10 @@ test_arctic_fuse_managed_paths_are_listed_in_backup_block() {
   assert_contains "${managed_output}" "RecentlyAiredEpisodes30Days.xsp" "RAE in managed paths"
   assert_contains "${managed_output}" "RecentlyReleasedMovies90Days.xsp" "RRM90 in managed paths"
   assert_contains "${managed_output}" "RecentlyReleasedMoviesCurrentYear.xsp" "RRMCY in managed paths"
+  assert_contains "${managed_output}" "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp" \
+    "RRMCAPY in managed paths"
+  assert_contains "${managed_output}" "TraktPopularTVShows.xsp" "TPTS in managed paths"
+  assert_contains "${managed_output}" "TraktWeekendBoxOffice.xsp" "TWBO in managed paths"
   assert_contains "${managed_output}" "NewShows.xsp" "NS in managed paths"
   assert_contains "${managed_output}" "NewMovies.xsp" "NM in managed paths"
 }
@@ -1678,42 +1734,50 @@ XML
 }
 
 test_arctic_fuse_failed_write_cleans_temporary_files() {
-  local dir root payload output status
+  local dir payload root output status blocked_path case_name
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
-  root="${dir}/storage"
   payload="${dir}/payload.conf"
   write_base_payload "${payload}"
 
-  # Pre-create a managed skin file that will be backed up
-  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
-  printf '<settings><setting id="pre-existing">value</setting></settings>\n' \
-    > "$(skin_settings_path "${root}")"
+  while IFS='|' read -r case_name blocked_path; do
+    root="${dir}/${case_name}/storage"
 
-  # Create a directory where a playlist file belongs, forcing rename to fail
-  mkdir -p "$(video_playlist_path "${root}" InProgressMovies90Days.xsp)"
+    mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+    printf '<settings><setting id="pre-existing">value</setting></settings>\n' \
+      > "$(skin_settings_path "${root}")"
+    mkdir -p "${blocked_path}"
 
-  set +e
-  output="$(run_transform "${root}" "${payload}" 2>&1)"
-  status=$?
-  set -e
+    set +e
+    output="$(run_transform "${root}" "${payload}" 2>&1)"
+    status=$?
+    set -e
 
-  assert_failure "${status}" "the blocked write must fail"
-  assert_eq "" "$(orphan_temp_files "${root}")" "no temp files left behind"
+    assert_failure "${status}" "the blocked write must fail for ${case_name}: ${output}"
+    assert_eq "" "$(orphan_temp_files "${root}")" "no temp files left behind for ${case_name}"
+  done <<EOF
+tv-widgets|$(skinvariables_node_path "${dir}/tv-widgets/storage" "skinvariables-shortcut-1101widgets.json")
+movies-widgets|$(skinvariables_node_path "${dir}/movies-widgets/storage" "skinvariables-shortcut-1102widgets.json")
+trakt-popular|$(video_playlist_path "${dir}/trakt-popular/storage" TraktPopularTVShows.xsp)
+recent-movies|$(video_playlist_path "${dir}/recent-movies/storage" RecentlyReleasedMoviesCurrentAndPreviousYear.xsp)
+trakt-box-office|$(video_playlist_path "${dir}/trakt-box-office/storage" TraktWeekendBoxOffice.xsp)
+EOF
 }
 
-test_arctic_fuse_replaces_obsolete_recently_released_playlist() {
-  local dir root payload old_playlist new_playlist unrelated written
+test_arctic_fuse_replaces_obsolete_recently_released_playlists() {
+  local dir root payload old_current_year old_rolling new_playlist unrelated written
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="${dir}/storage"
   payload="${dir}/payload.conf"
   write_base_payload "${payload}"
 
-  old_playlist="$(video_playlist_path "${root}" RecentlyReleasedMovies90Days.xsp)"
-  new_playlist="$(video_playlist_path "${root}" RecentlyReleasedMoviesCurrentYear.xsp)"
-  mkdir -p "$(dirname "${old_playlist}")"
-  printf 'obsolete managed content\n' > "${old_playlist}"
+  old_current_year="$(video_playlist_path "${root}" RecentlyReleasedMoviesCurrentYear.xsp)"
+  old_rolling="$(video_playlist_path "${root}" RecentlyReleasedMovies90Days.xsp)"
+  new_playlist="$(video_playlist_path "${root}" RecentlyReleasedMoviesCurrentAndPreviousYear.xsp)"
+  mkdir -p "$(dirname "${old_current_year}")"
+  printf 'obsolete current-year managed content\n' > "${old_current_year}"
+  printf 'obsolete rolling managed content\n' > "${old_rolling}"
 
   # An unrelated playlist beside these files must survive unchanged.
   unrelated="$(video_playlist_path "${root}" UnrelatedPlaylist.xsp)"
@@ -1721,16 +1785,22 @@ test_arctic_fuse_replaces_obsolete_recently_released_playlist() {
 
   written="$(run_transform "${root}" "${payload}")"
 
-  [[ ! -e "${old_playlist}" ]] || {
-    printf 'obsolete movie playlist still exists\n' >&2
+  [[ ! -e "${old_current_year}" ]] || {
+    printf 'obsolete current-year movie playlist still exists\n' >&2
+    return 1
+  }
+  [[ ! -e "${old_rolling}" ]] || {
+    printf 'obsolete rolling movie playlist still exists\n' >&2
     return 1
   }
   [[ -f "${new_playlist}" ]] || {
-    printf 'current-year movie playlist was not created\n' >&2
+    printf 'current-and-previous-year movie playlist was not created\n' >&2
     return 1
   }
-  assert_contains "${written}" "${old_playlist}" \
-    "obsolete playlist deletion is recorded for rollback"
+  assert_contains "${written}" "${old_current_year}" \
+    "obsolete current-year playlist deletion is recorded for rollback"
+  assert_contains "${written}" "${old_rolling}" \
+    "obsolete rolling playlist deletion is recorded for rollback"
   assert_contains "${written}" "${new_playlist}" \
     "replacement playlist write is recorded for rollback"
 
@@ -1775,6 +1845,7 @@ run_all_tests \
   test_arctic_fuse_managed_settings_are_promoted_to_root_nodes \
   test_arctic_fuse_deeply_nested_managed_settings_are_promoted_to_root_nodes \
   test_arctic_fuse_home_widgets_are_exact_and_ordered \
+  test_arctic_fuse_hub_widgets_are_exact_and_ordered \
   test_arctic_fuse_power_menu_is_coreelec_appropriate \
   test_arctic_fuse_smart_playlists_have_exact_rules \
   test_arctic_fuse_managed_files_are_private_and_primary_profile_only \
@@ -1782,5 +1853,5 @@ run_all_tests \
   test_arctic_fuse_second_run_is_byte_identical \
   test_arctic_fuse_managed_settings_carry_type_string \
   test_arctic_fuse_managed_paths_are_listed_in_backup_block \
-  test_arctic_fuse_replaces_obsolete_recently_released_playlist \
+  test_arctic_fuse_replaces_obsolete_recently_released_playlists \
   test_arctic_fuse_failed_write_cleans_temporary_files

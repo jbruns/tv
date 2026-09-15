@@ -767,13 +767,33 @@ def main(argv):
         {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
-        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
     ]
     write_json_atomic(os.path.join(nodes_dir,
                                    "skinvariables-shortcut-homewidgets.json"),
                       home_widgets)
+
+    tv_widgets = [
+        {"guid": "coreelec-tv-inprogress", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-recently-aired", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-trakt-popular", "icon": "", "label": "Trakt Popular TV Shows", "path": "special://profile/playlists/video/TraktPopularTVShows.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-new", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
+    ]
+    write_json_atomic(os.path.join(nodes_dir,
+                                   "skinvariables-shortcut-1101widgets.json"),
+                      tv_widgets)
+
+    movie_widgets = [
+        {"guid": "coreelec-movies-inprogress", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-recently-released", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-trakt-box-office", "icon": "", "label": "Trakt Weekend Box Office", "path": "special://profile/playlists/video/TraktWeekendBoxOffice.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-new", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
+    ]
+    write_json_atomic(os.path.join(nodes_dir,
+                                   "skinvariables-shortcut-1102widgets.json"),
+                      movie_widgets)
 
     power_menu = [
         {"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""},
@@ -815,6 +835,8 @@ def main(argv):
         os.unlink(path)
         WRITTEN_PATHS.append(path)
 
+    current_year = datetime.date.today().year
+
     write_smart_playlist(
         os.path.join(playlists_dir, "InProgressMovies90Days.xsp"),
         "In-Progress Movies", "movies",
@@ -836,11 +858,27 @@ def main(argv):
 
     remove_managed_file(
         os.path.join(playlists_dir, "RecentlyReleasedMovies90Days.xsp"))
+    remove_managed_file(
+        os.path.join(playlists_dir, "RecentlyReleasedMoviesCurrentYear.xsp"))
     write_smart_playlist(
-        os.path.join(playlists_dir, "RecentlyReleasedMoviesCurrentYear.xsp"),
+        os.path.join(playlists_dir,
+                     "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp"),
         "Recently Released Movies", "movies",
-        [("year", "is", str(datetime.date.today().year))],
+        [("year", "greaterthan", str(current_year - 2)),
+         ("year", "lessthan", str(current_year + 1))],
         ("year", "descending"))
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "TraktPopularTVShows.xsp"),
+        "Trakt Popular TV Shows", "tvshows",
+        [("tag", "contains", "trakt-popular")],
+        ("dateadded", "descending"), limit=25)
+
+    write_smart_playlist(
+        os.path.join(playlists_dir, "TraktWeekendBoxOffice.xsp"),
+        "Trakt Weekend Box Office", "movies",
+        [("tag", "contains", "trakt-weekend-box-office")],
+        ("dateadded", "descending"), limit=25)
 
     write_smart_playlist(
         os.path.join(playlists_dir, "NewShows.xsp"),
@@ -900,12 +938,17 @@ managed_settings_paths() {
 .kodi/userdata/addon_data/weather.ha/settings.xml
 .kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json
+.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json
+.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json
 .kodi/userdata/playlists/video/InProgressMovies90Days.xsp
 .kodi/userdata/playlists/video/InProgressShows90Days.xsp
 .kodi/userdata/playlists/video/RecentlyAiredEpisodes30Days.xsp
 .kodi/userdata/playlists/video/RecentlyReleasedMovies90Days.xsp
 .kodi/userdata/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp
+.kodi/userdata/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp
+.kodi/userdata/playlists/video/TraktPopularTVShows.xsp
+.kodi/userdata/playlists/video/TraktWeekendBoxOffice.xsp
 .kodi/userdata/playlists/video/NewShows.xsp
 .kodi/userdata/playlists/video/NewMovies.xsp
 MANAGED_SETTINGS_PATHS
@@ -2340,15 +2383,18 @@ def main(argv):
     observe("arctic_fuse.hubs_configured",
             1 if (pvr_hub_ok and addons_hub_ok) else 0)
 
-    # Plex entry (1101)
+    # Plex entry (1103)
     plex_ok = (
-        managed_setting_is("HomeSwitcher.1101.Name", "Plex")
+        managed_setting_is("HomeSwitcher.1103.Name", "Plex")
         and managed_setting_is(
-            "HomeSwitcher.1101.Icon",
+            "HomeSwitcher.1103.Icon",
             "special://home/addons/script.plexmod/icon2.png")
         and managed_setting_is(
-            "HomeSwitcher.1101.Shortcut.Path", "RunAddon(script.plexmod)")
-        and managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Target")
+            "HomeSwitcher.1103.Shortcut.Path", "RunAddon(script.plexmod)")
+        and managed_setting_is_unset("HomeSwitcher.1103.Shortcut.Target")
+        and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Label")
+        and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Path")
+        and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Target")
     )
     observe("arctic_fuse.plex_entry_configured", 1 if plex_ok else 0)
 
@@ -2362,7 +2408,7 @@ def main(argv):
         {"guid": "coreelec-home-inprogress-movies", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-inprogress-shows", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
         {"guid": "coreelec-home-recently-aired-shows", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
-        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp", "target": "videos"},
+        {"guid": "coreelec-home-recently-released-movies", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-shows", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
         {"guid": "coreelec-home-new-movies", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
     ]
@@ -2370,6 +2416,28 @@ def main(argv):
         nodes_dir, "skinvariables-shortcut-homewidgets.json"))
     observe("arctic_fuse.home_widgets_configured",
             1 if actual_home_widgets == expected_home_widgets else 0)
+
+    expected_tv_widgets = [
+        {"guid": "coreelec-tv-inprogress", "icon": "", "label": "In-Progress Shows", "path": "special://profile/playlists/video/InProgressShows90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-recently-aired", "icon": "", "label": "Recently Aired Shows", "path": "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-trakt-popular", "icon": "", "label": "Trakt Popular TV Shows", "path": "special://profile/playlists/video/TraktPopularTVShows.xsp", "target": "videos"},
+        {"guid": "coreelec-tv-new", "icon": "", "label": "New Shows", "path": "special://profile/playlists/video/NewShows.xsp", "target": "videos"},
+    ]
+    actual_tv_widgets = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-1101widgets.json"))
+    observe("arctic_fuse.tv_widgets_configured",
+            1 if actual_tv_widgets == expected_tv_widgets else 0)
+
+    expected_movie_widgets = [
+        {"guid": "coreelec-movies-inprogress", "icon": "", "label": "In-Progress Movies", "path": "special://profile/playlists/video/InProgressMovies90Days.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-recently-released", "icon": "", "label": "Recently Released Movies", "path": "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-trakt-box-office", "icon": "", "label": "Trakt Weekend Box Office", "path": "special://profile/playlists/video/TraktWeekendBoxOffice.xsp", "target": "videos"},
+        {"guid": "coreelec-movies-new", "icon": "", "label": "New Movies", "path": "special://profile/playlists/video/NewMovies.xsp", "target": "videos"},
+    ]
+    actual_movie_widgets = read_json(os.path.join(
+        nodes_dir, "skinvariables-shortcut-1102widgets.json"))
+    observe("arctic_fuse.movies_widgets_configured",
+            1 if actual_movie_widgets == expected_movie_widgets else 0)
 
     # Power menu
     expected_power_menu = [
@@ -2405,11 +2473,24 @@ def main(argv):
                       ("airdate", "notinthelast", "-1 days")],
             "order": ("year", "descending"),
         },
-        "RecentlyReleasedMoviesCurrentYear": {
+        "TraktPopularTVShows": {
+            "type": "tvshows", "name": "Trakt Popular TV Shows",
+            "match": "all", "limit": "25",
+            "rules": [("tag", "contains", "trakt-popular")],
+            "order": ("dateadded", "descending"),
+        },
+        "RecentlyReleasedMoviesCurrentAndPreviousYear": {
             "type": "movies", "name": "Recently Released Movies", "match": "all",
             "limit": "50",
-            "rules": [("year", "is", str(datetime.date.today().year))],
+            "rules": [("year", "greaterthan", str(datetime.date.today().year - 2)),
+                      ("year", "lessthan", str(datetime.date.today().year + 1))],
             "order": ("year", "descending"),
+        },
+        "TraktWeekendBoxOffice": {
+            "type": "movies", "name": "Trakt Weekend Box Office",
+            "match": "all", "limit": "25",
+            "rules": [("tag", "contains", "trakt-weekend-box-office")],
+            "order": ("dateadded", "descending"),
         },
         "NewShows": {
             "type": "tvshows", "name": "New Shows", "match": "all",
@@ -2429,6 +2510,11 @@ def main(argv):
             os.path.join(playlists_dir, playlist_name + ".xsp"))
         observe("arctic_fuse.playlist.%s.configured" % playlist_name,
                 1 if actual_sig == expected_sig else 0)
+
+    observe(
+        "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent",
+        0 if os.path.lexists(os.path.join(
+            playlists_dir, "RecentlyReleasedMoviesCurrentYear.xsp")) else 1)
 
     observe(
         "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent",
@@ -3157,17 +3243,30 @@ verify_remote_baseline() {
     "arctic_fuse.home_widgets_configured" "arctic_fuse.home" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.tv_widgets_configured" "arctic_fuse.tv" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.movies_widgets_configured" "arctic_fuse.movies" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   local playlist_name
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
-    RecentlyAiredEpisodes30Days RecentlyReleasedMoviesCurrentYear NewShows NewMovies; do
+    RecentlyAiredEpisodes30Days TraktPopularTVShows \
+    RecentlyReleasedMoviesCurrentAndPreviousYear TraktWeekendBoxOffice \
+    NewShows NewMovies; do
     coreelec_verify_boolean_observation "${observations}" \
       "arctic_fuse.playlist.${playlist_name}.configured" \
       "arctic_fuse.playlist.${playlist_name}" \
       || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   done
+
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.playlist.RecentlyReleasedMoviesCurrentYear.absent" \
+    "arctic_fuse.playlist_migration" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent" \

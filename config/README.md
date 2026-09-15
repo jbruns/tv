@@ -134,7 +134,12 @@ The shared baseline manages the following Arctic Fuse state:
   ID, with other case variants removed before verification.
 - `RecentlyAiredEpisodes30Days.xsp` is the rolling previous 30 days with
   future dates excluded.
-- `RecentlyReleasedMoviesCurrentYear.xsp` uses the device year captured during
-  provisioning and is ordered by year descending.
-- `RecentlyReleasedMovies90Days.xsp` is not written as a managed widget
-  playlist and is removed during provisioning.
+- `skinvariables-shortcut-1101widgets.json` and
+  `skinvariables-shortcut-1102widgets.json` are the native TV and Movies hub
+  widget nodes.
+- `TraktPopularTVShows.xsp` and `TraktWeekendBoxOffice.xsp` are tag-driven
+  playlists whose metadata is owned by Emby/server tags.
+- `RecentlyReleasedMoviesCurrentAndPreviousYear.xsp` uses numeric year bounds
+  for the current and previous calendar years and excludes future years.
+- `RecentlyReleasedMoviesCurrentYear.xsp` and
+  `RecentlyReleasedMovies90Days.xsp` are removed during provisioning.
