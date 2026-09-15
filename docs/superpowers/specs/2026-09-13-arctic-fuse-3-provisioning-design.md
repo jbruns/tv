@@ -2,17 +2,21 @@
 
 ## Status
 
-Approved for implementation planning, but implementation is blocked until the
-separate YouTube-removal work is merged and its effect on provisioning is
-reviewed.
+Approved for implementation planning. The prerequisite YouTube-removal and
+stable Emby changes are merged and reviewed.
 
 ## Context
 
 The previous known-good Kodi profile used Arctic Fuse 2 with focused TV,
 Movies, Music, and Live TV navigation. Current Ugoos provisioning installs
 Arctic Fuse 3 and manages a reliable baseline, but its content navigation is
-limited to a six-widget Home feed, direct Plex and YouTube entries, the
-built-in PVR and Add-ons hubs, and a power menu.
+limited to a six-widget Home feed, a direct Plex entry, the built-in PVR and
+Add-ons hubs, and a power menu.
+
+The merged baseline no longer provisions YouTube. It pins the stable Omega
+Emby repository (`repository.emby.kodi` 1.0.8) and stable Emby Next Gen client
+(`plugin.service.emby-next-gen` 11.1.27). Emby server selection and sign-in
+remain manual because the add-on stores server and user state in its database.
 
 This design restores the useful content discovery behavior through Arctic
 Fuse 3's native hub and widget contracts. It does not import or translate the
@@ -39,22 +43,9 @@ old Arctic Fuse 2 profile.
   favourites, keymaps, or `advancedsettings.xml`.
 - Enabling unknown add-on sources.
 - Proving that Emby has populated the Trakt tags at provisioning time.
-- Retaining YouTube in Kodi provisioning. Its removal is owned by a separate
-  change and is a prerequisite for this work.
+- Reintroducing YouTube in Kodi provisioning.
 - Adding the unused Arctic Fuse 2 Top Rated Unplayed playlist.
 - Restoring the disabled Arctic Fuse 2 Music hub.
-
-## Execution Prerequisite
-
-Implementation must not begin until the separate YouTube-removal change has:
-
-1. merged into the implementation branch;
-2. removed or revised the existing YouTube artifact, settings, workflow, and
-   Home-switcher behavior; and
-3. been reviewed to establish the new baseline that this work will modify.
-
-The implementation plan must be written against that merged baseline rather
-than assuming the current YouTube behavior can simply be overwritten.
 
 ## Navigation Architecture
 
@@ -72,10 +63,11 @@ Provisioning will manage the Arctic Fuse 3 switcher in this order:
 
 Disabled custom slots are represented by an absent toggle. Provisioning will
 remove stale name, icon, shortcut, target, mode, and spotlight settings for
-`1104`. It will also remove stale fields left by the preconditioned YouTube
-configuration wherever the merged YouTube-removal baseline has not already
-done so. It must not write the string `"false"` for a disabled switcher toggle,
-because Arctic Fuse treats any non-empty toggle value as enabled.
+`1104`. Existing devices may still contain values from the formerly managed
+YouTube `1102` entry. The Movies hub owns and normalizes every relevant `1102`
+field, so those values are migration input rather than preserved state. It
+must not write the string `"false"` for a disabled switcher toggle, because
+Arctic Fuse treats any non-empty toggle value as enabled.
 
 ### TV Shows hub
 
@@ -180,8 +172,10 @@ non-regular files cause a failure rather than being unlinked.
 ### Trakt and Emby ownership
 
 Provisioning owns the two Trakt playlist definitions and their widget
-references. Emby owns creation and refresh of the Kodi library tags
-`trakt-popular` and `trakt-weekend-box-office`.
+references. The stable Emby client and server-side library metadata own
+creation and refresh of the Kodi library tags `trakt-popular` and
+`trakt-weekend-box-office`; this design does not alter Emby onboarding or
+persist its database state.
 
 File verification confirms configuration convergence only. It must not report
 that the playlists contain items before an Emby library sync. The redacted
@@ -282,8 +276,7 @@ Tests will cover:
 - exact switcher order and assignments for TV Shows, Movies, Plex, disabled
   `1104`, conditional PVR, and Add-ons;
 - absence-based disable semantics;
-- removal of stale YouTube and custom-slot settings against the merged
-  prerequisite baseline;
+- replacement and normalization of stale YouTube-era `1102` values;
 - TV and Movies widget JSON paths, labels, targets, GUIDs, and ordering;
 - preservation of the six Home widgets;
 - random TV and random movie spotlight settings;
@@ -347,7 +340,7 @@ updated to describe:
 - Trakt/Emby ownership;
 - option tiles and Kodi defaults;
 - the sound dependency and actual artifact count; and
-- the YouTube-removal prerequisite.
+- stable Emby ownership of Trakt-tag population.
 
 ## Backup Exclusion
 
