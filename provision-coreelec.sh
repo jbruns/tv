@@ -1025,19 +1025,45 @@ coreelec_settings_transform_fixture() {
   coreelec_settings_transformer_source | python3 - "${root}" "${payload}"
 }
 
-# Every settings path the transformer may write, relative to the storage root.
-# Emitted as an `sh` function so the backup snapshot and the deployment
-# transaction copy exactly the same set and can never drift apart.
+# Emits component-owned settings paths relative to the storage root. The
+# transaction detects its one required CEC path before enumerating this list;
+# the earlier operational snapshot copies CEC candidates separately. Keeping
+# all fixed paths shared prevents the two backup layers from drifting apart.
 coreelec_managed_settings_paths_block() {
   cat <<'MANAGED_SETTINGS_FUNCTION'
-managed_settings_paths() {
-  cat <<'MANAGED_SETTINGS_PATHS'
-.kodi/userdata/guisettings.xml
-.cache/timezone
+detect_selected_cec_path() {
+  cec_path=""
+  cec_relative=""
+  [ "${apply_cec}" = "1" ] || return 0
+
+  cec_count=0
+  for cec_candidate in "${storage_root}"/.kodi/userdata/peripheral_data/*CEC*.xml; do
+    [ -f "${cec_candidate}" ] || continue
+    cec_count=$((cec_count + 1))
+    cec_path="${cec_candidate}"
+  done
+  [ "${cec_count}" -eq 1 ] \
+    || fail "expected exactly one CEC peripheral settings file, found ${cec_count}"
+  cec_relative="${cec_path#${storage_root}/}"
+}
+
+scoped_settings_paths() {
+  if [ "${apply_core}" = "1" ] || [ "${apply_skin}" = "1" ]; then
+    printf '%s\n' '.kodi/userdata/guisettings.xml'
+  fi
+  if [ "${apply_core}" = "1" ]; then
+    printf '%s\n' '.cache/timezone'
+  fi
+  if [ "${apply_services}" = "1" ]; then
+    cat <<'SERVICE_SETTINGS_PATHS'
 .kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
 .kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
 .kodi/userdata/addon_data/script.plexmod/settings.xml
 .kodi/userdata/addon_data/weather.ha/settings.xml
+SERVICE_SETTINGS_PATHS
+  fi
+  if [ "${apply_skin}" = "1" ]; then
+    cat <<'SKIN_SETTINGS_PATHS'
 .kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json
@@ -1053,7 +1079,11 @@ managed_settings_paths() {
 .kodi/userdata/playlists/video/TraktWeekendBoxOffice.xsp
 .kodi/userdata/playlists/video/NewShows.xsp
 .kodi/userdata/playlists/video/NewMovies.xsp
-MANAGED_SETTINGS_PATHS
+SKIN_SETTINGS_PATHS
+  fi
+  if [ "${apply_cec}" = "1" ] && [ -n "${cec_relative}" ]; then
+    printf '%s\n' "${cec_relative}"
+  fi
 }
 MANAGED_SETTINGS_FUNCTION
 }
@@ -1065,6 +1095,28 @@ MANAGED_SETTINGS_FUNCTION
 # those are always read at runtime from files the device itself revalidates.
 coreelec_remote_backup_script() {
   local root="${1:-/storage}"
+  local scope="${2:-baseline}" component remainder
+  local apply_core=0 apply_cec=0 apply_addons=0 apply_services=0 apply_skin=0
+  if [[ "${scope}" == "baseline" ]]; then
+    scope="core,cec,addons,services,skin"
+  fi
+  remainder="${scope}"
+  while [[ -n "${remainder}" ]]; do
+    component="${remainder%%,*}"
+    if [[ "${remainder}" == *,* ]]; then
+      remainder="${remainder#*,}"
+    else
+      remainder=""
+    fi
+    case "${component}" in
+      core) apply_core=1 ;;
+      cec) apply_cec=1 ;;
+      addons) apply_addons=1 ;;
+      services) apply_services=1 ;;
+      skin) apply_skin=1 ;;
+      *) die "Unsupported component in remote backup scope: ${component}" ;;
+    esac
+  done
   # umask 077 covers every directory and file the snapshot creates: a copy of
   # guisettings.xml or api_keys.json carries credentials, so the snapshot must
   # not be readable by anyone but root.
@@ -1072,9 +1124,20 @@ coreelec_remote_backup_script() {
 set -eu
 umask 077
 storage_root="${root}"
+apply_core="${apply_core}"
+apply_cec="${apply_cec}"
+apply_addons="${apply_addons}"
+apply_services="${apply_services}"
+apply_skin="${apply_skin}"
+cec_relative=""
 REMOTE_BACKUP_HEADER
   coreelec_managed_settings_paths_block
   cat <<'REMOTE_BACKUP'
+fail() {
+  printf 'remote backup: %s\n' "$1" >&2
+  exit 1
+}
+
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="${storage_root}/backup/coreelec-provision/${stamp}"
 mkdir -p "${backup}"
@@ -1096,23 +1159,26 @@ copy_one() {
 
 copy_one "${storage_root}/.ssh/authorized_keys"
 copy_one "${storage_root}/.cache/services/sshd.conf"
-copy_one "${storage_root}/.cache/hostname"
-copy_one "${storage_root}/.kodi/userdata/advancedsettings.xml"
-copy_one "${storage_root}/.kodi/userdata/sources.xml"
-copy_one "${storage_root}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
+if [ "${apply_core}" = "1" ]; then
+  copy_one "${storage_root}/.cache/hostname"
+  copy_one "${storage_root}/.kodi/userdata/advancedsettings.xml"
+  copy_one "${storage_root}/.kodi/userdata/sources.xml"
+  copy_one "${storage_root}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
+fi
 
-managed_settings_paths | while IFS= read -r managed_relative; do
+if [ "${apply_cec}" = "1" ]; then
+  # The deployment transaction enforces exactly one candidate before touching
+  # Kodi. This earlier operational snapshot copies only CEC candidates when
+  # CEC is selected and never scans peripheral data for another scope.
+  for cec_path in "${storage_root}"/.kodi/userdata/peripheral_data/*CEC*.xml; do
+    [ -f "${cec_path}" ] || continue
+    copy_one "${cec_path}"
+  done
+fi
+
+scoped_settings_paths | while IFS= read -r managed_relative; do
   [ -n "${managed_relative}" ] || continue
   copy_one "${storage_root}/${managed_relative}"
-done
-
-# The CEC peripheral file's name varies by adapter, so every candidate is
-# backed up before the transformer enforces its exactly-one rule. This also
-# preserves any unrelated peripheral file without copying an unbounded
-# directory tree.
-for cec_path in "${storage_root}"/.kodi/userdata/peripheral_data/*CEC*.xml; do
-  [ -f "${cec_path}" ] || continue
-  copy_one "${cec_path}"
 done
 
 {
@@ -1201,6 +1267,12 @@ addons_dir="${storage_root}/.kodi/addons"
 backup_root="${storage_root}/backup/coreelec-provision"
 tab="$(printf '\t')"
 transaction=""
+apply_core=""
+apply_cec=""
+apply_addons=""
+apply_services=""
+apply_skin=""
+plan_addon_count=0
 # Set when the list of paths the transformer applied could not be rebuilt, so
 # rollback can neither remove what this run created nor claim it restored the
 # device.
@@ -1243,12 +1315,131 @@ valid_directory_name() {
   return 0
 }
 
+valid_component_name() {
+  case "$1" in
+    core|cec|addons|services|skin) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_component_flag() {
+  case "$1" in
+    0|1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Refuses a plan line whose fields are not exactly what the validator promised.
 valid_plan_line() {
   valid_archive_name "$1" || return 1
   valid_addon_id "$2" || return 1
   valid_directory_name "$3" || return 1
   return 0
+}
+
+# Loads and revalidates the complete non-secret plan produced from the scoped
+# payload and selected artifact manifest. Every component flag must appear
+# exactly once; add-on rows are permitted only when the add-ons flag is set.
+# The optional second argument allows the initial component-only pass before
+# artifact inspection has appended add-on rows.
+load_deployment_plan() {
+  loaded_plan="$1"
+  plan_phase="${2:-complete}"
+  [ -f "${loaded_plan}" ] || fail "deployment plan is missing: ${loaded_plan}"
+  awk -F "${tab}" '
+    $1 == "component" && NF == 3 && $2 != "" && $3 != "" { next }
+    $1 == "addon" && NF == 4 && $2 != "" && $3 != "" && $4 != "" { next }
+    { exit 1 }
+  ' "${loaded_plan}" || fail "malformed deployment plan record shape"
+
+  apply_core=""
+  apply_cec=""
+  apply_addons=""
+  apply_services=""
+  apply_skin=""
+  seen_core=0
+  seen_cec=0
+  seen_addons=0
+  seen_services=0
+  seen_skin=0
+  seen_addon_ids="|"
+  plan_addon_count=0
+
+  while IFS="${tab}" read -r plan_kind plan_field1 plan_field2 plan_field3 plan_extra; do
+    [ -n "${plan_kind}" ] || fail "deployment plan contains an empty line"
+    case "${plan_kind}" in
+      component)
+        [ -z "${plan_field3}${plan_extra}" ] \
+          || fail "malformed component deployment plan line"
+        valid_component_name "${plan_field1}" \
+          || fail "unsupported component in deployment plan: ${plan_field1}"
+        valid_component_flag "${plan_field2}" \
+          || fail "component ${plan_field1} must be 0 or 1 in the deployment plan"
+        case "${plan_field1}" in
+          core)
+            [ "${seen_core}" -eq 0 ] || fail "deployment plan repeats component core"
+            seen_core=1
+            apply_core="${plan_field2}"
+            ;;
+          cec)
+            [ "${seen_cec}" -eq 0 ] || fail "deployment plan repeats component cec"
+            seen_cec=1
+            apply_cec="${plan_field2}"
+            ;;
+          addons)
+            [ "${seen_addons}" -eq 0 ] || fail "deployment plan repeats component addons"
+            seen_addons=1
+            apply_addons="${plan_field2}"
+            ;;
+          services)
+            [ "${seen_services}" -eq 0 ] || fail "deployment plan repeats component services"
+            seen_services=1
+            apply_services="${plan_field2}"
+            ;;
+          skin)
+            [ "${seen_skin}" -eq 0 ] || fail "deployment plan repeats component skin"
+            seen_skin=1
+            apply_skin="${plan_field2}"
+            ;;
+        esac
+        ;;
+      addon)
+        [ -z "${plan_extra}" ] || fail "malformed add-on deployment plan line"
+        valid_plan_line "${plan_field1}" "${plan_field2}" "${plan_field3}" \
+          || fail "unsupported deployment plan line: ${plan_field1} ${plan_field2} ${plan_field3}"
+        case "${seen_addon_ids}" in
+          *"|${plan_field2}|"*) fail "deployment plan repeats add-on ID ${plan_field2}" ;;
+        esac
+        seen_addon_ids="${seen_addon_ids}${plan_field2}|"
+        plan_addon_count=$((plan_addon_count + 1))
+        ;;
+      *)
+        fail "unsupported deployment plan record: ${plan_kind}"
+        ;;
+    esac
+  done < "${loaded_plan}"
+
+  [ "${seen_core}" -eq 1 ] || fail "deployment plan is missing component core"
+  [ "${seen_cec}" -eq 1 ] || fail "deployment plan is missing component cec"
+  [ "${seen_addons}" -eq 1 ] || fail "deployment plan is missing component addons"
+  [ "${seen_services}" -eq 1 ] || fail "deployment plan is missing component services"
+  [ "${seen_skin}" -eq 1 ] || fail "deployment plan is missing component skin"
+  [ "$((apply_core + apply_cec + apply_addons + apply_services + apply_skin))" -gt 0 ] \
+    || fail "deployment plan selects no component"
+  if [ "${apply_services}" = "1" ] && [ "${apply_addons}" != "1" ]; then
+    fail "deployment plan selects services without required component addons"
+  fi
+  if [ "${apply_skin}" = "1" ] \
+    && { [ "${apply_core}" != "1" ] || [ "${apply_addons}" != "1" ]; }; then
+    fail "deployment plan selects skin without required components core and addons"
+  fi
+  if [ "${apply_addons}" = "0" ] && [ "${plan_addon_count}" -ne 0 ]; then
+    fail "deployment plan contains add-ons while component addons is disabled"
+  fi
+  if [ "${plan_phase}" = "complete" ] \
+    && [ "${apply_addons}" = "1" ] && [ "${plan_addon_count}" -eq 0 ]; then
+    fail "deployment plan selects component addons but contains no add-ons"
+  fi
 }
 
 copy_into_backup() {
@@ -1445,8 +1636,6 @@ finish_transaction() {
 }
 trap finish_transaction EXIT HUP INT TERM
 
-[ -d "${stage_dir}" ] || fail "no uploaded artifact bundle was found: ${stage_dir}"
-[ -f "${stage_dir}/deploy.tsv" ] || fail "the uploaded bundle has no deploy.tsv manifest"
 [ -f "${payload_file}" ] || fail "no settings payload was uploaded: ${payload_file}"
 
 if [ -f "${pointer_file}" ]; then
@@ -1468,11 +1657,64 @@ fi
 # --- Phase 1: validate and expand the bundle while Kodi keeps running -------
 # Nothing outside the provisioning cache is touched here, so a bad bundle
 # never interrupts playback and never needs a rollback.
-rm -rf "${expanded_dir}"
-mkdir -p "${expanded_dir}"
 rm -f "${plan_file}"
 
-python3 - "${stage_dir}" > "${plan_file}" <<'PYTHON_DEPLOY_PLAN'
+python3 - "${payload_file}" > "${plan_file}" <<'PYTHON_COMPONENT_PLAN'
+import base64
+import sys
+
+PAYLOAD = sys.argv[1]
+COMPONENTS = (
+    ("APPLY_COMPONENT_CORE", "core"),
+    ("APPLY_COMPONENT_CEC", "cec"),
+    ("APPLY_COMPONENT_ADDONS", "addons"),
+    ("APPLY_COMPONENT_SERVICES", "services"),
+    ("APPLY_COMPONENT_SKIN", "skin"),
+)
+required = dict(COMPONENTS)
+values = {}
+
+
+def reject(message):
+    raise SystemExit("deployment scope rejected: " + message)
+
+
+with open(PAYLOAD, "r", encoding="utf-8") as handle:
+    for number, raw_line in enumerate(handle, start=1):
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        key, separator, encoded = line.partition("=")
+        if not separator or not key:
+            reject("payload line %d is not KEY=value" % number)
+        if key not in required:
+            continue
+        if key in values:
+            reject("payload repeats required component key: %s" % key)
+        try:
+            decoded = base64.b64decode(encoded.encode("ascii"),
+                                       validate=True).decode("utf-8")
+        except Exception:
+            reject("component payload key %s is not valid base64 UTF-8" % key)
+        if decoded not in ("0", "1"):
+            reject("%s must be 0 or 1" % key)
+        values[key] = decoded
+
+for key, component in COMPONENTS:
+    if key not in values:
+        reject("missing required component payload key: %s" % key)
+    sys.stdout.write("component\t%s\t%s\n" % (component, values[key]))
+PYTHON_COMPONENT_PLAN
+
+load_deployment_plan "${plan_file}" scope
+
+if [ "${apply_addons}" = "1" ]; then
+  [ -d "${stage_dir}" ] || fail "no uploaded artifact bundle was found: ${stage_dir}"
+  [ -f "${stage_dir}/deploy.tsv" ] || fail "the uploaded bundle has no deploy.tsv manifest"
+  rm -rf "${expanded_dir}"
+  mkdir -p "${expanded_dir}"
+
+python3 - "${stage_dir}" >> "${plan_file}" <<'PYTHON_DEPLOY_PLAN'
 import os
 import re
 import sys
@@ -1577,12 +1819,16 @@ if not plan:
     reject("no add-on was selected for deployment")
 
 for archive_name, addon_id, top in plan:
-    sys.stdout.write("%s\t%s\t%s\n" % (archive_name, addon_id, top))
+    sys.stdout.write("addon\t%s\t%s\t%s\n"
+                     % (archive_name, addon_id, top))
 PYTHON_DEPLOY_PLAN
+fi
 
-[ -s "${plan_file}" ] || fail "the uploaded bundle selected no add-ons"
+load_deployment_plan "${plan_file}" complete
+detect_selected_cec_path
 
-while IFS="${tab}" read -r plan_archive plan_id plan_top; do
+while IFS="${tab}" read -r plan_kind plan_archive plan_id plan_top plan_extra; do
+  [ "${plan_kind}" = "addon" ] || continue
   valid_plan_line "${plan_archive}" "${plan_id}" "${plan_top}" \
     || fail "unsupported deployment plan line: ${plan_archive} ${plan_id} ${plan_top}"
   mkdir -p "${expanded_dir}/${plan_id}"
@@ -1669,7 +1915,10 @@ while [ -e "${transaction}" ]; do
   collision=$((collision + 1))
   transaction="${backup_root}/${stamp}-${collision}"
 done
-mkdir -p "${transaction}/files" "${transaction}/rollback/addons"
+mkdir -p "${transaction}/files"
+if [ "${apply_addons}" = "1" ]; then
+  mkdir -p "${transaction}/rollback/addons"
+fi
 # Only this run's own subtree is tightened. /storage/backup is CoreELEC's own
 # backup location, shared with the device's other tooling, so its mode is left
 # exactly as the device set it; umask 077 already makes anything created here
@@ -1677,13 +1926,21 @@ mkdir -p "${transaction}/files" "${transaction}/rollback/addons"
 chmod 700 "${backup_root}" "${transaction}"
 : > "${transaction}/DEPLOYED.txt"
 : > "${transaction}/APPLIED.txt"
+cp "${plan_file}" "${transaction}/PLAN.tsv"
 {
   printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'hostname=%s\n' "$(hostname)"
   printf 'storage_root=%s\n' "${storage_root}"
   printf 'transaction=%s\n' "${transaction}"
+  while IFS="${tab}" read -r manifest_kind manifest_name manifest_value manifest_rest; do
+    [ "${manifest_kind}" = "component" ] || continue
+    if [ "${manifest_value}" = "1" ]; then
+      printf 'component %s\n' "${manifest_name}"
+    fi
+  done < "${plan_file}"
 } > "${transaction}/MANIFEST.txt"
-chmod 600 "${transaction}/MANIFEST.txt" "${transaction}/DEPLOYED.txt" "${transaction}/APPLIED.txt"
+chmod 600 "${transaction}/MANIFEST.txt" "${transaction}/DEPLOYED.txt" \
+  "${transaction}/APPLIED.txt" "${transaction}/PLAN.tsv"
 printf 'staged\n' > "${transaction}/STATE"
 # Written before anything moves so an interrupted session still leaves the
 # operator, and Task 6's verification, a handle on the material to undo it.
@@ -1695,14 +1952,17 @@ transaction_state="stopping Kodi"
 systemctl stop kodi.service >/dev/null 2>&1 || true
 
 transaction_state="backing up replaced paths"
-managed_settings_paths | while IFS= read -r managed_relative; do
+scoped_settings_paths | while IFS= read -r managed_relative; do
   [ -n "${managed_relative}" ] || continue
   copy_into_backup "${storage_root}/${managed_relative}"
 done
 
 transaction_state="replacing add-ons"
-mkdir -p "${addons_dir}"
-while IFS="${tab}" read -r plan_archive plan_id plan_top; do
+if [ "${apply_addons}" = "1" ]; then
+  mkdir -p "${addons_dir}"
+fi
+while IFS="${tab}" read -r plan_kind plan_archive plan_id plan_top plan_extra; do
+  [ "${plan_kind}" = "addon" ] || continue
   valid_plan_line "${plan_archive}" "${plan_id}" "${plan_top}" \
     || fail "unsupported deployment plan line: ${plan_archive} ${plan_id} ${plan_top}"
   destination="${addons_dir}/${plan_id}"
@@ -2912,7 +3172,7 @@ REMOTE_AUTHORIZED_KEY_INSTALL
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
   case "${name}" in
-    backup) coreelec_remote_backup_script "${root}" ;;
+    backup) coreelec_remote_backup_script "${root}" "${key_file:-baseline}" ;;
     payload) coreelec_remote_payload_script "${root}" ;;
     stage) coreelec_remote_stage_script "${root}" ;;
     deploy) coreelec_remote_deploy_script "${root}" ;;
@@ -3338,6 +3598,7 @@ coreelec_addon_selection() {
 # remain keyless.
 require_arctic_fuse_metadata_keys() {
   [[ "${APPLY_KODI}" == "1" ]] || return 0
+  coreelec_component_effective services || return 0
   [[ -n "${OMDB_API_KEY:-}" ]] \
     || die "OMDB_API_KEY is required for an Arctic Fuse 3 Kodi deployment"
   [[ -n "${MDBLIST_API_KEY:-}" ]] \
@@ -4346,8 +4607,10 @@ validate_remote() {
 }
 
 create_remote_backup() {
+  local component_scope
   info "Creating a selective pre-provisioning backup on the CoreELEC STORAGE partition" >&2
-  coreelec_remote_backup_script | ssh_keyed 'sh -s'
+  component_scope="$(coreelec_components_csv "${EFFECTIVE_COMPONENTS[@]}")"
+  coreelec_remote_backup_script "/storage" "${component_scope}" | ssh_keyed 'sh -s'
 }
 
 harden_remote_ssh() {
@@ -4450,6 +4713,31 @@ upload_kodi_settings_payload() {
   [[ "${script}" != *"'"* ]] \
     || die "Internal error: the remote payload script must not contain a single quote"
   coreelec_settings_payload | ssh_keyed "sh -c '${script}'"
+}
+
+prepare_artifact_deployment() {
+  ARTIFACT_STAGE_DIR="${TASK_TEMP_DIR}/artifacts"
+  mkdir -p "${ARTIFACT_STAGE_DIR}"
+  chmod 700 "${ARTIFACT_STAGE_DIR}"
+
+  if coreelec_component_effective addons; then
+    require_command unzip
+    require_command xmllint
+    require_command tar
+    info "Validating pinned add-on artifacts before changing anything on the device"
+    coreelec_artifacts_download_and_validate "${ARTIFACT_STAGE_DIR}"
+    # Resolving the selection here keeps every "which add-ons" decision -- and
+    # every way it can be refused -- on the untouched-device side of the run.
+    coreelec_addon_selection "${ARTIFACT_STAGE_DIR}/manifest.tsv" \
+      > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  else
+    # Downstream verification and reporting consume one manifest interface for
+    # every transaction. A non-add-on scope owns no artifacts, so its valid
+    # manifest is an empty private file rather than a fabricated selection.
+    : > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+    chmod 600 "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  fi
+  DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
 }
 
 # Streams the validated artifacts to the device over the SSH connection that
@@ -4560,7 +4848,9 @@ apply_kodi_baseline() {
   # the deploy that consumes it. Staging is the step most likely to fail (it
   # moves tens of megabytes and verifies checksums on the device), and a
   # failure there must not leave credentials sitting in the remote cache.
-  upload_artifact_bundle "${ARTIFACT_STAGE_DIR}"
+  if coreelec_component_effective addons; then
+    upload_artifact_bundle "${ARTIFACT_STAGE_DIR}"
+  fi
   upload_kodi_settings_payload
   # One transaction: add-ons land before the transformer runs, so activating
   # the pinned skin and weather provider cannot be rejected for referring to
@@ -4791,16 +5081,7 @@ validate_remote "${REMOTE_IDENTITY}"
 # first mutating SSH call, so a bad or unreachable artifact cancels the run
 # while the device is still untouched.
 if [[ "${APPLY_KODI}" == "1" ]]; then
-  require_command unzip
-  require_command xmllint
-  require_command tar
-  ARTIFACT_STAGE_DIR="${TASK_TEMP_DIR}/artifacts"
-  info "Validating pinned add-on artifacts before changing anything on the device"
-  coreelec_artifacts_download_and_validate "${ARTIFACT_STAGE_DIR}"
-  # Resolving the selection here keeps every "which add-ons" decision -- and
-  # every way it can be refused -- on the untouched-device side of the run.
-  coreelec_addon_selection "${ARTIFACT_STAGE_DIR}/manifest.tsv" > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
-  DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  prepare_artifact_deployment
 fi
 
 install_public_key_if_needed
