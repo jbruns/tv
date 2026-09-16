@@ -153,14 +153,36 @@ the effective scope, while the dated backup remains on the device.
       --addon plugin.service.emby-next-gen
     ```
 
-12. After the manual Emby sign-in completes and the library sync finishes,
-    confirm the Trakt Popular TV Shows and Trakt Weekend Box Office widgets
-    populate.
+    ### Reading the configuration report
+
+    The report banner is `coreelec-addon-configuration-report-2`. Each
+    selected add-on emits two independent status fields:
+
+    - `addon.<id>.config_status` covers artifact and configuration work owned
+      by provisioning: `configured`, `already-configured`, `skipped`,
+      `failed`, `dry-run`.
+    - `addon.<id>.onboarding_status` covers authentication and
+      synchronization owned by the user: `not-required`, `complete`,
+      `pending-authentication`, `pending-sync`, `manual-required`,
+      `unobservable`, `failed`, `dry-run`.
+
+    Only `onboarding_status=complete` means an add-on is finished;
+    `config_status=configured` on its own never does. The previous single
+    `addon.<id>.status` field is gone. The mapping from it is in the
+    [onboarding and restart contract's migration table](../superpowers/specs/2026-09-16-addon-onboarding-restart-sequencing-design.md#migration-from-coreelec-addon-configuration-report-1).
+
+12. Re-run `./configure-coreelec-addons.sh` and read
+    `addon.plugin.service.emby-next-gen.onboarding_status`.
+
+    `pending-sync` means the library sync has not finished, and the Trakt
+    Popular TV Shows and Trakt Weekend Box Office widgets are expected to be
+    empty. `complete` means every attempted library finished syncing.
 
     The stable Emby 11.1.27 client still requires manual sign-in, and the
-    server/library metadata supplies the Trakt tags after synchronization. An
-    empty Trakt widget after a successful configuration report is an Emby
-    tag/sync issue, not playlist-definition convergence.
+    server/library metadata supplies the Trakt tags after synchronization. The
+    onboarding order, restart checkpoints, and completion signals behind these
+    states are defined in the
+    [add-on onboarding and restart contract](../devices/ugoos-am6b-plus/addon-onboarding-contract.md).
 13. Run `./configure-kodi-lifecycle.sh` with the Home Assistant controller
     public key and matching identity:
 
@@ -196,6 +218,8 @@ the effective scope, while the dated backup remains on the device.
 ## Current rollout limits
 
 Component scoping does not configure the reserved room desired state and does
-not fix weather data, remux buffering, or post-install add-on sequencing.
-Emby sign-in and the documented Trakt tag/library synchronization remain
-manual. The Sony and Denon configuration boundary is unchanged.
+not fix weather data or remux buffering. Emby sign-in and the documented Trakt
+tag/library synchronization remain manual. The Sony and Denon configuration
+boundary is unchanged. The onboarding order, restart checkpoints, and
+completion signals are defined in the
+[add-on onboarding and restart contract](../devices/ugoos-am6b-plus/addon-onboarding-contract.md).
