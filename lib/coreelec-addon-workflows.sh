@@ -1523,13 +1523,25 @@ coreelec_postdeploy_pm4k_onboarding_status() {
   fi
 }
 
+coreelec_postdeploy_normalize_config_status() {
+  local raw="$1"
+  case "${raw}" in
+    configured|already-configured|skipped|failed|dry-run)
+      printf '%s\n' "${raw}"
+      ;;
+    *)
+      printf 'failed\n'
+      ;;
+  esac
+}
+
 run_addon_workflow() {
   local addon_id="$1" config_status onboarding_status authorization
 
   case "${addon_id}" in
     weather.ha)
       if coreelec_postdeploy_weather_ready; then
-        config_status="$(check_home_assistant_weather)"
+        config_status="$(coreelec_postdeploy_normalize_config_status "$(check_home_assistant_weather)")"
       else
         config_status="skipped"
       fi
@@ -1537,7 +1549,7 @@ run_addon_workflow() {
       ;;
     pvr.nextpvr)
       if coreelec_postdeploy_nextpvr_ready; then
-        config_status="$(check_nextpvr)"
+        config_status="$(coreelec_postdeploy_normalize_config_status "$(check_nextpvr)")"
       else
         config_status="skipped"
       fi

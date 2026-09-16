@@ -1948,6 +1948,70 @@ test_pm4k_version_mismatch_fails_the_configuration_axis() {
     "the configuration axis must not report success when provisioning failed" || return 1
 }
 
+test_weather_workflow_maps_authorization_required_to_failed_config_axis() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    coreelec_postdeploy_weather_ready() { return 0; }
+    check_home_assistant_weather() { printf 'authorization-required\n'; }
+    printf 'weather=%s\n' "$(run_addon_workflow weather.ha)"
+  } 2>&1)"
+
+  assert_contains "${output}" "weather=failed not-required" \
+    "a weather.ha authentication failure is a config-axis failure" || return 1
+  assert_not_contains "${output}" "authorization-required" \
+    "authorization-required must not leak onto the config axis" || return 1
+}
+
+test_nextpvr_workflow_maps_authorization_required_to_failed_config_axis() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    coreelec_postdeploy_nextpvr_ready() { return 0; }
+    check_nextpvr() { printf 'authorization-required\n'; }
+    printf 'nextpvr=%s\n' "$(run_addon_workflow pvr.nextpvr)"
+  } 2>&1)"
+
+  assert_contains "${output}" "nextpvr=failed not-required" \
+    "a pvr.nextpvr authentication failure is a config-axis failure" || return 1
+  assert_not_contains "${output}" "authorization-required" \
+    "authorization-required must not leak onto the config axis" || return 1
+}
+
+test_addon_workflow_config_axis_fails_closed_on_empty_check_result() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    coreelec_postdeploy_weather_ready() { return 0; }
+    check_home_assistant_weather() { printf '\n'; }
+    printf 'weather=%s\n' "$(run_addon_workflow weather.ha)"
+  } 2>&1)"
+
+  assert_contains "${output}" "weather=failed not-required" \
+    "an empty or unrecognized config check result fails closed" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_kodi_password_must_come_from_shared_environment \
@@ -1988,4 +2052,7 @@ run_all_tests \
   test_pm4k_server_binding_never_emits_plex_secrets \
   test_legacy_emby_ladder_never_reports_configured_on_database_existence \
   test_workflow_reports_configuration_and_onboarding_on_separate_axes \
-  test_pm4k_version_mismatch_fails_the_configuration_axis
+  test_pm4k_version_mismatch_fails_the_configuration_axis \
+  test_weather_workflow_maps_authorization_required_to_failed_config_axis \
+  test_nextpvr_workflow_maps_authorization_required_to_failed_config_axis \
+  test_addon_workflow_config_axis_fails_closed_on_empty_check_result
