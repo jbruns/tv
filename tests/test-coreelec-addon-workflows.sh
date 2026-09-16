@@ -1621,6 +1621,55 @@ EOF
   done
 }
 
+make_emby_account_fixture() {
+  local home_dir="$1" content="$2" filename="${3:-servers_fe02bd703bb043ba92bf60a497794db5.json}"
+  mkdir -p "${home_dir}/.kodi/userdata/addon_data/plugin.service.emby-next-gen"
+  if [[ -n "${content}" ]]; then
+    printf '%s' "${content}" \
+      > "${home_dir}/.kodi/userdata/addon_data/plugin.service.emby-next-gen/${filename}"
+  fi
+}
+
+run_emby_account_program() {
+  local home_dir="$1"
+  HOME="${home_dir}" bash -c "$(coreelec_postdeploy_emby_account_program)"
+}
+
+test_emby_account_state_reports_each_credential_condition() {
+  local dir complete
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  complete='{"ServerId":"fe02bd703bb043ba92bf60a497794db5","AccessToken":"emby-access-token-secret","UserId":"1f2e3d4c5b6a7988796a5b4c3d2e1f00"}'
+
+  mkdir -p "${dir}/absent"
+  assert_eq "absent" "$(run_emby_account_program "${dir}/absent")" \
+    "a missing servers file is absent" || return 1
+
+  make_emby_account_fixture "${dir}/present" "${complete}"
+  assert_eq "present" "$(run_emby_account_program "${dir}/present")" \
+    "a complete credential set is present" || return 1
+
+  make_emby_account_fixture "${dir}/invalid" 'not json at all'
+  assert_eq "invalid" "$(run_emby_account_program "${dir}/invalid")" \
+    "unparseable credentials fail closed" || return 1
+
+  make_emby_account_fixture "${dir}/incomplete" '{"ServerId":"fe02bd703bb043ba92bf60a497794db5","AccessToken":"","UserId":"1f2e3d4c5b6a7988796a5b4c3d2e1f00"}'
+  assert_eq "incomplete" "$(run_emby_account_program "${dir}/incomplete")" \
+    "an empty access token is incomplete" || return 1
+
+  make_emby_account_fixture "${dir}/ambiguous" "${complete}"
+  make_emby_account_fixture "${dir}/ambiguous" "${complete}" "servers_aaaabbbbccccddddeeeeffff00001111.json"
+  assert_eq "ambiguous" "$(run_emby_account_program "${dir}/ambiguous")" \
+    "two servers files fail closed" || return 1
+
+  make_emby_account_fixture "${dir}/mismatch" "${complete}" "servers_0000000000000000000000000000ffff.json"
+  assert_eq "invalid" "$(run_emby_account_program "${dir}/mismatch")" \
+    "a filename that disagrees with ServerId fails closed" || return 1
+
+  assert_not_contains "$(run_emby_account_program "${dir}/present")" "emby-access-token-secret" \
+    "the access token is never printed" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_kodi_password_must_come_from_shared_environment \
@@ -1654,4 +1703,5 @@ run_all_tests \
   test_pm4k_selects_sign_in_only_when_expected_control_is_focused \
   test_guided_flow_times_out_as_manual_required \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
-  test_guided_flow_refuses_addon_version_mismatch_before_private_steps
+  test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
+  test_emby_account_state_reports_each_credential_condition

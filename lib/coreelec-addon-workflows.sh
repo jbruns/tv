@@ -601,6 +601,56 @@ EOF
     | coreelec_ssh_command "${remote_command}"
 }
 
+coreelec_postdeploy_emby_account_program() {
+  cat <<'EOF'
+set -eu
+python3 - <<'PYEOF'
+import glob
+import json
+import os
+import sys
+
+paths = sorted(glob.glob(os.path.expanduser(
+    "~/.kodi/userdata/addon_data/plugin.service.emby-next-gen/servers_*.json")))
+if not paths:
+    sys.stdout.write("absent\n")
+    raise SystemExit(0)
+if len(paths) != 1:
+    sys.stdout.write("ambiguous\n")
+    raise SystemExit(0)
+
+try:
+    with open(paths[0], "r", encoding="utf-8") as handle:
+        server = json.load(handle)
+except Exception:
+    sys.stdout.write("invalid\n")
+    raise SystemExit(0)
+
+if not isinstance(server, dict):
+    sys.stdout.write("invalid\n")
+    raise SystemExit(0)
+
+server_id = server.get("ServerId")
+token = server.get("AccessToken")
+user_id = server.get("UserId")
+if not all(isinstance(value, str) and value.strip()
+           for value in (server_id, token, user_id)):
+    sys.stdout.write("incomplete\n")
+    raise SystemExit(0)
+
+if os.path.basename(paths[0]) != "servers_%s.json" % server_id:
+    sys.stdout.write("invalid\n")
+    raise SystemExit(0)
+
+sys.stdout.write("present\n")
+PYEOF
+EOF
+}
+
+coreelec_postdeploy_emby_account_state() {
+  coreelec_ssh_command "$(coreelec_postdeploy_emby_account_program)"
+}
+
 coreelec_postdeploy_emby_fail() {
   coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.failure" "$1"
   printf 'manual-required\n'
