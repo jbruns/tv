@@ -534,6 +534,7 @@ test_default_run_never_starts_account_authorization() {
     'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="$(install_ssh_stub "${dir}")"
   write_introspection_response "${dir}/stub/response-default.json"
+  printf 'absent\n' > "${dir}/stub/response-2.json"
 
   set +e
   output="$(
@@ -549,14 +550,15 @@ test_default_run_never_starts_account_authorization() {
   set -e
 
   assert_success "${rc}" "default run should succeed with non-interactive statuses only" || return 1
-  assert_eq "1" "$(ssh_call_count "${dir}")" "default run should make only the introspection call" || return 1
+  assert_eq "2" "$(ssh_call_count "${dir}")" \
+    "default run performs the introspection call plus a read-only Emby account-state check" || return 1
   body="$(ssh_request_body "${dir}" 1)"
   assert_eq '{"jsonrpc":"2.0","id":"introspect","method":"JSONRPC.Introspect","params":{"getdescriptions":false,"getmetadata":false}}' \
     "${body}" "default run performs the required introspection call" || return 1
   report="$(find_single_report "${dir}/reports")"
-  assert_contains "$(cat "${report}")" "addon.script.plexmod.status=authorization-required" \
+  assert_contains "$(cat "${report}")" "addon.script.plexmod.status=configured pending-authentication" \
     "default run reports that Plex authorization is deferred" || return 1
-  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.status=authorization-required" \
+  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.status=configured pending-authentication" \
     "default run reports that Emby authorization is deferred" || return 1
   assert_not_contains "${output}" "Input.ExecuteAction" "default run never attempts guided input" || return 1
 }
@@ -571,15 +573,16 @@ test_removed_service_inputs_never_enable_automated_login_paths() {
   PLEX_PROFILE_IDS="11,22"
   PLEX_TOKEN="removed-plex-token"
   output="$(run_addon_workflow script.plexmod)"
-  assert_eq "authorization-required" "${output}" \
+  assert_eq "configured pending-authentication" "${output}" \
     "Plex always requires account linking when interactive guidance is disabled" || return 1
 
   INTERACTIVE="1"
   EMBY_SERVER_URL="https://emby.example.test"
   EMBY_USERNAME="media-user"
   EMBY_PASSWORD="removed-emby-password"
+  coreelec_postdeploy_emby_account_state() { printf 'absent\n'; }
   output="$(run_addon_workflow plugin.service.emby-next-gen)"
-  assert_eq "authorization-required" "${output}" \
+  assert_eq "configured pending-authentication" "${output}" \
     "Emby always defers server selection and sign-in to the add-on UI"
 }
 
@@ -974,7 +977,7 @@ test_report_contains_statuses_but_no_secret_values() {
   report="$(find_single_report "${dir}/reports")"
   report_body="$(cat "${report}")"
   assert_contains "${report_body}" "addon.weather.ha.status=skipped" "weather status is written" || return 1
-  assert_contains "${report_body}" "addon.script.plexmod.status=authorization-required" \
+  assert_contains "${report_body}" "addon.script.plexmod.status=configured pending-authentication" \
     "Plex status is written" || return 1
   assert_not_contains "${report_body}" "kodi-web-password-secret" "report must not leak the Kodi password" || return 1
   assert_contains "${output}" "Report:" "run output points to the report file" || return 1
@@ -1408,6 +1411,8 @@ test_guided_flow_detects_persisted_tokens_without_printing_them() {
   write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.3.19"
   printf '%s\n' '<settings><setting id="auth.token">pm4k-account-token-secret</setting></settings>' \
     > "${dir}/stub/response-2.json"
+  printf '%s\n' '<settings><setting id="myplex.MyPlexAccount">{"ID": "12345"}</setting><setting id="lastServerId.12345">plex-machine-1</setting><setting id="None.PlexServerManager">{"servers": [{"uuid": "plex-machine-1"}]}</setting></settings>' \
+    > "${dir}/stub/response-3.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -1421,8 +1426,10 @@ test_guided_flow_detects_persisted_tokens_without_printing_them() {
     printf 'pm4k_status=%s\n' "$(run_addon_workflow script.plexmod)"
   } 2>&1)"
 
-  assert_eq "2" "$(ssh_call_count "${dir}")" "persisted-token detection stops before launch when already configured" || return 1
-  assert_contains "${output}" "pm4k_status=already-configured" "PM4K account flow detects an existing token" || return 1
+  assert_eq "3" "$(ssh_call_count "${dir}")" \
+    "persisted-token detection stops before launch, then checks server binding" || return 1
+  assert_contains "${output}" "pm4k_status=already-configured complete" \
+    "PM4K account flow detects an existing token and a bound server" || return 1
   assert_not_contains "${output}" "pm4k-account-token-secret" "PM4K token must not be printed" || return 1
 }
 
@@ -1447,7 +1454,8 @@ test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
   } 2>&1)"
 
   assert_eq "1" "$(ssh_call_count "${dir}")" "version mismatches stop before any private state or GUI steps" || return 1
-  assert_contains "${output}" "pm4k_status=manual-required" "PM4K version mismatch fails closed" || return 1
+  assert_contains "${output}" "pm4k_status=failed manual-required" \
+    "a PM4K provisioning failure must not report configured on the configuration axis" || return 1
   assert_contains "${output}" "service.script.plexmod.failure=version-mismatch" "PM4K mismatch is classified explicitly" || return 1
 }
 
@@ -1815,6 +1823,131 @@ test_legacy_emby_ladder_never_reports_configured_on_database_existence() {
     "database existence is a completed handshake, not onboarding success" || return 1
 }
 
+test_workflow_reports_configuration_and_onboarding_on_separate_axes() {
+  local dir bin_dir output
+
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    INTERACTIVE="0"
+    coreelec_postdeploy_emby_account_state() { printf 'absent\n'; }
+    printf 'emby=%s\n' "$(run_addon_workflow plugin.service.emby-next-gen)"
+  } 2>&1)"
+  assert_contains "${output}" "emby=configured pending-authentication" \
+    "an Emby client with no credentials is configured but unauthenticated" || return 1
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    INTERACTIVE="0"
+    coreelec_postdeploy_emby_account_state() { printf 'present\n'; }
+    coreelec_postdeploy_emby_sync_state() { printf 'sync-pending 0 16\n'; }
+    printf 'emby=%s\n' "$(run_addon_workflow plugin.service.emby-next-gen)"
+  } 2>&1)"
+  assert_contains "${output}" "emby=configured pending-sync" \
+    "an authenticated client mid-sync is not complete" || return 1
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    INTERACTIVE="0"
+    coreelec_postdeploy_emby_account_state() { printf 'present\n'; }
+    coreelec_postdeploy_emby_sync_state() { printf 'synced 16 16\n'; }
+    printf 'emby=%s\n' "$(run_addon_workflow plugin.service.emby-next-gen)"
+  } 2>&1)"
+  assert_contains "${output}" "emby=configured complete" \
+    "a finished sync is complete" || return 1
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    INTERACTIVE="0"
+    coreelec_postdeploy_emby_account_state() { printf 'invalid\n'; }
+    printf 'emby=%s\n' "$(run_addon_workflow plugin.service.emby-next-gen)"
+  } 2>&1)"
+  assert_contains "${output}" "emby=configured manual-required" \
+    "unreadable credentials fail closed" || return 1
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    INTERACTIVE="1"
+    authorize_pm4k_account() { printf 'configured\n'; }
+    coreelec_postdeploy_pm4k_server_bound() { printf '0'; }
+    printf 'pm4k=%s\n' "$(run_addon_workflow script.plexmod)"
+  } 2>&1)"
+  assert_contains "${output}" "pm4k=configured manual-required" \
+    "an authorized account with no bound server is not complete" || return 1
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    INTERACTIVE="1"
+    authorize_pm4k_account() { printf 'already-configured\n'; }
+    coreelec_postdeploy_pm4k_server_bound() { printf '1'; }
+    printf 'pm4k=%s\n' "$(run_addon_workflow script.plexmod)"
+  } 2>&1)"
+  assert_contains "${output}" "pm4k=already-configured complete" \
+    "a previously authorized account with a bound server is complete" || return 1
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    INTERACTIVE="0"
+    coreelec_postdeploy_weather_ready() { return 1; }
+    printf 'weather=%s\n' "$(run_addon_workflow weather.ha)"
+  } 2>&1)"
+  assert_contains "${output}" "weather=skipped not-required" \
+    "an unready unattended add-on is skipped with no onboarding axis" || return 1
+}
+
+test_pm4k_version_mismatch_fails_the_configuration_axis() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_ssh_stub "${dir}")"
+  set_guided_flow_pins
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.0"
+
+  output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    INTERACTIVE="1"
+    printf 'pm4k_status=%s\n' "$(run_addon_workflow script.plexmod)"
+  } 2>&1)"
+
+  assert_contains "${output}" "pm4k_status=failed manual-required" \
+    "a PM4K provisioning failure (version mismatch) must not report configured" || return 1
+  assert_not_contains "${output}" "pm4k_status=configured manual-required" \
+    "the configuration axis must not report success when provisioning failed" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_kodi_password_must_come_from_shared_environment \
@@ -1853,4 +1986,6 @@ run_all_tests \
   test_emby_sync_state_separates_handshake_from_completed_sync \
   test_pm4k_server_binding_is_checked_separately_from_the_account_token \
   test_pm4k_server_binding_never_emits_plex_secrets \
-  test_legacy_emby_ladder_never_reports_configured_on_database_existence
+  test_legacy_emby_ladder_never_reports_configured_on_database_existence \
+  test_workflow_reports_configuration_and_onboarding_on_separate_axes \
+  test_pm4k_version_mismatch_fails_the_configuration_axis

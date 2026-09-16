@@ -1458,34 +1458,114 @@ check_nextpvr() {
   printf 'configured\n'
 }
 
+coreelec_postdeploy_emby_onboarding_status() {
+  local account_state sync_state sync_word synced attempted
+  account_state="$(coreelec_postdeploy_emby_account_state 2>/dev/null || true)"
+  case "${account_state}" in
+    absent)
+      printf 'pending-authentication\n'
+      return 0
+      ;;
+    incomplete)
+      printf 'pending-authentication\n'
+      return 0
+      ;;
+    present) ;;
+    *)
+      coreelec_postdeploy_observe \
+        "service.plugin.service.emby-next-gen.account_state" "${account_state:-unreadable}"
+      printf 'manual-required\n'
+      return 0
+      ;;
+  esac
+
+  sync_state="$(coreelec_postdeploy_emby_sync_state 2>/dev/null || true)"
+  IFS=' ' read -r sync_word synced attempted <<EOF
+${sync_state}
+EOF
+  coreelec_postdeploy_observe \
+    "service.plugin.service.emby-next-gen.libraries_synced" "${synced:-0}"
+  coreelec_postdeploy_observe \
+    "service.plugin.service.emby-next-gen.libraries_attempted" "${attempted:-0}"
+
+  case "${sync_word}" in
+    synced) printf 'complete\n' ;;
+    sync-pending|database-absent) printf 'pending-sync\n' ;;
+    *) printf 'manual-required\n' ;;
+  esac
+}
+
+coreelec_postdeploy_pm4k_onboarding_status() {
+  local authorization="$1" bound
+  case "${authorization}" in
+    configured|already-configured) ;;
+    authorization-required)
+      printf 'pending-authentication\n'
+      return 0
+      ;;
+    *)
+      printf 'manual-required\n'
+      return 0
+      ;;
+  esac
+
+  bound="$(coreelec_postdeploy_pm4k_server_bound 2>/dev/null || true)"
+  if [[ ! "${bound}" =~ ^[01]$ ]]; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "server-state-unreadable"
+    printf 'manual-required\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.script.plexmod.server_bound" "${bound}"
+  if [[ "${bound}" == "1" ]]; then
+    printf 'complete\n'
+  else
+    printf 'manual-required\n'
+  fi
+}
+
 run_addon_workflow() {
-  case "$1" in
+  local addon_id="$1" config_status onboarding_status authorization
+
+  case "${addon_id}" in
     weather.ha)
       if coreelec_postdeploy_weather_ready; then
-        check_home_assistant_weather
+        config_status="$(check_home_assistant_weather)"
       else
-        printf 'skipped\n'
+        config_status="skipped"
       fi
+      onboarding_status="not-required"
       ;;
     pvr.nextpvr)
       if coreelec_postdeploy_nextpvr_ready; then
-        check_nextpvr
+        config_status="$(check_nextpvr)"
       else
-        printf 'skipped\n'
+        config_status="skipped"
       fi
+      onboarding_status="not-required"
       ;;
     script.plexmod)
+      config_status="configured"
       if [[ "${INTERACTIVE:-0}" == "1" ]]; then
-        authorize_pm4k_account
+        authorization="$(authorize_pm4k_account)"
       else
-        printf 'authorization-required\n'
+        authorization="authorization-required"
       fi
+      case "${authorization}" in
+        configured) config_status="configured" ;;
+        already-configured) config_status="already-configured" ;;
+        authorization-required) config_status="configured" ;;
+        *) config_status="failed" ;;
+      esac
+      onboarding_status="$(coreelec_postdeploy_pm4k_onboarding_status "${authorization}")"
       ;;
     plugin.service.emby-next-gen)
-      printf 'authorization-required\n'
+      config_status="configured"
+      onboarding_status="$(coreelec_postdeploy_emby_onboarding_status)"
       ;;
     *)
       die "No post-deployment workflow is defined for add-on: $1"
       ;;
   esac
+
+  printf '%s %s\n' "${config_status}" "${onboarding_status}"
 }
