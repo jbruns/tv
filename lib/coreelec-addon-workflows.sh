@@ -656,7 +656,9 @@ database = os.path.expanduser(
 if not os.path.isfile(database):
     sys.stdout.write("handshake-pending\n")
     raise SystemExit(0)
-sys.stdout.write("configured\n")
+# The database is created at handshake, before any library content is
+# synchronized. Completion is decided by coreelec_postdeploy_emby_sync_state.
+sys.stdout.write("handshake-complete\n")
 PYEOF
 EOF
 )"
@@ -795,7 +797,7 @@ assist_emby_login() {
 
   state="$(coreelec_postdeploy_emby_state "${server_url}" 2>/dev/null || true)"
   case "${state}" in
-    configured)
+    handshake-complete)
       coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
       printf 'already-configured\n'
       return 0
@@ -838,7 +840,7 @@ assist_emby_login() {
     if (( signin_selected == 1 )); then
       state="$(coreelec_postdeploy_emby_state "${server_url}" 2>/dev/null || true)"
       case "${state}" in
-        configured)
+        handshake-complete)
           coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
           coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.handshake_database" "present"
           printf 'configured\n'

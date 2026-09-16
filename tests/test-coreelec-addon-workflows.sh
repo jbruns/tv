@@ -1805,6 +1805,16 @@ test_pm4k_server_binding_never_emits_plex_secrets() {
     "server UUIDs are internal state and must not be emitted" || return 1
 }
 
+test_legacy_emby_ladder_never_reports_configured_on_database_existence() {
+  local program
+  program="$(declare -f coreelec_postdeploy_emby_state)"
+
+  assert_not_contains "${program}" 'sys.stdout.write("configured\n")' \
+    "database existence must not be reported as configured" || return 1
+  assert_contains "${program}" 'sys.stdout.write("handshake-complete\n")' \
+    "database existence is a completed handshake, not onboarding success" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_kodi_password_must_come_from_shared_environment \
@@ -1842,4 +1852,5 @@ run_all_tests \
   test_emby_account_state_reports_each_credential_condition \
   test_emby_sync_state_separates_handshake_from_completed_sync \
   test_pm4k_server_binding_is_checked_separately_from_the_account_token \
-  test_pm4k_server_binding_never_emits_plex_secrets
+  test_pm4k_server_binding_never_emits_plex_secrets \
+  test_legacy_emby_ladder_never_reports_configured_on_database_existence
