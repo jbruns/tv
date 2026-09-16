@@ -29,6 +29,14 @@ Accepted.
   `skin` depends on `core` and `addons`.
 - `room` is reserved and rejected as unimplemented. Room playback, whitelist,
   audio, library, hub, and view-state ownership requires a separate decision.
+- A few pinned add-on artifacts receive compatibility patches applied to the
+  expanded source during the transaction, before installation. Each patch
+  asserts the add-on's exact identity, version, and source structure, and fails
+  the transaction rather than installing an unreviewed artifact: `script.plexmod`
+  1.3.19 and `plugin.video.themoviedb.helper` 6.17.1 receive shutdown fixes, and
+  `weather.ha` 0.0.6.6 receives both a Kodi 21 settings-schema fix and a
+  retry-loop fix that keeps an unreachable Home Assistant from crashing the
+  add-on at boot.
 
 ## Rollout boundary
 
@@ -36,8 +44,10 @@ The repository contract permits CEC-only maintenance while the Home Assistant
 keep-running override is enabled. It does not establish that the corrected CEC
 policy or lifecycle package is installed on the theater device; live rollout
 and Sony-off recovery validation remain separate required work. This decision
-does not change Sony or Denon configuration and does not resolve weather,
-buffering, add-on sequencing, or room desired state.
+does not change Sony or Denon configuration and does not resolve buffering,
+add-on sequencing, or room desired state. The `weather.ha` boot crash is fixed
+in the provisioner but is only live on a device once an `addons`-scoped
+transaction has redeployed that artifact.
 
 ## Manual Per-Room Configuration
 - Hostname and reservation.
