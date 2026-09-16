@@ -1670,6 +1670,75 @@ test_emby_account_state_reports_each_credential_condition() {
     "the access token is never printed" || return 1
 }
 
+make_emby_sync_fixture() {
+  local home_dir="$1" synced="$2" attempted="$3"
+  mkdir -p "${home_dir}/.kodi/userdata/Database"
+  EMBY_FIXTURE_DB="${home_dir}/.kodi/userdata/Database/emby_fe02bd703bb043ba92bf60a497794db5.db" \
+  EMBY_FIXTURE_SYNCED="${synced}" \
+  EMBY_FIXTURE_ATTEMPTED="${attempted}" \
+  python3 - <<'PYEOF'
+import os
+import sqlite3
+
+connection = sqlite3.connect(os.environ["EMBY_FIXTURE_DB"])
+for table in ("LibrarySynced", "LibrarySyncedMirrow"):
+    connection.execute(
+        "CREATE TABLE %s (EmbyLibraryId TEXT, EmbyLibraryName TEXT, "
+        "EmbyType TEXT, KodiDBs TEXT)" % table)
+for index in range(int(os.environ["EMBY_FIXTURE_SYNCED"])):
+    connection.execute("INSERT INTO LibrarySynced VALUES (?,?,?,?)",
+                       (str(index), "Movies", "Movie", "video"))
+for index in range(int(os.environ["EMBY_FIXTURE_ATTEMPTED"])):
+    connection.execute("INSERT INTO LibrarySyncedMirrow VALUES (?,?,?,?)",
+                       (str(index), "Movies", "Movie", "video"))
+connection.commit()
+connection.close()
+PYEOF
+}
+
+run_emby_sync_program() {
+  local home_dir="$1"
+  HOME="${home_dir}" bash -c "$(coreelec_postdeploy_emby_sync_program)"
+}
+
+test_emby_sync_state_separates_handshake_from_completed_sync() {
+  local dir
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+
+  mkdir -p "${dir}/nodb/.kodi/userdata/Database"
+  assert_eq "database-absent 0 0" "$(run_emby_sync_program "${dir}/nodb")" \
+    "no database means the handshake has not happened" || return 1
+
+  make_emby_sync_fixture "${dir}/fresh" 0 0
+  assert_eq "sync-pending 0 0" "$(run_emby_sync_program "${dir}/fresh")" \
+    "an empty database is the false-success window and must stay pending" || return 1
+
+  make_emby_sync_fixture "${dir}/partial" 9 16
+  assert_eq "sync-pending 9 16" "$(run_emby_sync_program "${dir}/partial")" \
+    "an interrupted sync stays pending" || return 1
+
+  make_emby_sync_fixture "${dir}/started" 0 16
+  assert_eq "sync-pending 0 16" "$(run_emby_sync_program "${dir}/started")" \
+    "an attempted but unfinished sync stays pending" || return 1
+
+  make_emby_sync_fixture "${dir}/done" 16 16
+  assert_eq "synced 16 16" "$(run_emby_sync_program "${dir}/done")" \
+    "equal non-empty counts mean the sync finished" || return 1
+
+  mkdir -p "${dir}/corrupt/.kodi/userdata/Database"
+  printf 'this is not a database' \
+    > "${dir}/corrupt/.kodi/userdata/Database/emby_fe02bd703bb043ba92bf60a497794db5.db"
+  assert_eq "unreadable 0 0" "$(run_emby_sync_program "${dir}/corrupt")" \
+    "a corrupt database fails closed" || return 1
+
+  make_emby_sync_fixture "${dir}/two" 16 16
+  cp "${dir}/two/.kodi/userdata/Database/emby_fe02bd703bb043ba92bf60a497794db5.db" \
+     "${dir}/two/.kodi/userdata/Database/emby_0000000000000000000000000000ffff.db"
+  assert_eq "unreadable 0 0" "$(run_emby_sync_program "${dir}/two")" \
+    "two Emby databases fail closed" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_kodi_password_must_come_from_shared_environment \
@@ -1704,4 +1773,5 @@ run_all_tests \
   test_guided_flow_times_out_as_manual_required \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
   test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
-  test_emby_account_state_reports_each_credential_condition
+  test_emby_account_state_reports_each_credential_condition \
+  test_emby_sync_state_separates_handshake_from_completed_sync

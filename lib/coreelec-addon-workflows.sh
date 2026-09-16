@@ -651,6 +651,50 @@ coreelec_postdeploy_emby_account_state() {
   coreelec_ssh_command "$(coreelec_postdeploy_emby_account_program)"
 }
 
+coreelec_postdeploy_emby_sync_program() {
+  cat <<'EOF'
+set -eu
+python3 - <<'PYEOF'
+import glob
+import os
+import sqlite3
+import sys
+
+paths = sorted(glob.glob(os.path.expanduser(
+    "~/.kodi/userdata/Database/emby_*.db")))
+if not paths:
+    sys.stdout.write("database-absent 0 0\n")
+    raise SystemExit(0)
+if len(paths) != 1:
+    sys.stdout.write("unreadable 0 0\n")
+    raise SystemExit(0)
+
+try:
+    connection = sqlite3.connect("file:%s?mode=ro" % paths[0], uri=True)
+    synced = connection.execute(
+        "SELECT COUNT(*) FROM LibrarySynced").fetchone()[0]
+    attempted = connection.execute(
+        "SELECT COUNT(*) FROM LibrarySyncedMirrow").fetchone()[0]
+    connection.close()
+except Exception:
+    sys.stdout.write("unreadable 0 0\n")
+    raise SystemExit(0)
+
+# LibrarySyncedMirrow is written before each library's content loop and
+# LibrarySynced only after it completes, so equal non-empty counts are the
+# only proof that every attempted library finished.
+if synced and synced == attempted:
+    sys.stdout.write("synced %d %d\n" % (synced, attempted))
+else:
+    sys.stdout.write("sync-pending %d %d\n" % (synced, attempted))
+PYEOF
+EOF
+}
+
+coreelec_postdeploy_emby_sync_state() {
+  coreelec_ssh_command "$(coreelec_postdeploy_emby_sync_program)"
+}
+
 coreelec_postdeploy_emby_fail() {
   coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.failure" "$1"
   printf 'manual-required\n'
