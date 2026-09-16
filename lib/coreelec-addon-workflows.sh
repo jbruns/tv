@@ -390,6 +390,69 @@ sys.stdout.write("1" if token else "0")
 PYEOF
 }
 
+coreelec_postdeploy_pm4k_server_bound() {
+  local settings_xml
+  settings_xml="$(coreelec_postdeploy_read_addon_data_file "script.plexmod" "settings.xml")" || return 1
+  SETTINGS_XML="${settings_xml}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+text = os.environ.get("SETTINGS_XML", "")
+if not text.strip():
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    root = ET.fromstring(text)
+except Exception:
+    raise SystemExit(1)
+
+settings = {}
+for node in root.findall(".//setting"):
+    settings[node.attrib.get("id", "")] = (node.text or "").strip()
+
+account_state = settings.get("myplex.MyPlexAccount", "").strip()
+if not account_state:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    account_id = (json.loads(account_state).get("ID") or "")
+except Exception:
+    raise SystemExit(1)
+account_id = str(account_id).strip()
+if not account_id:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+selected = settings.get("lastServerId.%s" % account_id, "").strip()
+if not selected:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+manager_state = settings.get("None.PlexServerManager", "").strip()
+if not manager_state:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    servers = json.loads(manager_state).get("servers") or []
+except Exception:
+    raise SystemExit(1)
+
+known = set()
+for server in servers:
+    if isinstance(server, dict):
+        uuid = server.get("uuid")
+        if isinstance(uuid, str) and uuid.strip():
+            known.add(uuid.strip())
+
+sys.stdout.write("1" if selected in known else "0")
+PYEOF
+}
+
 coreelec_postdeploy_guided_timeout_seconds() {
   local value="${COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS:-300}"
   case "${value}" in

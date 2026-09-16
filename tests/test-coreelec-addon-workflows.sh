@@ -1739,6 +1739,72 @@ test_emby_sync_state_separates_handshake_from_completed_sync() {
     "two Emby databases fail closed" || return 1
 }
 
+pm4k_settings_xml() {
+  local account_id="$1" last_server="$2" server_uuid="$3"
+  printf '<settings>'
+  printf '<setting id="myplex.MyPlexAccount">{"ID":"%s","authToken":"pm4k-account-token-secret"}</setting>' "${account_id}"
+  if [[ -n "${last_server}" ]]; then
+    printf '<setting id="lastServerId.%s">%s</setting>' "${account_id}" "${last_server}"
+  fi
+  printf '<setting id="None.PlexServerManager">{"servers":[{"name":"aMMc","uuid":"%s","connections":[{"token":"plex-connection-token-secret"}]}]}</setting>' "${server_uuid}"
+  printf '</settings>'
+}
+
+run_pm4k_server_bound() {
+  local dir="$1" settings="$2" bin_dir
+  bin_dir="$(install_ssh_stub "${dir}")"
+  printf '%s' "${settings}" > "${dir}/stub/response-default.json"
+  (
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${bin_dir}:${PATH}"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    coreelec_postdeploy_pm4k_server_bound
+  )
+}
+
+test_pm4k_server_binding_is_checked_separately_from_the_account_token() {
+  local dir bound
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+
+  mkdir -p "${dir}/bound"
+  bound="$(run_pm4k_server_bound "${dir}/bound" \
+    "$(pm4k_settings_xml 650797 5f5119b42542da76aba1994246e691f6d26bf7e3 5f5119b42542da76aba1994246e691f6d26bf7e3)")"
+  assert_eq "1" "${bound}" "a selected server present in the server list is bound" || return 1
+
+  mkdir -p "${dir}/unselected"
+  bound="$(run_pm4k_server_bound "${dir}/unselected" \
+    "$(pm4k_settings_xml 650797 "" 5f5119b42542da76aba1994246e691f6d26bf7e3)")"
+  assert_eq "0" "${bound}" "an authenticated account with no selected server is not bound" || return 1
+
+  mkdir -p "${dir}/stale"
+  bound="$(run_pm4k_server_bound "${dir}/stale" \
+    "$(pm4k_settings_xml 650797 0000000000000000000000000000000000000000 5f5119b42542da76aba1994246e691f6d26bf7e3)")"
+  assert_eq "0" "${bound}" "a selected server absent from the server list is not bound" || return 1
+
+  mkdir -p "${dir}/empty"
+  bound="$(run_pm4k_server_bound "${dir}/empty" '<settings></settings>')"
+  assert_eq "0" "${bound}" "no account state means no binding" || return 1
+}
+
+test_pm4k_server_binding_never_emits_plex_secrets() {
+  local dir emitted
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+
+  mkdir -p "${dir}/bound"
+  emitted="$(run_pm4k_server_bound "${dir}/bound" \
+    "$(pm4k_settings_xml 650797 5f5119b42542da76aba1994246e691f6d26bf7e3 5f5119b42542da76aba1994246e691f6d26bf7e3)" 2>&1)"
+
+  assert_not_contains "${emitted}" "plex-connection-token-secret" \
+    "Plex connection tokens must never be emitted on any stream" || return 1
+  assert_not_contains "${emitted}" "pm4k-account-token-secret" \
+    "the Plex account token must never be emitted on any stream" || return 1
+  assert_not_contains "${emitted}" "5f5119b42542da76aba1994246e691f6d26bf7e3" \
+    "server UUIDs are internal state and must not be emitted" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_kodi_password_must_come_from_shared_environment \
@@ -1774,4 +1840,6 @@ run_all_tests \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
   test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
   test_emby_account_state_reports_each_credential_condition \
-  test_emby_sync_state_separates_handshake_from_completed_sync
+  test_emby_sync_state_separates_handshake_from_completed_sync \
+  test_pm4k_server_binding_is_checked_separately_from_the_account_token \
+  test_pm4k_server_binding_never_emits_plex_secrets
