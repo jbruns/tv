@@ -15,13 +15,22 @@ and its `configured` value conflates two unrelated facts: that provisioning
 wrote the artifact and configuration, and that the add-on is actually onboarded
 and usable.
 
-The conflation is not theoretical. For `plugin.service.emby-next-gen` the
-post-deploy check reports `configured` as soon as `emby_<ServerId>.db` exists.
-That file is created at handshake, before any library content is synchronized,
-so the report can claim success while the Arctic Fuse 3 Trakt widgets are still
-empty. `docs/operations/provision-ugoos.md` step 12 already tells the operator
-to expect this, which is an admission that the report vocabulary is wrong
-rather than a fix for it.
+The conflation is not theoretical, and for Emby it is currently latent rather
+than active. `run_addon_workflow` dispatches
+`plugin.service.emby-next-gen` to an unconditional `authorization-required`,
+so the report is honest but useless: it can never signal that onboarding
+finished, no matter how complete the library sync is. Meanwhile
+`coreelec_postdeploy_emby_state` already implements a nine-value ladder that
+returns `configured` as soon as `emby_<ServerId>.db` exists. That file is
+created at handshake, before any library content is synchronized. The ladder
+has no production caller today — it is reachable only from `assist_emby_login`,
+which is itself uncalled — so wiring it up as written would introduce exactly
+the false success this workstream exists to prevent.
+
+`docs/operations/provision-ugoos.md` step 12 already tells the operator to
+expect an empty Trakt widget after a successful configuration report, which is
+an admission that the report vocabulary cannot express the distinction rather
+than a fix for it.
 
 This design defines the evidence-based contract: the onboarding order, the
 required restart checkpoints, and the observable completion signals. It makes
@@ -42,7 +51,9 @@ manual steps.
 
 - Automating the Emby sign-in or the Plex server selection. Both require a
   human at the UI. Automation may only follow once this contract is proven in
-  use.
+  use. In particular `assist_emby_login`, which drives the sign-in dialog over
+  JSON-RPC, has no production caller today and this design does not give it
+  one. Only the Emby *observation* path is wired up.
 - Changing `provision-coreelec.sh`. The restart rules below describe its
   current behavior and justify it; the evidence implies no change to it.
 - Removing or enabling add-ons found in a drifted state. See issues #12 and
@@ -268,9 +279,12 @@ and the onboarding fact moves to `onboarding_status`.
   `libraries_attempted=<m>`.
 - `LibrarySynced` non-empty and equal to `LibrarySyncedMirrow`: `complete`.
 
-The present-day Emby result therefore becomes `config_status=configured` with
-`onboarding_status=pending-sync` until the library sync finishes, which is the
-distinction this workstream is for.
+Emby's branch therefore stops returning an unconditional
+`authorization-required` and instead reports the observed rung of the ladder:
+`config_status=configured` with `onboarding_status=pending-sync` while the
+library sync is incomplete, and `complete` once it finishes. The ladder's
+existing `configured` rung, which fires on mere database existence, is
+corrected as part of this work rather than wired up as written.
 
 ## Fail-Closed Rule
 
