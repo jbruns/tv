@@ -4078,7 +4078,7 @@ verify_remote_baseline() {
 
   if coreelec_component_effective services; then
     value="$(coreelec_observation_value setting.weather.addon "${observations}" || true)"
-    if coreelec_weather_configured && coreelec_manifest_contains "${manifest}" "weather.ha"; then
+    if coreelec_weather_configured; then
       coreelec_report_comparison "weather_provider" "weather.ha" "${value}" \
         || failures=$((failures + 1))
     else

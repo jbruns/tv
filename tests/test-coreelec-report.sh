@@ -1637,6 +1637,54 @@ test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse() {
     "the mismatched skin transaction is never finalized"
 }
 
+test_weather_mismatch_rolls_back_when_manifest_omits_weather_addon() {
+  local dir config manifest observations log verify_output verify_rc
+  local output rc weather_status remote_calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/remote-calls.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}.full"
+  grep -v $'\tweather.ha\t' "${manifest}.full" > "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "setting.weather.addon" "weather.gismeteo"
+
+  set +e
+  verify_output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_verify_components services "${config}" "${observations}" "${manifest}" 2>&1)"
+  verify_rc=$?
+  output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_conclude_component services "${config}" "${observations}" \
+    "${manifest}" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  weather_status="$(printf '%s\n' "${verify_output}" \
+    | awk -F= '$1 == "weather_provider.status" { print $2 }')"
+  remote_calls="$(tr '\n' ' ' < "${log}")"
+  if [[ "${verify_rc}" -eq 0 || "${rc}" -eq 0 \
+      || "${weather_status}" != "mismatch" \
+      || "${remote_calls}" != *rollback* || "${remote_calls}" == *finalize* ]]; then
+    printf 'observed verify_status=%s weather_verdict=%s conclude_status=%s remote_calls=%s\n' \
+      "${verify_rc}" "${weather_status}" "${rc}" "${remote_calls}" >&2
+  fi
+  assert_failure "${verify_rc}" \
+    "configured services verification must reject a non-HA provider" || return 1
+  assert_failure "${rc}" \
+    "configured services must reject a non-HA provider even when the manifest omits weather.ha" \
+    || return 1
+  assert_eq "mismatch" "${weather_status}" \
+    "the configured provider mismatch is reported" || return 1
+  assert_contains "${output}" "deployment_state=rolled-back" \
+    "the mismatched provider transaction is rolled back" || return 1
+  assert_contains "$(cat "${log}")" "rollback" \
+    "rollback is invoked for a configured provider mismatch" || return 1
+  assert_not_contains "$(cat "${log}")" "finalize" \
+    "the mismatched provider transaction is never finalized"
+}
+
 test_cec_ignore_mismatch_triggers_rollback() {
   local dir config manifest observations log output rc
   dir="$(make_scratch_dir)"
@@ -4219,6 +4267,7 @@ run_all_tests \
   test_transient_verification_mismatch_is_retried_before_commit \
   test_verification_mismatch_is_fatal \
   test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse \
+  test_weather_mismatch_rolls_back_when_manifest_omits_weather_addon \
   test_cec_ignore_mismatch_triggers_rollback \
   test_incomplete_rollback_is_fatal_with_recovery_path \
   test_an_unanswered_probe_is_a_verification_failure \
