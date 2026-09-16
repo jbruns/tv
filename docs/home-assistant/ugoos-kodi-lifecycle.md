@@ -262,6 +262,13 @@ Valid lifecycle stdout is exactly `running`, `stopped`, or `failed`.
 - Lifecycle failures leave CoreELEC awake and notify; failed SSH cannot promise
   that Kodi started. Sony power-off failure leaves Kodi running without
   repeated off requests.
+- A start or stop command can exceed the 15-second SSH client deadline after
+  the device has already converged. When the 30-second status poll then reads
+  the currently desired state authoritatively, it clears that one operation's
+  stale diagnostic and dismisses its notification. `running` also requires
+  JSON-RPC readiness before it counts as start convergence. Observed states
+  that differ from the desired state, `failed` results, unreachable hosts, and
+  unrelated operation errors are all preserved.
 - The package never suspends, shuts down, reboots, power-cycles, or sends
   Wake-on-LAN to the Ugoos.
 - Kodi CEC remains available for remote navigation but is provisioned not to
