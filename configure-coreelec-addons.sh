@@ -215,13 +215,13 @@ EOF
 }
 
 write_report() {
-  local file="$1" capability_state="$2" addon_id status
+  local file="$1" capability_state="$2" addon_id config_status onboarding_status
   umask 077
   mkdir -p "${REPORT_DIR}"
   # The private umask protects creation; explicit modes remain defense in depth.
   chmod 700 "${REPORT_DIR}"
   {
-    printf 'report_format=coreelec-addon-configuration-report-1\n'
+    printf 'report_format=coreelec-addon-configuration-report-2\n'
     printf 'script_version=%s\n' "${SCRIPT_VERSION}"
     printf 'created_utc=%s\n' "$(timestamp)"
     printf 'target=%s\n' "${TARGET}"
@@ -235,11 +235,17 @@ write_report() {
       printf 'addon.%s.interaction_level=%s\n' "${addon_id}" \
         "$(coreelec_postdeploy_addon_interaction_level "${addon_id}")"
       if [[ "${DRY_RUN}" == "1" ]]; then
-        status="dry-run"
+        config_status="dry-run"
+        onboarding_status="dry-run"
       else
-        status="$(run_addon_workflow "${addon_id}")"
+        # IFS is scoped to this read only: the script sets IFS=$'\n\t' globally,
+        # which would otherwise prevent splitting on the space between tokens.
+        IFS=' ' read -r config_status onboarding_status <<EOF
+$(run_addon_workflow "${addon_id}")
+EOF
       fi
-      printf 'addon.%s.status=%s\n' "${addon_id}" "${status}"
+      printf 'addon.%s.config_status=%s\n' "${addon_id}" "${config_status}"
+      printf 'addon.%s.onboarding_status=%s\n' "${addon_id}" "${onboarding_status}"
     done <<EOF
 $(coreelec_postdeploy_selected_addons)
 EOF

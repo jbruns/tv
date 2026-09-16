@@ -456,8 +456,10 @@ CONFIG
   report="$(find_single_report "${dir}/reports")"
   report_body="$(cat "${report}")"
   for addon_id in weather.ha pvr.nextpvr script.plexmod plugin.service.emby-next-gen; do
-    assert_contains "${report_body}" "addon.${addon_id}.status=dry-run" \
-      "dry-run emits one static status for ${addon_id}" || return 1
+    assert_contains "${report_body}" "addon.${addon_id}.config_status=dry-run" \
+      "dry-run emits a static config status for ${addon_id}" || return 1
+    assert_contains "${report_body}" "addon.${addon_id}.onboarding_status=dry-run" \
+      "dry-run emits a static onboarding status for ${addon_id}" || return 1
   done
   assert_not_contains "${output}${report_body}" "dry-run-kodi-secret" \
     "dry-run output and report must not contain the Kodi secret" || return 1
@@ -556,9 +558,13 @@ test_default_run_never_starts_account_authorization() {
   assert_eq '{"jsonrpc":"2.0","id":"introspect","method":"JSONRPC.Introspect","params":{"getdescriptions":false,"getmetadata":false}}' \
     "${body}" "default run performs the required introspection call" || return 1
   report="$(find_single_report "${dir}/reports")"
-  assert_contains "$(cat "${report}")" "addon.script.plexmod.status=configured pending-authentication" \
+  assert_contains "$(cat "${report}")" "addon.script.plexmod.config_status=configured" \
+    "default run reports Plex configuration as complete" || return 1
+  assert_contains "$(cat "${report}")" "addon.script.plexmod.onboarding_status=pending-authentication" \
     "default run reports that Plex authorization is deferred" || return 1
-  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.status=configured pending-authentication" \
+  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.config_status=configured" \
+    "default run reports Emby configuration as complete" || return 1
+  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.onboarding_status=pending-authentication" \
     "default run reports that Emby authorization is deferred" || return 1
   assert_not_contains "${output}" "Input.ExecuteAction" "default run never attempts guided input" || return 1
 }
@@ -976,9 +982,12 @@ test_report_contains_statuses_but_no_secret_values() {
   assert_success "${rc}" "report fixture run should succeed" || return 1
   report="$(find_single_report "${dir}/reports")"
   report_body="$(cat "${report}")"
-  assert_contains "${report_body}" "addon.weather.ha.status=skipped" "weather status is written" || return 1
-  assert_contains "${report_body}" "addon.script.plexmod.status=configured pending-authentication" \
-    "Plex status is written" || return 1
+  assert_contains "${report_body}" "addon.weather.ha.config_status=skipped" "weather status is written" || return 1
+  assert_contains "${report_body}" "addon.weather.ha.onboarding_status=not-required" "weather onboarding status is written" || return 1
+  assert_contains "${report_body}" "addon.script.plexmod.config_status=configured" \
+    "Plex configuration status is written" || return 1
+  assert_contains "${report_body}" "addon.script.plexmod.onboarding_status=pending-authentication" \
+    "Plex onboarding status is written" || return 1
   assert_not_contains "${report_body}" "kodi-web-password-secret" "report must not leak the Kodi password" || return 1
   assert_contains "${output}" "Report:" "run output points to the report file" || return 1
 }
@@ -1515,7 +1524,7 @@ CONFIG
 
   report="$(find_single_report "${report_dir}")"
   argv_logs="$(cat "${dir}"/stub/argv-*.log; python3_argv_logs "${dir}")"
-  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.status=configured" \
+  assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.config_status=configured" \
     "successful Emby assistance is reported" || return 1
   assert_contains "$(cat "${dir}/stub/stdin-5.log")" '"method":"JSONRPC.NotifyAll"' \
     "Emby assistance asks the running service to open its server manager" || return 1
@@ -2012,6 +2021,39 @@ test_addon_workflow_config_axis_fails_closed_on_empty_check_result() {
     "an empty or unrecognized config check result fails closed" || return 1
 }
 
+test_report_emits_both_status_axes_under_the_new_format() {
+  local dir config env_file report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/postdeploy.conf"
+  env_file="${dir}/.env"
+  write_config "${config}" weather.ha script.plexmod
+  write_shared_env_file "${env_file}" \
+    'KODI_WEB_PASSWORD=kodi-web-password-secret'
+
+  UGOOS_ENV_FILE="${env_file}" bash "${CLI_SCRIPT}" \
+    --config "${config}" \
+    --report-dir "${dir}/reports" \
+    --target coreelec-theater \
+    --dry-run >/dev/null 2>&1
+  report="$(find_single_report "${dir}/reports")"
+
+  assert_contains "$(cat "${report}")" "report_format=coreelec-addon-configuration-report-2" \
+    "the format banner records the two-axis vocabulary" || return 1
+  assert_contains "$(cat "${report}")" "addon.weather.ha.config_status=dry-run" \
+    "dry-run is reported on the configuration axis" || return 1
+  assert_contains "$(cat "${report}")" "addon.weather.ha.onboarding_status=dry-run" \
+    "dry-run is reported on the onboarding axis" || return 1
+  assert_contains "$(cat "${report}")" "addon.script.plexmod.config_status=dry-run" \
+    "every selected add-on gets a configuration axis" || return 1
+  assert_contains "$(cat "${report}")" "addon.script.plexmod.onboarding_status=dry-run" \
+    "every selected add-on gets an onboarding axis" || return 1
+  assert_not_contains "$(cat "${report}")" "addon.weather.ha.status=" \
+    "the conflated single status field is gone" || return 1
+  assert_contains "$(cat "${report}")" "addon.script.plexmod.interaction_level=" \
+    "interaction level is retained" || return 1
+}
+
 run_all_tests \
   test_help_lists_supported_addons_and_interaction_levels \
   test_kodi_password_must_come_from_shared_environment \
@@ -2055,4 +2097,5 @@ run_all_tests \
   test_pm4k_version_mismatch_fails_the_configuration_axis \
   test_weather_workflow_maps_authorization_required_to_failed_config_axis \
   test_nextpvr_workflow_maps_authorization_required_to_failed_config_axis \
-  test_addon_workflow_config_axis_fails_closed_on_empty_check_result
+  test_addon_workflow_config_axis_fails_closed_on_empty_check_result \
+  test_report_emits_both_status_axes_under_the_new_format
