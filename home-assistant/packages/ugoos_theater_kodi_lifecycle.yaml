@@ -688,7 +688,8 @@ automation:
                           {{ poll_stdout in ['running', 'stopped']
                           and (not previous_host_reachable
                             or not is_state('input_boolean.ugoos_theater_observation_ready', 'on')
-                            or poll_stdout != states('sensor.ugoos_theater_desired_kodi_state')) }}
+                            or (previous_lifecycle_state in ['stopped', 'failed']
+                              and poll_stdout == 'running')) }}
                     sequence:
                       - action: script.ugoos_theater_begin_observation
               - action: input_text.set_value
@@ -715,6 +716,23 @@ automation:
                     data:
                       operation: status
                       message: ""
+              # An authoritative poll that observes the currently desired
+              # state is proof of convergence, even when the command that
+              # reached it exceeded the client deadline. Clear only that
+              # operation's stale diagnostic. A running service without
+              # JSON-RPC readiness is not start convergence.
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: >-
+                          {{ poll_stdout == states('sensor.ugoos_theater_desired_kodi_state') | trim
+                          and (poll_stdout == 'stopped'
+                            or states('media_player.theater_kodi_theater') not in ['off', 'unknown', 'unavailable']) }}
+                    sequence:
+                      - action: script.ugoos_theater_record_error
+                        data:
+                          operation: "{{ 'stop' if poll_stdout == 'stopped' else 'start' }}"
+                          message: ""
         default:
           - choose:
               - conditions:

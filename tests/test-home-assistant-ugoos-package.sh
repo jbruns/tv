@@ -38,6 +38,10 @@ test_host_and_service_recovery_start_fresh_off_observation() {
   package_fixture recovery_starts_fresh_observation
 }
 
+test_stale_desired_sensor_never_restarts_an_intentionally_stopped_kodi() {
+  package_fixture stale_desired_sensor_does_not_restart_stopped_kodi
+}
+
 test_reconciler_first_recovery_starts_fresh_off_observation() {
   package_fixture reconciler_first_recovery_starts_fresh_observation
 }
@@ -45,9 +49,20 @@ test_reconciler_first_recovery_starts_fresh_off_observation() {
 test_persistent_start_failure_is_not_retried_by_healthy_status_polls() {
   package_fixture healthy_polls_do_not_retry_start
 }
-
 test_persistent_stop_failure_is_not_retried_by_healthy_status_polls() {
   package_fixture healthy_polls_do_not_retry_stop
+}
+
+test_stop_client_timeout_then_convergence_clears_the_stale_diagnostic() {
+  package_fixture client_timeout_then_converged_stop_clears_stale_error
+}
+
+test_start_client_timeout_then_convergence_clears_the_stale_diagnostic() {
+  package_fixture client_timeout_then_converged_start_clears_stale_error
+}
+
+test_convergence_clearing_preserves_unresolved_and_unrelated_errors() {
+  package_fixture convergence_clear_preserves_unresolved_and_unrelated_errors
 }
 
 test_actual_status_outage_still_reconciles_after_command_failure() {
@@ -317,6 +332,9 @@ test_failed_lifecycle_state_is_recorded_without_marking_host_unreachable() {
 run_all_tests \
   test_persistent_start_failure_is_not_retried_by_healthy_status_polls \
   test_persistent_stop_failure_is_not_retried_by_healthy_status_polls \
+  test_stop_client_timeout_then_convergence_clears_the_stale_diagnostic \
+  test_start_client_timeout_then_convergence_clears_the_stale_diagnostic \
+  test_convergence_clearing_preserves_unresolved_and_unrelated_errors \
   test_actual_status_outage_still_reconciles_after_command_failure \
   test_reconciler_first_recovery_starts_fresh_off_observation \
   test_shell_action_exceptions_reach_lifecycle_error_handling \
@@ -336,6 +354,7 @@ run_all_tests \
   test_failed_sony_episode_latch_survives_ha_restart \
   test_fresh_observation_epoch_blocks_old_idle_duration \
   test_host_and_service_recovery_start_fresh_off_observation \
+  test_stale_desired_sensor_never_restarts_an_intentionally_stopped_kodi \
   test_start_and_reload_invalidate_queued_off_intervals \
   test_kodi_availability_recovery_reconciles_with_a_fresh_epoch \
   test_queued_reconciliation_uses_current_desired_state \

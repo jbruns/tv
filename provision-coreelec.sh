@@ -19,6 +19,11 @@ SCRIPT_VERSION="1.0.0"
 TARGET=""
 IDENTITY_FILE="${HOME}/.ssh/coreelec_admin_ed25519"
 ADDONS=()
+REQUESTED_COMPONENTS=()
+EFFECTIVE_COMPONENTS=()
+CLI_COMPONENTS=()
+COMPONENTS_EXPLICIT="0"
+PRINT_COMPONENT_PLAN="0"
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
@@ -65,8 +70,16 @@ Options:
   --kodi-port PORT          Kodi HTTP/JSON-RPC port (default: 8080)
   --kodi-user USER          Kodi account for Home Assistant (default: homeassistant)
   --addon ID                Deploy only this pinned add-on from the locked
-                             manifest; repeatable. An ID that is not locked in
-                             the configuration is rejected.
+                             manifest; repeatable. Without --component, the
+                             full baseline still applies. With --component,
+                             this also selects the addons component. An ID
+                             that is not locked in the configuration is
+                             rejected.
+  --component NAME          Apply only this component and its dependencies;
+                             repeatable. Implemented components are baseline,
+                             core, cec, addons, services, and skin. The room
+                             name is reserved and rejected as unimplemented.
+                             Dependencies are expanded and reported.
   --report-dir PATH         Local report directory
   --expected-release VER    Required CoreELEC release substring (default: 21.3)
   --no-kodi                 Skip Kodi and Home Assistant baseline configuration
@@ -81,6 +94,9 @@ Options:
   -h, --help                Show this help
 
 Internal:
+  --print-component-plan    Print the normalized requested and effective
+                             component plan, then exit without contacting a
+                             device.
   --transform-fixture ROOT PAYLOAD
                             Apply the Kodi/add-on settings transformer to ROOT
                              using a base64 KEY=value payload file, then exit.
@@ -116,7 +132,15 @@ Examples:
   ./provision-coreelec.sh --check-config
   ./provision-coreelec.sh --check-artifacts
   ./provision-coreelec.sh --target coreelec-theater
+  ./provision-coreelec.sh --target coreelec-theater --component cec
+  ./provision-coreelec.sh --target coreelec-theater --component skin
+  ./provision-coreelec.sh --target coreelec-theater --component cec --addon script.plexmod
   ./provision-coreelec.sh --config /path/to/device.conf --target 172.16.99.50
+
+With no --component, provisioning applies the full baseline. Explicit
+components narrow mutation, backup, verification, and reporting to their
+expanded effective scope. Component dependencies are services -> addons and
+skin -> core, addons.
 
 The device must first be booted through the CoreELEC wizard with Ethernet and
 SSH enabled and a unique root password. The first run may prompt for that root
@@ -240,6 +264,13 @@ WRITTEN_PATHS = []
 ADDON_DOCUMENTS = {}
 MANAGED_DIRECTORIES = set()
 TEMPORARY_SUFFIX = ".provision-new"
+COMPONENT_PAYLOAD_KEYS = (
+    "APPLY_COMPONENT_CORE",
+    "APPLY_COMPONENT_CEC",
+    "APPLY_COMPONENT_ADDONS",
+    "APPLY_COMPONENT_SERVICES",
+    "APPLY_COMPONENT_SKIN",
+)
 
 
 def fail(message):
@@ -299,10 +330,15 @@ def read_payload(path):
 
 
 def validate_payload(values):
-    """`HAVE_X=1` with a missing or empty `X` is a contradiction: the caller
-    believes the secret is configured while the payload carries nothing.
-    Failing here, before any write, keeps an empty managed value from being
-    stored as if it were a real credential. Only the key name is reported."""
+    """Requires strict scope flags and rejects contradictory secret markers.
+
+    Failing before any write keeps an empty managed value from being stored as
+    a credential. Error messages name keys but never decoded values."""
+    for key in COMPONENT_PAYLOAD_KEYS:
+        if key not in values:
+            fail("missing required component payload key: %s" % key)
+        if values[key] not in ("0", "1"):
+            fail("%s must be 0 or 1" % key)
     for key in sorted(values):
         if not key.startswith("HAVE_") or values[key] != "1":
             continue
@@ -526,11 +562,8 @@ def commit_addon_settings():
         write_xml_atomic(path, ADDON_DOCUMENTS[path][0])
 
 
-def set_cec_tv_off_action(storage_root, value):
-    """Forces Kodi's CEC peripheral setting for what a TV standby broadcast
-    makes the box do. There is exactly one such file once CoreELEC has
-    detected the CEC adapter; zero or more than one is ambiguous, and an
-    always-awake box must never guess which peripheral file to edit."""
+def set_cec_power_policy(storage_root, tv_off_action):
+    """Keeps CEC navigation while decoupling Kodi and TV power state."""
     peripheral_dir = os.path.join(
         storage_root, ".kodi", "userdata", "peripheral_data"
     )
@@ -542,16 +575,22 @@ def set_cec_tv_off_action(storage_root, value):
     root = tree.getroot()
     if root.tag != "settings":
         fail("unexpected root element in %s" % paths[0])
+    managed = {
+        "activate_source": "0",
+        "standby_devices": "231",
+        "standby_pc_on_tv_standby": tv_off_action,
+        "standby_tv_on_pc_standby": "0",
+        "wake_devices": "231",
+    }
     # Peripheral::LoadPersistedSettings reads direct children and value
     # attributes, unlike guisettings.xml. Repair previously nested settings.
-    for parent in root.iter():
-        if parent is not root:
-            for node in list(parent):
-                if node.tag == "setting" and node.get("id") == "standby_pc_on_tv_standby":
-                    parent.remove(node)
-    _set_xml_setting(
-        root, "standby_pc_on_tv_standby", value, flat=True
-    )
+    for setting_id in managed:
+        for parent in root.iter():
+            if parent is not root:
+                for node in list(parent):
+                    if node.tag == "setting" and node.get("id") == setting_id:
+                        parent.remove(node)
+        _set_xml_setting(root, setting_id, managed[setting_id], flat=True)
     write_xml_atomic(paths[0], tree)
 
 
@@ -583,11 +622,22 @@ def main(argv):
     def secret(key):
         return config(key) if have(key) else ""
 
+    apply_core = config("APPLY_COMPONENT_CORE") == "1"
+    apply_cec = config("APPLY_COMPONENT_CEC") == "1"
+    # Add-ons owns artifacts rather than settings, but its explicit flag is
+    # still parsed and validated with every other implemented component.
+    apply_addons = config("APPLY_COMPONENT_ADDONS") == "1"
+    apply_services = config("APPLY_COMPONENT_SERVICES") == "1"
+    apply_skin = config("APPLY_COMPONENT_SKIN") == "1"
+
     userdata = os.path.join(storage_root, ".kodi", "userdata")
     addon_data = os.path.join(userdata, "addon_data")
-    register_managed_directory(userdata)
-    register_managed_directory(addon_data)
-    register_managed_directory(os.path.join(storage_root, ".cache"))
+    if apply_core or apply_skin:
+        register_managed_directory(userdata)
+    if apply_services or apply_skin:
+        register_managed_directory(addon_data)
+    if apply_core:
+        register_managed_directory(os.path.join(storage_root, ".cache"))
 
     def addon_file(addon_id, name):
         directory = os.path.join(addon_data, addon_id)
@@ -598,101 +648,137 @@ def main(argv):
                               and config("HOME_ASSISTANT_WEATHER_ENTITY")
                               and have("HOME_ASSISTANT_TOKEN"))
     nextpvr_configured = bool(config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
+    if apply_services and weather_configured:
+        register_managed_directory(userdata)
 
     # --- Kodi guisettings ---------------------------------------------------
-    kodi_values = {
-        "general.addonupdates":
-            "0" if config("ADDON_UPDATE_MODE") == "auto" else "1",
-        "input.enablemouse": "false",
-        "locale.country": config("LOCALE_COUNTRY"),
-        "locale.keyboardlayouts": config("KEYBOARD_LAYOUT"),
-        "locale.language": config("LOCALE_LANGUAGE"),
-        "locale.timezone": config("TIMEZONE"),
-        "locale.timezonecountry": config("TIMEZONE_COUNTRY"),
-        "lookandfeel.skin": SKIN_ID,
-        "lookandfeel.soundskin": "resource.uisounds.fromashes",
-        "videolibrary.flattentvshows": "1",
-        "videolibrary.ignorevideoextras": "true",
-        "videolibrary.ignorevideoversions": "true",
-        "videoplayer.adjustrefreshrate": "2",
-        "videoplayer.usedisplayasclock": "false",
-    }
-    if have("KODI_WEB_PASSWORD"):
+    kodi_values = {}
+    if apply_core:
         kodi_values.update({
-            "services.esallinterfaces": "false",
-            "services.esenabled": "true",
-            "services.webserver": "true",
-            "services.webserverauthentication": "true",
-            "services.webserverpassword": secret("KODI_WEB_PASSWORD"),
-            "services.webserverport": config("KODI_WEB_PORT"),
-            "services.webserverssl": "false",
-            "services.webserverusername": config("KODI_WEB_USER"),
+            "general.addonupdates":
+                "0" if config("ADDON_UPDATE_MODE") == "auto" else "1",
+            "input.enablemouse": "false",
+            "locale.country": config("LOCALE_COUNTRY"),
+            "locale.keyboardlayouts": config("KEYBOARD_LAYOUT"),
+            "locale.language": config("LOCALE_LANGUAGE"),
+            "locale.timezone": config("TIMEZONE"),
+            "locale.timezonecountry": config("TIMEZONE_COUNTRY"),
+            "videolibrary.flattentvshows": "1",
+            "videolibrary.ignorevideoextras": "true",
+            "videolibrary.ignorevideoversions": "true",
+            "videoplayer.adjustrefreshrate": "2",
+            "videoplayer.usedisplayasclock": "false",
         })
-    if weather_configured:
+        if have("KODI_WEB_PASSWORD"):
+            kodi_values.update({
+                "services.esallinterfaces": "false",
+                "services.esenabled": "true",
+                "services.webserver": "true",
+                "services.webserverauthentication": "true",
+                "services.webserverpassword": secret("KODI_WEB_PASSWORD"),
+                "services.webserverport": config("KODI_WEB_PORT"),
+                "services.webserverssl": "false",
+                "services.webserverusername": config("KODI_WEB_USER"),
+            })
+    if apply_services and weather_configured:
         kodi_values["weather.addon"] = WEATHER_ADDON_ID
+    if apply_skin:
+        kodi_values.update({
+            "lookandfeel.skin": SKIN_ID,
+            "lookandfeel.soundskin": "resource.uisounds.fromashes",
+        })
 
-    guisettings_path = os.path.join(userdata, "guisettings.xml")
-    guisettings_tree, guisettings_root = load_kodi_settings(guisettings_path)
-    for setting_id in sorted(kodi_values):
-        set_kodi_setting(guisettings_root, setting_id, kodi_values[setting_id])
-    write_xml_atomic(guisettings_path, guisettings_tree)
+    if apply_core or apply_skin or (apply_services and weather_configured):
+        guisettings_path = os.path.join(userdata, "guisettings.xml")
+        guisettings_tree, guisettings_root = load_kodi_settings(
+            guisettings_path
+        )
+        for setting_id in sorted(kodi_values):
+            set_kodi_setting(
+                guisettings_root, setting_id, kodi_values[setting_id]
+            )
+        write_xml_atomic(guisettings_path, guisettings_tree)
 
     # --- HDMI-CEC TV standby behavior ---------------------------------------
     # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
     # not user-configurable, so any other value is a caller defect.
-    cec_tv_off_action = config("CEC_TV_OFF_ACTION")
-    if cec_tv_off_action != "36028":
-        fail("CEC_TV_OFF_ACTION must be 36028 (Ignore); got %r"
-             % (cec_tv_off_action,))
-    set_cec_tv_off_action(storage_root, cec_tv_off_action)
+    if apply_cec:
+        cec_tv_off_action = config("CEC_TV_OFF_ACTION")
+        if cec_tv_off_action != "36028":
+            fail("CEC_TV_OFF_ACTION must be 36028 (Ignore); got %r"
+                 % (cec_tv_off_action,))
+        set_cec_power_policy(storage_root, cec_tv_off_action)
 
-    # --- TMDb Helper --------------------------------------------------------
-    # OMDb and MDbList keys belong to TMDb Helper only, never to the skin.
-    tmdb_settings = addon_file("plugin.video.themoviedb.helper", "settings.xml")
-    if have("MDBLIST_API_KEY"):
-        set_addon_setting(tmdb_settings, "mdblist_apikey",
-                          secret("MDBLIST_API_KEY"))
-    if have("OMDB_API_KEY"):
-        set_addon_setting(tmdb_settings, "omdb_apikey", secret("OMDB_API_KEY"))
+    if apply_services:
+        # --- TMDb Helper ----------------------------------------------------
+        # OMDb and MDbList keys belong to TMDb Helper only, never to the skin.
+        tmdb_settings = addon_file(
+            "plugin.video.themoviedb.helper", "settings.xml"
+        )
+        if have("MDBLIST_API_KEY"):
+            set_addon_setting(tmdb_settings, "mdblist_apikey",
+                              secret("MDBLIST_API_KEY"))
+        if have("OMDB_API_KEY"):
+            set_addon_setting(tmdb_settings, "omdb_apikey",
+                              secret("OMDB_API_KEY"))
 
-    # --- NextPVR ------------------------------------------------------------
-    # Kodi 21 has no pvrmanager.enabled setting: the PVR manager starts from an
-    # enabled client instance, so instance-settings-1.xml carries the enable.
-    instance = addon_file("pvr.nextpvr", "instance-settings-1.xml")
-    if nextpvr_configured:
-        set_addon_setting(instance, "host", config("NEXTPVR_HOST"))
-        set_addon_setting(instance, "hostprotocol",
-                          config("NEXTPVR_PROTOCOL") or "http")
-        set_addon_setting(instance, "kodi_addon_instance_enabled", "true")
-        set_addon_setting(instance, "kodi_addon_instance_name",
-                          config("NEXTPVR_INSTANCE_NAME") or "NextPVR")
-        set_addon_setting(instance, "pin", secret("NEXTPVR_PIN"))
-        set_addon_setting(instance, "port", config("NEXTPVR_PORT") or "8866")
-    elif not os.path.exists(instance):
-        # Without a backend, Kodi's generated localhost instance fails
-        # permanently and Kodi disables the add-on itself.
-        set_addon_setting(instance, "kodi_addon_instance_enabled", "false")
+        # --- NextPVR --------------------------------------------------------
+        # Kodi 21 has no pvrmanager.enabled setting: the PVR manager starts
+        # from an enabled client instance, so instance-settings-1.xml carries
+        # the enable.
+        instance = addon_file("pvr.nextpvr", "instance-settings-1.xml")
+        if nextpvr_configured:
+            set_addon_setting(instance, "host", config("NEXTPVR_HOST"))
+            set_addon_setting(instance, "hostprotocol",
+                              config("NEXTPVR_PROTOCOL") or "http")
+            set_addon_setting(instance, "kodi_addon_instance_enabled", "true")
+            set_addon_setting(instance, "kodi_addon_instance_name",
+                              config("NEXTPVR_INSTANCE_NAME") or "NextPVR")
+            set_addon_setting(instance, "pin", secret("NEXTPVR_PIN"))
+            set_addon_setting(
+                instance, "port", config("NEXTPVR_PORT") or "8866"
+            )
+        elif not os.path.exists(instance):
+            # Without a backend, Kodi's generated localhost instance fails
+            # permanently and Kodi disables the add-on itself.
+            set_addon_setting(
+                instance, "kodi_addon_instance_enabled", "false"
+            )
 
-    # Local Plex is no longer supported. Remove only settings previously
-    # managed by this provisioner so existing devices migrate to account link.
-    plex_settings = addon_file("script.plexmod", "settings.xml")
-    for setting_id in ("allow_insecure", "local_mode", "local_servers_json",
-                       "local_profiles_json"):
-        remove_addon_setting(plex_settings, setting_id)
+        # Local Plex is no longer supported. Remove only settings previously
+        # managed by this provisioner so existing devices migrate to account
+        # link.
+        plex_settings = addon_file("script.plexmod", "settings.xml")
+        for setting_id in (
+                "allow_insecure", "local_mode", "local_servers_json",
+                "local_profiles_json"):
+            remove_addon_setting(plex_settings, setting_id)
 
-    # --- Home Assistant Weather --------------------------------------------
-    if weather_configured:
-        weather_settings = addon_file(WEATHER_ADDON_ID, "settings.xml")
-        set_addon_setting(weather_settings, "ha_key",
-                          secret("HOME_ASSISTANT_TOKEN"), version=1)
-        set_addon_setting(weather_settings, "ha_server",
-                          config("HOME_ASSISTANT_URL"), version=1)
-        set_addon_setting(weather_settings, "ha_weather_forecast_entity_id",
-                          config("HOME_ASSISTANT_WEATHER_ENTITY"), version=1)
-        set_addon_setting(weather_settings, "ha_sun_entity_id",
-                          config("HOME_ASSISTANT_SUN_ENTITY"), version=1)
+        # --- Home Assistant Weather ----------------------------------------
+        if weather_configured:
+            weather_settings = addon_file(WEATHER_ADDON_ID, "settings.xml")
+            set_addon_setting(weather_settings, "ha_key",
+                              secret("HOME_ASSISTANT_TOKEN"), version=1)
+            set_addon_setting(weather_settings, "ha_server",
+                              config("HOME_ASSISTANT_URL"), version=1)
+            set_addon_setting(
+                weather_settings, "ha_weather_forecast_entity_id",
+                config("HOME_ASSISTANT_WEATHER_ENTITY"), version=1
+            )
+            set_addon_setting(
+                weather_settings, "ha_sun_entity_id",
+                config("HOME_ASSISTANT_SUN_ENTITY"), version=1
+            )
 
-    commit_addon_settings()
+        commit_addon_settings()
+
+    if not apply_skin:
+        if apply_core and config("TIMEZONE"):
+            write_text_atomic(
+                os.path.join(storage_root, ".cache", "timezone"),
+                "TIMEZONE=%s\n" % config("TIMEZONE"), mode=0o644
+            )
+        return
 
     # --- Arctic Fuse skin settings ------------------------------------------
     skin_settings_path = addon_file(SKIN_ID, "settings.xml")
@@ -926,7 +1012,7 @@ def main(argv):
     # --- CoreELEC timezone cache -------------------------------------------
     # Kodi's CoreELEC patch writes this file when the timezone changes through
     # the UI; offline edits must write it explicitly. It holds no secret.
-    if config("TIMEZONE"):
+    if apply_core and config("TIMEZONE"):
         write_text_atomic(os.path.join(storage_root, ".cache", "timezone"),
                           "TIMEZONE=%s\n" % config("TIMEZONE"), mode=0o644)
 
@@ -954,19 +1040,46 @@ coreelec_settings_transform_fixture() {
   coreelec_settings_transformer_source | python3 - "${root}" "${payload}"
 }
 
-# Every settings path the transformer may write, relative to the storage root.
-# Emitted as an `sh` function so the backup snapshot and the deployment
-# transaction copy exactly the same set and can never drift apart.
+# Emits component-owned settings paths relative to the storage root. The
+# transaction detects its one required CEC path before enumerating this list;
+# the earlier operational snapshot copies CEC candidates separately. Keeping
+# all fixed paths shared prevents the two backup layers from drifting apart.
 coreelec_managed_settings_paths_block() {
   cat <<'MANAGED_SETTINGS_FUNCTION'
-managed_settings_paths() {
-  cat <<'MANAGED_SETTINGS_PATHS'
-.kodi/userdata/guisettings.xml
-.cache/timezone
+detect_selected_cec_path() {
+  cec_path=""
+  cec_relative=""
+  [ "${apply_cec}" = "1" ] || return 0
+
+  cec_count=0
+  for cec_candidate in "${storage_root}"/.kodi/userdata/peripheral_data/*CEC*.xml; do
+    [ -f "${cec_candidate}" ] || continue
+    cec_count=$((cec_count + 1))
+    cec_path="${cec_candidate}"
+  done
+  [ "${cec_count}" -eq 1 ] \
+    || fail "expected exactly one CEC peripheral settings file, found ${cec_count}"
+  cec_relative="${cec_path#${storage_root}/}"
+}
+
+scoped_settings_paths() {
+  if [ "${apply_core}" = "1" ] || [ "${apply_services}" = "1" ] \
+      || [ "${apply_skin}" = "1" ]; then
+    printf '%s\n' '.kodi/userdata/guisettings.xml'
+  fi
+  if [ "${apply_core}" = "1" ]; then
+    printf '%s\n' '.cache/timezone'
+  fi
+  if [ "${apply_services}" = "1" ]; then
+    cat <<'SERVICE_SETTINGS_PATHS'
 .kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
 .kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
 .kodi/userdata/addon_data/script.plexmod/settings.xml
 .kodi/userdata/addon_data/weather.ha/settings.xml
+SERVICE_SETTINGS_PATHS
+  fi
+  if [ "${apply_skin}" = "1" ]; then
+    cat <<'SKIN_SETTINGS_PATHS'
 .kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json
@@ -982,7 +1095,11 @@ managed_settings_paths() {
 .kodi/userdata/playlists/video/TraktWeekendBoxOffice.xsp
 .kodi/userdata/playlists/video/NewShows.xsp
 .kodi/userdata/playlists/video/NewMovies.xsp
-MANAGED_SETTINGS_PATHS
+SKIN_SETTINGS_PATHS
+  fi
+  if [ "${apply_cec}" = "1" ] && [ -n "${cec_relative}" ]; then
+    printf '%s\n' "${cec_relative}"
+  fi
 }
 MANAGED_SETTINGS_FUNCTION
 }
@@ -994,6 +1111,28 @@ MANAGED_SETTINGS_FUNCTION
 # those are always read at runtime from files the device itself revalidates.
 coreelec_remote_backup_script() {
   local root="${1:-/storage}"
+  local scope="${2:-baseline}" component remainder
+  local apply_core=0 apply_cec=0 apply_addons=0 apply_services=0 apply_skin=0
+  if [[ "${scope}" == "baseline" ]]; then
+    scope="core,cec,addons,services,skin"
+  fi
+  remainder="${scope}"
+  while [[ -n "${remainder}" ]]; do
+    component="${remainder%%,*}"
+    if [[ "${remainder}" == *,* ]]; then
+      remainder="${remainder#*,}"
+    else
+      remainder=""
+    fi
+    case "${component}" in
+      core) apply_core=1 ;;
+      cec) apply_cec=1 ;;
+      addons) apply_addons=1 ;;
+      services) apply_services=1 ;;
+      skin) apply_skin=1 ;;
+      *) die "Unsupported component in remote backup scope: ${component}" ;;
+    esac
+  done
   # umask 077 covers every directory and file the snapshot creates: a copy of
   # guisettings.xml or api_keys.json carries credentials, so the snapshot must
   # not be readable by anyone but root.
@@ -1001,9 +1140,20 @@ coreelec_remote_backup_script() {
 set -eu
 umask 077
 storage_root="${root}"
+apply_core="${apply_core}"
+apply_cec="${apply_cec}"
+apply_addons="${apply_addons}"
+apply_services="${apply_services}"
+apply_skin="${apply_skin}"
+cec_relative=""
 REMOTE_BACKUP_HEADER
   coreelec_managed_settings_paths_block
   cat <<'REMOTE_BACKUP'
+fail() {
+  printf 'remote backup: %s\n' "$1" >&2
+  exit 1
+}
+
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="${storage_root}/backup/coreelec-provision/${stamp}"
 mkdir -p "${backup}"
@@ -1025,23 +1175,26 @@ copy_one() {
 
 copy_one "${storage_root}/.ssh/authorized_keys"
 copy_one "${storage_root}/.cache/services/sshd.conf"
-copy_one "${storage_root}/.cache/hostname"
-copy_one "${storage_root}/.kodi/userdata/advancedsettings.xml"
-copy_one "${storage_root}/.kodi/userdata/sources.xml"
-copy_one "${storage_root}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
+if [ "${apply_core}" = "1" ]; then
+  copy_one "${storage_root}/.cache/hostname"
+  copy_one "${storage_root}/.kodi/userdata/advancedsettings.xml"
+  copy_one "${storage_root}/.kodi/userdata/sources.xml"
+  copy_one "${storage_root}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
+fi
 
-managed_settings_paths | while IFS= read -r managed_relative; do
+if [ "${apply_cec}" = "1" ]; then
+  # The deployment transaction enforces exactly one candidate before touching
+  # Kodi. This earlier operational snapshot copies only CEC candidates when
+  # CEC is selected and never scans peripheral data for another scope.
+  for cec_path in "${storage_root}"/.kodi/userdata/peripheral_data/*CEC*.xml; do
+    [ -f "${cec_path}" ] || continue
+    copy_one "${cec_path}"
+  done
+fi
+
+scoped_settings_paths | while IFS= read -r managed_relative; do
   [ -n "${managed_relative}" ] || continue
   copy_one "${storage_root}/${managed_relative}"
-done
-
-# The CEC peripheral file's name varies by adapter, so every candidate is
-# backed up before the transformer enforces its exactly-one rule. This also
-# preserves any unrelated peripheral file without copying an unbounded
-# directory tree.
-for cec_path in "${storage_root}"/.kodi/userdata/peripheral_data/*CEC*.xml; do
-  [ -f "${cec_path}" ] || continue
-  copy_one "${cec_path}"
 done
 
 {
@@ -1130,6 +1283,12 @@ addons_dir="${storage_root}/.kodi/addons"
 backup_root="${storage_root}/backup/coreelec-provision"
 tab="$(printf '\t')"
 transaction=""
+apply_core=""
+apply_cec=""
+apply_addons=""
+apply_services=""
+apply_skin=""
+plan_addon_count=0
 # Set when the list of paths the transformer applied could not be rebuilt, so
 # rollback can neither remove what this run created nor claim it restored the
 # device.
@@ -1172,12 +1331,131 @@ valid_directory_name() {
   return 0
 }
 
+valid_component_name() {
+  case "$1" in
+    core|cec|addons|services|skin) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_component_flag() {
+  case "$1" in
+    0|1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Refuses a plan line whose fields are not exactly what the validator promised.
 valid_plan_line() {
   valid_archive_name "$1" || return 1
   valid_addon_id "$2" || return 1
   valid_directory_name "$3" || return 1
   return 0
+}
+
+# Loads and revalidates the complete non-secret plan produced from the scoped
+# payload and selected artifact manifest. Every component flag must appear
+# exactly once; add-on rows are permitted only when the add-ons flag is set.
+# The optional second argument allows the initial component-only pass before
+# artifact inspection has appended add-on rows.
+load_deployment_plan() {
+  loaded_plan="$1"
+  plan_phase="${2:-complete}"
+  [ -f "${loaded_plan}" ] || fail "deployment plan is missing: ${loaded_plan}"
+  awk -F "${tab}" '
+    $1 == "component" && NF == 3 && $2 != "" && $3 != "" { next }
+    $1 == "addon" && NF == 4 && $2 != "" && $3 != "" && $4 != "" { next }
+    { exit 1 }
+  ' "${loaded_plan}" || fail "malformed deployment plan record shape"
+
+  apply_core=""
+  apply_cec=""
+  apply_addons=""
+  apply_services=""
+  apply_skin=""
+  seen_core=0
+  seen_cec=0
+  seen_addons=0
+  seen_services=0
+  seen_skin=0
+  seen_addon_ids="|"
+  plan_addon_count=0
+
+  while IFS="${tab}" read -r plan_kind plan_field1 plan_field2 plan_field3 plan_extra; do
+    [ -n "${plan_kind}" ] || fail "deployment plan contains an empty line"
+    case "${plan_kind}" in
+      component)
+        [ -z "${plan_field3}${plan_extra}" ] \
+          || fail "malformed component deployment plan line"
+        valid_component_name "${plan_field1}" \
+          || fail "unsupported component in deployment plan: ${plan_field1}"
+        valid_component_flag "${plan_field2}" \
+          || fail "component ${plan_field1} must be 0 or 1 in the deployment plan"
+        case "${plan_field1}" in
+          core)
+            [ "${seen_core}" -eq 0 ] || fail "deployment plan repeats component core"
+            seen_core=1
+            apply_core="${plan_field2}"
+            ;;
+          cec)
+            [ "${seen_cec}" -eq 0 ] || fail "deployment plan repeats component cec"
+            seen_cec=1
+            apply_cec="${plan_field2}"
+            ;;
+          addons)
+            [ "${seen_addons}" -eq 0 ] || fail "deployment plan repeats component addons"
+            seen_addons=1
+            apply_addons="${plan_field2}"
+            ;;
+          services)
+            [ "${seen_services}" -eq 0 ] || fail "deployment plan repeats component services"
+            seen_services=1
+            apply_services="${plan_field2}"
+            ;;
+          skin)
+            [ "${seen_skin}" -eq 0 ] || fail "deployment plan repeats component skin"
+            seen_skin=1
+            apply_skin="${plan_field2}"
+            ;;
+        esac
+        ;;
+      addon)
+        [ -z "${plan_extra}" ] || fail "malformed add-on deployment plan line"
+        valid_plan_line "${plan_field1}" "${plan_field2}" "${plan_field3}" \
+          || fail "unsupported deployment plan line: ${plan_field1} ${plan_field2} ${plan_field3}"
+        case "${seen_addon_ids}" in
+          *"|${plan_field2}|"*) fail "deployment plan repeats add-on ID ${plan_field2}" ;;
+        esac
+        seen_addon_ids="${seen_addon_ids}${plan_field2}|"
+        plan_addon_count=$((plan_addon_count + 1))
+        ;;
+      *)
+        fail "unsupported deployment plan record: ${plan_kind}"
+        ;;
+    esac
+  done < "${loaded_plan}"
+
+  [ "${seen_core}" -eq 1 ] || fail "deployment plan is missing component core"
+  [ "${seen_cec}" -eq 1 ] || fail "deployment plan is missing component cec"
+  [ "${seen_addons}" -eq 1 ] || fail "deployment plan is missing component addons"
+  [ "${seen_services}" -eq 1 ] || fail "deployment plan is missing component services"
+  [ "${seen_skin}" -eq 1 ] || fail "deployment plan is missing component skin"
+  [ "$((apply_core + apply_cec + apply_addons + apply_services + apply_skin))" -gt 0 ] \
+    || fail "deployment plan selects no component"
+  if [ "${apply_services}" = "1" ] && [ "${apply_addons}" != "1" ]; then
+    fail "deployment plan selects services without required component addons"
+  fi
+  if [ "${apply_skin}" = "1" ] \
+    && { [ "${apply_core}" != "1" ] || [ "${apply_addons}" != "1" ]; }; then
+    fail "deployment plan selects skin without required components core and addons"
+  fi
+  if [ "${apply_addons}" = "0" ] && [ "${plan_addon_count}" -ne 0 ]; then
+    fail "deployment plan contains add-ons while component addons is disabled"
+  fi
+  if [ "${plan_phase}" = "complete" ] \
+    && [ "${apply_addons}" = "1" ] && [ "${plan_addon_count}" -eq 0 ]; then
+    fail "deployment plan selects component addons but contains no add-ons"
+  fi
 }
 
 copy_into_backup() {
@@ -1374,8 +1652,6 @@ finish_transaction() {
 }
 trap finish_transaction EXIT HUP INT TERM
 
-[ -d "${stage_dir}" ] || fail "no uploaded artifact bundle was found: ${stage_dir}"
-[ -f "${stage_dir}/deploy.tsv" ] || fail "the uploaded bundle has no deploy.tsv manifest"
 [ -f "${payload_file}" ] || fail "no settings payload was uploaded: ${payload_file}"
 
 if [ -f "${pointer_file}" ]; then
@@ -1397,11 +1673,64 @@ fi
 # --- Phase 1: validate and expand the bundle while Kodi keeps running -------
 # Nothing outside the provisioning cache is touched here, so a bad bundle
 # never interrupts playback and never needs a rollback.
-rm -rf "${expanded_dir}"
-mkdir -p "${expanded_dir}"
 rm -f "${plan_file}"
 
-python3 - "${stage_dir}" > "${plan_file}" <<'PYTHON_DEPLOY_PLAN'
+python3 - "${payload_file}" > "${plan_file}" <<'PYTHON_COMPONENT_PLAN'
+import base64
+import sys
+
+PAYLOAD = sys.argv[1]
+COMPONENTS = (
+    ("APPLY_COMPONENT_CORE", "core"),
+    ("APPLY_COMPONENT_CEC", "cec"),
+    ("APPLY_COMPONENT_ADDONS", "addons"),
+    ("APPLY_COMPONENT_SERVICES", "services"),
+    ("APPLY_COMPONENT_SKIN", "skin"),
+)
+required = dict(COMPONENTS)
+values = {}
+
+
+def reject(message):
+    raise SystemExit("deployment scope rejected: " + message)
+
+
+with open(PAYLOAD, "r", encoding="utf-8") as handle:
+    for number, raw_line in enumerate(handle, start=1):
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        key, separator, encoded = line.partition("=")
+        if not separator or not key:
+            reject("payload line %d is not KEY=value" % number)
+        if key not in required:
+            continue
+        if key in values:
+            reject("payload repeats required component key: %s" % key)
+        try:
+            decoded = base64.b64decode(encoded.encode("ascii"),
+                                       validate=True).decode("utf-8")
+        except Exception:
+            reject("component payload key %s is not valid base64 UTF-8" % key)
+        if decoded not in ("0", "1"):
+            reject("%s must be 0 or 1" % key)
+        values[key] = decoded
+
+for key, component in COMPONENTS:
+    if key not in values:
+        reject("missing required component payload key: %s" % key)
+    sys.stdout.write("component\t%s\t%s\n" % (component, values[key]))
+PYTHON_COMPONENT_PLAN
+
+load_deployment_plan "${plan_file}" scope
+
+if [ "${apply_addons}" = "1" ]; then
+  [ -d "${stage_dir}" ] || fail "no uploaded artifact bundle was found: ${stage_dir}"
+  [ -f "${stage_dir}/deploy.tsv" ] || fail "the uploaded bundle has no deploy.tsv manifest"
+  rm -rf "${expanded_dir}"
+  mkdir -p "${expanded_dir}"
+
+python3 - "${stage_dir}" >> "${plan_file}" <<'PYTHON_DEPLOY_PLAN'
 import os
 import re
 import sys
@@ -1506,12 +1835,16 @@ if not plan:
     reject("no add-on was selected for deployment")
 
 for archive_name, addon_id, top in plan:
-    sys.stdout.write("%s\t%s\t%s\n" % (archive_name, addon_id, top))
+    sys.stdout.write("addon\t%s\t%s\t%s\n"
+                     % (archive_name, addon_id, top))
 PYTHON_DEPLOY_PLAN
+fi
 
-[ -s "${plan_file}" ] || fail "the uploaded bundle selected no add-ons"
+load_deployment_plan "${plan_file}" complete
+detect_selected_cec_path
 
-while IFS="${tab}" read -r plan_archive plan_id plan_top; do
+while IFS="${tab}" read -r plan_kind plan_archive plan_id plan_top plan_extra; do
+  [ "${plan_kind}" = "addon" ] || continue
   valid_plan_line "${plan_archive}" "${plan_id}" "${plan_top}" \
     || fail "unsupported deployment plan line: ${plan_archive} ${plan_id} ${plan_top}"
   mkdir -p "${expanded_dir}/${plan_id}"
@@ -1542,6 +1875,186 @@ matches[0].set("type", "number")
 tree.write(path, encoding="UTF-8", xml_declaration=True)
 PYTHON_PATCH_WEATHER_SETTINGS
   fi
+  if [ "${plan_id}" = "script.plexmod" ]; then
+    pm4k_root="${expanded_dir}/${plan_id}/${plan_top}"
+    pm4k_monitor="${pm4k_root}/lib/monitor.py"
+    [ -f "${pm4k_monitor}" ] \
+      || fail "the expanded script.plexmod has no lib/monitor.py"
+    python3 - "${pm4k_root}/addon.xml" "${pm4k_monitor}" <<'PYTHON_PATCH_PM4K_SHUTDOWN' \
+      || fail "could not apply the PM4K 1.3.19 shutdown compatibility patch"
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+addon_path, monitor_path = sys.argv[1:]
+addon = ET.parse(addon_path).getroot()
+if addon.get("id") != "script.plexmod" or addon.get("version") != "1.3.19":
+    raise SystemExit("unexpected PM4K identity or version")
+
+with open(monitor_path, "r", encoding="utf-8") as handle:
+    lines = handle.readlines()
+
+matches = []
+for index in range(len(lines) - 1):
+    first = lines[index]
+    second = lines[index + 1]
+    indent = first[:len(first) - len(first.lstrip())]
+    if (first.strip() == 'windowutils.HOME.closeOption = "kodi_exit"'
+            and second.strip() == "windowutils.HOME.doClose()"
+            and second.startswith(indent)):
+        matches.append((index, indent))
+
+if len(matches) != 1:
+    raise SystemExit("unexpected PM4K System.OnQuit HOME dereference")
+
+index, indent = matches[0]
+lines[index:index + 2] = [
+    indent + "if windowutils.HOME:\n",
+    indent + '    windowutils.HOME.closeOption = "kodi_exit"\n',
+    indent + "    windowutils.HOME.doClose()\n",
+]
+patched = "".join(lines)
+compile(patched, monitor_path, "exec")
+temporary = monitor_path + ".provision-new"
+with open(temporary, "w", encoding="utf-8", newline="") as handle:
+    handle.write(patched)
+os.replace(temporary, monitor_path)
+PYTHON_PATCH_PM4K_SHUTDOWN
+  fi
+  if [ "${plan_id}" = "plugin.video.themoviedb.helper" ]; then
+    tmdb_root="${expanded_dir}/${plan_id}/${plan_top}"
+    tmdb_service="${tmdb_root}/resources/tmdbhelper/lib/monitor/service.py"
+    tmdb_cronjob="${tmdb_root}/resources/tmdbhelper/lib/monitor/cronjob.py"
+    [ -f "${tmdb_service}" ] \
+      || fail "the expanded plugin.video.themoviedb.helper has no resources/tmdbhelper/lib/monitor/service.py"
+    [ -f "${tmdb_cronjob}" ] \
+      || fail "the expanded plugin.video.themoviedb.helper has no resources/tmdbhelper/lib/monitor/cronjob.py"
+    python3 - "${tmdb_root}/addon.xml" "${tmdb_service}" "${tmdb_cronjob}" <<'PYTHON_PATCH_TMDB_SHUTDOWN' \
+      || fail "could not apply the TMDb Helper 6.17.1 shutdown compatibility patch"
+import os
+import stat
+import sys
+import xml.etree.ElementTree as ET
+
+addon_path, service_path, cronjob_path = sys.argv[1:]
+addon = ET.parse(addon_path).getroot()
+if (addon.get("id") != "plugin.video.themoviedb.helper"
+        or addon.get("version") != "6.17.1"):
+    raise SystemExit("unexpected TMDb Helper identity or version")
+
+with open(service_path, "r", encoding="utf-8") as handle:
+    lines = handle.readlines()
+
+workers = (
+    (
+        "Cron Thread",
+        "self.cron_job",
+        (
+            "        self.cron_job = CronJobMonitor(self, update_hour=get_setting('library_autoupdate_hour', 'int'))\n",
+            "        self.cron_job.setName('Cron Thread')\n",
+            "        self.cron_job.start()\n",
+        ),
+        "        self.cron_job.daemon = True\n",
+    ),
+    (
+        "Image Thread",
+        "self.images_monitor",
+        (
+            "        self.images_monitor = ImagesMonitor(self)\n",
+            "        self.images_monitor.setName('Image Thread')\n",
+            "        self.images_monitor.start()\n",
+        ),
+        "        self.images_monitor.daemon = True\n",
+    ),
+)
+
+changed = False
+for label, worker, expected, daemon_line in workers:
+    patched = expected[:2] + (daemon_line, expected[2])
+    unpatched_matches = [
+        index for index in range(len(lines) - len(expected) + 1)
+        if tuple(lines[index:index + len(expected)]) == expected
+    ]
+    patched_matches = [
+        index for index in range(len(lines) - len(patched) + 1)
+        if tuple(lines[index:index + len(patched)]) == patched
+    ]
+    required_counts = [lines.count(line) for line in expected]
+    daemon_lines = [
+        line for line in lines
+        if line.strip().startswith(worker + ".daemon")
+    ]
+
+    if (unpatched_matches and not patched_matches
+            and required_counts == [1, 1, 1] and not daemon_lines):
+        lines.insert(unpatched_matches[0] + 2, daemon_line)
+        changed = True
+        continue
+    if (patched_matches and not unpatched_matches
+            and required_counts == [1, 1, 1]
+            and daemon_lines == [daemon_line]):
+        continue
+    raise SystemExit("unexpected TMDb Helper %s sequence" % label)
+
+patched_source = "".join(lines)
+compile(patched_source, service_path, "exec")
+
+with open(cronjob_path, "r", encoding="utf-8") as handle:
+    cron_lines = handle.readlines()
+
+cron_unpatched = (
+    "        while not self.update_monitor.abortRequested() and not self.exit:\n",
+    "            self.update_monitor.waitForAbort(self._poll_time)\n",
+    "            self._on_poll()\n",
+)
+cron_guard = (
+    "            if self.update_monitor.abortRequested() or self.exit:\n",
+    "                return\n",
+)
+cron_patched = cron_unpatched[:2] + cron_guard + (cron_unpatched[2],)
+cron_unpatched_matches = [
+    index for index in range(len(cron_lines) - len(cron_unpatched) + 1)
+    if tuple(cron_lines[index:index + len(cron_unpatched)]) == cron_unpatched
+]
+cron_patched_matches = [
+    index for index in range(len(cron_lines) - len(cron_patched) + 1)
+    if tuple(cron_lines[index:index + len(cron_patched)]) == cron_patched
+]
+cron_required_counts = [cron_lines.count(line) for line in cron_unpatched]
+cron_abort_rechecks = [
+    line for line in cron_lines
+    if line.strip().startswith("if self.update_monitor.abortRequested()")
+]
+
+cron_changed = False
+if (cron_unpatched_matches and not cron_patched_matches
+        and cron_required_counts == [1, 1, 1] and not cron_abort_rechecks):
+    cron_lines[cron_unpatched_matches[0]:cron_unpatched_matches[0] + 3] = cron_patched
+    cron_changed = True
+elif (cron_patched_matches and not cron_unpatched_matches
+        and cron_required_counts == [1, 1, 1]
+        and cron_abort_rechecks == [cron_guard[0]]):
+    pass
+else:
+    raise SystemExit("unexpected TMDb Helper Cron shutdown loop")
+
+patched_cronjob = "".join(cron_lines)
+compile(patched_cronjob, cronjob_path, "exec")
+
+if changed:
+    temporary = service_path + ".provision-new"
+    with open(temporary, "w", encoding="utf-8", newline="") as handle:
+        handle.write(patched_source)
+    os.chmod(temporary, stat.S_IMODE(os.stat(service_path).st_mode))
+    os.replace(temporary, service_path)
+if cron_changed:
+    temporary = cronjob_path + ".provision-new"
+    with open(temporary, "w", encoding="utf-8", newline="") as handle:
+        handle.write(patched_cronjob)
+    os.chmod(temporary, stat.S_IMODE(os.stat(cronjob_path).st_mode))
+    os.replace(temporary, cronjob_path)
+PYTHON_PATCH_TMDB_SHUTDOWN
+  fi
 done < "${plan_file}"
 
 # --- Phase 2: mutate the device inside a recoverable transaction ------------
@@ -1552,7 +2065,10 @@ while [ -e "${transaction}" ]; do
   collision=$((collision + 1))
   transaction="${backup_root}/${stamp}-${collision}"
 done
-mkdir -p "${transaction}/files" "${transaction}/rollback/addons"
+mkdir -p "${transaction}/files"
+if [ "${apply_addons}" = "1" ]; then
+  mkdir -p "${transaction}/rollback/addons"
+fi
 # Only this run's own subtree is tightened. /storage/backup is CoreELEC's own
 # backup location, shared with the device's other tooling, so its mode is left
 # exactly as the device set it; umask 077 already makes anything created here
@@ -1560,13 +2076,21 @@ mkdir -p "${transaction}/files" "${transaction}/rollback/addons"
 chmod 700 "${backup_root}" "${transaction}"
 : > "${transaction}/DEPLOYED.txt"
 : > "${transaction}/APPLIED.txt"
+cp "${plan_file}" "${transaction}/PLAN.tsv"
 {
   printf 'created_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'hostname=%s\n' "$(hostname)"
   printf 'storage_root=%s\n' "${storage_root}"
   printf 'transaction=%s\n' "${transaction}"
+  while IFS="${tab}" read -r manifest_kind manifest_name manifest_value manifest_rest; do
+    [ "${manifest_kind}" = "component" ] || continue
+    if [ "${manifest_value}" = "1" ]; then
+      printf 'component %s\n' "${manifest_name}"
+    fi
+  done < "${plan_file}"
 } > "${transaction}/MANIFEST.txt"
-chmod 600 "${transaction}/MANIFEST.txt" "${transaction}/DEPLOYED.txt" "${transaction}/APPLIED.txt"
+chmod 600 "${transaction}/MANIFEST.txt" "${transaction}/DEPLOYED.txt" \
+  "${transaction}/APPLIED.txt" "${transaction}/PLAN.tsv"
 printf 'staged\n' > "${transaction}/STATE"
 # Written before anything moves so an interrupted session still leaves the
 # operator, and Task 6's verification, a handle on the material to undo it.
@@ -1578,14 +2102,17 @@ transaction_state="stopping Kodi"
 systemctl stop kodi.service >/dev/null 2>&1 || true
 
 transaction_state="backing up replaced paths"
-managed_settings_paths | while IFS= read -r managed_relative; do
+scoped_settings_paths | while IFS= read -r managed_relative; do
   [ -n "${managed_relative}" ] || continue
   copy_into_backup "${storage_root}/${managed_relative}"
 done
 
 transaction_state="replacing add-ons"
-mkdir -p "${addons_dir}"
-while IFS="${tab}" read -r plan_archive plan_id plan_top; do
+if [ "${apply_addons}" = "1" ]; then
+  mkdir -p "${addons_dir}"
+fi
+while IFS="${tab}" read -r plan_kind plan_archive plan_id plan_top plan_extra; do
+  [ "${plan_kind}" = "addon" ] || continue
   valid_plan_line "${plan_archive}" "${plan_id}" "${plan_top}" \
     || fail "unsupported deployment plan line: ${plan_archive} ${plan_id} ${plan_top}"
   destination="${addons_dir}/${plan_id}"
@@ -1708,15 +2235,16 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-SETTING_IDS = [
+CORE_SETTING_IDS = [
     "locale.language",
     "locale.country",
     "locale.keyboardlayouts",
     "locale.timezonecountry",
     "locale.timezone",
-    "lookandfeel.skin",
-    "weather.addon",
 ]
+SKIN_SETTING_IDS = ["lookandfeel.skin"]
+SERVICE_SETTING_IDS = ["weather.addon"]
+SETTING_IDS = CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
 
 # `date +%Z%z` output: a zone abbreviation followed by a UTC offset. Anything
 # else -- an unexpanded format string, an error line, an empty answer -- is not
@@ -1754,6 +2282,11 @@ def observe(key, value):
     text = "%s" % (value,)
     text = text.replace("\r", " ").replace("\n", " ")
     OBSERVATIONS.append("%s=%s" % (key, text))
+
+
+def emit_observations():
+    for line in OBSERVATIONS:
+        sys.stdout.write(line + "\n")
 
 
 def read_request(path):
@@ -1854,9 +2387,9 @@ def index_responses(payload):
     return entries
 
 
-def query_batch(addon_ids):
+def query_batch(addon_ids, setting_ids=SETTING_IDS):
     batch = [{"jsonrpc": "2.0", "id": "version", "method": "JSONRPC.Version"}]
-    for setting_id in SETTING_IDS:
+    for setting_id in setting_ids:
         batch.append({"jsonrpc": "2.0",
                       "id": "setting:" + setting_id,
                       "method": "Settings.GetSettingValue",
@@ -1923,7 +2456,8 @@ def request_enable(curl_config, url, addon_id):
                                      "enabled": True}}]) is not None
 
 
-def converge_enabled_addons(curl_config, url, addon_ids, entries):
+def converge_enabled_addons(curl_config, url, addon_ids, entries,
+                            setting_ids=SETTING_IDS):
     """Enables every installed add-on Kodi reports disabled, asks Kodi again,
     and repeats until it reports them all enabled, stops changing its answer,
     or the round bound is reached.
@@ -1956,7 +2490,8 @@ def converge_enabled_addons(curl_config, url, addon_ids, entries):
             if not request_enable(curl_config, url, addon_id):
                 served = False
         requeried = index_responses(
-            call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+            call_jsonrpc(curl_config, url,
+                         query_batch(addon_ids, setting_ids)))
         if not requeried or not jsonrpc_version(requeried):
             # Kodi stopped answering. The last state it did report stands,
             # and an add-on left disabled in it stays a failure.
@@ -2028,13 +2563,8 @@ def timezone_cache_value(storage_root):
     return ""
 
 
-def cec_tv_off_action_value(storage_root):
-    """Locates the one Kodi CEC peripheral settings file and returns its
-    standby_pc_on_tv_standby value. Never reports the file's own name: the
-    adapter file name varies and is not part of the observation contract. A
-    missing or ambiguous file, or a file with no such setting, is fatal for
-    the same reason it is fatal for the transformer -- guessing which
-    peripheral file governs TV standby is worse than refusing to answer."""
+def cec_power_values(storage_root):
+    """Returns the managed CEC power policy without exposing adapter names."""
     peripheral_dir = os.path.join(
         storage_root, ".kodi", "userdata", "peripheral_data"
     )
@@ -2045,13 +2575,18 @@ def cec_tv_off_action_value(storage_root):
     root = ET.parse(paths[0]).getroot()
     if root.tag != "settings":
         fail("unexpected root element in %s" % paths[0])
-    nodes = [node for node in root.iter("setting")
-             if node.get("id") == "standby_pc_on_tv_standby"]
-    if (len(nodes) != 1 or nodes[0] not in root.findall("setting")
-            or not nodes[0].get("value")):
-        fail("the Kodi CEC peripheral settings file requires exactly one "
-             "direct standby_pc_on_tv_standby setting with a value attribute")
-    return nodes[0].get("value")
+    values = {}
+    for setting_id in (
+            "activate_source", "wake_devices", "standby_devices",
+            "standby_tv_on_pc_standby", "standby_pc_on_tv_standby"):
+        nodes = [node for node in root.iter("setting")
+                 if node.get("id") == setting_id]
+        if (len(nodes) != 1 or nodes[0] not in root.findall("setting")
+                or nodes[0].get("value") is None):
+            fail("the Kodi CEC peripheral settings file requires exactly one "
+                 "direct %s setting with a value attribute" % setting_id)
+        values[setting_id] = nodes[0].get("value")
+    return values
 
 
 def localtime_target(system_root):
@@ -2214,8 +2749,28 @@ def main(argv):
     def have(key):
         return request.get("HAVE_" + key, "0") == "1"
 
-    addon_ids = [line.strip() for line in config("ADDON_IDS").split("\n")
-                 if line.strip()]
+    canonical_components = ["core", "cec", "addons", "services", "skin"]
+    component_text = config("EFFECTIVE_COMPONENTS")
+    components = component_text.split(",")
+    if (not component_text or any(not item for item in components)
+            or components != [
+                item for item in canonical_components if item in components]):
+        fail("invalid effective component scope")
+
+    def selected(component):
+        return component in components
+
+    setting_ids = []
+    if selected("core"):
+        setting_ids.extend(CORE_SETTING_IDS)
+    if selected("skin"):
+        setting_ids.extend(SKIN_SETTING_IDS)
+    if selected("services"):
+        setting_ids.extend(SERVICE_SETTING_IDS)
+    addon_ids = (
+        [line.strip() for line in config("ADDON_IDS").split("\n")
+         if line.strip()]
+        if selected("addons") else [])
     port = config("KODI_PORT", "8080")
     url = "http://127.0.0.1:%s/jsonrpc" % port
     try:
@@ -2232,7 +2787,8 @@ def main(argv):
         try:
             for attempt in range(attempts):
                 entries = index_responses(
-                    call_jsonrpc(curl_config, url, query_batch(addon_ids)))
+                    call_jsonrpc(
+                        curl_config, url, query_batch(addon_ids, setting_ids)))
                 if jsonrpc_version(entries):
                     break
                 entries = {}
@@ -2249,49 +2805,62 @@ def main(argv):
         # round after round -- so the reported state is what Kodi observes
         # once it has settled rather than what a single pass asked for.
         entries, enable_attempted, enable_unresolved = converge_enabled_addons(
-            curl_config, url, addon_ids, entries)
+            curl_config, url, addon_ids, entries, setting_ids)
     finally:
         if os.path.lexists(curl_config):
             os.remove(curl_config)
 
     observe("observation_format", "coreelec-verification-1")
     observe("jsonrpc_version", jsonrpc_version(entries))
-    for setting_id in SETTING_IDS:
+    for setting_id in setting_ids:
         observe("setting." + setting_id, setting_value(entries, setting_id))
 
-    timezone = config("TIMEZONE")
-    observe("timezone_cache", timezone_cache_value(storage_root))
-    observe("localtime_path", localtime_target(system_root))
-    observe("localtime_kind", localtime_kind(system_root))
-    observe("localtime_zoneinfo_match",
-            localtime_zoneinfo_match(system_root, timezone))
-    if timezone:
-        verdict, expected_marks, observed_marks = zone_marks_verdict(timezone)
-    else:
-        verdict, expected_marks, observed_marks = ("unavailable", "", "")
-    observe("date_offset_expected", expected_marks)
-    observe("date_offset_observed", observed_marks)
-    observe("date_matches_timezone", verdict)
-    observe("cec.tv_off_action", cec_tv_off_action_value(storage_root))
+    if selected("core"):
+        timezone = config("TIMEZONE")
+        observe("timezone_cache", timezone_cache_value(storage_root))
+        observe("localtime_path", localtime_target(system_root))
+        observe("localtime_kind", localtime_kind(system_root))
+        observe("localtime_zoneinfo_match",
+                localtime_zoneinfo_match(system_root, timezone))
+        if timezone:
+            verdict, expected_marks, observed_marks = zone_marks_verdict(timezone)
+        else:
+            verdict, expected_marks, observed_marks = ("unavailable", "", "")
+        observe("date_offset_expected", expected_marks)
+        observe("date_offset_observed", observed_marks)
+        observe("date_matches_timezone", verdict)
 
-    for addon_id in addon_ids:
-        installed, version, enabled = addon_state(entries.get("addon:" + addon_id))
-        observe("addon.%s.installed" % addon_id, installed)
-        observe("addon.%s.version" % addon_id, version)
-        observe("addon.%s.enabled" % addon_id, enabled)
-        observe("addon.%s.enable_attempted" % addon_id,
-                1 if addon_id in enable_attempted else 0)
+    if selected("cec"):
+        cec_values = cec_power_values(storage_root)
+        observe("cec.activate_source", cec_values["activate_source"])
+        observe("cec.wake_devices", cec_values["wake_devices"])
+        observe("cec.standby_devices", cec_values["standby_devices"])
+        observe("cec.standby_tv_on_pc_standby",
+                cec_values["standby_tv_on_pc_standby"])
+        observe("cec.tv_off_action",
+                cec_values["standby_pc_on_tv_standby"])
 
-    # The add-ons Kodi was asked for and still reports disabled, named exactly.
-    # An add-on ID is not a secret, and naming them is what tells the operator
-    # which ones to look at.
-    observe("addon_enable_unresolved", " ".join(enable_unresolved))
+    if selected("addons"):
+        for addon_id in addon_ids:
+            installed, version, enabled = addon_state(
+                entries.get("addon:" + addon_id))
+            observe("addon.%s.installed" % addon_id, installed)
+            observe("addon.%s.version" % addon_id, version)
+            observe("addon.%s.enabled" % addon_id, enabled)
+            observe("addon.%s.enable_attempted" % addon_id,
+                    1 if addon_id in enable_attempted else 0)
+
+        # The add-ons Kodi was asked for and still reports disabled, named
+        # exactly. An add-on ID is not a secret, and naming it tells the
+        # operator what to inspect.
+        observe("addon_enable_unresolved", " ".join(enable_unresolved))
 
     def addon_data(addon_id, name):
         return os.path.join(storage_root, ".kodi", "userdata", "addon_data",
                             addon_id, name)
 
-    if have("HOME_ASSISTANT_TOKEN") and config("HOME_ASSISTANT_URL") \
+    if selected("services") and have("HOME_ASSISTANT_TOKEN") \
+            and config("HOME_ASSISTANT_URL") \
             and config("HOME_ASSISTANT_WEATHER_ENTITY"):
         values = read_settings(addon_data("weather.ha", "settings.xml")) or {}
         matched = (values.get("ha_server") == config("HOME_ASSISTANT_URL")
@@ -2300,7 +2869,8 @@ def main(argv):
                    and bool(values.get("ha_key")))
         observe("addon_settings.weather.ha.configured", 1 if matched else 0)
 
-    if have("NEXTPVR_PIN") and config("NEXTPVR_HOST"):
+    if selected("services") and have("NEXTPVR_PIN") \
+            and config("NEXTPVR_HOST"):
         values = read_settings(
             addon_data("pvr.nextpvr", "instance-settings-1.xml")) or {}
         matched = (values.get("host") == config("NEXTPVR_HOST")
@@ -2310,7 +2880,8 @@ def main(argv):
             matched = matched and values.get("port") == config("NEXTPVR_PORT")
         observe("addon_settings.pvr.nextpvr.configured", 1 if matched else 0)
 
-    if have("OMDB_API_KEY") or have("MDBLIST_API_KEY"):
+    if selected("services") \
+            and (have("OMDB_API_KEY") or have("MDBLIST_API_KEY")):
         values = read_settings(
             addon_data("plugin.video.themoviedb.helper", "settings.xml")) or {}
         if have("OMDB_API_KEY"):
@@ -2319,6 +2890,10 @@ def main(argv):
         if have("MDBLIST_API_KEY"):
             observe("addon_settings.plugin.video.themoviedb.helper.mdblist_configured",
                     1 if bool(values.get("mdblist_apikey")) else 0)
+
+    if not selected("skin"):
+        emit_observations()
+        return
 
     # --- Arctic Fuse skin state -------------------------------------------
 
@@ -2371,6 +2946,13 @@ def main(argv):
         """A disabled managed setting has no case variant anywhere."""
         matches = xml_setting_matches(skin_settings_path, setting_id)
         return matches is not None and not matches
+
+    def managed_setting_is_unset_or(setting_id, expected):
+        """Accept absence or one inert canonical default recreated by AF3."""
+        matches = xml_setting_matches(skin_settings_path, setting_id)
+        return matches is not None and (
+            not matches
+            or matches == [(setting_id, "string", expected, True)])
 
     def kodi_setting_is(setting_id, expected):
         matches = xml_setting_matches(guisettings_path, setting_id)
@@ -2492,12 +3074,14 @@ def main(argv):
         and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Path")
         and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Target")
     )
-    custom_1104_disabled = all(
-        managed_setting_is_unset("HomeSwitcher.1104." + suffix)
-        for suffix in (
-            "Name", "Toggle", "Icon", "Mode", "Shortcut.Path",
-            "Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
-            "Spotlight.Target"))
+    custom_1104_disabled = (
+        managed_setting_is_unset_or("HomeSwitcher.1104.Name", "Custom")
+        and all(
+            managed_setting_is_unset("HomeSwitcher.1104." + suffix)
+            for suffix in (
+                "Toggle", "Icon", "Mode", "Shortcut.Path",
+                "Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
+                "Spotlight.Target")))
     nextpvr_expected = bool(
         config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
     if nextpvr_expected:
@@ -2538,8 +3122,8 @@ def main(argv):
         managed_setting_is("optionstiles.03.include", "Weather")
         if weather_expected
         else managed_setting_is_unset("optionstiles.03.include"),
-        managed_setting_is_unset("optionstiles.03.path"),
-        managed_setting_is_unset("optionstiles.03.target"),
+        managed_setting_is_unset_or("optionstiles.03.path", ""),
+        managed_setting_is_unset_or("optionstiles.03.target", ""),
     ))
     option_tiles_ok = all((
         managed_setting_is("optionstiles.01.include", "NowPlaying"),
@@ -2677,8 +3261,7 @@ def main(argv):
             0 if os.path.lexists(os.path.join(
                 playlists_dir, playlist_name + ".xsp")) else 1)
 
-    for line in OBSERVATIONS:
-        sys.stdout.write(line + "\n")
+    emit_observations()
 
 
 main(sys.argv)
@@ -2779,7 +3362,7 @@ REMOTE_AUTHORIZED_KEY_INSTALL
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
   case "${name}" in
-    backup) coreelec_remote_backup_script "${root}" ;;
+    backup) coreelec_remote_backup_script "${root}" "${key_file:-baseline}" ;;
     payload) coreelec_remote_payload_script "${root}" ;;
     stage) coreelec_remote_stage_script "${root}" ;;
     deploy) coreelec_remote_deploy_script "${root}" ;;
@@ -2792,6 +3375,145 @@ coreelec_emit_remote_script() {
       die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, or authorized-key, not: ${name}"
       ;;
   esac
+}
+
+coreelec_component_known() {
+  case "$1" in
+    baseline|core|cec|addons|services|skin|room) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coreelec_component_implemented() {
+  case "$1" in
+    baseline|core|cec|addons|services|skin) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coreelec_component_dependencies() {
+  case "$1" in
+    services) printf '%s\n' addons ;;
+    skin) printf '%s\n' core addons ;;
+    room) printf '%s\n' core ;;
+  esac
+}
+
+coreelec_component_set_contains() {
+  case "$1" in
+    *$'\n'"$2"$'\n'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+coreelec_component_requested() {
+  coreelec_component_set_contains "${REQUESTED_COMPONENT_SET:-$'\n'}" "$1"
+}
+
+coreelec_component_effective() {
+  coreelec_component_set_contains "${EFFECTIVE_COMPONENT_SET:-$'\n'}" "$1"
+}
+
+coreelec_expand_component() {
+  local component="$1" stack="$2" dependency
+
+  coreelec_component_set_contains "${stack}" "${component}" \
+    && die "Component dependency cycle detected at: ${component}"
+  coreelec_component_effective "${component}" && return 0
+  stack="${stack}${component}"$'\n'
+
+  if [[ "${component}" == "baseline" ]]; then
+    for dependency in core cec addons services skin; do
+      coreelec_expand_component "${dependency}" "${stack}"
+    done
+    return 0
+  fi
+
+  while IFS= read -r dependency; do
+    [[ -n "${dependency}" ]] || continue
+    coreelec_expand_component "${dependency}" "${stack}"
+  done < <(coreelec_component_dependencies "${component}")
+  EFFECTIVE_COMPONENT_SET="${EFFECTIVE_COMPONENT_SET}${component}"$'\n'
+}
+
+coreelec_prepare_component_plan() {
+  local component requested_set=$'\n' canonical
+
+  REQUESTED_COMPONENTS=()
+  REQUESTED_COMPONENT_SET=$'\n'
+  EFFECTIVE_COMPONENTS=()
+  EFFECTIVE_COMPONENT_SET=$'\n'
+  COMPONENT_DEPENDENCIES_ADDED=()
+
+  if [[ "${COMPONENTS_EXPLICIT}" == "1" ]]; then
+    [[ "${APPLY_KODI}" == "1" ]] \
+      || die "--no-kodi cannot be used with --component"
+    for component in ${CLI_COMPONENTS[@]+"${CLI_COMPONENTS[@]}"}; do
+      [[ -n "${component}" ]] || continue
+      coreelec_component_known "${component}" \
+        || die "Unknown component: ${component}"
+      coreelec_component_implemented "${component}" \
+        || die "Component is not implemented: ${component}"
+      if ! coreelec_component_set_contains "${requested_set}" "${component}"; then
+        REQUESTED_COMPONENTS+=("${component}")
+        requested_set="${requested_set}${component}"$'\n'
+      fi
+    done
+    if (( ${#ADDONS[@]} > 0 )) \
+      && ! coreelec_component_set_contains "${requested_set}" addons; then
+      REQUESTED_COMPONENTS+=("addons")
+      requested_set="${requested_set}addons"$'\n'
+    fi
+  else
+    REQUESTED_COMPONENTS=("baseline")
+    requested_set="${requested_set}baseline"$'\n'
+  fi
+  REQUESTED_COMPONENT_SET="${requested_set}"
+
+  for component in ${REQUESTED_COMPONENTS[@]+"${REQUESTED_COMPONENTS[@]}"}; do
+    coreelec_expand_component "${component}" $'\n'
+  done
+
+  for canonical in core cec addons services skin room; do
+    if coreelec_component_effective "${canonical}"; then
+      EFFECTIVE_COMPONENTS+=("${canonical}")
+    fi
+  done
+  (( ${#EFFECTIVE_COMPONENTS[@]} > 0 )) \
+    || die "Effective component plan is empty"
+
+  if ! coreelec_component_requested baseline; then
+    for canonical in ${EFFECTIVE_COMPONENTS[@]+"${EFFECTIVE_COMPONENTS[@]}"}; do
+      if ! coreelec_component_requested "${canonical}"; then
+        COMPONENT_DEPENDENCIES_ADDED+=("${canonical}")
+      fi
+    done
+  fi
+}
+
+coreelec_components_csv() {
+  local result="" component
+  for component in "$@"; do
+    if [[ -n "${result}" ]]; then
+      result="${result},${component}"
+    else
+      result="${component}"
+    fi
+  done
+  printf '%s\n' "${result}"
+}
+
+coreelec_print_component_plan() {
+  printf 'components.requested=%s\n' \
+    "$(coreelec_components_csv "${REQUESTED_COMPONENTS[@]}")"
+  printf 'components.effective=%s\n' \
+    "$(coreelec_components_csv "${EFFECTIVE_COMPONENTS[@]}")"
+  if (( ${#COMPONENT_DEPENDENCIES_ADDED[@]} > 0 )); then
+    printf 'components.dependencies_added=%s\n' \
+      "$(coreelec_components_csv "${COMPONENT_DEPENDENCIES_ADDED[@]}")"
+  else
+    printf 'components.dependencies_added=none\n'
+  fi
 }
 
 # Precedence: built-in safe defaults, then the selected configuration file,
@@ -2909,6 +3631,16 @@ while (( $# > 0 )); do
       coreelec_config_add_cli_addon "$2"
       shift 2
       ;;
+    --component)
+      (( $# >= 2 )) || die "--component requires a value"
+      COMPONENTS_EXPLICIT="1"
+      CLI_COMPONENTS+=("$2")
+      shift 2
+      ;;
+    --print-component-plan)
+      PRINT_COMPONENT_PLAN="1"
+      shift
+      ;;
     --print-addon-selection)
       (( $# >= 2 )) || die "--print-addon-selection requires a manifest path"
       PRINT_ADDON_SELECTION="$2"
@@ -2987,6 +3719,12 @@ while (( $# > 0 )); do
   esac
 done
 
+coreelec_prepare_component_plan
+if [[ "${PRINT_COMPONENT_PLAN}" == "1" ]]; then
+  coreelec_print_component_plan
+  exit 0
+fi
+
 # Bash 3.2 treats expanding "${array[@]}" of an *empty* array under `set -u`
 # as an unbound-variable error rather than an empty list. Every
 # optional array in this script is therefore iterated through the `${a[@]+...}`
@@ -3050,6 +3788,7 @@ coreelec_addon_selection() {
 # remain keyless.
 require_arctic_fuse_metadata_keys() {
   [[ "${APPLY_KODI}" == "1" ]] || return 0
+  coreelec_component_effective services || return 0
   [[ -n "${OMDB_API_KEY:-}" ]] \
     || die "OMDB_API_KEY is required for an Arctic Fuse 3 Kodi deployment"
   [[ -n "${MDBLIST_API_KEY:-}" ]] \
@@ -3196,6 +3935,7 @@ verify_remote_baseline() {
   local failures=0
   local index addon_id version filename observed_version installed enabled attempted
   local addon_failed value content match expected_marks observed_marks
+  local arctic_fuse_failures=0 playlist_name
 
   if [[ ! -r "${observations}" ]]; then
     warn "Verification observations are not readable: ${observations}"
@@ -3216,6 +3956,10 @@ verify_remote_baseline() {
 
   printf 'verification_source=device-localhost-jsonrpc\n'
 
+  coreelec_report_comparison "observation_format" "coreelec-verification-1" \
+    "$(coreelec_observation_value observation_format "${observations}" || true)" \
+    || failures=$((failures + 1))
+
   value="$(coreelec_observation_value jsonrpc_version "${observations}" || true)"
   printf 'jsonrpc.version=%s\n' "${value}"
   if [[ -n "${value}" ]]; then
@@ -3225,6 +3969,7 @@ verify_remote_baseline() {
     failures=$((failures + 1))
   fi
 
+  if coreelec_component_effective core; then
   coreelec_report_comparison "regional.locale.language" "${LOCALE_LANGUAGE}" \
     "$(coreelec_observation_value setting.locale.language "${observations}" || true)" \
     || failures=$((failures + 1))
@@ -3243,13 +3988,28 @@ verify_remote_baseline() {
   coreelec_report_comparison "regional.timezone_cache" "${TIMEZONE}" \
     "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
     || failures=$((failures + 1))
+  fi
 
   # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
   # not user-configurable, so the expected side is a literal rather than a
   # configuration variable.
+  if coreelec_component_effective cec; then
   coreelec_report_comparison "cec.tv_off_action" "36028" \
     "$(coreelec_observation_value cec.tv_off_action "${observations}" || true)" \
     || failures=$((failures + 1))
+  coreelec_report_comparison "cec.activate_source" "0" \
+    "$(coreelec_observation_value cec.activate_source "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "cec.wake_devices" "231" \
+    "$(coreelec_observation_value cec.wake_devices "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "cec.standby_devices" "231" \
+    "$(coreelec_observation_value cec.standby_devices "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "cec.standby_tv_on_pc_standby" "0" \
+    "$(coreelec_observation_value cec.standby_tv_on_pc_standby "${observations}" || true)" \
+    || failures=$((failures + 1))
+  fi
 
   # CoreELEC images differ both in where the zoneinfo tree lives and in how
   # /etc/localtime is stored. A symlink is matched against the tail of its
@@ -3258,6 +4018,7 @@ verify_remote_baseline() {
   # is judged by the byte comparison the device performed against its own
   # copy of the requested zone. Anything else is still a mismatch: unproven is
   # not proven.
+  if coreelec_component_effective core; then
   value="$(coreelec_observation_value localtime_path "${observations}" || true)"
   content="$(coreelec_observation_value localtime_zoneinfo_match "${observations}" || true)"
   printf 'regional.localtime.expected=%s\n' "${TIMEZONE}"
@@ -3304,27 +4065,32 @@ verify_remote_baseline() {
       printf 'regional.date_offset.status=unavailable\n'
       ;;
   esac
+  fi
 
-  # The skin and the weather provider are only verified when this run
-  # deployed the add-on that provides them.
-  if coreelec_manifest_contains "${manifest}" "skin.arctic.fuse.3"; then
+  # Skin activation belongs to the component scope, independently of a
+  # narrowed artifact manifest. Add-on version/enabled checks remain filtered
+  # to the artifacts this run selected below.
+  if coreelec_component_effective skin; then
     coreelec_report_comparison "skin" "skin.arctic.fuse.3" \
       "$(coreelec_observation_value setting.lookandfeel.skin "${observations}" || true)" \
       || failures=$((failures + 1))
   fi
 
-  value="$(coreelec_observation_value setting.weather.addon "${observations}" || true)"
-  if coreelec_weather_configured && coreelec_manifest_contains "${manifest}" "weather.ha"; then
-    coreelec_report_comparison "weather_provider" "weather.ha" "${value}" \
-      || failures=$((failures + 1))
-  else
-    # Without a Home Assistant URL, entity, and token the run deliberately
-    # leaves the existing provider alone; reporting it is not a verdict.
-    printf 'weather_provider.expected=unchanged\n'
-    printf 'weather_provider.observed=%s\n' "${value}"
-    printf 'weather_provider.status=not-configured\n'
+  if coreelec_component_effective services; then
+    value="$(coreelec_observation_value setting.weather.addon "${observations}" || true)"
+    if coreelec_weather_configured; then
+      coreelec_report_comparison "weather_provider" "weather.ha" "${value}" \
+        || failures=$((failures + 1))
+    else
+      # Without a Home Assistant URL, entity, and token the run deliberately
+      # leaves the existing provider alone; reporting it is not a verdict.
+      printf 'weather_provider.expected=unchanged\n'
+      printf 'weather_provider.observed=%s\n' "${value}"
+      printf 'weather_provider.status=not-configured\n'
+    fi
   fi
 
+  if coreelec_component_effective addons; then
   while IFS=$'\t' read -r index addon_id version filename; do
     [[ -n "${addon_id}" ]] || continue
     addon_failed=0
@@ -3337,7 +4103,9 @@ verify_remote_baseline() {
     printf 'addon.%s.installed=%s\n' "${addon_id}" "${installed:-0}"
     printf 'addon.%s.enabled=%s\n' "${addon_id}" "${enabled:-0}"
     printf 'addon.%s.enable_attempted=%s\n' "${addon_id}" "${attempted:-0}"
-    printf 'addon.%s.status=%s\n' "${addon_id}" "$(classify_addon_status "${addon_id}")"
+    if coreelec_component_effective services; then
+      printf 'addon.%s.status=%s\n' "${addon_id}" "$(classify_addon_status "${addon_id}")"
+    fi
     [[ "${installed}" == "1" ]] || addon_failed=1
     [[ "${enabled}" == "1" ]] || addon_failed=1
     [[ "${observed_version}" == "${version}" ]] || addon_failed=1
@@ -3357,28 +4125,33 @@ verify_remote_baseline() {
   if [[ -n "${value}" ]]; then
     printf 'addon_enable_unresolved=%s\n' "${value}"
   fi
+  fi
 
   # Files this run configured are checked on the device, which returns a
   # boolean rather than the stored token, key, or PIN.
+  if coreelec_component_effective services; then
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "weather.ha" coreelec_weather_configured || failures=$((failures + 1))
   coreelec_verify_addon_settings "${observations}" "${manifest}" \
     "pvr.nextpvr" coreelec_nextpvr_configured || failures=$((failures + 1))
 
   # Split ratings-key verification: each key is independently fatal.
-  local arctic_fuse_failures=0
   if [[ -n "${OMDB_API_KEY:-}" ]]; then
     coreelec_verify_boolean_observation "${observations}" \
       "addon_settings.plugin.video.themoviedb.helper.omdb_configured" \
-      "metadata.omdb" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+      "metadata.omdb" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   fi
   if [[ -n "${MDBLIST_API_KEY:-}" ]]; then
     coreelec_verify_boolean_observation "${observations}" \
       "addon_settings.plugin.video.themoviedb.helper.mdblist_configured" \
-      "metadata.mdblist" || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+      "metadata.mdblist" \
+      || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  fi
   fi
 
   # Arctic Fuse surfaces are each reported before the aggregate status.
+  if coreelec_component_effective skin; then
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.tv_hub_configured" "arctic_fuse.tv_hub" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
@@ -3422,7 +4195,6 @@ verify_remote_baseline() {
     "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
-  local playlist_name
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
     RecentlyAiredEpisodes30Days TraktPopularTVShows TraktWeekendBoxOffice \
     RecentlyReleasedMoviesCurrentAndPreviousYear NewShows NewMovies; do
@@ -3462,6 +4234,7 @@ verify_remote_baseline() {
     printf 'arctic_fuse.status=ok\n'
   else
     printf 'arctic_fuse.status=mismatch\n'
+  fi
   fi
 
   printf 'verification_failures=%s\n' "${failures}"
@@ -3583,6 +4356,15 @@ coreelec_report_manual_actions() {
 # section, and it is fenced by begin/end markers.
 coreelec_report_render() {
   local manifest="$1" name value index filename
+  local report_component_set report_addons=0 report_services=0
+  local requested_csv effective_csv dependencies_csv
+  report_component_set="${EFFECTIVE_COMPONENT_SET:-$'\ncore\ncec\naddons\nservices\nskin\n'}"
+  case "${report_component_set}" in
+    *$'\n'addons$'\n'*) report_addons=1 ;;
+  esac
+  case "${report_component_set}" in
+    *$'\n'services$'\n'*) report_services=1 ;;
+  esac
   printf 'report_format=coreelec-provisioning-report-2\n'
   printf 'script_version=%s\n' "${SCRIPT_VERSION}"
   printf 'created_utc=%s\n' "$(timestamp)"
@@ -3606,18 +4388,36 @@ coreelec_report_render() {
     printf 'remote_backup_path=%s\n' "${REMOTE_BACKUP_PATH}"
   fi
 
-  if (( ${#ADDONS[@]} > 0 )); then
-    printf 'requested_addons=%s\n' "$(printf '%s,' ${ADDONS[@]+"${ADDONS[@]}"} | sed 's/,$//')"
-    printf 'addon_selection=subset\n'
-    # A narrowed selection deploys exactly what was named; nothing resolves
-    # its dependencies, so that stays the operator's problem and is stated.
-    printf 'addon_dependency_resolution=manual\n'
-  else
-    printf 'requested_addons=all-locked-artifacts\n'
-    printf 'addon_selection=all-locked-artifacts\n'
-    printf 'addon_dependency_resolution=complete-locked-closure\n'
+  if [[ "${report_addons}" == "1" ]]; then
+    if (( ${#ADDONS[@]} > 0 )); then
+      printf 'requested_addons=%s\n' "$(printf '%s,' ${ADDONS[@]+"${ADDONS[@]}"} | sed 's/,$//')"
+      printf 'addon_selection=subset\n'
+      # A narrowed selection deploys exactly what was named; nothing resolves
+      # its dependencies, so that stays the operator's problem and is stated.
+      printf 'addon_dependency_resolution=manual\n'
+    else
+      printf 'requested_addons=all-locked-artifacts\n'
+      printf 'addon_selection=all-locked-artifacts\n'
+      printf 'addon_dependency_resolution=complete-locked-closure\n'
+    fi
   fi
 
+  if [[ -n "${EFFECTIVE_COMPONENT_SET:-}" ]]; then
+    requested_csv="$(IFS=,; printf '%s' "${REQUESTED_COMPONENTS[*]}")"
+    effective_csv="$(IFS=,; printf '%s' "${EFFECTIVE_COMPONENTS[*]}")"
+    if (( ${#COMPONENT_DEPENDENCIES_ADDED[@]} > 0 )); then
+      dependencies_csv="$(IFS=,; printf '%s' "${COMPONENT_DEPENDENCIES_ADDED[*]}")"
+    else
+      dependencies_csv="none"
+    fi
+  else
+    requested_csv="baseline"
+    effective_csv="core,cec,addons,services,skin"
+    dependencies_csv="none"
+  fi
+  printf 'components.requested=%s\n' "${requested_csv}"
+  printf 'components.effective=%s\n' "${effective_csv}"
+  printf 'components.dependencies_added=%s\n' "${dependencies_csv}"
   if [[ -n "${REMOTE_TRANSACTION}" ]]; then
     printf 'deployment_transaction=%s\n' "${REMOTE_TRANSACTION}"
   fi
@@ -3625,7 +4425,7 @@ coreelec_report_render() {
   printf 'verification_result=%s\n' "${VERIFICATION_RESULT}"
   # What this run deployed, independently of what verification observed, so
   # the record of the change survives even a failed verification.
-  if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+  if [[ "${report_addons}" == "1" && -n "${manifest}" && -r "${manifest}" ]]; then
     while IFS=$'\t' read -r index name value filename; do
       [[ -n "${name}" ]] || continue
       printf 'deployed_addon.%s=%s\n' "${name}" "${value}"
@@ -3642,12 +4442,16 @@ coreelec_report_render() {
 
   coreelec_secret_names | while IFS= read -r name; do
     [[ -n "${name}" ]] || continue
+    case "${name}" in
+      KODI_WEB_PASSWORD) ;;
+      *) [[ "${report_services}" == "1" ]] || continue ;;
+    esac
     value="0"
     [[ -n "$(coreelec_secret_value "${name}")" ]] && value="1"
     printf 'secret_present.%s=%s\n' "${name}" "${value}"
   done
 
-  if [[ -n "${manifest}" && -r "${manifest}" ]]; then
+  if [[ "${report_services}" == "1" && -n "${manifest}" && -r "${manifest}" ]]; then
     coreelec_report_manual_actions "${manifest}"
   fi
 }
@@ -3705,27 +4509,36 @@ coreelec_conclude_deployment() {
   local manifest="$1"
   local observations="${TASK_TEMP_DIR}/verify-observations.conf"
   local verification="${TASK_TEMP_DIR}/verification.conf"
-  local status=0
+  local status=0 attempt=1
+  local max_attempts="${COREELEC_VERIFICATION_ATTEMPTS:-13}"
+  local retry_delay="${COREELEC_VERIFICATION_RETRY_DELAY:-5}"
 
   DEPLOYMENT_STATE="pending-verification"
   info "Verifying the deployed baseline on the device over localhost JSON-RPC" >&2
-  : > "${observations}"
-  chmod 600 "${observations}" 2>/dev/null || true
-  # A probe that cannot run is a verification failure, not a fatal error: the
-  # deployment still has to be undone rather than left half-committed.
-  coreelec_collect_remote_observations "${observations}" || status=$?
+  while (( attempt <= max_attempts )); do
+    status=0
+    : > "${observations}"
+    chmod 600 "${observations}" 2>/dev/null || true
+    # A probe that cannot run is a verification failure, not a fatal error:
+    # the deployment still has to be undone rather than left half-committed.
+    coreelec_collect_remote_observations "${observations}" || status=$?
 
-  # `|| status=$?` rather than toggling errexit: this function is called from
-  # both an errexit and a non-errexit context, and toggling it here would
-  # change the caller's setting behind its back.
-  if (( status == 0 )); then
-    verify_remote_baseline "${observations}" "${manifest}" > "${verification}" \
-      || status=$?
-  else
-    printf 'verification_source=device-localhost-jsonrpc\n' > "${verification}"
-    printf 'verification_error=the device did not answer the verification probe\n' \
-      >> "${verification}"
-  fi
+    # `|| status=$?` rather than toggling errexit: this function is called
+    # from both an errexit and a non-errexit context, and toggling it here
+    # would change the caller's setting behind its back.
+    if (( status == 0 )); then
+      verify_remote_baseline "${observations}" "${manifest}" > "${verification}" \
+        || status=$?
+    else
+      printf 'verification_source=device-localhost-jsonrpc\n' > "${verification}"
+      printf 'verification_error=the device did not answer the verification probe\n' \
+        >> "${verification}"
+    fi
+    (( status == 0 || attempt == max_attempts )) && break
+    info "Device verification has not converged; retrying (${attempt}/${max_attempts})" >&2
+    sleep "${retry_delay}"
+    attempt=$((attempt + 1))
+  done
   chmod 600 "${verification}" 2>/dev/null || true
   VERIFICATION_REPORT_FILE="${verification}"
 
@@ -3814,9 +4627,23 @@ if (( ${#CONCLUDE_FIXTURE[@]} > 0 )); then
   TASK_TEMP_DIR="$(mktemp -d "${CONCLUDE_FIXTURE[4]}.XXXXXX")"
   REMOTE_TRANSACTION="fixture-transaction"
   : > "${CONCLUDE_FIXTURE[4]}"
+  conclude_fixture_attempt=0
+  COREELEC_VERIFICATION_RETRY_DELAY=0
+  if [[ -d "${CONCLUDE_FIXTURE[0]}" ]]; then
+    COREELEC_VERIFICATION_ATTEMPTS="$(
+      find "${CONCLUDE_FIXTURE[0]}" -maxdepth 1 -type f -name '*.conf' | wc -l | tr -d ' '
+    )"
+  else
+    COREELEC_VERIFICATION_ATTEMPTS=1
+  fi
   coreelec_collect_remote_observations() {
     printf 'verify\n' >> "${CONCLUDE_FIXTURE[4]}"
-    cp "${CONCLUDE_FIXTURE[0]}" "$1"
+    if [[ -d "${CONCLUDE_FIXTURE[0]}" ]]; then
+      conclude_fixture_attempt=$((conclude_fixture_attempt + 1))
+      cp "${CONCLUDE_FIXTURE[0]}/${conclude_fixture_attempt}.conf" "$1"
+    else
+      cp "${CONCLUDE_FIXTURE[0]}" "$1"
+    fi
   }
   finalize_remote_deployment() {
     printf 'finalize\n' >> "${CONCLUDE_FIXTURE[4]}"
@@ -4023,8 +4850,10 @@ validate_remote() {
 }
 
 create_remote_backup() {
+  local component_scope
   info "Creating a selective pre-provisioning backup on the CoreELEC STORAGE partition" >&2
-  coreelec_remote_backup_script | ssh_keyed 'sh -s'
+  component_scope="$(coreelec_components_csv "${EFFECTIVE_COMPONENTS[@]}")"
+  coreelec_remote_backup_script "/storage" "${component_scope}" | ssh_keyed 'sh -s'
 }
 
 harden_remote_ssh() {
@@ -4080,6 +4909,16 @@ coreelec_settings_payload_secret() {
 }
 
 coreelec_settings_payload() {
+  coreelec_settings_payload_entry APPLY_COMPONENT_CORE \
+    "$(coreelec_component_effective core && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_CEC \
+    "$(coreelec_component_effective cec && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_ADDONS \
+    "$(coreelec_component_effective addons && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_SERVICES \
+    "$(coreelec_component_effective services && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_SKIN \
+    "$(coreelec_component_effective skin && printf 1 || printf 0)"
   coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
   coreelec_settings_payload_entry TIMEZONE_COUNTRY "${TIMEZONE_COUNTRY}"
   coreelec_settings_payload_entry LOCALE_LANGUAGE "${LOCALE_LANGUAGE}"
@@ -4117,6 +4956,31 @@ upload_kodi_settings_payload() {
   [[ "${script}" != *"'"* ]] \
     || die "Internal error: the remote payload script must not contain a single quote"
   coreelec_settings_payload | ssh_keyed "sh -c '${script}'"
+}
+
+prepare_artifact_deployment() {
+  ARTIFACT_STAGE_DIR="${TASK_TEMP_DIR}/artifacts"
+  mkdir -p "${ARTIFACT_STAGE_DIR}"
+  chmod 700 "${ARTIFACT_STAGE_DIR}"
+
+  if coreelec_component_effective addons; then
+    require_command unzip
+    require_command xmllint
+    require_command tar
+    info "Validating pinned add-on artifacts before changing anything on the device"
+    coreelec_artifacts_download_and_validate "${ARTIFACT_STAGE_DIR}"
+    # Resolving the selection here keeps every "which add-ons" decision -- and
+    # every way it can be refused -- on the untouched-device side of the run.
+    coreelec_addon_selection "${ARTIFACT_STAGE_DIR}/manifest.tsv" \
+      > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  else
+    # Downstream verification and reporting consume one manifest interface for
+    # every transaction. A non-add-on scope owns no artifacts, so its valid
+    # manifest is an empty private file rather than a fabricated selection.
+    : > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+    chmod 600 "${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  fi
+  DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
 }
 
 # Streams the validated artifacts to the device over the SSH connection that
@@ -4227,7 +5091,9 @@ apply_kodi_baseline() {
   # the deploy that consumes it. Staging is the step most likely to fail (it
   # moves tens of megabytes and verifies checksums on the device), and a
   # failure there must not leave credentials sitting in the remote cache.
-  upload_artifact_bundle "${ARTIFACT_STAGE_DIR}"
+  if coreelec_component_effective addons; then
+    upload_artifact_bundle "${ARTIFACT_STAGE_DIR}"
+  fi
   upload_kodi_settings_payload
   # One transaction: add-ons land before the transformer runs, so activating
   # the pinned skin and weather provider cannot be rejected for referring to
@@ -4281,27 +5147,37 @@ wait_for_kodi_jsonrpc() {
 # answers with a boolean.
 coreelec_verify_request() {
   local index id version filename ids=""
+  coreelec_settings_payload_entry EFFECTIVE_COMPONENTS \
+    "$(coreelec_components_csv "${EFFECTIVE_COMPONENTS[@]}")"
   coreelec_settings_payload_entry KODI_WEB_USER "${KODI_USER}"
   coreelec_settings_payload_entry KODI_WEB_PASSWORD "${KODI_WEB_PASSWORD}"
   coreelec_settings_payload_entry KODI_PORT "${KODI_PORT}"
-  coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
-  coreelec_settings_payload_entry HOME_ASSISTANT_URL "${HOME_ASSISTANT_URL}"
-  coreelec_settings_payload_entry HOME_ASSISTANT_WEATHER_ENTITY "${HOME_ASSISTANT_WEATHER_ENTITY}"
-  coreelec_settings_payload_entry NEXTPVR_HOST "${NEXTPVR_HOST}"
-  coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
-  coreelec_settings_payload_entry HAVE_HOME_ASSISTANT_TOKEN \
-    "$([[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_NEXTPVR_PIN \
-    "$([[ -n "${NEXTPVR_PIN:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_OMDB_API_KEY \
-    "$([[ -n "${OMDB_API_KEY:-}" ]] && printf '1' || printf '0')"
-  coreelec_settings_payload_entry HAVE_MDBLIST_API_KEY \
-    "$([[ -n "${MDBLIST_API_KEY:-}" ]] && printf '1' || printf '0')"
-  while IFS=$'\t' read -r index id version filename; do
-    [[ -n "${id}" ]] || continue
-    ids="${ids}${id}"$'\n'
-  done < "${DEPLOY_MANIFEST}"
-  coreelec_settings_payload_entry ADDON_IDS "${ids}"
+  if coreelec_component_effective core; then
+    coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
+  fi
+  if coreelec_component_effective services || coreelec_component_effective skin; then
+    coreelec_settings_payload_entry HOME_ASSISTANT_URL "${HOME_ASSISTANT_URL}"
+    coreelec_settings_payload_entry HOME_ASSISTANT_WEATHER_ENTITY "${HOME_ASSISTANT_WEATHER_ENTITY}"
+    coreelec_settings_payload_entry NEXTPVR_HOST "${NEXTPVR_HOST}"
+    coreelec_settings_payload_entry NEXTPVR_PORT "${NEXTPVR_PORT}"
+    coreelec_settings_payload_entry HAVE_HOME_ASSISTANT_TOKEN \
+      "$([[ -n "${HOME_ASSISTANT_TOKEN:-}" ]] && printf '1' || printf '0')"
+    coreelec_settings_payload_entry HAVE_NEXTPVR_PIN \
+      "$([[ -n "${NEXTPVR_PIN:-}" ]] && printf '1' || printf '0')"
+  fi
+  if coreelec_component_effective services; then
+    coreelec_settings_payload_entry HAVE_OMDB_API_KEY \
+      "$([[ -n "${OMDB_API_KEY:-}" ]] && printf '1' || printf '0')"
+    coreelec_settings_payload_entry HAVE_MDBLIST_API_KEY \
+      "$([[ -n "${MDBLIST_API_KEY:-}" ]] && printf '1' || printf '0')"
+  fi
+  if coreelec_component_effective addons; then
+    while IFS=$'\t' read -r index id version filename; do
+      [[ -n "${id}" ]] || continue
+      ids="${ids}${id}"$'\n'
+    done < "${DEPLOY_MANIFEST}"
+    coreelec_settings_payload_entry ADDON_IDS "${ids}"
+  fi
 }
 
 upload_kodi_verify_request() {
@@ -4458,16 +5334,7 @@ validate_remote "${REMOTE_IDENTITY}"
 # first mutating SSH call, so a bad or unreachable artifact cancels the run
 # while the device is still untouched.
 if [[ "${APPLY_KODI}" == "1" ]]; then
-  require_command unzip
-  require_command xmllint
-  require_command tar
-  ARTIFACT_STAGE_DIR="${TASK_TEMP_DIR}/artifacts"
-  info "Validating pinned add-on artifacts before changing anything on the device"
-  coreelec_artifacts_download_and_validate "${ARTIFACT_STAGE_DIR}"
-  # Resolving the selection here keeps every "which add-ons" decision -- and
-  # every way it can be refused -- on the untouched-device side of the run.
-  coreelec_addon_selection "${ARTIFACT_STAGE_DIR}/manifest.tsv" > "${ARTIFACT_STAGE_DIR}/deploy.tsv"
-  DEPLOY_MANIFEST="${ARTIFACT_STAGE_DIR}/deploy.tsv"
+  prepare_artifact_deployment
 fi
 
 install_public_key_if_needed

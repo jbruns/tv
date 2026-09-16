@@ -68,7 +68,7 @@ write_manifest() {
 1	skin.arctic.fuse.3	3.2.16	1.zip
 2	weather.ha	0.0.6.6	2.zip
 3	pvr.nextpvr	21.3.2.1	3.zip
-4	script.plexmod	1.14.1-beta1	4.zip
+4	script.plexmod	1.3.19	4.zip
 5	resource.uisounds.fromashes	3.0.01	5.zip
 6	plugin.service.emby-next-gen	11.1.27	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
@@ -589,6 +589,11 @@ make_fake_storage() {
     value="${line#*=}"
     printf '%s=%s\n' "${key}" "$(printf '%s' "${value}" | openssl base64 -A)" >> "${payload}"
   done <<'ENTRIES'
+APPLY_COMPONENT_CORE=1
+APPLY_COMPONENT_CEC=1
+APPLY_COMPONENT_ADDONS=1
+APPLY_COMPONENT_SERVICES=1
+APPLY_COMPONENT_SKIN=1
 TIMEZONE=America/Los_Angeles
 TIMEZONE_COUNTRY=United States
 LOCALE_LANGUAGE=resource.language.en_us
@@ -600,6 +605,36 @@ ENTRIES
   printf '%s\n' "${root}"
 }
 
+set_remote_component_scope() {
+  local root="$1" core="$2" cec="$3" addons="$4" services="$5" skin="$6"
+  local payload="${root}/.cache/coreelec-provision/settings-payload.conf"
+  local filtered="${payload}.without-components" key value
+  grep -v '^APPLY_COMPONENT_' "${payload}" > "${filtered}"
+  mv "${filtered}" "${payload}"
+  for key in CORE CEC ADDONS SERVICES SKIN; do
+    case "${key}" in
+      CORE) value="${core}" ;;
+      CEC) value="${cec}" ;;
+      ADDONS) value="${addons}" ;;
+      SERVICES) value="${services}" ;;
+      SKIN) value="${skin}" ;;
+    esac
+    printf 'APPLY_COMPONENT_%s=%s\n' \
+      "${key}" "$(printf '%s' "${value}" | openssl base64 -A)" >> "${payload}"
+  done
+  chmod 600 "${payload}"
+}
+
+replace_remote_payload_entry() {
+  local root="$1" key="$2" encoded="$3"
+  local payload="${root}/.cache/coreelec-provision/settings-payload.conf"
+  local filtered="${payload}.without-${key}"
+  grep -v "^${key}=" "${payload}" > "${filtered}"
+  printf '%s=%s\n' "${key}" "${encoded}" >> "${filtered}"
+  mv "${filtered}" "${payload}"
+  chmod 600 "${payload}"
+}
+
 # Recreates what upload_artifact_bundle leaves on the device: one fixture ZIP
 # per add-on plus the deploy.tsv the transaction reads. Each spec is
 # "id:version:top-level-directory", so a ZIP root that differs from the add-on
@@ -608,7 +643,8 @@ stage_addon_bundle() {
   local dir="$1" root="$2"
   shift 2
   local stage="${root}/.cache/coreelec-provision/stage"
-  local index=0 spec id version topdir work weather_settings
+  local index=0 spec id version topdir work weather_settings pm4k_monitor
+  local tmdb_service tmdb_cronjob
   mkdir -p "${stage}"
   : > "${stage}/deploy.tsv"
   for spec in "$@"; do
@@ -638,10 +674,121 @@ XML
       printf '%s/resources/settings.xml\t%s\n' "${topdir}" "${weather_settings}" \
         >> "${work}/zip-manifest.tsv"
     fi
+    if [[ "${id}" == "script.plexmod" ]]; then
+      mkdir -p "${work}/lib"
+      pm4k_monitor="${work}/lib/monitor.py"
+      cat > "${pm4k_monitor}" <<'PY'
+def onNotification(sender, method):
+    if sender == "xbmc" and method == "System.OnQuit":
+        from .windows import windowutils
+        windowutils.HOME.closeOption = "kodi_exit"
+        windowutils.HOME.doClose()
+        return
+PY
+      printf '%s/lib/monitor.py\t%s\n' "${topdir}" "${pm4k_monitor}" \
+        >> "${work}/zip-manifest.tsv"
+    fi
+    if [[ "${id}" == "plugin.video.themoviedb.helper" ]]; then
+      mkdir -p "${work}/resources/tmdbhelper/lib/monitor"
+      tmdb_service="${work}/resources/tmdbhelper/lib/monitor/service.py"
+      tmdb_cronjob="${work}/resources/tmdbhelper/lib/monitor/cronjob.py"
+      cat > "${tmdb_service}" <<'PY'
+from threading import Lock
+
+
+class ServiceMonitor(Poller):
+    def __init__(self):
+        self.exit = False
+        self.listitem = None
+
+    def run(self):
+        self.mutex_lock = Lock()
+
+        self.update_monitor = UpdateMonitor()
+        self.player_monitor = PlayerMonitor()
+
+        self.run_cron_job()
+        self.run_images_monitor()
+
+        self.listitem_funcs = ListItemMonitorFunctions(self)
+
+        get_property('ServiceStarted', 'True')
+
+        self.poller()
+
+    def run_cron_job(self):
+        self.cron_job = CronJobMonitor(self, update_hour=get_setting('library_autoupdate_hour', 'int'))
+        self.cron_job.setName('Cron Thread')
+        self.cron_job.start()
+
+    def run_images_monitor(self):
+        self.images_monitor = ImagesMonitor(self)
+        self.images_monitor.setName('Image Thread')
+        self.images_monitor.start()
+
+    def _on_exit(self):
+        try:
+            self.cron_job.exit = True
+        except AttributeError:
+            pass
+        try:
+            self.images_monitor.exit = True
+        except AttributeError:
+            pass
+        if not self.update_monitor.abortRequested():
+            get_property('ServiceStarted', clear_property=True)
+            get_property('ServiceStop', clear_property=True)
+PY
+      cat > "${tmdb_cronjob}" <<'PY'
+CRONJOB_POLL_TIME = 600
+
+
+class CronJobMonitor(SafeThread):
+
+    _poll_time = CRONJOB_POLL_TIME
+
+    def __init__(self, parent, update_hour=0):
+        SafeThread.__init__(self)
+        self.exit = False
+        self.update_hour = update_hour
+        self.update_monitor = parent.update_monitor
+
+    def _on_startup(self):
+        self._do_recache_kodidb()
+        self._do_trakt_authorization()
+
+    def _on_poll(self):
+        self._do_database_maintenance()
+        self._do_delete_old_databases()
+        self._do_library_update_check()
+        self._do_delete_old_log_files()
+
+    def _do_database_maintenance(self):
+        self.database_maintenance.vacuum()
+
+    def run(self):
+        self._on_startup()
+
+        while not self.update_monitor.abortRequested() and not self.exit:
+            self.update_monitor.waitForAbort(self._poll_time)
+            self._on_poll()
+PY
+      printf '%s/resources/tmdbhelper/lib/monitor/service.py\t%s\n' \
+        "${topdir}" "${tmdb_service}" >> "${work}/zip-manifest.tsv"
+      printf '%s/resources/tmdbhelper/lib/monitor/cronjob.py\t%s\n' \
+        "${topdir}" "${tmdb_cronjob}" >> "${work}/zip-manifest.tsv"
+    fi
     build_zip_from_manifest "${stage}/${index}.zip" "${work}/zip-manifest.tsv"
     printf '%s\t%s\t%s\t%s.zip\n' \
       "${index}" "${id}" "${version}" "${index}" >> "${stage}/deploy.tsv"
   done
+}
+
+rebuild_staged_fixture_zip() {
+  local dir="$1" root="$2" index="$3"
+  build_zip_from_manifest \
+    "${root}/.cache/coreelec-provision/stage/${index}.zip" \
+    "${dir}/zip-source-${index}/zip-manifest.tsv"
 }
 
 # Stubs the two remote commands the transaction shells out to. Both append to
@@ -719,6 +866,255 @@ remote_calls() {
 
 # --- Remote deployment transaction tests ------------------------------------
 
+test_cec_only_transaction_accepts_no_artifacts_and_rolls_back_only_cec() {
+  local dir root bin_dir rc output transaction cec_path backup_paths applied_paths
+  local guisettings service_settings skin_settings node playlist addon_marker
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+
+  cec_path="${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
+  cp "${cec_path}" "${dir}/cec.before"
+  guisettings="${root}/.kodi/userdata/guisettings.xml"
+  service_settings="${root}/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml"
+  skin_settings="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  node="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
+  playlist="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+  addon_marker="${root}/.kodi/addons/plugin.video.untouched/marker.txt"
+  mkdir -p "$(dirname "${service_settings}")" "$(dirname "${skin_settings}")" \
+    "$(dirname "${node}")" "$(dirname "${playlist}")" "$(dirname "${addon_marker}")"
+  printf 'guisettings sentinel\n' > "${guisettings}"
+  printf 'service sentinel\n' > "${service_settings}"
+  printf 'skin sentinel\n' > "${skin_settings}"
+  printf 'node sentinel\n' > "${node}"
+  printf 'playlist sentinel\n' > "${playlist}"
+  printf 'add-on sentinel\n' > "${addon_marker}"
+  cp "${guisettings}" "${dir}/guisettings.before"
+  cp "${service_settings}" "${dir}/service.before"
+  cp "${skin_settings}" "${dir}/skin.before"
+  cp "${node}" "${dir}/node.before"
+  cp "${playlist}" "${dir}/playlist.before"
+  cp "${addon_marker}" "${dir}/addon.before"
+
+  set_remote_component_scope "${root}" 0 1 0 0 0
+  stage_addon_bundle "${dir}" "${root}"
+
+  # Fail the first post-transform Kodi start. The trap must restore the CEC
+  # bytes even though no add-on bundle or unrelated settings path participates.
+  export SYSTEMCTL_FAIL="start kodi.service"
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  unset SYSTEMCTL_FAIL
+  assert_failure "${rc}" "the injected post-transform failure must fail the transaction"
+
+  transaction="$(find "${root}/backup/coreelec-provision" -mindepth 1 -maxdepth 1 -type d -print | head -1)"
+  [[ -n "${transaction}" ]] || {
+    printf 'the CEC-only failure did not create rollback material: %s\n' "${output}" >&2
+    return 1
+  }
+  if ! cmp -s "${dir}/cec.before" "${cec_path}"; then
+    printf 'CEC rollback did not restore the original bytes\n' >&2
+    return 1
+  fi
+  backup_paths="$(find "${transaction}/files" -type f -print | sort)"
+  assert_eq "${transaction}/files/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml" \
+    "${backup_paths}" "CEC-only rollback material contains exactly the detected CEC file"
+  applied_paths="$(cat "${transaction}/APPLIED.txt")"
+  assert_eq "${cec_path}" "${applied_paths}" \
+    "the scoped applied plan contains only the CEC file"
+  assert_eq $'component\tcore\t0\ncomponent\tcec\t1\ncomponent\taddons\t0\ncomponent\tservices\t0\ncomponent\tskin\t0' \
+    "$(cat "${transaction}/PLAN.tsv")" \
+    "the persisted remote plan records the complete CEC-only scope"
+
+  cmp -s "${dir}/guisettings.before" "${guisettings}" \
+    || { printf 'CEC-only deployment changed guisettings.xml\n' >&2; return 1; }
+  cmp -s "${dir}/service.before" "${service_settings}" \
+    || { printf 'CEC-only deployment changed service settings\n' >&2; return 1; }
+  cmp -s "${dir}/skin.before" "${skin_settings}" \
+    || { printf 'CEC-only deployment changed skin settings\n' >&2; return 1; }
+  cmp -s "${dir}/node.before" "${node}" \
+    || { printf 'CEC-only deployment changed a skin node\n' >&2; return 1; }
+  cmp -s "${dir}/playlist.before" "${playlist}" \
+    || { printf 'CEC-only deployment changed a playlist\n' >&2; return 1; }
+  cmp -s "${dir}/addon.before" "${addon_marker}" \
+    || { printf 'CEC-only deployment changed an add-on directory\n' >&2; return 1; }
+  assert_not_contains "$(cat "${transaction}/MANIFEST.txt")" ".kodi/addons" \
+    "CEC-only transaction metadata never names the add-on tree"
+}
+
+test_cec_and_addons_transaction_mutates_only_selected_surfaces() {
+  local dir root bin_dir rc output transaction cec_path guisettings service_settings
+  local skin_settings node playlist untouched addon_dir calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+
+  cec_path="${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
+  guisettings="${root}/.kodi/userdata/guisettings.xml"
+  service_settings="${root}/.kodi/userdata/addon_data/script.plexmod/settings.xml"
+  skin_settings="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  node="${root}/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
+  playlist="${root}/.kodi/userdata/playlists/video/NewMovies.xsp"
+  untouched="${root}/.kodi/addons/plugin.video.untouched/marker.txt"
+  addon_dir="${root}/.kodi/addons/script.plexmod"
+  mkdir -p "$(dirname "${service_settings}")" "$(dirname "${skin_settings}")" \
+    "$(dirname "${node}")" "$(dirname "${playlist}")" "$(dirname "${untouched}")" \
+    "${addon_dir}"
+  printf 'guisettings sentinel\n' > "${guisettings}"
+  printf 'service sentinel\n' > "${service_settings}"
+  printf 'skin sentinel\n' > "${skin_settings}"
+  printf 'node sentinel\n' > "${node}"
+  printf 'playlist sentinel\n' > "${playlist}"
+  printf 'untouched add-on\n' > "${untouched}"
+  printf 'old PM4K\n' > "${addon_dir}/marker.txt"
+  cp "${guisettings}" "${dir}/guisettings.before"
+  cp "${service_settings}" "${dir}/service.before"
+  cp "${skin_settings}" "${dir}/skin.before"
+  cp "${node}" "${dir}/node.before"
+  cp "${playlist}" "${dir}/playlist.before"
+  cp "${untouched}" "${dir}/untouched.before"
+
+  set_remote_component_scope "${root}" 0 1 1 0 0
+  stage_addon_bundle "${dir}" "${root}" "script.plexmod:1.3.19:plex-for-kodi-fixture"
+
+  set +e
+  transaction="$(run_remote_script deploy "${root}" "${bin_dir}" 2>"${dir}/deploy.err")"
+  rc=$?
+  set -e
+  output="$(cat "${dir}/deploy.err")"
+  assert_success "${rc}" "the scoped CEC plus PM4K transaction must succeed: ${output}"
+  assert_contains "$(cat "${cec_path}")" 'value="36028"' \
+    "the selected CEC file is transformed"
+  assert_eq "new script.plexmod 1.3.19" "$(cat "${addon_dir}/marker.txt")" \
+    "the selected PM4K directory is replaced"
+  assert_contains "$(cat "${addon_dir}/lib/monitor.py")" "if windowutils.HOME:" \
+    "the selected PM4K artifact keeps its compatibility patch"
+  assert_eq "old PM4K" \
+    "$(cat "${transaction}/rollback/addons/script.plexmod/marker.txt")" \
+    "the selected prior add-on directory is rollback material"
+  assert_eq "${cec_path}" "$(cat "${transaction}/APPLIED.txt")" \
+    "the mixed scoped applied plan contains only the selected settings path"
+  assert_eq $'component\tcore\t0\ncomponent\tcec\t1\ncomponent\taddons\t1\ncomponent\tservices\t0\ncomponent\tskin\t0\naddon\t1.zip\tscript.plexmod\tplex-for-kodi-fixture' \
+    "$(cat "${transaction}/PLAN.tsv")" \
+    "the persisted remote plan records components and the selected PM4K artifact"
+
+  cmp -s "${dir}/guisettings.before" "${guisettings}" \
+    || { printf 'CEC plus add-ons changed guisettings.xml\n' >&2; return 1; }
+  cmp -s "${dir}/service.before" "${service_settings}" \
+    || { printf 'CEC plus add-ons changed service settings\n' >&2; return 1; }
+  cmp -s "${dir}/skin.before" "${skin_settings}" \
+    || { printf 'CEC plus add-ons changed skin settings\n' >&2; return 1; }
+  cmp -s "${dir}/node.before" "${node}" \
+    || { printf 'CEC plus add-ons changed a skin node\n' >&2; return 1; }
+  cmp -s "${dir}/playlist.before" "${playlist}" \
+    || { printf 'CEC plus add-ons changed a playlist\n' >&2; return 1; }
+  cmp -s "${dir}/untouched.before" "${untouched}" \
+    || { printf 'CEC plus add-ons changed an unselected add-on\n' >&2; return 1; }
+
+  calls="$(remote_calls)"
+  assert_eq "1" "$(printf '%s\n' "${calls}" | grep -c '^systemctl stop kodi.service$')" \
+    "the combined transaction stops Kodi once"
+  assert_eq "1" "$(printf '%s\n' "${calls}" | grep -c '^systemctl start kodi.service$')" \
+    "the combined transaction starts Kodi once"
+}
+
+test_remote_scope_is_revalidated_before_mutation() {
+  local dir root bin_dir rc output cec_path
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  cec_path="${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
+  cp "${cec_path}" "${dir}/cec.before"
+  set_remote_component_scope "${root}" 0 1 0 0 0
+  grep -v '^APPLY_COMPONENT_SKIN=' \
+    "${root}/.cache/coreelec-provision/settings-payload.conf" \
+    > "${dir}/malformed-payload.conf"
+  mv "${dir}/malformed-payload.conf" \
+    "${root}/.cache/coreelec-provision/settings-payload.conf"
+  stage_addon_bundle "${dir}" "${root}"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a malformed component scope must fail"
+  assert_contains "${output}" "missing required component" \
+    "the remote scope error names the missing component flag"
+  assert_eq "" "$(remote_calls)" "malformed scope fails before Kodi is stopped"
+  cmp -s "${dir}/cec.before" "${cec_path}" \
+    || { printf 'malformed scope changed the CEC file before rejection\n' >&2; return 1; }
+  if [[ -d "${root}/backup/coreelec-provision" ]] \
+    && find "${root}/backup/coreelec-provision" -mindepth 1 -print -quit | grep -q .; then
+    printf 'malformed scope created transaction material before rejection\n' >&2
+    return 1
+  fi
+}
+
+test_cec_only_predeployment_backup_contains_no_unselected_settings() {
+  local dir root script backup output rc cec_path guisettings service_settings skin_settings
+  local advancedsettings sources coreelec_settings hostname
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  cec_path="${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
+  guisettings="${root}/.kodi/userdata/guisettings.xml"
+  service_settings="${root}/.kodi/userdata/addon_data/script.plexmod/settings.xml"
+  skin_settings="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  advancedsettings="${root}/.kodi/userdata/advancedsettings.xml"
+  sources="${root}/.kodi/userdata/sources.xml"
+  coreelec_settings="${root}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
+  hostname="${root}/.cache/hostname"
+  mkdir -p "$(dirname "${service_settings}")" "$(dirname "${skin_settings}")" \
+    "$(dirname "${coreelec_settings}")"
+  printf 'guisettings sentinel\n' > "${guisettings}"
+  printf 'service sentinel\n' > "${service_settings}"
+  printf 'skin sentinel\n' > "${skin_settings}"
+  printf 'advanced settings sentinel\n' > "${advancedsettings}"
+  printf 'sources sentinel\n' > "${sources}"
+  printf 'CoreELEC service sentinel\n' > "${coreelec_settings}"
+  printf 'hostname sentinel\n' > "${hostname}"
+
+  script="$(bash "${PROVISIONER}" --emit-remote-script backup "${root}" cec)"
+  set +e
+  output="$(printf '%s\n' "${script}" | sh -s 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the scoped pre-deployment backup must succeed: ${output}" \
+    || return 1
+  assert_not_contains "${output}" "not found" \
+    "the scoped backup must execute every path selector" || return 1
+  backup="$(printf '%s\n' "${output}" | tail -1)"
+
+  if [[ ! -f "${backup}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml" ]]; then
+    printf 'the scoped pre-deployment backup omitted the selected CEC file\n' >&2
+    return 1
+  fi
+  cmp -s "${cec_path}" \
+    "${backup}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml" \
+    || { printf 'the scoped CEC backup changed the source bytes\n' >&2; return 1; }
+  if [[ -e "${backup}/.kodi/userdata/guisettings.xml" ]] \
+    || [[ -e "${backup}/.kodi/userdata/addon_data/script.plexmod/settings.xml" ]] \
+    || [[ -e "${backup}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml" ]] \
+    || [[ -e "${backup}/.kodi/userdata/advancedsettings.xml" ]] \
+    || [[ -e "${backup}/.kodi/userdata/sources.xml" ]] \
+    || [[ -e "${backup}/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml" ]] \
+    || [[ -e "${backup}/.cache/hostname" ]]; then
+    printf 'the CEC-only pre-deployment backup copied unselected settings\n' >&2
+    return 1
+  fi
+}
+
 test_remote_deploy_stops_kodi_after_staging_validation() {
   local dir root bin_dir rc output stage first_service
   dir="$(make_scratch_dir)"
@@ -763,6 +1159,427 @@ test_remote_deploy_stops_kodi_after_staging_validation() {
     "the first service call stops Kodi"
 }
 
+test_remote_deploy_guards_pm4k_shutdown_without_an_open_home_window() {
+  local dir root bin_dir output rc monitor
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "script.plexmod:1.3.19:plex-for-kodi-fixture"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the pinned PM4K bundle must deploy: ${output}" || return 1
+
+  monitor="${root}/.kodi/addons/script.plexmod/lib/monitor.py"
+  assert_contains "$(cat "${monitor}")" "if windowutils.HOME:" \
+    "PM4K shutdown must guard the nullable HOME window before dereferencing it"
+}
+
+test_remote_deploy_makes_tmdb_shutdown_workers_daemon_threads() {
+  local dir root bin_dir output rc service source
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the pinned TMDb Helper bundle must deploy: ${output}" || return 1
+
+  service="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/service.py"
+  source="$(cat "${service}")"
+  assert_contains "${source}" $'        self.cron_job.daemon = True\n        self.cron_job.start()' \
+    "the Cron Thread is daemonized immediately before it starts" || return 1
+  assert_contains "${source}" $'        self.images_monitor.daemon = True\n        self.images_monitor.start()' \
+    "the Image Thread is daemonized immediately before it starts" || return 1
+  assert_contains "${source}" "self.cron_job.exit = True" \
+    "the Cron Thread cooperative exit flag remains" || return 1
+  assert_contains "${source}" "self.images_monitor.exit = True" \
+    "the Image Thread cooperative exit flag remains" || return 1
+  assert_eq "644" "$(file_mode "${service}")" \
+    "patching preserves the staged add-on source mode" || return 1
+  python3 - "${service}" <<'PY'
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    compile(handle.read(), sys.argv[1], "exec")
+PY
+}
+
+test_remote_deploy_stops_tmdb_cron_before_shutdown_maintenance() {
+  local dir root bin_dir output rc cronjob
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the pinned TMDb Helper bundle must deploy: ${output}" || return 1
+
+  cronjob="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/cronjob.py"
+  assert_eq "644" "$(file_mode "${cronjob}")" \
+    "patching preserves the staged Cron source mode" || return 1
+  python3 - "${cronjob}" <<'PY'
+import sys
+
+path = sys.argv[1]
+namespace = {"SafeThread": object}
+with open(path, "r", encoding="utf-8") as handle:
+    exec(compile(handle.read(), path, "exec"), namespace)
+
+
+def make_cron(monitor, events):
+    cron = namespace["CronJobMonitor"].__new__(namespace["CronJobMonitor"])
+    cron.exit = False
+    cron.update_monitor = monitor
+    cron._on_startup = lambda: events.append("startup")
+    cron._do_database_maintenance = lambda: events.append("vacuum")
+    cron._do_delete_old_databases = lambda: events.append("delete databases")
+    cron._do_library_update_check = lambda: events.append("library update")
+    cron._do_delete_old_log_files = lambda: events.append("delete logs")
+    return cron
+
+
+shutdown_events = []
+
+
+class ShutdownMonitor:
+    aborted = False
+
+    def abortRequested(self):
+        return self.aborted
+
+    def waitForAbort(self, timeout):
+        shutdown_events.append(("wait", timeout))
+        self.aborted = True
+
+
+make_cron(ShutdownMonitor(), shutdown_events).run()
+expected_shutdown = ["startup", ("wait", 600)]
+if shutdown_events != expected_shutdown:
+    raise SystemExit(
+        "shutdown wake reached maintenance: expected %r, got %r"
+        % (expected_shutdown, shutdown_events)
+    )
+
+normal_events = []
+
+
+class OnePollMonitor:
+    checks = 0
+
+    def abortRequested(self):
+        self.checks += 1
+        return self.checks >= 3
+
+    def waitForAbort(self, timeout):
+        normal_events.append(("wait", timeout))
+
+
+make_cron(OnePollMonitor(), normal_events).run()
+expected_normal = [
+    "startup",
+    ("wait", 600),
+    "vacuum",
+    "delete databases",
+    "library update",
+    "delete logs",
+]
+if normal_events != expected_normal:
+    raise SystemExit(
+        "normal wake skipped periodic maintenance: expected %r, got %r"
+        % (expected_normal, normal_events)
+    )
+PY
+}
+
+test_remote_deploy_accepts_exact_prepatched_tmdb_shutdown_workers() {
+  local dir root bin_dir output rc service cronjob
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  cronjob="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/cronjob.py"
+  python3 - "${service}" "${cronjob}" <<'PY'
+import sys
+
+service_path, cronjob_path = sys.argv[1:]
+with open(service_path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace(
+    "        self.cron_job.start()\n",
+    "        self.cron_job.daemon = True\n        self.cron_job.start()\n",
+)
+source = source.replace(
+    "        self.images_monitor.start()\n",
+    "        self.images_monitor.daemon = True\n        self.images_monitor.start()\n",
+)
+with open(service_path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+
+with open(cronjob_path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace(
+    "            self.update_monitor.waitForAbort(self._poll_time)\n"
+    "            self._on_poll()\n",
+    "            self.update_monitor.waitForAbort(self._poll_time)\n"
+    "            if self.update_monitor.abortRequested() or self.exit:\n"
+    "                return\n"
+    "            self._on_poll()\n",
+)
+with open(cronjob_path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+PY
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the exact prepatched TMDb Helper must remain deployable: ${output}" || return 1
+  service="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/service.py"
+  service="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/service.py"
+  assert_eq "1" "$(grep -c 'self\.cron_job\.daemon = True' "${service}")" \
+    "idempotence leaves one Cron Thread daemon assignment" || return 1
+  assert_eq "1" "$(grep -c 'self\.images_monitor\.daemon = True' "${service}")" \
+    "idempotence leaves one Image Thread daemon assignment" || return 1
+  cronjob="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/cronjob.py"
+  assert_eq "1" \
+    "$(grep -c 'if self\.update_monitor\.abortRequested() or self\.exit:' "${cronjob}")" \
+    "idempotence leaves one Cron shutdown abort guard" || return 1
+  python3 - "${service}" <<'PY'
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    compile(handle.read(), sys.argv[1], "exec")
+PY
+}
+
+test_remote_deploy_rejects_partial_tmdb_cron_abort_guard_before_install() {
+  local dir root bin_dir output rc cronjob
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  cronjob="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/cronjob.py"
+  python3 - "${cronjob}" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace(
+    "            self.update_monitor.waitForAbort(self._poll_time)\n",
+    "            self.update_monitor.waitForAbort(self._poll_time)\n"
+    "            if self.update_monitor.abortRequested() or self.exit:\n"
+    "                pass\n",
+)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+PY
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a partial TMDb Cron abort guard must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Cron shutdown loop" \
+    "the rejection names the partial Cron shutdown guard" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a partial Cron guard never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_wrong_tmdb_helper_version_before_install() {
+  local dir root bin_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.2:plugin.video.themoviedb.helper"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreviewed TMDb Helper version must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper identity or version" \
+    "the rejection names the identity/version guard" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a rejected TMDb version never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_missing_tmdb_worker_sequence_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  sed "s/setName('Cron Thread')/setName('Unexpected Thread')/" \
+    "${service}" > "${service}.new"
+  mv "${service}.new" "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing TMDb worker sequence must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Cron Thread sequence" \
+    "the rejection names the missing Cron Thread shape" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a rejected TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_duplicate_tmdb_worker_sequence_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  cp "${service}" "${service}.duplicate"
+  cat "${service}.duplicate" >> "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "duplicate TMDb worker sequences must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Cron Thread sequence" \
+    "the rejection names the ambiguous Cron Thread shape" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "an ambiguous TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_differently_patched_tmdb_worker_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  sed '/self\.images_monitor\.start()/i\
+        self.images_monitor.daemon = False
+' "${service}" > "${service}.new"
+  mv "${service}.new" "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a differently patched TMDb worker must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Image Thread sequence" \
+    "the rejection names the conflicting Image Thread shape" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a conflicting TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_uncompileable_tmdb_service_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  printf '\ndef broken(:\n' >> "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "uncompileable TMDb Helper source must be rejected" || return 1
+  assert_contains "${output}" "SyntaxError" \
+    "the rejection reports that the patched source cannot compile" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "uncompileable TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_tmdb_helper_without_service_file() {
+  local dir root bin_dir output rc manifest
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  manifest="${dir}/zip-source-1/zip-manifest.tsv"
+  grep -v '/resources/tmdbhelper/lib/monitor/service\.py' "${manifest}" \
+    > "${manifest}.new"
+  mv "${manifest}.new" "${manifest}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "TMDb Helper without its service worker source must be rejected" || return 1
+  assert_contains "${output}" "has no resources/tmdbhelper/lib/monitor/service.py" \
+    "the rejection names the missing service source" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a missing TMDb service file never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
 test_remote_deploy_traps_kodi_restart() {
   local dir root bin_dir rc output script last_call
   dir="$(make_scratch_dir)"
@@ -779,8 +1596,7 @@ test_remote_deploy_traps_kodi_restart() {
   # A failure after Kodi was stopped must still leave Kodi running. A payload
   # value that is not valid base64 gets past the preflight checks and fails
   # inside the transformer, after the add-ons were already replaced.
-  printf 'TIMEZONE=!!!not-base64!!!\n' \
-    > "${root}/.cache/coreelec-provision/settings-payload.conf"
+  replace_remote_payload_entry "${root}" TIMEZONE '!!!not-base64!!!'
   set +e
   output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
   rc=$?
@@ -1020,7 +1836,7 @@ test_remote_deploy_uses_addon_xml_id_not_zip_directory_name() {
   # carries a version suffix or an entirely different name.
   stage_addon_bundle "${dir}" "${root}" \
     "weather.ha:0.0.6.6:weather.ha-0.0.6.6" \
-    "script.plexmod:1.14.1-beta1:plugin.video.pm4k"
+    "script.plexmod:1.3.19:plugin.video.pm4k"
 
   set +e
   transaction="$(run_remote_script deploy "${root}" "${bin_dir}" 2>/dev/null)"
@@ -1031,7 +1847,7 @@ test_remote_deploy_uses_addon_xml_id_not_zip_directory_name() {
   assert_eq "new weather.ha 0.0.6.6" \
     "$(cat "${root}/.kodi/addons/weather.ha/marker.txt")" \
     "the add-on is installed under its addon.xml ID"
-  assert_eq "new script.plexmod 1.14.1-beta1" \
+  assert_eq "new script.plexmod 1.3.19" \
     "$(cat "${root}/.kodi/addons/script.plexmod/marker.txt")" \
     "a differently named ZIP root is installed under its addon.xml ID"
   assert_contains \
@@ -1115,8 +1931,7 @@ test_remote_deploy_rolls_back_automatically_when_a_step_fails() {
   # The transformer runs after the add-ons are in place; a payload value that
   # is not valid base64 fails it mid-transaction, which is exactly the window
   # rollback exists for.
-  printf 'TIMEZONE=!!!not-base64!!!\n' \
-    > "${root}/.cache/coreelec-provision/settings-payload.conf"
+  replace_remote_payload_entry "${root}" TIMEZONE '!!!not-base64!!!'
   set +e
   output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
   rc=$?
@@ -1430,7 +2245,7 @@ print_addon_selection() {
 write_selection_manifest() {
   local manifest="$1"
   {
-    printf '1\tscript.plexmod\t1.14.1-beta1\t1.zip\n'
+    printf '1\tscript.plexmod\t1.3.19\t1.zip\n'
     printf '2\tscript.module.requests\t2.31.0\t2.zip\n'
     printf '3\tweather.ha\t0.0.6.6\t3.zip\n'
   } > "${manifest}"
@@ -1696,6 +2511,36 @@ CHECKS
   assert_contains "${output}" "valid_directory_name rejects /absolute" "an absolute ZIP root is refused"
 }
 
+test_the_remote_transaction_rejects_malformed_plan_shape() {
+  local dir root program plan output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  program="${dir}/plan-shape-validator.sh"
+  plan="${dir}/malformed-plan.tsv"
+  printf 'component\tcore\t0\t\n' > "${plan}"
+  printf 'component\tcec\t1\n' >> "${plan}"
+  printf 'component\taddons\t0\n' >> "${plan}"
+  printf 'component\tservices\t0\n' >> "${plan}"
+  printf 'component\tskin\t0\n' >> "${plan}"
+
+  {
+    extract_transaction_prologue "${root}"
+    printf 'load_deployment_plan %q complete\n' "${plan}"
+    printf '%s\n' "printf 'malformed plan accepted\n'"
+  } > "${program}"
+
+  set +e
+  output="$(sh "${program}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a component row with an extra field must be rejected"
+  assert_contains "${output}" "malformed" \
+    "the remote plan-shape failure is reported explicitly"
+  assert_not_contains "${output}" "malformed plan accepted" \
+    "the malformed remote plan never reaches mutation"
+}
+
 # /storage/backup is CoreELEC's own backup location. The transaction makes its
 # own subtree private and leaves the shared parent's mode alone.
 test_the_transaction_never_changes_the_shared_backup_directory() {
@@ -1732,6 +2577,62 @@ test_the_render_flag_is_an_alias_of_the_deploy_emitter() {
 
 # --- Local ordering and preflight -------------------------------------------
 
+test_non_addon_plan_creates_an_empty_manifest_without_artifact_work() {
+  local dir log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  log="${dir}/artifact-preflight.log"
+  : > "${log}"
+
+  load_provisioner_function prepare_artifact_deployment || return 1
+  coreelec_component_effective() { [[ "$1" == "cec" ]]; }
+  require_command() { printf 'require %s\n' "$1" >> "${log}"; }
+  info() { printf 'info\n' >> "${log}"; }
+  warn() { printf 'warn\n' >> "${log}"; }
+  coreelec_artifacts_download_and_validate() { printf 'download\n' >> "${log}"; }
+  coreelec_addon_selection() { printf 'selection\n' >> "${log}"; }
+  TASK_TEMP_DIR="${dir}"
+  ARTIFACT_STAGE_DIR=""
+  DEPLOY_MANIFEST=""
+
+  prepare_artifact_deployment
+
+  assert_eq "${dir}/artifacts/deploy.tsv" "${DEPLOY_MANIFEST}" \
+    "the non-add-on plan still exposes a deploy manifest"
+  if [[ ! -f "${DEPLOY_MANIFEST}" || -s "${DEPLOY_MANIFEST}" ]]; then
+    printf 'the non-add-on deploy manifest must exist and be genuinely empty\n' >&2
+    return 1
+  fi
+  assert_eq "600" "$(file_mode "${DEPLOY_MANIFEST}")" \
+    "the empty deploy manifest is private"
+  assert_eq "" "$(cat "${log}")" \
+    "non-add-on planning does not require, download, select, or warn about artifacts"
+}
+
+test_non_addon_baseline_skips_artifact_upload() {
+  local dir log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  log="${dir}/baseline-calls.log"
+  : > "${log}"
+
+  load_provisioner_function apply_kodi_baseline || return 1
+  coreelec_component_effective() { [[ "$1" == "cec" ]]; }
+  info() { :; }
+  upload_artifact_bundle() { printf 'bundle\n' >> "${log}"; }
+  upload_kodi_settings_payload() { printf 'payload\n' >> "${log}"; }
+  deploy_artifacts_and_settings() { printf 'deploy\n' >> "${log}"; }
+  wait_for_kodi_jsonrpc() { printf 'verify\n' >> "${log}"; }
+  ARTIFACT_STAGE_DIR="${dir}/artifacts"
+
+  apply_kodi_baseline
+
+  assert_eq "payload
+deploy
+verify" "$(cat "${log}")" \
+    "a non-add-on transaction skips bundle upload but keeps one combined transaction"
+}
+
 # The payload is the only thing that carries secrets to the device. It is
 # uploaded last, immediately before the transaction that consumes and removes
 # it, so no earlier failure can strand it.
@@ -1743,6 +2644,7 @@ test_the_artifact_bundle_is_staged_before_the_secret_payload() {
   : > "${log}"
 
   load_provisioner_function apply_kodi_baseline || return 1
+  coreelec_component_effective() { [[ "$1" == "addons" ]]; }
   info() { :; }
   upload_artifact_bundle() { printf 'bundle %s\n' "$1" >> "${log}"; }
   upload_kodi_settings_payload() { printf 'payload\n' >> "${log}"; }
@@ -1767,6 +2669,7 @@ test_a_failed_bundle_upload_never_uploads_the_secret_payload() {
   : > "${log}"
 
   load_provisioner_function apply_kodi_baseline || return 1
+  coreelec_component_effective() { [[ "$1" == "addons" ]]; }
   info() { :; }
   upload_artifact_bundle() { printf 'bundle\n' >> "${log}"; return 1; }
   upload_kodi_settings_payload() { printf 'payload\n' >> "${log}"; }
@@ -2216,7 +3119,22 @@ run_all_tests \
   test_parent_traversal_entry_fails \
   test_absolute_path_entry_fails \
   test_duplicate_artifact_id_fails \
+  test_cec_only_transaction_accepts_no_artifacts_and_rolls_back_only_cec \
+  test_cec_and_addons_transaction_mutates_only_selected_surfaces \
+  test_remote_scope_is_revalidated_before_mutation \
+  test_cec_only_predeployment_backup_contains_no_unselected_settings \
   test_remote_deploy_stops_kodi_after_staging_validation \
+  test_remote_deploy_guards_pm4k_shutdown_without_an_open_home_window \
+  test_remote_deploy_makes_tmdb_shutdown_workers_daemon_threads \
+  test_remote_deploy_stops_tmdb_cron_before_shutdown_maintenance \
+  test_remote_deploy_accepts_exact_prepatched_tmdb_shutdown_workers \
+  test_remote_deploy_rejects_partial_tmdb_cron_abort_guard_before_install \
+  test_remote_deploy_rejects_wrong_tmdb_helper_version_before_install \
+  test_remote_deploy_rejects_missing_tmdb_worker_sequence_before_install \
+  test_remote_deploy_rejects_duplicate_tmdb_worker_sequence_before_install \
+  test_remote_deploy_rejects_differently_patched_tmdb_worker_before_install \
+  test_remote_deploy_rejects_uncompileable_tmdb_service_before_install \
+  test_remote_deploy_rejects_tmdb_helper_without_service_file \
   test_remote_deploy_traps_kodi_restart \
   test_remote_deploy_backs_up_each_replaced_path \
   test_remote_deploy_extracts_into_staging_before_replace \
@@ -2243,8 +3161,11 @@ run_all_tests \
   test_a_stale_transaction_pointer_is_reported_when_it_is_cleared \
   test_a_rollback_that_cannot_record_its_state_reports_failure \
   test_the_remote_transaction_revalidates_every_plan_field \
+  test_the_remote_transaction_rejects_malformed_plan_shape \
   test_the_transaction_never_changes_the_shared_backup_directory \
   test_the_render_flag_is_an_alias_of_the_deploy_emitter \
+  test_non_addon_plan_creates_an_empty_manifest_without_artifact_work \
+  test_non_addon_baseline_skips_artifact_upload \
   test_the_artifact_bundle_is_staged_before_the_secret_payload \
   test_a_failed_bundle_upload_never_uploads_the_secret_payload \
   test_a_failed_deployment_discards_the_remote_secret_payload \

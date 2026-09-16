@@ -493,6 +493,25 @@ def recovery_starts_fresh_observation(path):
         p.drain()
         assert len(p.commands()) == before, "epoch maturity must not retry forever"
 
+def stale_desired_sensor_does_not_restart_stopped_kodi(path):
+    p = Package(path)
+    established_pair(p)
+    p.auto_events = True
+    p.set_state(SONY, "off", age=120)
+    p.service = "stopped"
+    p.set_state(ACTUAL, "running")
+    p.package["template"][0]["sensor"][0]["state"] = "running"
+    epoch = States(p)(EPOCH)
+
+    p.automation("ugoos_theater_kodi_status_poll")
+    p.drain()
+
+    assert p.service == "stopped", \
+        "a stale desired-state sensor restarted Kodi after the confirmed Sony-off stop"
+    assert "start" not in p.commands()
+    assert States(p)(EPOCH) == epoch, \
+        "an ordinary actual/desired mismatch fabricated a fresh recovery epoch"
+
 def reconciler_first_recovery_starts_fresh_observation(path):
     for previous_host, previous_service in (("on", "stopped"), ("on", "failed"), ("off", "running")):
         p = Package(path)
@@ -750,6 +769,78 @@ def operation_errors_clear_only_on_matching_convergence(path):
     assert States(p)("input_text.ugoos_theater_stop_error") == "stop failed"
     assert "stop failed" in States(p)(LAST_ERROR)
     assert p.timestamp(States(p)(RECONCILE_TIME)) == p.now.timestamp()
+
+
+def client_timeout_then_converged_stop_clears_stale_error(path):
+    p = Package(path)
+    established_pair(p)
+    p.set_state(SONY, "off", age=7200)
+    p.responses["stop"] = deque([{"returncode": 124, "stdout": "", "stderr": "stop timed out"}])
+    p.run_script(RECONCILE)
+    assert "stop timed out" in States(p)("input_text.ugoos_theater_stop_error")
+    assert "ugoos_theater_kodi_lifecycle_stop" in p.notifications
+    p.service = "stopped"
+    p.set_state(KODI, "unavailable")
+    p.advance(30)
+    p.automation("ugoos_theater_kodi_status_poll")
+    assert States(p)(ACTUAL) == "stopped"
+    assert States(p)("input_text.ugoos_theater_stop_error") == "", \
+        "authoritative stop convergence did not clear the stale stop diagnostic"
+    assert "ugoos_theater_kodi_lifecycle_stop" not in p.notifications, \
+        "stale stop notification survived confirmed convergence"
+    assert "stop timed out" not in States(p)(LAST_ERROR)
+
+
+def client_timeout_then_converged_start_clears_stale_error(path):
+    p = Package(path)
+    established_pair(p)
+    p.service = "stopped"
+    p.set_state(ACTUAL, "stopped")
+    p.set_state(KODI, "unavailable")
+    p.responses["start"] = deque([{"returncode": 124, "stdout": "", "stderr": "start timed out"}])
+    p.run_script(RECONCILE)
+    assert "start timed out" in States(p)("input_text.ugoos_theater_start_error")
+    assert "ugoos_theater_kodi_lifecycle_start" in p.notifications
+    p.service = "running"
+    p.set_state(KODI, "idle")
+    p.advance(30)
+    p.automation("ugoos_theater_kodi_status_poll")
+    assert States(p)(ACTUAL) == "running"
+    assert States(p)("input_text.ugoos_theater_start_error") == "", \
+        "authoritative start convergence did not clear the stale start diagnostic"
+    assert "ugoos_theater_kodi_lifecycle_start" not in p.notifications, \
+        "stale start notification survived confirmed convergence"
+
+
+def convergence_clear_preserves_unresolved_and_unrelated_errors(path):
+    p = Package(path)
+    established_pair(p)
+    p.set_state(SONY, "off", age=7200)
+    p.set_state("input_text.ugoos_theater_stop_error", "stop timed out")
+    p.set_state("input_text.ugoos_theater_idle_probe_error", "probe stale")
+    p.set_state("input_text.ugoos_theater_configuration_error", "entity missing")
+    p.notifications["ugoos_theater_kodi_lifecycle_stop"] = "stop timed out"
+    p.notifications["ugoos_theater_kodi_idle_probe"] = "probe stale"
+    p.service = "running"
+    p.automation("ugoos_theater_kodi_status_poll")
+    assert States(p)(ACTUAL) == "running"
+    assert States(p)("input_text.ugoos_theater_stop_error") == "stop timed out", \
+        "an unresolved stop failure was cleared while Kodi was still running"
+    assert "ugoos_theater_kodi_lifecycle_stop" in p.notifications
+    assert States(p)("input_text.ugoos_theater_idle_probe_error") == "probe stale", \
+        "convergence clearing reached an unrelated operation error"
+    assert "ugoos_theater_kodi_idle_probe" in p.notifications
+
+    q = Package(path)
+    established_pair(q)
+    q.set_state("input_text.ugoos_theater_start_error", "start readiness timeout")
+    q.notifications["ugoos_theater_kodi_lifecycle_start"] = "start readiness timeout"
+    q.service = "running"
+    q.set_state(KODI, "unavailable")
+    q.automation("ugoos_theater_kodi_status_poll")
+    assert States(q)("input_text.ugoos_theater_start_error") == "start readiness timeout", \
+        "a running service without JSON-RPC readiness was treated as start convergence"
+    assert "ugoos_theater_kodi_lifecycle_start" in q.notifications
 
 
 def reachable_stale_probe_is_reported(path):

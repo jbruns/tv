@@ -20,7 +20,7 @@ addon_record() {
   case "$1" in
     weather.ha) printf '%s\n' 'weather.ha|0.0.6.6|https://example.test/weather.ha.zip|deadbeef' ;;
     pvr.nextpvr) printf '%s\n' 'pvr.nextpvr|21.3.2.1|https://example.test/pvr.nextpvr.zip|deadbeef' ;;
-    script.plexmod) printf '%s\n' 'script.plexmod|1.14.1-beta1|https://example.test/script.plexmod.zip|deadbeef' ;;
+    script.plexmod) printf '%s\n' 'script.plexmod|1.3.19|https://example.test/script.plexmod.zip|deadbeef' ;;
     plugin.service.emby-next-gen) printf '%s\n' 'plugin.service.emby-next-gen|11.1.27|https://example.test/plugin.service.emby-next-gen.zip|deadbeef' ;;
     *)
       printf 'unknown fixture add-on: %s\n' "$1" >&2
@@ -1300,7 +1300,7 @@ test_pm4k_launch_uses_addons_executeaddon() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   set_guided_flow_pins
-  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.3.19"
   printf '%s\n' '<settings></settings>' > "${dir}/stub/response-2.json"
   printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
   write_gui_state_response "${dir}/stub/response-4.json" "Plex" "Sign In"
@@ -1342,7 +1342,7 @@ test_pm4k_selects_sign_in_only_when_expected_control_is_focused() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   set_guided_flow_pins
-  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.3.19"
   printf '%s\n' '<settings></settings>' > "${dir}/stub/response-2.json"
   printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
   write_gui_state_response "${dir}/stub/response-4.json" "Plex" "Go to Settings"
@@ -1373,7 +1373,7 @@ test_guided_flow_times_out_as_manual_required() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   set_guided_flow_pins
-  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.3.19"
   printf '%s\n' '<settings></settings>' > "${dir}/stub/response-2.json"
   printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-3.json"
   write_gui_state_response "${dir}/stub/response-4.json" "Plex" "Sign In"
@@ -1405,7 +1405,7 @@ test_guided_flow_detects_persisted_tokens_without_printing_them() {
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   set_guided_flow_pins
-  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.14.1-beta1"
+  write_addon_details_response "${dir}/stub/response-1.json" "script.plexmod" "1.3.19"
   printf '%s\n' '<settings><setting id="auth.token">pm4k-account-token-secret</setting></settings>' \
     > "${dir}/stub/response-2.json"
 

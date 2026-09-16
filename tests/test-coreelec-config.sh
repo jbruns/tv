@@ -10,6 +10,7 @@ source "${SCRIPT_DIR}/test-helper.sh"
 source "${SCRIPT_DIR}/../lib/coreelec-config.sh"
 
 KODI_WEB_PASSWORD="test-kodi-password"
+PROVISIONER="${SCRIPT_DIR}/../provision-coreelec.sh"
 
 test_defaults_are_pacific_english_us() {
   coreelec_config_defaults
@@ -233,6 +234,114 @@ test_target_is_not_loaded_from_shared_config() {
   assert_contains "${output}" "unknown configuration key" "TARGET is rejected as unknown"
 }
 
+test_default_component_plan_is_full_baseline() {
+  local output
+  output="$(bash "${PROVISIONER}" --print-component-plan)"
+  assert_contains "${output}" "components.requested=baseline"
+  assert_contains "${output}" "components.effective=core,cec,addons,services,skin"
+  assert_contains "${output}" "components.dependencies_added=none"
+}
+
+test_legacy_addon_filter_preserves_default_baseline() {
+  local output
+  output="$(bash "${PROVISIONER}" --no-kodi --addon script.plexmod \
+    --print-component-plan)"
+  assert_contains "${output}" "components.requested=baseline"
+  assert_contains "${output}" "components.effective=core,cec,addons,services,skin"
+  assert_contains "${output}" "components.dependencies_added=none"
+}
+
+test_explicit_cec_plan_is_isolated() {
+  local output
+  output="$(bash "${PROVISIONER}" --component cec --print-component-plan)"
+  assert_contains "${output}" "components.requested=cec"
+  assert_contains "${output}" "components.effective=cec"
+  assert_contains "${output}" "components.dependencies_added=none"
+}
+
+test_skin_expands_dependencies_in_stable_order() {
+  local output
+  output="$(bash "${PROVISIONER}" --component skin --print-component-plan)"
+  assert_contains "${output}" "components.requested=skin"
+  assert_contains "${output}" "components.effective=core,addons,skin"
+  assert_contains "${output}" "components.dependencies_added=core,addons"
+}
+
+test_services_expands_addons_dependency() {
+  local output
+  output="$(bash "${PROVISIONER}" --component services --print-component-plan)"
+  assert_contains "${output}" "components.requested=services"
+  assert_contains "${output}" "components.effective=addons,services"
+  assert_contains "${output}" "components.dependencies_added=addons"
+}
+
+test_explicit_addon_implies_addons_component() {
+  local output
+  output="$(bash "${PROVISIONER}" --component cec --addon script.plexmod \
+    --print-component-plan)"
+  assert_contains "${output}" "components.requested=cec,addons"
+  assert_contains "${output}" "components.effective=cec,addons"
+  assert_contains "${output}" "components.dependencies_added=none"
+}
+
+test_duplicate_component_requests_are_normalized() {
+  local output
+  output="$(bash "${PROVISIONER}" --component skin --component skin \
+    --component core --print-component-plan)"
+  assert_contains "${output}" "components.requested=skin,core"
+  assert_contains "${output}" "components.effective=core,addons,skin"
+  assert_contains "${output}" "components.dependencies_added=addons"
+}
+
+test_explicit_baseline_expands_full_plan() {
+  local output
+  output="$(bash "${PROVISIONER}" --component baseline --print-component-plan)"
+  assert_contains "${output}" "components.requested=baseline"
+  assert_contains "${output}" "components.effective=core,cec,addons,services,skin"
+  assert_contains "${output}" "components.dependencies_added=none"
+}
+
+test_unknown_component_is_rejected() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --component imaginary --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "unknown component must be rejected"
+  assert_contains "${output}" "Unknown component: imaginary"
+}
+
+test_unimplemented_room_component_is_rejected() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --component room --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "room component must be rejected until implemented"
+  assert_contains "${output}" "Component is not implemented: room"
+}
+
+test_no_kodi_conflicts_with_explicit_components() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --no-kodi --component cec \
+    --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "--no-kodi must conflict with explicit components"
+  assert_contains "${output}" "--no-kodi cannot be used with --component"
+}
+
+test_empty_component_request_is_rejected() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --component "" --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "empty component request must be rejected"
+  assert_contains "${output}" "Effective component plan is empty"
+}
+
 test_service_secret_without_endpoint_is_rejected() {
   coreelec_config_defaults
   local rc output
@@ -387,9 +496,8 @@ test_emby_password_is_rejected_in_config() {
 
 PRODUCTION_CONFIG="${SCRIPT_DIR}/../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf"
 
-# Head of pannal/plex-for-kodi's develop_kodi21 branch whose addon.xml declares
-# script.plexmod 1.14.1-beta1. The branch ref moves; this commit does not.
-PLEXMOD_COMMIT="2707bbe72a7ea829b69bdd7ebb753c700552b4d0"
+# Publisher commit that added the stable PM4K 1.3.19 repository package.
+PLEXMOD_COMMIT="eba134ac09bfe4916b3511d1e377bf6bb03a947e"
 
 # A change detector, not a proof. This list is a transcription of the
 # artifact IDs reviewed and recorded in provision.conf; comparing it against
@@ -500,7 +608,7 @@ test_production_config_locks_primary_addon_versions() {
   coreelec_config_load "${PRODUCTION_CONFIG}"
   assert_artifact_version "repository.emby.kodi" "1.0.8"
   assert_artifact_version "plugin.service.emby-next-gen" "11.1.27"
-  assert_artifact_version "script.plexmod" "1.14.1-beta1"
+  assert_artifact_version "script.plexmod" "1.3.19"
   assert_artifact_version "skin.arctic.fuse.3" "3.2.16"
   assert_artifact_version "plugin.video.themoviedb.helper" "6.17.1"
   assert_artifact_version "weather.ha" "0.0.6.6"
@@ -546,9 +654,9 @@ test_production_config_matches_the_reviewed_artifact_id_set() {
   assert_eq "${expected}" "${actual}" "locked artifact ID set"
 }
 
-# The two add-ons that are not published as versioned repository ZIPs are
-# pinned to immutable upstream archives, so the config must record which
-# revision each one came from rather than pointing at a moving ref.
+# The externally hosted add-ons are pinned to immutable publisher revisions,
+# so the config must record which revision each one came from rather than
+# pointing at a moving ref.
 test_production_config_records_immutable_upstream_sources() {
   coreelec_config_defaults
   coreelec_config_load "${PRODUCTION_CONFIG}"
@@ -561,13 +669,14 @@ test_production_config_records_immutable_upstream_sources() {
     esac
   done
   assert_contains "${plexmod_url:-}" \
-    "https://codeload.github.com/pannal/plex-for-kodi/zip/${PLEXMOD_COMMIT}" \
-    "script.plexmod is pinned to an immutable commit archive"
+    "https://raw.githubusercontent.com/pannal/dontpanickodi/${PLEXMOD_COMMIT}/omega/zips/script.plexmod/script.plexmod-1.3.19.zip" \
+    "script.plexmod is pinned to its immutable stable repository package"
   assert_contains "${weather_url:-}" \
     "https://codeload.github.com/Eugeniusz-Gienek/kodi_weather_ha/zip/refs/tags/0.0.6.6" \
     "weather.ha is pinned to its upstream tag archive"
   assert_contains "${body}" "${PLEXMOD_COMMIT}" "the pinned plexmod commit SHA is recorded"
-  assert_contains "${body}" "develop_kodi21" "the plexmod source branch is recorded"
+  assert_contains "${body}" "latest published stable PM4K release" \
+    "the stable plexmod selection rationale is recorded"
 }
 
 test_production_config_records_each_artifact_exactly_once() {
@@ -690,6 +799,18 @@ run_all_tests \
   test_removed_local_service_inputs_are_unknown \
   test_cli_value_overrides_config_value \
   test_target_is_not_loaded_from_shared_config \
+  test_default_component_plan_is_full_baseline \
+  test_legacy_addon_filter_preserves_default_baseline \
+  test_explicit_cec_plan_is_isolated \
+  test_skin_expands_dependencies_in_stable_order \
+  test_services_expands_addons_dependency \
+  test_explicit_addon_implies_addons_component \
+  test_duplicate_component_requests_are_normalized \
+  test_explicit_baseline_expands_full_plan \
+  test_unknown_component_is_rejected \
+  test_unimplemented_room_component_is_rejected \
+  test_no_kodi_conflicts_with_explicit_components \
+  test_empty_component_request_is_rejected \
   test_service_secret_without_endpoint_is_rejected \
   test_service_location_secrets_are_validated \
   test_missing_optional_secrets_are_allowed \

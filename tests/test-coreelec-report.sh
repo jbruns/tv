@@ -61,7 +61,7 @@ write_manifest() {
 1	skin.arctic.fuse.3	3.2.16	1.zip
 2	weather.ha	0.0.6.6	2.zip
 3	pvr.nextpvr	21.3.2.1	3.zip
-4	script.plexmod	1.14.1-beta1	4.zip
+4	script.plexmod	1.3.19	4.zip
 5	resource.uisounds.fromashes	3.0.01	5.zip
 6	plugin.service.emby-next-gen	11.1.27	6.zip
 7	plugin.video.themoviedb.helper	6.17.1	7.zip
@@ -137,6 +137,10 @@ date_offset_expected=PDT-0700
 date_offset_observed=PDT-0700
 date_matches_timezone=1
 cec.tv_off_action=36028
+cec.activate_source=0
+cec.wake_devices=231
+cec.standby_devices=231
+cec.standby_tv_on_pc_standby=0
 addon.skin.arctic.fuse.3.installed=1
 addon.skin.arctic.fuse.3.version=3.2.16
 addon.skin.arctic.fuse.3.enabled=1
@@ -150,7 +154,7 @@ addon.pvr.nextpvr.version=21.3.2.1
 addon.pvr.nextpvr.enabled=1
 addon.pvr.nextpvr.enable_attempted=0
 addon.script.plexmod.installed=1
-addon.script.plexmod.version=1.14.1-beta1
+addon.script.plexmod.version=1.3.19
 addon.script.plexmod.enabled=1
 addon.script.plexmod.enable_attempted=0
 addon.resource.uisounds.fromashes.installed=1
@@ -357,6 +361,14 @@ run_verify() {
     --verify-fixture "${observations}" "${manifest}"
 }
 
+run_verify_components() {
+  local component="$1" config="$2" observations="$3" manifest="$4"
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --component "${component}" \
+    --verify-fixture "${observations}" "${manifest}"
+}
+
 run_classify() {
   local config="$1" addon_id="$2"
   HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
@@ -375,6 +387,15 @@ run_report() {
     --report-fixture "${directory}" "${observations}" "${manifest}" "${reachable}"
 }
 
+run_report_components() {
+  local component="$1" config="$2" directory="$3" observations="$4" manifest="$5"
+  local reachable="${6:-unknown}"
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --component "${component}" \
+    --report-fixture "${directory}" "${observations}" "${manifest}" "${reachable}"
+}
+
 # Runs the real verify -> finalize/rollback decision with the three remote
 # calls replaced by recording stubs whose exit status the test chooses.
 run_conclude() {
@@ -383,6 +404,16 @@ run_conclude() {
   HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
     NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
     bash "${PROVISIONER}" --config "${config}" \
+    --conclude-fixture "${observations}" "${manifest}" \
+    "${finalize_status}" "${rollback_status}" "${log}"
+}
+
+run_conclude_component() {
+  local component="$1" config="$2" observations="$3" manifest="$4"
+  local finalize_status="$5" rollback_status="$6" log="$7"
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --component "${component}" \
     --conclude-fixture "${observations}" "${manifest}" \
     "${finalize_status}" "${rollback_status}" "${log}"
 }
@@ -417,7 +448,7 @@ test_all_expected_addon_versions_are_verified() {
     "requested version is reported" || return 1
   assert_contains "${output}" "addon.plugin.service.emby-next-gen.observed_version=11.1.27" \
     "observed version is reported" || return 1
-  assert_contains "${output}" "addon.script.plexmod.observed_version=1.14.1-beta1" \
+  assert_contains "${output}" "addon.script.plexmod.observed_version=1.3.19" \
     "pre-release version round-trips" || return 1
   assert_eq "41" "$(printf '%s\n' "${output}" | grep -c '\.verification=ok$')" \
     "every manifest add-on is verified" || return 1
@@ -604,6 +635,30 @@ test_weather_provider_is_verified_only_when_configured() {
     "the unconfigured state is explicit" || return 1
 }
 
+test_services_only_configured_weather_verifies() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_verify_components services "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "services-only configured weather must verify when weather.ha is active" || return 1
+  assert_contains "${output}" "weather_provider.status=ok" \
+    "the services-owned provider is verified" || return 1
+  assert_not_contains "${output}" "skin.status=" \
+    "services-only verification does not claim skin ownership"
+}
+
 test_timezone_cache_and_zoneinfo_are_verified() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
@@ -682,6 +737,102 @@ test_cec_ignore_mismatch_fails_verification() {
     "the comparator names the observed CEC action" || return 1
   assert_contains "${output}" "cec.tv_off_action.status=mismatch" \
     "the CEC action mismatch is reported" || return 1
+}
+
+test_cec_power_coupling_mismatch_fails_verification() {
+  local dir config manifest observations output rc key
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+
+  for key in activate_source wake_devices standby_devices standby_tv_on_pc_standby; do
+    write_pass_observations "${observations}"
+    set_observation "${observations}" "cec.${key}" "unexpected"
+    set +e
+    output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "CEC ${key} power coupling must fail verification" || return 1
+    assert_contains "${output}" "cec.${key}.status=mismatch" \
+      "the CEC ${key} mismatch is reported" || return 1
+  done
+}
+
+test_cec_only_verification_ignores_unselected_component_observations() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "setting.locale.language" "invalid"
+  set_observation "${observations}" "addon.weather.ha.enabled" "0"
+  set_observation "${observations}" "addon_settings.weather.ha.configured" "0"
+  set_observation "${observations}" "arctic_fuse.home_widgets_configured" "0"
+
+  set +e
+  output="$(run_verify_components cec "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "CEC-only verification ignores unselected state" || return 1
+  assert_contains "${output}" "cec.activate_source.status=ok" \
+    "the selected CEC value is verified" || return 1
+  assert_not_contains "${output}" "arctic_fuse." \
+    "skin verdicts are omitted" || return 1
+  assert_not_contains "${output}" "addon.weather.ha." \
+    "add-on verdicts are omitted" || return 1
+  assert_not_contains "${output}" "regional.locale." \
+    "regional verdicts are omitted" || return 1
+}
+
+test_cec_only_verification_fails_when_a_selected_observation_is_missing() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  grep -v '^cec.activate_source=' "${observations}" > "${observations}.new"
+  mv "${observations}.new" "${observations}"
+
+  set +e
+  output="$(run_verify_components cec "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing selected CEC value must fail verification" || return 1
+  assert_contains "${output}" "cec.activate_source.status=mismatch" \
+    "the unanswered selected observation is named" || return 1
+}
+
+test_default_baseline_still_rejects_invalid_arctic_fuse_state() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "arctic_fuse.home_widgets_configured" "0"
+
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "the default baseline keeps strict AF3 verification" || return 1
+  assert_contains "${output}" "arctic_fuse.status=mismatch" \
+    "the full baseline reports the AF3 mismatch" || return 1
 }
 
 # CoreELEC images ship /etc/localtime either as a symlink into the zoneinfo
@@ -1069,6 +1220,58 @@ test_audit_report_records_cec_ignore_without_adapter_filename() {
     "the report never names the peripheral_data path" || return 1
 }
 
+test_report_records_the_deterministic_component_plan() {
+  local dir config manifest observations report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  report="$(run_report_components skin "${config}" "${dir}/out" \
+    "${observations}" "${manifest}")"
+  assert_eq "skin" "$(report_line "${report}" components.requested)" \
+    "the requested component is recorded" || return 1
+  assert_eq "core,addons,skin" "$(report_line "${report}" components.effective)" \
+    "effective components use stable dependency order" || return 1
+  assert_eq "core,addons" "$(report_line "${report}" components.dependencies_added)" \
+    "added dependencies are explicit" || return 1
+}
+
+test_cec_only_report_omits_unselected_verdicts_and_remains_redacted() {
+  local dir config manifest observations report contents
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  report="$(HOME_ASSISTANT_TOKEN=cec-only-report-secret \
+    run_report_components cec "${config}" "${dir}/out" \
+    "${observations}" "${manifest}")"
+  contents="$(cat "${report}")"
+  assert_eq "cec" "$(report_line "${report}" components.requested)" \
+    "the CEC-only request is recorded" || return 1
+  assert_eq "cec" "$(report_line "${report}" components.effective)" \
+    "the CEC-only effective scope stays narrow" || return 1
+  assert_contains "${contents}" "cec.activate_source.status=ok" \
+    "the selected CEC verdict is reported" || return 1
+  assert_not_contains "${contents}" "arctic_fuse." \
+    "unselected skin verdicts are omitted" || return 1
+  assert_not_contains "${contents}" "addon.weather.ha." \
+    "unselected add-on verdicts are omitted" || return 1
+  assert_not_contains "${contents}" "regional.locale." \
+    "unselected regional verdicts are omitted" || return 1
+  assert_not_contains "${contents}" "cec-only-report-secret" \
+    "the existing redaction guard still protects scoped reports" || return 1
+}
+
 test_report_redacts_all_supplied_secret_values() {
   local dir config manifest observations output rc remaining
   dir="$(make_scratch_dir)"
@@ -1352,6 +1555,32 @@ test_verification_success_finalizes_and_commits() {
   assert_eq "verify" "$(head -n 1 "${log}")" "verification ran before finalize" || return 1
 }
 
+test_transient_verification_mismatch_is_retried_before_commit() {
+  local dir config manifest observations log output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations"
+  log="${dir}/remote-calls.log"
+  mkdir -p "${observations}"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}/1.conf"
+  set_observation "${observations}/1.conf" "arctic_fuse.hubs_configured" "0"
+  write_pass_observations "${observations}/2.conf"
+
+  set +e
+  output="$(run_conclude "${config}" "${observations}" "${manifest}" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a transient startup mismatch converges before the deadline" || return 1
+  assert_contains "${output}" "deployment_state=committed" \
+    "the converged transaction is committed" || return 1
+  assert_eq $'verify\nverify\nfinalize' "$(cat "${log}")" \
+    "verification retries once before committing" || return 1
+}
+
 test_verification_mismatch_is_fatal() {
   local dir config manifest observations log output rc
   dir="$(make_scratch_dir)"
@@ -1374,6 +1603,86 @@ test_verification_mismatch_is_fatal() {
   assert_contains "${output}" "deployment_state=rolled-back" "the transaction is undone" || return 1
   assert_contains "$(cat "${log}")" "rollback" "rollback was invoked" || return 1
   assert_not_contains "$(cat "${log}")" "finalize" "a failed run must not commit" || return 1
+}
+
+test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse() {
+  local dir config manifest observations log output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/remote-calls.log"
+  write_base_config "${config}"
+  write_manifest "${manifest}.full"
+  grep -v $'\tskin.arctic.fuse.3\t' "${manifest}.full" > "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "setting.lookandfeel.skin" "skin.estuary"
+
+  set +e
+  output="$(run_conclude_component skin "${config}" "${observations}" \
+    "${manifest}" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" \
+    "an effective skin scope must reject Estuary even when the manifest omits Arctic Fuse" \
+    || return 1
+  assert_contains "${output}" "verification_result=fail" \
+    "the active-skin mismatch is fatal" || return 1
+  assert_contains "${output}" "deployment_state=rolled-back" \
+    "the mismatched skin transaction is rolled back" || return 1
+  assert_contains "$(cat "${log}")" "rollback" \
+    "rollback is invoked for an effective-skin mismatch" || return 1
+  assert_not_contains "$(cat "${log}")" "finalize" \
+    "the mismatched skin transaction is never finalized"
+}
+
+test_weather_mismatch_rolls_back_when_manifest_omits_weather_addon() {
+  local dir config manifest observations log verify_output verify_rc
+  local output rc weather_status remote_calls
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/remote-calls.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}.full"
+  grep -v $'\tweather.ha\t' "${manifest}.full" > "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "setting.weather.addon" "weather.gismeteo"
+
+  set +e
+  verify_output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_verify_components services "${config}" "${observations}" "${manifest}" 2>&1)"
+  verify_rc=$?
+  output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_conclude_component services "${config}" "${observations}" \
+    "${manifest}" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  weather_status="$(printf '%s\n' "${verify_output}" \
+    | awk -F= '$1 == "weather_provider.status" { print $2 }')"
+  remote_calls="$(tr '\n' ' ' < "${log}")"
+  if [[ "${verify_rc}" -eq 0 || "${rc}" -eq 0 \
+      || "${weather_status}" != "mismatch" \
+      || "${remote_calls}" != *rollback* || "${remote_calls}" == *finalize* ]]; then
+    printf 'observed verify_status=%s weather_verdict=%s conclude_status=%s remote_calls=%s\n' \
+      "${verify_rc}" "${weather_status}" "${rc}" "${remote_calls}" >&2
+  fi
+  assert_failure "${verify_rc}" \
+    "configured services verification must reject a non-HA provider" || return 1
+  assert_failure "${rc}" \
+    "configured services must reject a non-HA provider even when the manifest omits weather.ha" \
+    || return 1
+  assert_eq "mismatch" "${weather_status}" \
+    "the configured provider mismatch is reported" || return 1
+  assert_contains "${output}" "deployment_state=rolled-back" \
+    "the mismatched provider transaction is rolled back" || return 1
+  assert_contains "$(cat "${log}")" "rollback" \
+    "rollback is invoked for a configured provider mismatch" || return 1
+  assert_not_contains "$(cat "${log}")" "finalize" \
+    "the mismatched provider transaction is never finalized"
 }
 
 test_cec_ignore_mismatch_triggers_rollback() {
@@ -1735,16 +2044,22 @@ install_probe_path_without_curl() {
 # in a value becomes a newline, because the production request carries the
 # add-on list as one multi-line value.
 write_probe_request() {
-  local file="$1" line key value
+  local file="$1" line key value have_component_scope=0
   : > "${file}"
   chmod 600 "${file}"
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
     key="${line%%=*}"
     value="${line#*=}"
+    [[ "${key}" != "EFFECTIVE_COMPONENTS" ]] || have_component_scope=1
     value="${value//\\n/$'\n'}"
     printf '%s=%s\n' "${key}" "$(printf '%s' "${value}" | openssl base64 -A)" >> "${file}"
   done
+  if [[ "${have_component_scope}" == "0" ]]; then
+    printf 'EFFECTIVE_COMPONENTS=%s\n' \
+      "$(printf '%s' 'core,cec,addons,services,skin' | openssl base64 -A)" \
+      >> "${file}"
+  fi
 }
 
 # `layout` selects how /etc/localtime is stored, because CoreELEC images use
@@ -1761,7 +2076,7 @@ make_probe_fixture_root() {
   # A passing CEC peripheral file, matching the transformer's fixed Ignore
   # (36028) baseline. Tests that care about a different CEC state overwrite
   # this file themselves.
-  printf '<settings><setting id="standby_pc_on_tv_standby" value="36028" /></settings>\n' \
+  printf '%s\n' '<settings><setting id="activate_source" value="0" /><setting id="wake_devices" value="231" /><setting id="standby_devices" value="231" /><setting id="standby_tv_on_pc_standby" value="0" /><setting id="standby_pc_on_tv_standby" value="36028" /></settings>' \
     > "${root}/.kodi/userdata/peripheral_data/cec_CEC_Adapter.xml"
   rm -f "${dir}/system/etc/localtime"
   case "${layout}" in
@@ -1865,6 +2180,14 @@ ENTRIES
   output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
   assert_contains "${output}" "cec.tv_off_action=36028" \
     "the CEC TV-off action is reported" || return 1
+  assert_contains "${output}" "cec.activate_source=0" \
+    "Kodi does not claim the active source at startup" || return 1
+  assert_contains "${output}" "cec.wake_devices=231" \
+    "Kodi wakes no HDMI devices at startup" || return 1
+  assert_contains "${output}" "cec.standby_devices=231" \
+    "Kodi puts no HDMI devices in standby" || return 1
+  assert_contains "${output}" "cec.standby_tv_on_pc_standby=0" \
+    "Kodi shutdown does not power off the TV" || return 1
   assert_not_contains "${output}" "cec_CEC_Adapter" \
     "the dynamic adapter filename is never reported" || return 1
 
@@ -1877,6 +2200,95 @@ ENTRIES
   assert_failure "${rc}" "a missing CEC peripheral file must fail the probe" || return 1
   assert_contains "${output}" "peripheral_data" \
     "the failure names the peripheral_data directory" || return 1
+}
+
+test_cec_only_remote_probe_emits_only_common_and_cec_observations() {
+  local dir root bin_dir request output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+EFFECTIVE_COMPONENTS=cec
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "observation_format=coreelec-verification-1" \
+    "the observation contract is always reported" || return 1
+  assert_contains "${output}" "jsonrpc_version=" \
+    "Kodi restart/readiness evidence is always reported" || return 1
+  assert_contains "${output}" "cec.tv_off_action=36028" \
+    "the selected CEC state is reported" || return 1
+  assert_not_contains "${output}" "setting.locale." \
+    "the CEC probe omits regional observations" || return 1
+  assert_not_contains "${output}" "addon.weather.ha." \
+    "the CEC probe omits add-on observations" || return 1
+  assert_not_contains "${output}" "addon_settings." \
+    "the CEC probe omits service observations" || return 1
+  assert_not_contains "${output}" "arctic_fuse." \
+    "the CEC probe omits skin observations" || return 1
+}
+
+test_remote_probe_rejects_an_invalid_component_scope() {
+  local dir root bin_dir request output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+EFFECTIVE_COMPONENTS=cec,unknown
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  set +e
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an invalid effective component list must be rejected" || return 1
+  assert_contains "${output}" "invalid effective component scope" \
+    "the malformed scope is diagnosed" || return 1
+}
+
+test_remote_probe_rejects_a_missing_component_scope() {
+  local dir root bin_dir request output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ENTRIES
+  grep -v '^EFFECTIVE_COMPONENTS=' "${request}" > "${request}.new"
+  mv "${request}.new" "${request}"
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  set +e
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing effective component list must not widen to baseline" || return 1
+  assert_contains "${output}" "invalid effective component scope" \
+    "the missing scope is diagnosed" || return 1
 }
 
 test_remote_probe_rejects_a_malformed_cec_document() {
@@ -2843,6 +3255,24 @@ test_probe_rejects_enabled_custom_1104() {
     "an enabled custom slot is not the managed disabled state" || return 1
 }
 
+test_probe_accepts_inert_defaults_recreated_by_arctic_fuse() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  append_skin_setting_node "${skin_file}" "HomeSwitcher.1104.Name" "string" "Custom"
+  append_skin_setting_node "${skin_file}" "optionstiles.03.path" "string" ""
+  append_skin_setting_node "${skin_file}" "optionstiles.03.target" "string" ""
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=1" \
+    "an untoggled default custom label remains disabled" || return 1
+  assert_contains "${output}" "arctic_fuse.option_tiles_configured=1" \
+    "empty AF3-created Weather path and target do not redirect the tile" || return 1
+}
+
 test_probe_rejects_plex_in_the_wrong_slot() {
   local dir root bin_dir output skin_file setting_spec setting_id value
   dir="$(make_scratch_dir)"
@@ -3699,6 +4129,8 @@ test_each_ratings_key_presence_is_verified_separately() {
   assert_failure "${rc}" "missing OMDb key must fail" || return 1
   assert_contains "${output}" "metadata.omdb.status=mismatch" "omdb mismatch" || return 1
   assert_contains "${output}" "metadata.mdblist.status=ok" "mdblist still ok" || return 1
+  assert_contains "${output}" "arctic_fuse.status=mismatch" \
+    "the baseline AF3 aggregate includes the OMDb mismatch" || return 1
 
   # Only MDbList missing
   write_pass_observations "${observations}"
@@ -3710,6 +4142,8 @@ test_each_ratings_key_presence_is_verified_separately() {
   assert_failure "${rc}" "missing MDbList key must fail" || return 1
   assert_contains "${output}" "metadata.mdblist.status=mismatch" "mdblist mismatch" || return 1
   assert_contains "${output}" "metadata.omdb.status=ok" "omdb still ok" || return 1
+  assert_contains "${output}" "arctic_fuse.status=mismatch" \
+    "the baseline AF3 aggregate includes the MDbList mismatch" || return 1
 }
 
 # --- Report content for Arctic Fuse surfaces --------------------------------
@@ -3799,8 +4233,13 @@ run_all_tests \
   test_addon_version_mismatch_is_failure \
   test_active_skin_is_verified \
   test_weather_provider_is_verified_only_when_configured \
+  test_services_only_configured_weather_verifies \
   test_timezone_cache_and_zoneinfo_are_verified \
   test_cec_ignore_mismatch_fails_verification \
+  test_cec_power_coupling_mismatch_fails_verification \
+  test_cec_only_verification_ignores_unselected_component_observations \
+  test_cec_only_verification_fails_when_a_selected_observation_is_missing \
+  test_default_baseline_still_rejects_invalid_arctic_fuse_state \
   test_regular_file_localtime_is_verified_by_content \
   test_unexpected_device_date_output_is_advisory_not_fatal \
   test_date_offset_reports_expected_and_observed_marks \
@@ -3813,6 +4252,8 @@ run_all_tests \
   test_missing_optional_values_are_classified_unconfigured \
   test_report_lists_secret_presence_without_secret_values \
   test_audit_report_records_cec_ignore_without_adapter_filename \
+  test_report_records_the_deterministic_component_plan \
+  test_cec_only_report_omits_unselected_verdicts_and_remains_redacted \
   test_report_redacts_all_supplied_secret_values \
   test_report_records_config_fingerprint_without_secrets \
   test_report_lists_manual_actions_in_order \
@@ -3823,7 +4264,10 @@ run_all_tests \
   test_host_jsonrpc_unreachability_is_environmental_only \
   test_report_fingerprint_tool_is_required_even_without_kodi \
   test_verification_success_finalizes_and_commits \
+  test_transient_verification_mismatch_is_retried_before_commit \
   test_verification_mismatch_is_fatal \
+  test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse \
+  test_weather_mismatch_rolls_back_when_manifest_omits_weather_addon \
   test_cec_ignore_mismatch_triggers_rollback \
   test_incomplete_rollback_is_fatal_with_recovery_path \
   test_an_unanswered_probe_is_a_verification_failure \
@@ -3831,6 +4275,9 @@ run_all_tests \
   test_remote_verify_script_passes_shell_syntax_check \
   test_remote_verify_probe_reports_state_without_secrets \
   test_remote_probe_reports_cec_ignore \
+  test_cec_only_remote_probe_emits_only_common_and_cec_observations \
+  test_remote_probe_rejects_an_invalid_component_scope \
+  test_remote_probe_rejects_a_missing_component_scope \
   test_remote_probe_rejects_a_malformed_cec_document \
   test_remote_probe_rejects_unreadable_or_ambiguous_cec_values \
   test_remote_verify_probe_compares_a_copied_localtime_by_content \
@@ -3855,6 +4302,7 @@ run_all_tests \
   test_probe_reports_each_hub_observation_independently \
   test_probe_rejects_stale_youtube_movie_shortcut \
   test_probe_rejects_enabled_custom_1104 \
+  test_probe_accepts_inert_defaults_recreated_by_arctic_fuse \
   test_probe_rejects_plex_in_the_wrong_slot \
   test_probe_accepts_unconfigured_pvr_and_weather_absence \
   test_probe_rejects_pvr_toggle_when_unconfigured \
