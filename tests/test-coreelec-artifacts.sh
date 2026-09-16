@@ -644,6 +644,7 @@ stage_addon_bundle() {
   shift 2
   local stage="${root}/.cache/coreelec-provision/stage"
   local index=0 spec id version topdir work weather_settings pm4k_monitor
+  local tmdb_service
   mkdir -p "${stage}"
   : > "${stage}/deploy.tsv"
   for spec in "$@"; do
@@ -687,10 +688,70 @@ PY
       printf '%s/lib/monitor.py\t%s\n' "${topdir}" "${pm4k_monitor}" \
         >> "${work}/zip-manifest.tsv"
     fi
+    if [[ "${id}" == "plugin.video.themoviedb.helper" ]]; then
+      mkdir -p "${work}/resources/tmdbhelper/lib/monitor"
+      tmdb_service="${work}/resources/tmdbhelper/lib/monitor/service.py"
+      cat > "${tmdb_service}" <<'PY'
+from threading import Lock
+
+
+class ServiceMonitor(Poller):
+    def __init__(self):
+        self.exit = False
+        self.listitem = None
+
+    def run(self):
+        self.mutex_lock = Lock()
+
+        self.update_monitor = UpdateMonitor()
+        self.player_monitor = PlayerMonitor()
+
+        self.run_cron_job()
+        self.run_images_monitor()
+
+        self.listitem_funcs = ListItemMonitorFunctions(self)
+
+        get_property('ServiceStarted', 'True')
+
+        self.poller()
+
+    def run_cron_job(self):
+        self.cron_job = CronJobMonitor(self, update_hour=get_setting('library_autoupdate_hour', 'int'))
+        self.cron_job.setName('Cron Thread')
+        self.cron_job.start()
+
+    def run_images_monitor(self):
+        self.images_monitor = ImagesMonitor(self)
+        self.images_monitor.setName('Image Thread')
+        self.images_monitor.start()
+
+    def _on_exit(self):
+        try:
+            self.cron_job.exit = True
+        except AttributeError:
+            pass
+        try:
+            self.images_monitor.exit = True
+        except AttributeError:
+            pass
+        if not self.update_monitor.abortRequested():
+            get_property('ServiceStarted', clear_property=True)
+            get_property('ServiceStop', clear_property=True)
+PY
+      printf '%s/resources/tmdbhelper/lib/monitor/service.py\t%s\n' \
+        "${topdir}" "${tmdb_service}" >> "${work}/zip-manifest.tsv"
+    fi
     build_zip_from_manifest "${stage}/${index}.zip" "${work}/zip-manifest.tsv"
     printf '%s\t%s\t%s\t%s.zip\n' \
       "${index}" "${id}" "${version}" "${index}" >> "${stage}/deploy.tsv"
   done
+}
+
+rebuild_staged_fixture_zip() {
+  local dir="$1" root="$2" index="$3"
+  build_zip_from_manifest \
+    "${root}/.cache/coreelec-provision/stage/${index}.zip" \
+    "${dir}/zip-source-${index}/zip-manifest.tsv"
 }
 
 # Stubs the two remote commands the transaction shells out to. Both append to
@@ -1081,6 +1142,253 @@ test_remote_deploy_guards_pm4k_shutdown_without_an_open_home_window() {
   monitor="${root}/.kodi/addons/script.plexmod/lib/monitor.py"
   assert_contains "$(cat "${monitor}")" "if windowutils.HOME:" \
     "PM4K shutdown must guard the nullable HOME window before dereferencing it"
+}
+
+test_remote_deploy_makes_tmdb_shutdown_workers_daemon_threads() {
+  local dir root bin_dir output rc service source
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the pinned TMDb Helper bundle must deploy: ${output}" || return 1
+
+  service="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/service.py"
+  source="$(cat "${service}")"
+  assert_contains "${source}" $'        self.cron_job.daemon = True\n        self.cron_job.start()' \
+    "the Cron Thread is daemonized immediately before it starts" || return 1
+  assert_contains "${source}" $'        self.images_monitor.daemon = True\n        self.images_monitor.start()' \
+    "the Image Thread is daemonized immediately before it starts" || return 1
+  assert_contains "${source}" "self.cron_job.exit = True" \
+    "the Cron Thread cooperative exit flag remains" || return 1
+  assert_contains "${source}" "self.images_monitor.exit = True" \
+    "the Image Thread cooperative exit flag remains" || return 1
+  assert_eq "644" "$(file_mode "${service}")" \
+    "patching preserves the staged add-on source mode" || return 1
+  python3 - "${service}" <<'PY'
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    compile(handle.read(), sys.argv[1], "exec")
+PY
+}
+
+test_remote_deploy_accepts_exact_prepatched_tmdb_shutdown_workers() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  python3 - "${service}" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace(
+    "        self.cron_job.start()\n",
+    "        self.cron_job.daemon = True\n        self.cron_job.start()\n",
+)
+source = source.replace(
+    "        self.images_monitor.start()\n",
+    "        self.images_monitor.daemon = True\n        self.images_monitor.start()\n",
+)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+PY
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the exact prepatched TMDb Helper must remain deployable: ${output}" || return 1
+  service="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/service.py"
+  service="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/service.py"
+  assert_eq "1" "$(grep -c 'self\.cron_job\.daemon = True' "${service}")" \
+    "idempotence leaves one Cron Thread daemon assignment" || return 1
+  assert_eq "1" "$(grep -c 'self\.images_monitor\.daemon = True' "${service}")" \
+    "idempotence leaves one Image Thread daemon assignment" || return 1
+  python3 - "${service}" <<'PY'
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    compile(handle.read(), sys.argv[1], "exec")
+PY
+}
+
+test_remote_deploy_rejects_wrong_tmdb_helper_version_before_install() {
+  local dir root bin_dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.2:plugin.video.themoviedb.helper"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreviewed TMDb Helper version must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper identity or version" \
+    "the rejection names the identity/version guard" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a rejected TMDb version never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_missing_tmdb_worker_sequence_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  sed "s/setName('Cron Thread')/setName('Unexpected Thread')/" \
+    "${service}" > "${service}.new"
+  mv "${service}.new" "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a missing TMDb worker sequence must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Cron Thread sequence" \
+    "the rejection names the missing Cron Thread shape" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a rejected TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_duplicate_tmdb_worker_sequence_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  cp "${service}" "${service}.duplicate"
+  cat "${service}.duplicate" >> "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "duplicate TMDb worker sequences must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Cron Thread sequence" \
+    "the rejection names the ambiguous Cron Thread shape" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "an ambiguous TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_differently_patched_tmdb_worker_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  sed '/self\.images_monitor\.start()/i\
+        self.images_monitor.daemon = False
+' "${service}" > "${service}.new"
+  mv "${service}.new" "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a differently patched TMDb worker must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Image Thread sequence" \
+    "the rejection names the conflicting Image Thread shape" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a conflicting TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_uncompileable_tmdb_service_before_install() {
+  local dir root bin_dir output rc service
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
+  printf '\ndef broken(:\n' >> "${service}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "uncompileable TMDb Helper source must be rejected" || return 1
+  assert_contains "${output}" "SyntaxError" \
+    "the rejection reports that the patched source cannot compile" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "uncompileable TMDb source never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
+}
+
+test_remote_deploy_rejects_tmdb_helper_without_service_file() {
+  local dir root bin_dir output rc manifest
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  manifest="${dir}/zip-source-1/zip-manifest.tsv"
+  grep -v '/resources/tmdbhelper/lib/monitor/service\.py' "${manifest}" \
+    > "${manifest}.new"
+  mv "${manifest}.new" "${manifest}"
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "TMDb Helper without its service worker source must be rejected" || return 1
+  assert_contains "${output}" "has no resources/tmdbhelper/lib/monitor/service.py" \
+    "the rejection names the missing service source" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a missing TMDb service file never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
 }
 
 test_remote_deploy_traps_kodi_restart() {
@@ -2628,6 +2936,14 @@ run_all_tests \
   test_cec_only_predeployment_backup_contains_no_unselected_settings \
   test_remote_deploy_stops_kodi_after_staging_validation \
   test_remote_deploy_guards_pm4k_shutdown_without_an_open_home_window \
+  test_remote_deploy_makes_tmdb_shutdown_workers_daemon_threads \
+  test_remote_deploy_accepts_exact_prepatched_tmdb_shutdown_workers \
+  test_remote_deploy_rejects_wrong_tmdb_helper_version_before_install \
+  test_remote_deploy_rejects_missing_tmdb_worker_sequence_before_install \
+  test_remote_deploy_rejects_duplicate_tmdb_worker_sequence_before_install \
+  test_remote_deploy_rejects_differently_patched_tmdb_worker_before_install \
+  test_remote_deploy_rejects_uncompileable_tmdb_service_before_install \
+  test_remote_deploy_rejects_tmdb_helper_without_service_file \
   test_remote_deploy_traps_kodi_restart \
   test_remote_deploy_backs_up_each_replaced_path \
   test_remote_deploy_extracts_into_staging_before_replace \

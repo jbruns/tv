@@ -1918,6 +1918,88 @@ with open(temporary, "w", encoding="utf-8", newline="") as handle:
 os.replace(temporary, monitor_path)
 PYTHON_PATCH_PM4K_SHUTDOWN
   fi
+  if [ "${plan_id}" = "plugin.video.themoviedb.helper" ]; then
+    tmdb_root="${expanded_dir}/${plan_id}/${plan_top}"
+    tmdb_service="${tmdb_root}/resources/tmdbhelper/lib/monitor/service.py"
+    [ -f "${tmdb_service}" ] \
+      || fail "the expanded plugin.video.themoviedb.helper has no resources/tmdbhelper/lib/monitor/service.py"
+    python3 - "${tmdb_root}/addon.xml" "${tmdb_service}" <<'PYTHON_PATCH_TMDB_SHUTDOWN' \
+      || fail "could not apply the TMDb Helper 6.17.1 shutdown compatibility patch"
+import os
+import stat
+import sys
+import xml.etree.ElementTree as ET
+
+addon_path, service_path = sys.argv[1:]
+addon = ET.parse(addon_path).getroot()
+if (addon.get("id") != "plugin.video.themoviedb.helper"
+        or addon.get("version") != "6.17.1"):
+    raise SystemExit("unexpected TMDb Helper identity or version")
+
+with open(service_path, "r", encoding="utf-8") as handle:
+    lines = handle.readlines()
+
+workers = (
+    (
+        "Cron Thread",
+        "self.cron_job",
+        (
+            "        self.cron_job = CronJobMonitor(self, update_hour=get_setting('library_autoupdate_hour', 'int'))\n",
+            "        self.cron_job.setName('Cron Thread')\n",
+            "        self.cron_job.start()\n",
+        ),
+        "        self.cron_job.daemon = True\n",
+    ),
+    (
+        "Image Thread",
+        "self.images_monitor",
+        (
+            "        self.images_monitor = ImagesMonitor(self)\n",
+            "        self.images_monitor.setName('Image Thread')\n",
+            "        self.images_monitor.start()\n",
+        ),
+        "        self.images_monitor.daemon = True\n",
+    ),
+)
+
+changed = False
+for label, worker, expected, daemon_line in workers:
+    patched = expected[:2] + (daemon_line, expected[2])
+    unpatched_matches = [
+        index for index in range(len(lines) - len(expected) + 1)
+        if tuple(lines[index:index + len(expected)]) == expected
+    ]
+    patched_matches = [
+        index for index in range(len(lines) - len(patched) + 1)
+        if tuple(lines[index:index + len(patched)]) == patched
+    ]
+    required_counts = [lines.count(line) for line in expected]
+    daemon_lines = [
+        line for line in lines
+        if line.strip().startswith(worker + ".daemon")
+    ]
+
+    if (unpatched_matches and not patched_matches
+            and required_counts == [1, 1, 1] and not daemon_lines):
+        lines.insert(unpatched_matches[0] + 2, daemon_line)
+        changed = True
+        continue
+    if (patched_matches and not unpatched_matches
+            and required_counts == [1, 1, 1]
+            and daemon_lines == [daemon_line]):
+        continue
+    raise SystemExit("unexpected TMDb Helper %s sequence" % label)
+
+patched_source = "".join(lines)
+compile(patched_source, service_path, "exec")
+if changed:
+    temporary = service_path + ".provision-new"
+    with open(temporary, "w", encoding="utf-8", newline="") as handle:
+        handle.write(patched_source)
+    os.chmod(temporary, stat.S_IMODE(os.stat(service_path).st_mode))
+    os.replace(temporary, service_path)
+PYTHON_PATCH_TMDB_SHUTDOWN
+  fi
 done < "${plan_file}"
 
 # --- Phase 2: mutate the device inside a recoverable transaction ------------
