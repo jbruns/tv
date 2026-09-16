@@ -644,7 +644,7 @@ stage_addon_bundle() {
   shift 2
   local stage="${root}/.cache/coreelec-provision/stage"
   local index=0 spec id version topdir work weather_settings pm4k_monitor
-  local tmdb_service tmdb_cronjob
+  local tmdb_service tmdb_cronjob weather_adapter
   mkdir -p "${stage}"
   : > "${stage}/deploy.tsv"
   for spec in "$@"; do
@@ -672,6 +672,35 @@ stage_addon_bundle() {
 </settings>
 XML
       printf '%s/resources/settings.xml\t%s\n' "${topdir}" "${weather_settings}" \
+        >> "${work}/zip-manifest.tsv"
+      mkdir -p "${work}/lib/homeassistant"
+      weather_adapter="${work}/lib/homeassistant/_adapter.py"
+      cat > "${weather_adapter}" <<'PY'
+import requests
+from requests import RequestException
+
+
+class HomeAssistantAdapter:
+    @staticmethod
+    def __request(url, token, post=False, data=None, check_ssl=True, request_attempts=5):
+        err_code_received = -1
+        err_msg = "Unknown error"
+        for i in range(request_attempts):
+            try:
+                r = requests.get(url=url, params=data)
+                if r.ok:
+                    return r
+            except RequestException:
+                #raise RequestError(error_code=-1, url=url, method="POST" if post else "GET", body="")
+                err_code_received = -1
+                err_msg = "Unknown error"
+            if not r.ok:
+                #raise RequestError(error_code=r.status_code, url=url, method="POST" if post else "GET", body=r.text)
+                err_code_received = r.status_code
+                err_msg = r.text
+        raise RequestError(error_code=err_code_received, url=url, method="POST" if post else "GET", body=err_msg)
+PY
+      printf '%s/lib/homeassistant/_adapter.py\t%s\n' "${topdir}" "${weather_adapter}" \
         >> "${work}/zip-manifest.tsv"
     fi
     if [[ "${id}" == "script.plexmod" ]]; then
@@ -1862,6 +1891,120 @@ test_remote_deploy_uses_addon_xml_id_not_zip_directory_name() {
     printf 'the ZIP root directory name must never become the install path\n' >&2
     return 1
   fi
+}
+
+test_remote_deploy_patches_weather_unreachable_retry_loop() {
+  local dir root bin_dir rc output adapter
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "weather.ha:0.0.6.6:weather.ha-0.0.6.6"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the patched Weather artifact must deploy: ${output}" || return 1
+  adapter="${root}/.kodi/addons/weather.ha/lib/homeassistant/_adapter.py"
+  assert_eq "1" "$(grep -c '^                continue$' "${adapter}")" \
+    "the connection-failure branch continues to the next attempt" || return 1
+  assert_contains "$(cat "${adapter}")" \
+    $'                err_msg = "Unknown error"\n                continue\n            if not r.ok:' \
+    "the retry continue is inserted before the unguarded response check" || return 1
+  python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "${adapter}" \
+    || { printf 'the patched Weather adapter must stay compilable\n' >&2; return 1; }
+}
+
+test_remote_deploy_accepts_exact_prepatched_weather_retry_loop() {
+  local dir root bin_dir rc output adapter
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "weather.ha:0.0.6.6:weather.ha-0.0.6.6"
+  python3 - "${dir}/zip-source-1/lib/homeassistant/_adapter.py" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace(
+    '                err_msg = "Unknown error"\n            if not r.ok:\n',
+    '                err_msg = "Unknown error"\n                continue\n            if not r.ok:\n',
+)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+PY
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the exact prepatched Weather adapter must remain deployable: ${output}" || return 1
+  adapter="${root}/.kodi/addons/weather.ha/lib/homeassistant/_adapter.py"
+  assert_eq "1" "$(grep -c '^                continue$' "${adapter}")" \
+    "idempotence leaves one retry continue" || return 1
+}
+
+test_remote_deploy_rejects_unexpected_weather_retry_loop_before_install() {
+  local dir root bin_dir rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "weather.ha:0.0.6.6:weather.ha-0.0.6.6"
+  python3 - "${dir}/zip-source-1/lib/homeassistant/_adapter.py" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace("            if not r.ok:\n", "            if r is not None and not r.ok:\n")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+PY
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreviewed Weather retry loop must be rejected" || return 1
+  assert_contains "${output}" "unexpected weather.ha request retry loop" \
+    "the rejection names the retry loop guard" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a rejected Weather retry loop never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/weather.ha" ]]
+}
+
+test_remote_deploy_rejects_wrong_weather_version_before_install() {
+  local dir root bin_dir rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" "weather.ha:0.0.6.7:weather.ha-0.0.6.7"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreviewed Weather version must be rejected" || return 1
+  assert_contains "${output}" "unexpected weather.ha identity or version" \
+    "the rejection names the identity/version guard" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a rejected Weather version never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/weather.ha" ]]
 }
 
 test_remote_deploy_finalize_releases_rollback_material() {
@@ -3142,6 +3285,10 @@ run_all_tests \
   test_remote_deploy_has_rollback_for_replaced_paths \
   test_remote_deploy_rejects_manifest_path_injection \
   test_remote_deploy_uses_addon_xml_id_not_zip_directory_name \
+  test_remote_deploy_patches_weather_unreachable_retry_loop \
+  test_remote_deploy_accepts_exact_prepatched_weather_retry_loop \
+  test_remote_deploy_rejects_unexpected_weather_retry_loop_before_install \
+  test_remote_deploy_rejects_wrong_weather_version_before_install \
   test_remote_deploy_finalize_releases_rollback_material \
   test_remote_deploy_rolls_back_automatically_when_a_step_fails \
   test_remote_deploy_refuses_a_second_pending_transaction \

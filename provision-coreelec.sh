@@ -1874,6 +1874,56 @@ if len(matches) != 1 or matches[0].get("type") != "int":
 matches[0].set("type", "number")
 tree.write(path, encoding="UTF-8", xml_declaration=True)
 PYTHON_PATCH_WEATHER_SETTINGS
+    weather_root="${expanded_dir}/${plan_id}/${plan_top}"
+    weather_adapter="${weather_root}/lib/homeassistant/_adapter.py"
+    [ -f "${weather_adapter}" ] \
+      || fail "the expanded weather.ha has no lib/homeassistant/_adapter.py"
+    python3 - "${weather_root}/addon.xml" "${weather_adapter}" <<'PYTHON_PATCH_WEATHER_RETRY' \
+      || fail "could not apply the weather.ha 0.0.6.6 unreachable-host compatibility patch"
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+addon_path, adapter_path = sys.argv[1:]
+addon = ET.parse(addon_path).getroot()
+if addon.get("id") != "weather.ha" or addon.get("version") != "0.0.6.6":
+    raise SystemExit("unexpected weather.ha identity or version")
+
+with open(adapter_path, "r", encoding="utf-8") as handle:
+    lines = handle.readlines()
+
+# Upstream leaves `r` unbound when the request itself raises, so the shared
+# `if not r.ok` check below the handler turns every connection failure into an
+# UnboundLocalError. That escapes the plugin's RequestError handling, so the
+# add-on crashes at boot instead of reporting Home Assistant as unreachable.
+expected = (
+    '                err_msg = "Unknown error"\n',
+    "            if not r.ok:\n",
+)
+patched = (expected[0], "                continue\n", expected[1])
+
+unpatched_matches = [
+    index for index in range(len(lines) - len(expected) + 1)
+    if tuple(lines[index:index + len(expected)]) == expected
+]
+patched_matches = [
+    index for index in range(len(lines) - len(patched) + 1)
+    if tuple(lines[index:index + len(patched)]) == patched
+]
+required_counts = [lines.count(line) for line in expected]
+
+if unpatched_matches and not patched_matches and required_counts == [1, 1]:
+    lines.insert(unpatched_matches[0] + 1, patched[1])
+elif not (patched_matches and not unpatched_matches and required_counts == [1, 1]):
+    raise SystemExit("unexpected weather.ha request retry loop")
+
+source = "".join(lines)
+compile(source, adapter_path, "exec")
+temporary = adapter_path + ".provision-new"
+with open(temporary, "w", encoding="utf-8", newline="") as handle:
+    handle.write(source)
+os.replace(temporary, adapter_path)
+PYTHON_PATCH_WEATHER_RETRY
   fi
   if [ "${plan_id}" = "script.plexmod" ]; then
     pm4k_root="${expanded_dir}/${plan_id}/${plan_top}"
