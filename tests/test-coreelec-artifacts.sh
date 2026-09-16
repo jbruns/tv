@@ -644,7 +644,7 @@ stage_addon_bundle() {
   shift 2
   local stage="${root}/.cache/coreelec-provision/stage"
   local index=0 spec id version topdir work weather_settings pm4k_monitor
-  local tmdb_service
+  local tmdb_service tmdb_cronjob
   mkdir -p "${stage}"
   : > "${stage}/deploy.tsv"
   for spec in "$@"; do
@@ -691,6 +691,7 @@ PY
     if [[ "${id}" == "plugin.video.themoviedb.helper" ]]; then
       mkdir -p "${work}/resources/tmdbhelper/lib/monitor"
       tmdb_service="${work}/resources/tmdbhelper/lib/monitor/service.py"
+      tmdb_cronjob="${work}/resources/tmdbhelper/lib/monitor/cronjob.py"
       cat > "${tmdb_service}" <<'PY'
 from threading import Lock
 
@@ -738,8 +739,44 @@ class ServiceMonitor(Poller):
             get_property('ServiceStarted', clear_property=True)
             get_property('ServiceStop', clear_property=True)
 PY
+      cat > "${tmdb_cronjob}" <<'PY'
+CRONJOB_POLL_TIME = 600
+
+
+class CronJobMonitor(SafeThread):
+
+    _poll_time = CRONJOB_POLL_TIME
+
+    def __init__(self, parent, update_hour=0):
+        SafeThread.__init__(self)
+        self.exit = False
+        self.update_hour = update_hour
+        self.update_monitor = parent.update_monitor
+
+    def _on_startup(self):
+        self._do_recache_kodidb()
+        self._do_trakt_authorization()
+
+    def _on_poll(self):
+        self._do_database_maintenance()
+        self._do_delete_old_databases()
+        self._do_library_update_check()
+        self._do_delete_old_log_files()
+
+    def _do_database_maintenance(self):
+        self.database_maintenance.vacuum()
+
+    def run(self):
+        self._on_startup()
+
+        while not self.update_monitor.abortRequested() and not self.exit:
+            self.update_monitor.waitForAbort(self._poll_time)
+            self._on_poll()
+PY
       printf '%s/resources/tmdbhelper/lib/monitor/service.py\t%s\n' \
         "${topdir}" "${tmdb_service}" >> "${work}/zip-manifest.tsv"
+      printf '%s/resources/tmdbhelper/lib/monitor/cronjob.py\t%s\n' \
+        "${topdir}" "${tmdb_cronjob}" >> "${work}/zip-manifest.tsv"
     fi
     build_zip_from_manifest "${stage}/${index}.zip" "${work}/zip-manifest.tsv"
     printf '%s\t%s\t%s\t%s.zip\n' \
@@ -1181,8 +1218,102 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 PY
 }
 
+test_remote_deploy_stops_tmdb_cron_before_shutdown_maintenance() {
+  local dir root bin_dir output rc cronjob
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the pinned TMDb Helper bundle must deploy: ${output}" || return 1
+
+  cronjob="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/cronjob.py"
+  assert_eq "644" "$(file_mode "${cronjob}")" \
+    "patching preserves the staged Cron source mode" || return 1
+  python3 - "${cronjob}" <<'PY'
+import sys
+
+path = sys.argv[1]
+namespace = {"SafeThread": object}
+with open(path, "r", encoding="utf-8") as handle:
+    exec(compile(handle.read(), path, "exec"), namespace)
+
+
+def make_cron(monitor, events):
+    cron = namespace["CronJobMonitor"].__new__(namespace["CronJobMonitor"])
+    cron.exit = False
+    cron.update_monitor = monitor
+    cron._on_startup = lambda: events.append("startup")
+    cron._do_database_maintenance = lambda: events.append("vacuum")
+    cron._do_delete_old_databases = lambda: events.append("delete databases")
+    cron._do_library_update_check = lambda: events.append("library update")
+    cron._do_delete_old_log_files = lambda: events.append("delete logs")
+    return cron
+
+
+shutdown_events = []
+
+
+class ShutdownMonitor:
+    aborted = False
+
+    def abortRequested(self):
+        return self.aborted
+
+    def waitForAbort(self, timeout):
+        shutdown_events.append(("wait", timeout))
+        self.aborted = True
+
+
+make_cron(ShutdownMonitor(), shutdown_events).run()
+expected_shutdown = ["startup", ("wait", 600)]
+if shutdown_events != expected_shutdown:
+    raise SystemExit(
+        "shutdown wake reached maintenance: expected %r, got %r"
+        % (expected_shutdown, shutdown_events)
+    )
+
+normal_events = []
+
+
+class OnePollMonitor:
+    checks = 0
+
+    def abortRequested(self):
+        self.checks += 1
+        return self.checks >= 3
+
+    def waitForAbort(self, timeout):
+        normal_events.append(("wait", timeout))
+
+
+make_cron(OnePollMonitor(), normal_events).run()
+expected_normal = [
+    "startup",
+    ("wait", 600),
+    "vacuum",
+    "delete databases",
+    "library update",
+    "delete logs",
+]
+if normal_events != expected_normal:
+    raise SystemExit(
+        "normal wake skipped periodic maintenance: expected %r, got %r"
+        % (expected_normal, normal_events)
+    )
+PY
+}
+
 test_remote_deploy_accepts_exact_prepatched_tmdb_shutdown_workers() {
-  local dir root bin_dir output rc service
+  local dir root bin_dir output rc service cronjob
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   root="$(make_fake_storage "${dir}")"
@@ -1192,11 +1323,12 @@ test_remote_deploy_accepts_exact_prepatched_tmdb_shutdown_workers() {
   stage_addon_bundle "${dir}" "${root}" \
     "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
   service="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/service.py"
-  python3 - "${service}" <<'PY'
+  cronjob="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/cronjob.py"
+  python3 - "${service}" "${cronjob}" <<'PY'
 import sys
 
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as handle:
+service_path, cronjob_path = sys.argv[1:]
+with open(service_path, "r", encoding="utf-8") as handle:
     source = handle.read()
 source = source.replace(
     "        self.cron_job.start()\n",
@@ -1206,7 +1338,20 @@ source = source.replace(
     "        self.images_monitor.start()\n",
     "        self.images_monitor.daemon = True\n        self.images_monitor.start()\n",
 )
-with open(path, "w", encoding="utf-8") as handle:
+with open(service_path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+
+with open(cronjob_path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace(
+    "            self.update_monitor.waitForAbort(self._poll_time)\n"
+    "            self._on_poll()\n",
+    "            self.update_monitor.waitForAbort(self._poll_time)\n"
+    "            if self.update_monitor.abortRequested() or self.exit:\n"
+    "                return\n"
+    "            self._on_poll()\n",
+)
+with open(cronjob_path, "w", encoding="utf-8") as handle:
     handle.write(source)
 PY
   rebuild_staged_fixture_zip "${dir}" "${root}" 1
@@ -1222,12 +1367,56 @@ PY
     "idempotence leaves one Cron Thread daemon assignment" || return 1
   assert_eq "1" "$(grep -c 'self\.images_monitor\.daemon = True' "${service}")" \
     "idempotence leaves one Image Thread daemon assignment" || return 1
+  cronjob="${root}/.kodi/addons/plugin.video.themoviedb.helper/resources/tmdbhelper/lib/monitor/cronjob.py"
+  assert_eq "1" \
+    "$(grep -c 'if self\.update_monitor\.abortRequested() or self\.exit:' "${cronjob}")" \
+    "idempotence leaves one Cron shutdown abort guard" || return 1
   python3 - "${service}" <<'PY'
 import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     compile(handle.read(), sys.argv[1], "exec")
 PY
+}
+
+test_remote_deploy_rejects_partial_tmdb_cron_abort_guard_before_install() {
+  local dir root bin_dir output rc cronjob
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_fake_storage "${dir}")"
+  bin_dir="$(install_remote_stubs "${dir}")"
+  export REMOTE_CALL_LOG="${dir}/remote-calls.log"
+  : > "${REMOTE_CALL_LOG}"
+  stage_addon_bundle "${dir}" "${root}" \
+    "plugin.video.themoviedb.helper:6.17.1:plugin.video.themoviedb.helper"
+  cronjob="${dir}/zip-source-1/resources/tmdbhelper/lib/monitor/cronjob.py"
+  python3 - "${cronjob}" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    source = handle.read()
+source = source.replace(
+    "            self.update_monitor.waitForAbort(self._poll_time)\n",
+    "            self.update_monitor.waitForAbort(self._poll_time)\n"
+    "            if self.update_monitor.abortRequested() or self.exit:\n"
+    "                pass\n",
+)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+PY
+  rebuild_staged_fixture_zip "${dir}" "${root}" 1
+
+  set +e
+  output="$(run_remote_script deploy "${root}" "${bin_dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a partial TMDb Cron abort guard must be rejected" || return 1
+  assert_contains "${output}" "unexpected TMDb Helper Cron shutdown loop" \
+    "the rejection names the partial Cron shutdown guard" || return 1
+  assert_not_contains "$(remote_calls)" "systemctl " \
+    "a partial Cron guard never stops Kodi" || return 1
+  [[ ! -e "${root}/.kodi/addons/plugin.video.themoviedb.helper" ]]
 }
 
 test_remote_deploy_rejects_wrong_tmdb_helper_version_before_install() {
@@ -2937,7 +3126,9 @@ run_all_tests \
   test_remote_deploy_stops_kodi_after_staging_validation \
   test_remote_deploy_guards_pm4k_shutdown_without_an_open_home_window \
   test_remote_deploy_makes_tmdb_shutdown_workers_daemon_threads \
+  test_remote_deploy_stops_tmdb_cron_before_shutdown_maintenance \
   test_remote_deploy_accepts_exact_prepatched_tmdb_shutdown_workers \
+  test_remote_deploy_rejects_partial_tmdb_cron_abort_guard_before_install \
   test_remote_deploy_rejects_wrong_tmdb_helper_version_before_install \
   test_remote_deploy_rejects_missing_tmdb_worker_sequence_before_install \
   test_remote_deploy_rejects_duplicate_tmdb_worker_sequence_before_install \

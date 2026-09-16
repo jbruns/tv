@@ -1921,16 +1921,19 @@ PYTHON_PATCH_PM4K_SHUTDOWN
   if [ "${plan_id}" = "plugin.video.themoviedb.helper" ]; then
     tmdb_root="${expanded_dir}/${plan_id}/${plan_top}"
     tmdb_service="${tmdb_root}/resources/tmdbhelper/lib/monitor/service.py"
+    tmdb_cronjob="${tmdb_root}/resources/tmdbhelper/lib/monitor/cronjob.py"
     [ -f "${tmdb_service}" ] \
       || fail "the expanded plugin.video.themoviedb.helper has no resources/tmdbhelper/lib/monitor/service.py"
-    python3 - "${tmdb_root}/addon.xml" "${tmdb_service}" <<'PYTHON_PATCH_TMDB_SHUTDOWN' \
+    [ -f "${tmdb_cronjob}" ] \
+      || fail "the expanded plugin.video.themoviedb.helper has no resources/tmdbhelper/lib/monitor/cronjob.py"
+    python3 - "${tmdb_root}/addon.xml" "${tmdb_service}" "${tmdb_cronjob}" <<'PYTHON_PATCH_TMDB_SHUTDOWN' \
       || fail "could not apply the TMDb Helper 6.17.1 shutdown compatibility patch"
 import os
 import stat
 import sys
 import xml.etree.ElementTree as ET
 
-addon_path, service_path = sys.argv[1:]
+addon_path, service_path, cronjob_path = sys.argv[1:]
 addon = ET.parse(addon_path).getroot()
 if (addon.get("id") != "plugin.video.themoviedb.helper"
         or addon.get("version") != "6.17.1"):
@@ -1992,12 +1995,61 @@ for label, worker, expected, daemon_line in workers:
 
 patched_source = "".join(lines)
 compile(patched_source, service_path, "exec")
+
+with open(cronjob_path, "r", encoding="utf-8") as handle:
+    cron_lines = handle.readlines()
+
+cron_unpatched = (
+    "        while not self.update_monitor.abortRequested() and not self.exit:\n",
+    "            self.update_monitor.waitForAbort(self._poll_time)\n",
+    "            self._on_poll()\n",
+)
+cron_guard = (
+    "            if self.update_monitor.abortRequested() or self.exit:\n",
+    "                return\n",
+)
+cron_patched = cron_unpatched[:2] + cron_guard + (cron_unpatched[2],)
+cron_unpatched_matches = [
+    index for index in range(len(cron_lines) - len(cron_unpatched) + 1)
+    if tuple(cron_lines[index:index + len(cron_unpatched)]) == cron_unpatched
+]
+cron_patched_matches = [
+    index for index in range(len(cron_lines) - len(cron_patched) + 1)
+    if tuple(cron_lines[index:index + len(cron_patched)]) == cron_patched
+]
+cron_required_counts = [cron_lines.count(line) for line in cron_unpatched]
+cron_abort_rechecks = [
+    line for line in cron_lines
+    if line.strip().startswith("if self.update_monitor.abortRequested()")
+]
+
+cron_changed = False
+if (cron_unpatched_matches and not cron_patched_matches
+        and cron_required_counts == [1, 1, 1] and not cron_abort_rechecks):
+    cron_lines[cron_unpatched_matches[0]:cron_unpatched_matches[0] + 3] = cron_patched
+    cron_changed = True
+elif (cron_patched_matches and not cron_unpatched_matches
+        and cron_required_counts == [1, 1, 1]
+        and cron_abort_rechecks == [cron_guard[0]]):
+    pass
+else:
+    raise SystemExit("unexpected TMDb Helper Cron shutdown loop")
+
+patched_cronjob = "".join(cron_lines)
+compile(patched_cronjob, cronjob_path, "exec")
+
 if changed:
     temporary = service_path + ".provision-new"
     with open(temporary, "w", encoding="utf-8", newline="") as handle:
         handle.write(patched_source)
     os.chmod(temporary, stat.S_IMODE(os.stat(service_path).st_mode))
     os.replace(temporary, service_path)
+if cron_changed:
+    temporary = cronjob_path + ".provision-new"
+    with open(temporary, "w", encoding="utf-8", newline="") as handle:
+        handle.write(patched_cronjob)
+    os.chmod(temporary, stat.S_IMODE(os.stat(cronjob_path).st_mode))
+    os.replace(temporary, cronjob_path)
 PYTHON_PATCH_TMDB_SHUTDOWN
   fi
 done < "${plan_file}"
