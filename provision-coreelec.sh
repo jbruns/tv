@@ -648,6 +648,8 @@ def main(argv):
                               and config("HOME_ASSISTANT_WEATHER_ENTITY")
                               and have("HOME_ASSISTANT_TOKEN"))
     nextpvr_configured = bool(config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
+    if apply_services and weather_configured:
+        register_managed_directory(userdata)
 
     # --- Kodi guisettings ---------------------------------------------------
     kodi_values = {}
@@ -678,15 +680,15 @@ def main(argv):
                 "services.webserverssl": "false",
                 "services.webserverusername": config("KODI_WEB_USER"),
             })
-        if weather_configured:
-            kodi_values["weather.addon"] = WEATHER_ADDON_ID
+    if apply_services and weather_configured:
+        kodi_values["weather.addon"] = WEATHER_ADDON_ID
     if apply_skin:
         kodi_values.update({
             "lookandfeel.skin": SKIN_ID,
             "lookandfeel.soundskin": "resource.uisounds.fromashes",
         })
 
-    if apply_core or apply_skin:
+    if apply_core or apply_skin or (apply_services and weather_configured):
         guisettings_path = os.path.join(userdata, "guisettings.xml")
         guisettings_tree, guisettings_root = load_kodi_settings(
             guisettings_path
@@ -1061,7 +1063,8 @@ detect_selected_cec_path() {
 }
 
 scoped_settings_paths() {
-  if [ "${apply_core}" = "1" ] || [ "${apply_skin}" = "1" ]; then
+  if [ "${apply_core}" = "1" ] || [ "${apply_services}" = "1" ] \
+      || [ "${apply_skin}" = "1" ]; then
     printf '%s\n' '.kodi/userdata/guisettings.xml'
   fi
   if [ "${apply_core}" = "1" ]; then
@@ -4064,10 +4067,10 @@ verify_remote_baseline() {
   esac
   fi
 
-  # The skin and the weather provider are only verified when this run
-  # deployed the add-on that provides them.
-  if coreelec_component_effective skin \
-      && coreelec_manifest_contains "${manifest}" "skin.arctic.fuse.3"; then
+  # Skin activation belongs to the component scope, independently of a
+  # narrowed artifact manifest. Add-on version/enabled checks remain filtered
+  # to the artifacts this run selected below.
+  if coreelec_component_effective skin; then
     coreelec_report_comparison "skin" "skin.arctic.fuse.3" \
       "$(coreelec_observation_value setting.lookandfeel.skin "${observations}" || true)" \
       || failures=$((failures + 1))

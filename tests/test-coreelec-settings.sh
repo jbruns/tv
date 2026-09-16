@@ -1125,6 +1125,46 @@ test_weather_provider_changes_only_when_configured() {
   assert_eq "weather.ha" "$(xml_setting "${settings}" weather.addon)" "provider switches once fully configured"
 }
 
+test_services_only_configured_weather_changes_provider() {
+  local dir root payload settings written
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/services.conf"
+  seed_guisettings "${root}"
+  write_scoped_full_payload "${payload}" 0 0 0 1 0
+
+  written="$(run_transform "${root}" "${payload}")"
+  settings="$(guisettings_path "${root}")"
+
+  assert_eq "weather.ha" "$(xml_setting "${settings}" weather.addon)" \
+    "services owns the configured weather provider" || return 1
+  assert_eq "skin.estuary" "$(xml_setting "${settings}" lookandfeel.skin)" \
+    "services leaves the skin-owned setting unchanged" || return 1
+  assert_eq "Europe/Berlin" "$(xml_setting "${settings}" locale.timezone)" \
+    "services leaves core-owned settings unchanged" || return 1
+  assert_eq "1" "$(applied_path_count "${written}" "${settings}")" \
+    "services reports the guisettings provider update exactly once"
+}
+
+test_core_only_configured_weather_leaves_provider_unchanged() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/core.conf"
+  seed_guisettings "${root}"
+  write_scoped_full_payload "${payload}" 1 0 0 0 0
+
+  run_transform "${root}" "${payload}" >/dev/null
+  settings="$(guisettings_path "${root}")"
+
+  assert_eq "weather.gismeteo" "$(xml_setting "${settings}" weather.addon)" \
+    "core leaves the services-owned weather provider unchanged" || return 1
+  assert_eq "America/Los_Angeles" "$(xml_setting "${settings}" locale.timezone)" \
+    "the selected core settings still converge"
+}
+
 test_pm4k_local_mode_settings_are_removed() {
   local dir root payload settings setting_id
   dir="$(make_scratch_dir)"
@@ -2316,6 +2356,8 @@ run_all_tests \
   test_nextpvr_uses_instance_settings_format \
   test_home_assistant_weather_uses_flat_settings_format \
   test_weather_provider_changes_only_when_configured \
+  test_services_only_configured_weather_changes_provider \
+  test_core_only_configured_weather_leaves_provider_unchanged \
   test_pm4k_local_mode_settings_are_removed \
   test_absent_optional_secrets_do_not_create_secret_settings \
   test_absent_nextpvr_secret_preserves_an_existing_instance \

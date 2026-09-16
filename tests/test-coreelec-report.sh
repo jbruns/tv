@@ -408,6 +408,16 @@ run_conclude() {
     "${finalize_status}" "${rollback_status}" "${log}"
 }
 
+run_conclude_component() {
+  local component="$1" config="$2" observations="$3" manifest="$4"
+  local finalize_status="$5" rollback_status="$6" log="$7"
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --component "${component}" \
+    --conclude-fixture "${observations}" "${manifest}" \
+    "${finalize_status}" "${rollback_status}" "${log}"
+}
+
 report_line() {
   local file="$1" key="$2"
   awk -v key="${key}" 'index($0, key "=") == 1 { print substr($0, length(key) + 2) }' "${file}"
@@ -623,6 +633,30 @@ test_weather_provider_is_verified_only_when_configured() {
   assert_success "${rc}" "an unconfigured weather provider must not fail" || return 1
   assert_contains "${output}" "weather_provider.status=not-configured" \
     "the unconfigured state is explicit" || return 1
+}
+
+test_services_only_configured_weather_verifies() {
+  local dir config manifest observations output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(HOME_ASSISTANT_TOKEN=ha-token NEXTPVR_PIN=1234 PLEX_TOKEN=plex-token \
+    run_verify_components services "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "services-only configured weather must verify when weather.ha is active" || return 1
+  assert_contains "${output}" "weather_provider.status=ok" \
+    "the services-owned provider is verified" || return 1
+  assert_not_contains "${output}" "skin.status=" \
+    "services-only verification does not claim skin ownership"
 }
 
 test_timezone_cache_and_zoneinfo_are_verified() {
@@ -1569,6 +1603,38 @@ test_verification_mismatch_is_fatal() {
   assert_contains "${output}" "deployment_state=rolled-back" "the transaction is undone" || return 1
   assert_contains "$(cat "${log}")" "rollback" "rollback was invoked" || return 1
   assert_not_contains "$(cat "${log}")" "finalize" "a failed run must not commit" || return 1
+}
+
+test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse() {
+  local dir config manifest observations log output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/remote-calls.log"
+  write_base_config "${config}"
+  write_manifest "${manifest}.full"
+  grep -v $'\tskin.arctic.fuse.3\t' "${manifest}.full" > "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "setting.lookandfeel.skin" "skin.estuary"
+
+  set +e
+  output="$(run_conclude_component skin "${config}" "${observations}" \
+    "${manifest}" 0 0 "${log}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" \
+    "an effective skin scope must reject Estuary even when the manifest omits Arctic Fuse" \
+    || return 1
+  assert_contains "${output}" "verification_result=fail" \
+    "the active-skin mismatch is fatal" || return 1
+  assert_contains "${output}" "deployment_state=rolled-back" \
+    "the mismatched skin transaction is rolled back" || return 1
+  assert_contains "$(cat "${log}")" "rollback" \
+    "rollback is invoked for an effective-skin mismatch" || return 1
+  assert_not_contains "$(cat "${log}")" "finalize" \
+    "the mismatched skin transaction is never finalized"
 }
 
 test_cec_ignore_mismatch_triggers_rollback() {
@@ -4119,6 +4185,7 @@ run_all_tests \
   test_addon_version_mismatch_is_failure \
   test_active_skin_is_verified \
   test_weather_provider_is_verified_only_when_configured \
+  test_services_only_configured_weather_verifies \
   test_timezone_cache_and_zoneinfo_are_verified \
   test_cec_ignore_mismatch_fails_verification \
   test_cec_power_coupling_mismatch_fails_verification \
@@ -4151,6 +4218,7 @@ run_all_tests \
   test_verification_success_finalizes_and_commits \
   test_transient_verification_mismatch_is_retried_before_commit \
   test_verification_mismatch_is_fatal \
+  test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse \
   test_cec_ignore_mismatch_triggers_rollback \
   test_incomplete_rollback_is_fatal_with_recovery_path \
   test_an_unanswered_probe_is_a_verification_failure \
