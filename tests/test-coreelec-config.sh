@@ -785,6 +785,140 @@ test_production_config_takes_binary_addons_from_the_installed_branch() {
   done
 }
 
+test_room_config_parses_every_key() {
+  local dir file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  cat > "${file}" <<'CONF'
+# theater
+ROOM_DISPLAY_RESOLUTION=3840x2160p
+ROOM_DISPLAY_WHITELIST=0409602160024.00000pstd,0384002160060.00000pstd
+ROOM_DOLBY_VISION=1
+ROOM_DOLBY_VISION_MODE=tv-led
+ROOM_AUDIO_PASSTHROUGH=1
+ROOM_AUDIO_AC3=1
+ROOM_AUDIO_EAC3=1
+ROOM_AUDIO_DTS=1
+ROOM_AUDIO_TRUEHD=1
+ROOM_AUDIO_DTSHD=0
+CONF
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  coreelec_room_config_validate
+  assert_eq "3840x2160p" "${ROOM_DISPLAY_RESOLUTION}" "resolution label"
+  assert_eq "0409602160024.00000pstd,0384002160060.00000pstd" \
+    "${ROOM_DISPLAY_WHITELIST}" "whitelist"
+  assert_eq "tv-led" "${ROOM_DOLBY_VISION_MODE}" "dolby vision mode"
+  assert_eq "0" "${ROOM_AUDIO_DTSHD}" "dts-hd passthrough"
+}
+
+test_room_config_missing_key_is_rejected() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  cat > "${file}" <<'CONF'
+ROOM_DISPLAY_RESOLUTION=3840x2160p
+CONF
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  set +e
+  output="$(coreelec_room_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an incomplete room file must be rejected"
+  assert_contains "${output}" "ROOM_DISPLAY_WHITELIST"
+}
+
+test_room_config_rejects_provision_keys_and_secrets() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  printf 'KODI_PORT=8181\n' > "${file}"
+  coreelec_room_config_defaults
+  set +e
+  output="$(coreelec_room_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a provision.conf key must not be accepted in room.conf"
+  assert_contains "${output}" "unknown room configuration key: KODI_PORT"
+
+  printf 'KODI_WEB_PASSWORD=hunter2\n' > "${file}"
+  coreelec_room_config_defaults
+  set +e
+  output="$(coreelec_room_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a secret must not be accepted in room.conf"
+  assert_contains "${output}" "is a secret"
+  assert_not_contains "${output}" "hunter2"
+}
+
+test_room_config_rejects_room_keys_in_provision_conf() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+  printf 'ROOM_DISPLAY_RESOLUTION=3840x2160p\n' > "${file}"
+  coreelec_config_defaults
+  set +e
+  output="$(coreelec_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a room key must not be accepted in provision.conf"
+  assert_contains "${output}" "unknown configuration key: ROOM_DISPLAY_RESOLUTION"
+}
+
+test_room_config_rejects_malformed_values() {
+  local dir file rc output entry
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  for entry in \
+    'ROOM_DISPLAY_RESOLUTION=3840*2160p' \
+    'ROOM_DISPLAY_WHITELIST=not-a-mode' \
+    'ROOM_DISPLAY_WHITELIST=0384002160060.00000pstd,' \
+    'ROOM_DOLBY_VISION_MODE=player' \
+    'ROOM_AUDIO_DTS=yes'; do
+    printf '%s\n' "${entry}" > "${file}"
+    coreelec_room_config_defaults
+    set +e
+    output="$(coreelec_room_config_load "${file}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "malformed entry must be rejected: ${entry}"
+    assert_contains "${output}" "${entry%%=*}"
+  done
+}
+
+test_room_name_rejects_path_traversal() {
+  local name rc output
+  for name in '.' '..' 'a/b' '' '-theater'; do
+    set +e
+    output="$(coreelec_validate_room_name "${name}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "room name must be rejected: '${name}'"
+  done
+  set +e
+  coreelec_validate_room_name theater >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" "a plain room name is accepted"
+}
+
+test_shipped_theater_room_config_is_complete() {
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${SCRIPT_DIR}/../config/rooms/theater/room.conf"
+  coreelec_room_config_validate
+  assert_eq "3840x2160p" "${ROOM_DISPLAY_RESOLUTION}" "theater resolution"
+  assert_eq "tv-led" "${ROOM_DOLBY_VISION_MODE}" "theater dolby vision mode"
+  assert_eq "1" "${ROOM_AUDIO_TRUEHD}" "theater truehd passthrough"
+  assert_contains "${ROOM_DISPLAY_WHITELIST}" "0384002160060.00000pstd"
+}
+
 run_all_tests \
   test_defaults_are_pacific_english_us \
   test_comments_blank_lines_and_values_are_parsed \
@@ -826,4 +960,11 @@ run_all_tests \
   test_production_config_records_each_artifact_exactly_once \
   test_production_config_artifact_records_are_well_formed \
   test_production_config_has_no_blocked_pins \
-  test_production_config_takes_binary_addons_from_the_installed_branch
+  test_production_config_takes_binary_addons_from_the_installed_branch \
+  test_room_config_parses_every_key \
+  test_room_config_missing_key_is_rejected \
+  test_room_config_rejects_provision_keys_and_secrets \
+  test_room_config_rejects_room_keys_in_provision_conf \
+  test_room_config_rejects_malformed_values \
+  test_room_name_rejects_path_traversal \
+  test_shipped_theater_room_config_is_complete

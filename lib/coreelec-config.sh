@@ -173,6 +173,53 @@ coreelec_config_validate_id_list() {
   done
 }
 
+# A Kodi resolution label such as "3840x2160p". Kodi reports these with a
+# trailing space; the configuration value never carries one.
+coreelec_config_validate_resolution_label() {
+  local label="$1" value="$2"
+  case "${value}" in
+    ""|*[!0-9xpi]*|*x*x*) die "${label} must be a resolution label such as 3840x2160p: ${value}" ;;
+  esac
+  case "${value}" in
+    [0-9]*x[0-9]*[pi]) ;;
+    *) die "${label} must be a resolution label such as 3840x2160p: ${value}" ;;
+  esac
+}
+
+# A comma-separated list of Kodi display mode strings. Each is exactly five
+# width digits, five height digits, three refresh digits, a dot, five decimal
+# digits, a scan letter, and the stereo suffix: 0384002160060.00000pstd.
+coreelec_config_validate_mode_list() {
+  local label="$1" value="$2" token remainder="$2"
+  [[ -n "${value}" ]] || die "${label} must not be empty"
+  while [[ -n "${remainder}" ]]; do
+    token="${remainder%%,*}"
+    case "${token}" in
+      [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9][0-9][0-9][0-9][pi]std) ;;
+      *) die "${label} must be a comma-separated list of Kodi display modes; rejected: ${token}" ;;
+    esac
+    case "${remainder}" in
+      *,*) remainder="${remainder#*,}" ;;
+      *) remainder="" ;;
+    esac
+  done
+  case "${value}" in
+    *,,*|,*|*,) die "${label} must not contain an empty display mode: ${value}" ;;
+  esac
+}
+
+# A room name is used as a single path segment under config/rooms, so it is
+# validated more strictly than validate_identifier, which permits "." and
+# would therefore accept "..".
+coreelec_validate_room_name() {
+  local value="$1"
+  case "${value}" in
+    ""|.|..) die "Room name must not be empty, '.', or '..'" ;;
+    -*) die "Room name must not start with a hyphen: ${value}" ;;
+    *[!A-Za-z0-9_-]*) die "Room name may contain only letters, digits, underscore, and hyphen: ${value}" ;;
+  esac
+}
+
 # --- Defaults ---
 
 coreelec_config_defaults() {
@@ -380,5 +427,124 @@ coreelec_config_validate() {
     die "NEXTPVR_PIN requires NEXTPVR_HOST to be configured"
   fi
 
+  return 0
+}
+
+# --- Room configuration ----------------------------------------------------
+#
+# A second strict allowlist, deliberately separate from coreelec_config_assign
+# so the two key sets cannot leak into each other: a provision.conf key in a
+# room file, or a room key in provision.conf, is an unknown key to the other
+# parser and is rejected naming the key.
+
+coreelec_room_config_defaults() {
+  ROOM_NAME=""
+  ROOM_CONFIG_FILE=""
+  ROOM_DISPLAY_RESOLUTION=""
+  ROOM_DISPLAY_WHITELIST=""
+  ROOM_DOLBY_VISION=""
+  ROOM_DOLBY_VISION_MODE=""
+  ROOM_AUDIO_PASSTHROUGH=""
+  ROOM_AUDIO_AC3=""
+  ROOM_AUDIO_EAC3=""
+  ROOM_AUDIO_DTS=""
+  ROOM_AUDIO_TRUEHD=""
+  ROOM_AUDIO_DTSHD=""
+  # Resolved by the pre-transaction display probe, never by configuration.
+  ROOM_DISPLAY_RESOLUTION_INDEX=""
+  COREELEC_ROOM_CONFIG_SEEN_KEYS=$'\n'
+}
+
+coreelec_room_config_assign() {
+  local source="$1" line_number="$2" key="$3" value="$4"
+  local location="${source}:${line_number}"
+
+  case "${key}" in
+    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|HOME_ASSISTANT_URL|HOME_ASSISTANT_TOKEN|NEXTPVR_HOST|NEXTPVR_PIN|TMDB_API_KEY)
+      die "${location}: ${key} is a secret and must be supplied only as an environment variable"
+      ;;
+  esac
+
+  case "${COREELEC_ROOM_CONFIG_SEEN_KEYS}" in
+    *$'\n'"${key}"$'\n'*) die "${location}: duplicate room configuration key: ${key}" ;;
+  esac
+  COREELEC_ROOM_CONFIG_SEEN_KEYS="${COREELEC_ROOM_CONFIG_SEEN_KEYS}${key}"$'\n'
+
+  case "${key}" in
+    ROOM_DISPLAY_RESOLUTION)
+      coreelec_config_validate_resolution_label "ROOM_DISPLAY_RESOLUTION" "${value}"
+      ROOM_DISPLAY_RESOLUTION="${value}"
+      ;;
+    ROOM_DISPLAY_WHITELIST)
+      coreelec_config_validate_mode_list "ROOM_DISPLAY_WHITELIST" "${value}"
+      ROOM_DISPLAY_WHITELIST="${value}"
+      ;;
+    ROOM_DOLBY_VISION)
+      coreelec_config_validate_bool "ROOM_DOLBY_VISION" "${value}"
+      ROOM_DOLBY_VISION="${value}"
+      ;;
+    ROOM_DOLBY_VISION_MODE)
+      coreelec_config_validate_enum "ROOM_DOLBY_VISION_MODE" "${value}" "tv-led" "player-led"
+      ROOM_DOLBY_VISION_MODE="${value}"
+      ;;
+    ROOM_AUDIO_PASSTHROUGH)
+      coreelec_config_validate_bool "ROOM_AUDIO_PASSTHROUGH" "${value}"
+      ROOM_AUDIO_PASSTHROUGH="${value}"
+      ;;
+    ROOM_AUDIO_AC3)
+      coreelec_config_validate_bool "ROOM_AUDIO_AC3" "${value}"
+      ROOM_AUDIO_AC3="${value}"
+      ;;
+    ROOM_AUDIO_EAC3)
+      coreelec_config_validate_bool "ROOM_AUDIO_EAC3" "${value}"
+      ROOM_AUDIO_EAC3="${value}"
+      ;;
+    ROOM_AUDIO_DTS)
+      coreelec_config_validate_bool "ROOM_AUDIO_DTS" "${value}"
+      ROOM_AUDIO_DTS="${value}"
+      ;;
+    ROOM_AUDIO_TRUEHD)
+      coreelec_config_validate_bool "ROOM_AUDIO_TRUEHD" "${value}"
+      ROOM_AUDIO_TRUEHD="${value}"
+      ;;
+    ROOM_AUDIO_DTSHD)
+      coreelec_config_validate_bool "ROOM_AUDIO_DTSHD" "${value}"
+      ROOM_AUDIO_DTSHD="${value}"
+      ;;
+    *)
+      die "${location}: unknown room configuration key: ${key}"
+      ;;
+  esac
+}
+
+coreelec_room_config_load() {
+  local file="$1" line line_number=0 key value trimmed
+  [[ -r "${file}" ]] || die "Room configuration file is not readable: ${file}"
+  ROOM_CONFIG_FILE="${file}"
+  COREELEC_ROOM_CONFIG_SEEN_KEYS=$'\n'
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_number=$((line_number + 1))
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    case "${trimmed}" in
+      ''|'#'*) continue ;;
+      *=*) key="${line%%=*}"; value="${line#*=}" ;;
+      *) die "${file}:${line_number}: expected KEY=value" ;;
+    esac
+    coreelec_room_config_assign "${file}" "${line_number}" "${key}" "${value}"
+  done < "${file}"
+}
+
+# Every room key is required. A silent default for a display or audio setting
+# is exactly the unverifiable state this component exists to eliminate.
+coreelec_room_config_validate() {
+  local key
+  for key in ROOM_DISPLAY_RESOLUTION ROOM_DISPLAY_WHITELIST ROOM_DOLBY_VISION \
+    ROOM_DOLBY_VISION_MODE ROOM_AUDIO_PASSTHROUGH ROOM_AUDIO_AC3 \
+    ROOM_AUDIO_EAC3 ROOM_AUDIO_DTS ROOM_AUDIO_TRUEHD ROOM_AUDIO_DTSHD; do
+    case "${COREELEC_ROOM_CONFIG_SEEN_KEYS}" in
+      *$'\n'"${key}"$'\n'*) ;;
+      *) die "${ROOM_CONFIG_FILE:-room configuration}: missing required room configuration key: ${key}" ;;
+    esac
+  done
   return 0
 }
