@@ -69,10 +69,17 @@ add-on is finished; `config_status=configured` on its own never does.
 | `script.plexmod` | guided | see PM4K ladder below |
 | `plugin.service.emby-next-gen` | manual | see Emby ladder below |
 
-**Emby ladder** (`plugin.service.emby-next-gen`), evaluated in order:
+**Emby ladder** (`plugin.service.emby-next-gen`), evaluated in order. This is
+observed behavior of the wired-in code path
+(`coreelec_postdeploy_emby_account_program` / `_account_state` /
+`_onboarding_status`), which is a local filesystem glob and JSON parse only —
+it never performs network I/O:
 
-- `servers_*.json` absent, ambiguous, invalid, incomplete: `pending-authentication`.
-- server unreachable, certificate error, or identity mismatch: `failed`.
+- `servers_*.json` absent or incomplete (missing `ServerId`, `AccessToken`, or
+  `UserId`): `pending-authentication`.
+- `servers_*.json` ambiguous (more than one file) or invalid (unparseable
+  JSON): `manual-required`, with observation
+  `service.plugin.service.emby-next-gen.account_state=<ambiguous|invalid>`.
 - `emby_<ServerId>.db` absent: `pending-sync`.
 - `LibrarySynced` empty: `pending-sync`.
 - `LibrarySynced` not equal to `LibrarySyncedMirrow`: `pending-sync`, with
@@ -93,11 +100,18 @@ add-on is finished; `config_status=configured` on its own never does.
 A Plex account that has authenticated but never selected a server is **not**
 complete; it reports `manual-required`.
 
-`unobservable` is **reserved** and currently emitted by nothing. It exists only
-for an add-on with a real onboarding step whose completion has no reliable
-observable. No add-on currently selected is in that state. Introducing an
-add-on that needs it requires documenting in this contract why no signal
-exists; it must never be used to paper over a signal that was merely
+`unobservable` and `failed` are **reserved** and currently emitted by nothing
+in the shipped `onboarding_status` vocabulary. `unobservable` exists only for
+an add-on with a real onboarding step whose completion has no reliable
+observable. `failed` exists for a future wired failure path: a network- and
+TLS-aware Emby state check (`coreelec_postdeploy_emby_state`, the source of
+the `server-unavailable`, `certificate-error`, and `identity-mismatch` states)
+is implemented but has no production caller — `run_addon_workflow` never
+invokes it, only `assist_emby_login` can reach it, and nothing calls that
+either. No add-on currently selected is in either reserved state. Introducing
+an add-on that needs one requires documenting in this contract why no signal
+exists, or wiring the dormant Emby network check into the live workflow; a
+reserved value must never be used to paper over a signal that was merely
 inconvenient to read.
 
 ## Evidence

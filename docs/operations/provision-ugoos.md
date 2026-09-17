@@ -163,13 +163,17 @@ the effective scope, while the dated backup remains on the device.
       `failed`, `dry-run`.
     - `addon.<id>.onboarding_status` covers authentication and
       synchronization owned by the user: `not-required`, `complete`,
-      `pending-authentication`, `pending-sync`, `manual-required`,
-      `unobservable`, `failed`, `dry-run`.
+      `pending-authentication`, `pending-sync`, `manual-required`, `dry-run`,
+      plus two reserved values currently emitted by nothing:
+      `unobservable` and `failed`.
 
     Only `onboarding_status=complete` means an add-on is finished;
     `config_status=configured` on its own never does. The previous single
     `addon.<id>.status` field is gone. The mapping from it is in the
     [onboarding and restart contract's migration table](../superpowers/specs/2026-09-16-addon-onboarding-restart-sequencing-design.md#migration-from-coreelec-addon-configuration-report-1).
+    The full per-add-on completion ladder, including which vocabulary values
+    each add-on can actually produce, is in the
+    [add-on onboarding and restart contract](../devices/ugoos-am6b-plus/addon-onboarding-contract.md#completion-signals).
 
 12. Re-run `./configure-coreelec-addons.sh` and read
     `addon.plugin.service.emby-next-gen.onboarding_status`.
