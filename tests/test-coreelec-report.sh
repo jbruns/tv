@@ -129,6 +129,10 @@ setting.locale.timezone=America/Los_Angeles
 setting.lookandfeel.skin=skin.arctic.fuse.3
 setting.lookandfeel.soundskin=resource.uisounds.fromashes
 setting.weather.addon=weather.ha
+setting.audiooutput.audiodevice=ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
+setting.audiooutput.passthroughdevice=ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
+resolved.audio.device=ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
+resolved.audio.passthroughdevice=ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
 timezone_cache=America/Los_Angeles
 localtime_path=/usr/share/zoneinfo/America/Los_Angeles
 localtime_kind=symlink
@@ -343,6 +347,9 @@ OBSERVATIONS
 # whose whitelist is the single default mode below and whose Dolby Vision and
 # audio settings are all "on"/"tv-led" -- run_room_verification's default
 # room.conf agrees with these values unless a test overrides both sides.
+# The channel layout default (10) matches run_room_verification's fixed
+# ROOM_AUDIO_CHANNELS=7.1, and its resolved.audio.channels line stands in for
+# the audio probe's pre-transaction resolution.
 # `key=value` replaces one room observation; `omit=<setting id or short
 # name>` drops it entirely, the way a device that never answered that
 # setting would.
@@ -350,11 +357,11 @@ write_room_observations() {
   local file="$1" whitelist="0384002160060.00000pstd" resolution="41" \
     disabledolbyvision="false" dolbyvisionled="0" passthrough="true" \
     ac3passthrough="true" eac3passthrough="true" dtspassthrough="true" \
-    truehdpassthrough="true" dtshdpassthrough="true"
+    truehdpassthrough="true" dtshdpassthrough="true" channels="10"
   local omit_whitelist=0 omit_resolution=0 omit_disabledolbyvision=0 \
     omit_dolbyvisionled=0 omit_passthrough=0 omit_ac3passthrough=0 \
     omit_eac3passthrough=0 omit_dtspassthrough=0 omit_truehdpassthrough=0 \
-    omit_dtshdpassthrough=0
+    omit_dtshdpassthrough=0 omit_channels=0
   local arg key value
   shift
 
@@ -375,6 +382,7 @@ write_room_observations() {
         *.truehdpassthrough|truehdpassthrough) omit_truehdpassthrough=1 ;;
         *.dtshdpassthrough|dtshdpassthrough) omit_dtshdpassthrough=1 ;;
         *.passthrough|passthrough) omit_passthrough=1 ;;
+        *channels) omit_channels=1 ;;
         *)
           printf 'write_room_observations: unknown setting to omit: %s\n' "${value}" >&2
           return 1
@@ -393,6 +401,7 @@ write_room_observations() {
       dtspassthrough) dtspassthrough="${value}" ;;
       truehdpassthrough) truehdpassthrough="${value}" ;;
       dtshdpassthrough) dtshdpassthrough="${value}" ;;
+      channels) channels="${value}" ;;
       *)
         printf 'write_room_observations: unknown override: %s\n' "${key}" >&2
         return 1
@@ -418,6 +427,10 @@ write_room_observations() {
       || printf 'setting.audiooutput.truehdpassthrough=%s\n' "${truehdpassthrough}"
     (( omit_dtshdpassthrough )) \
       || printf 'setting.audiooutput.dtshdpassthrough=%s\n' "${dtshdpassthrough}"
+    if (( ! omit_channels )); then
+      printf 'setting.audiooutput.channels=%s\n' "${channels}"
+      printf 'resolved.audio.channels=%s\n' "${channels}"
+    fi
   } >> "${file}"
 }
 
@@ -4967,6 +4980,132 @@ test_audio_probe_requests_the_audio_category() {
     "audiooutput is not a valid category" || return 1
 }
 
+# Seeds the three resolved.* lines the fixture seam reads, so tests can reach
+# the ok and mismatch branches rather than only unobservable. Uses
+# set_observation (replace-in-place-or-append) rather than a raw append,
+# because write_pass_observations already seeds resolved.audio.device and
+# resolved.audio.passthroughdevice with a matching baseline; a bare append
+# would leave that first, matching line as the one coreelec_observation_value
+# actually reads.
+write_resolved_audio() {
+  local file="$1" device="$2" passthrough="$3" channels="$4"
+  if [[ -n "${device}" ]]; then
+    set_observation "${file}" "resolved.audio.device" "${device}"
+  fi
+  if [[ -n "${passthrough}" ]]; then
+    set_observation "${file}" "resolved.audio.passthroughdevice" "${passthrough}"
+  fi
+  if [[ -n "${channels}" ]]; then
+    set_observation "${file}" "resolved.audio.channels" "${channels}"
+  fi
+}
+
+# run_room_verification's fixed --component room --room NAME invocation
+# already exercises core (room depends on core), so it is the right helper
+# for the one scenario in this file that needs both scopes verified together.
+test_audio_verification_passes_when_the_device_matches() {
+  local dir observations output device
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  observations="${dir}/observations.env"
+  device="ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND"
+  write_room_observations "${observations}"
+  set_observation "${observations}" "setting.audiooutput.audiodevice" "${device}"
+  set_observation "${observations}" "setting.audiooutput.channels" "10"
+  write_resolved_audio "${observations}" "${device}" "" "10"
+  set +e
+  output="$(run_room_verification "${dir}" '0384002160060.00000pstd' 2>&1)"
+  set -e
+  assert_contains "${output}" "audio.device.status=ok" \
+    "a matching output device passes" || return 1
+  assert_contains "${output}" "room.audio.channels.status=ok" \
+    "a matching channel layout passes" || return 1
+}
+
+test_audio_verification_reports_a_changed_device() {
+  local dir config manifest observations output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  # The device drifted to the S/PDIF output: passthrough would silently stop
+  # carrying TrueHD, which is the exact failure this work exists to catch.
+  # write_pass_observations already seeds resolved.audio.device with the
+  # matching (surround71) value, so overwriting only the observed setting is
+  # what puts the two sides out of step.
+  set_observation "${observations}" "setting.audiooutput.audiodevice" \
+    "ALSA:iec958:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND"
+  set +e
+  output="$(run_verify_components core "${config}" "${observations}" "${manifest}" 2>&1)"
+  set -e
+  assert_contains "${output}" "audio.device.status=mismatch" \
+    "a drifted output device is reported" || return 1
+  assert_contains "${output}" "verification_result=fail" \
+    "a drifted output device fails the run" || return 1
+}
+
+test_audio_verification_is_unobservable_without_a_resolved_value() {
+  local dir config manifest observations output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  # write_pass_observations seeds a resolved.audio.device line by default;
+  # this test is only honest about the unobservable case if that line is
+  # removed, the way a run with no pre-transaction audio probe result would
+  # leave it.
+  grep -v '^resolved.audio.device=' "${observations}" > "${observations}.tmp"
+  mv "${observations}.tmp" "${observations}"
+  set_observation "${observations}" "setting.audiooutput.audiodevice" \
+    "ALSA:hdmi:CARD=X,DEV=0|X"
+  set +e
+  output="$(run_verify_components core "${config}" "${observations}" "${manifest}" 2>&1)"
+  set -e
+  assert_contains "${output}" "audio.device.status=unobservable" \
+    "an unresolved device cannot be honestly compared" || return 1
+  assert_contains "${output}" "verification_result=fail" \
+    "unobservable fails closed" || return 1
+}
+
+test_audio_channels_are_not_verified_outside_the_room_scope() {
+  local dir config manifest observations output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "setting.audiooutput.audiodevice" \
+    "ALSA:hdmi:CARD=X,DEV=0|X"
+  write_resolved_audio "${observations}" "ALSA:hdmi:CARD=X,DEV=0|X" "" "10"
+  set +e
+  output="$(run_verify_components core "${config}" "${observations}" "${manifest}" 2>&1)"
+  set -e
+  assert_not_contains "${output}" "room.audio.channels" \
+    "a core-only run reports no room channel state" || return 1
+}
+
+test_verify_probe_observes_the_audio_settings() {
+  local output
+  output="$(run_verify_probe_with_components "core,room")"
+  assert_contains "${output}" "setting.audiooutput.audiodevice=" \
+    "core observes the output device" || return 1
+  assert_contains "${output}" "setting.audiooutput.passthroughdevice=" \
+    "core observes the passthrough device" || return 1
+  assert_contains "${output}" "setting.audiooutput.channels=" \
+    "room observes the channel layout" || return 1
+}
+
 run_all_tests \
   test_verify_probe_renders_boolean_settings_lowercase \
   test_display_probe_resolves_a_label_to_an_index \
@@ -5124,4 +5263,9 @@ run_all_tests \
   test_audio_probe_rejects_an_unknown_parameter \
   test_audio_probe_reports_an_unreachable_kodi \
   test_audio_probe_contains_no_single_quote \
-  test_audio_probe_requests_the_audio_category
+  test_audio_probe_requests_the_audio_category \
+  test_audio_verification_passes_when_the_device_matches \
+  test_audio_verification_reports_a_changed_device \
+  test_audio_verification_is_unobservable_without_a_resolved_value \
+  test_audio_channels_are_not_verified_outside_the_room_scope \
+  test_verify_probe_observes_the_audio_settings

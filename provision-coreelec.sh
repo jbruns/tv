@@ -2366,6 +2366,8 @@ CORE_SETTING_IDS = [
     "locale.keyboardlayouts",
     "locale.timezonecountry",
     "locale.timezone",
+    "audiooutput.audiodevice",
+    "audiooutput.passthroughdevice",
 ]
 SKIN_SETTING_IDS = ["lookandfeel.skin"]
 SERVICE_SETTING_IDS = ["weather.addon"]
@@ -2380,6 +2382,7 @@ ROOM_SETTING_IDS = [
     "audiooutput.dtspassthrough",
     "audiooutput.truehdpassthrough",
     "audiooutput.dtshdpassthrough",
+    "audiooutput.channels",
 ]
 SETTING_IDS = (CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
                + ROOM_SETTING_IDS)
@@ -4521,6 +4524,35 @@ verify_remote_baseline() {
   coreelec_report_comparison "regional.timezone_cache" "${TIMEZONE}" \
     "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
     || failures=$((failures + 1))
+
+    # Each output is its own independent pass/fail: one output left pointing
+    # at the wrong ALSA device must never be hidden behind the other being
+    # correct. Without a resolved value there is nothing correct to compare
+    # the observation to, so it is reported unobservable rather than guessed.
+    if [[ -n "${AUDIO_DEVICE_VALUE}" ]]; then
+      coreelec_room_compare_setting "audio.device" \
+        "${AUDIO_DEVICE_VALUE}" "setting.audiooutput.audiodevice" \
+        "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'audio.device.expected=%s\n' "${AUDIO_DEVICE}"
+      printf 'audio.device.observed=%s\n' \
+        "$(coreelec_observation_value setting.audiooutput.audiodevice "${observations}" || true)"
+      printf 'audio.device.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
+    if [[ -n "${AUDIO_PASSTHROUGH_DEVICE_VALUE}" ]]; then
+      coreelec_room_compare_setting "audio.passthroughdevice" \
+        "${AUDIO_PASSTHROUGH_DEVICE_VALUE}" \
+        "setting.audiooutput.passthroughdevice" "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'audio.passthroughdevice.expected=%s\n' "${AUDIO_PASSTHROUGH_DEVICE}"
+      printf 'audio.passthroughdevice.observed=%s\n' \
+        "$(coreelec_observation_value setting.audiooutput.passthroughdevice "${observations}" || true)"
+      printf 'audio.passthroughdevice.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
   fi
 
   # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
@@ -4858,6 +4890,18 @@ verify_remote_baseline() {
       "$([[ "${ROOM_AUDIO_DTSHD}" == "1" ]] && printf true || printf false)" \
       "setting.audiooutput.dtshdpassthrough" "${observations}" \
       || failures=$((failures + 1))
+    if [[ -n "${ROOM_AUDIO_CHANNELS_INDEX}" ]]; then
+      coreelec_room_compare_setting "room.audio.channels" \
+        "${ROOM_AUDIO_CHANNELS_INDEX}" "setting.audiooutput.channels" \
+        "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'room.audio.channels.expected=%s\n' "${ROOM_AUDIO_CHANNELS}"
+      printf 'room.audio.channels.observed=%s\n' \
+        "$(coreelec_observation_value setting.audiooutput.channels "${observations}" || true)"
+      printf 'room.audio.channels.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
   fi
 
   printf 'verification_failures=%s\n' "${failures}"
@@ -5240,6 +5284,18 @@ if (( ${#VERIFY_FIXTURE[@]} > 0 )); then
     coreelec_observation_value resolved.room.display.resolution \
       "${VERIFY_FIXTURE[0]}" || printf ''
   )"
+  AUDIO_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.device \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
+  AUDIO_PASSTHROUGH_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.passthroughdevice \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
+  ROOM_AUDIO_CHANNELS_INDEX="$(
+    coreelec_observation_value resolved.audio.channels \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
   verify_remote_baseline "${VERIFY_FIXTURE[0]}" "${VERIFY_FIXTURE[1]}"
   exit $?
 fi
@@ -5256,6 +5312,21 @@ if (( ${#REPORT_FIXTURE[@]} > 0 )); then
   coreelec_collect_remote_observations() { cp "${REPORT_FIXTURE[1]}" "$1"; }
   finalize_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
   rollback_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
+  # As with the verify fixture seam, the pre-transaction audio probe never
+  # runs against a fixture, so the resolved values it would have supplied are
+  # read from the same resolved.* lines instead.
+  AUDIO_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.device \
+      "${REPORT_FIXTURE[1]}" || printf ''
+  )"
+  AUDIO_PASSTHROUGH_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.passthroughdevice \
+      "${REPORT_FIXTURE[1]}" || printf ''
+  )"
+  ROOM_AUDIO_CHANNELS_INDEX="$(
+    coreelec_observation_value resolved.audio.channels \
+      "${REPORT_FIXTURE[1]}" || printf ''
+  )"
   coreelec_conclude_deployment "${REPORT_FIXTURE[2]}" >/dev/null 2>&1 || true
   coreelec_write_report_file \
     "$(coreelec_report_path "${REPORT_FIXTURE[0]}")" "${REPORT_FIXTURE[2]}" "0"
@@ -5272,9 +5343,26 @@ if (( ${#CONCLUDE_FIXTURE[@]} > 0 )); then
     COREELEC_VERIFICATION_ATTEMPTS="$(
       find "${CONCLUDE_FIXTURE[0]}" -maxdepth 1 -type f -name '*.conf' | wc -l | tr -d ' '
     )"
+    conclude_fixture_first="${CONCLUDE_FIXTURE[0]}/1.conf"
   else
     COREELEC_VERIFICATION_ATTEMPTS=1
+    conclude_fixture_first="${CONCLUDE_FIXTURE[0]}"
   fi
+  # As with the verify and report fixture seams, the pre-transaction audio
+  # probe never runs against a fixture; its resolved values are read from the
+  # first attempt's observations instead.
+  AUDIO_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.device \
+      "${conclude_fixture_first}" || printf ''
+  )"
+  AUDIO_PASSTHROUGH_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.passthroughdevice \
+      "${conclude_fixture_first}" || printf ''
+  )"
+  ROOM_AUDIO_CHANNELS_INDEX="$(
+    coreelec_observation_value resolved.audio.channels \
+      "${conclude_fixture_first}" || printf ''
+  )"
   coreelec_collect_remote_observations() {
     printf 'verify\n' >> "${CONCLUDE_FIXTURE[4]}"
     if [[ -d "${CONCLUDE_FIXTURE[0]}" ]]; then
