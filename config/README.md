@@ -69,6 +69,46 @@ expansion, so shell metacharacters in a value are inert data.
 - Reserved secret keys are rejected outright from the file.
 - `TARGET` is not a supported key and can never be set from a config file.
 
+## Room configuration surface
+
+`--component room --room NAME` reads a separate file:
+
+```text
+config/rooms/<room>/room.conf
+```
+
+It is a distinct file with its own key allowlist, parsed by the same strict
+grammar above. The two allowlists are disjoint by name in both directions: a
+`provision.conf` key written into a room file is rejected as an unknown room
+configuration key, and a room key written into `provision.conf` is rejected
+as an unknown configuration key. Room files hold no secrets; the same reserved
+secret keys listed above are rejected outright from a room file too.
+
+Every one of the following ten keys is required; there is no default for any
+of them, because a silent default for a display or audio setting is exactly
+the unverifiable state the `room` component exists to eliminate.
+
+| Key | Accepted values |
+| --- | --- |
+| `ROOM_DISPLAY_RESOLUTION` | a resolution label, e.g. `3840x2160p` |
+| `ROOM_DISPLAY_WHITELIST` | comma-separated Kodi display mode strings |
+| `ROOM_DOLBY_VISION` | `0` or `1` (stated positively; see below) |
+| `ROOM_DOLBY_VISION_MODE` | `tv-led` or `player-led` |
+| `ROOM_AUDIO_PASSTHROUGH` | `0` or `1` |
+| `ROOM_AUDIO_AC3` | `0` or `1` |
+| `ROOM_AUDIO_EAC3` | `0` or `1` |
+| `ROOM_AUDIO_DTS` | `0` or `1` |
+| `ROOM_AUDIO_TRUEHD` | `0` or `1` |
+| `ROOM_AUDIO_DTSHD` | `0` or `1` |
+
+`ROOM_DOLBY_VISION` is written inverted onto Kodi's own
+`coreelec.amlogic.disabledolbyvision` setting: `ROOM_DOLBY_VISION=1` writes
+`disabledolbyvision=false`. There is no Atmos key; Atmos rides on
+`ROOM_AUDIO_TRUEHD` and `ROOM_AUDIO_EAC3`. The full meaning of every key, the
+display mode string format, and the pre-transaction display probe are
+documented in the
+[room desired-state reference](../docs/devices/ugoos-am6b-plus/room-desired-state.md).
+
 ## Supported inputs
 
 ### Script input contract
@@ -139,8 +179,8 @@ and narrows only the artifact set. When components are explicit, each
 | `addons` | The selected, checksum-locked artifacts and their installed add-on directories |
 | `services` | Settings owned by `plugin.video.themoviedb.helper`, `weather.ha`, `pvr.nextpvr`, and `script.plexmod` |
 | `skin` | Active Arctic Fuse selection, Arctic Fuse settings, Skin Variables widget JSON, managed video playlists, and skin-specific shared Kodi defaults |
-| `room` | Reserved for a future reviewed room-specific playback/library contract; currently unimplemented and rejected rather than treated as a no-op |
-| `baseline` | Alias for every implemented component: `core,cec,addons,services,skin`; it excludes reserved `room` |
+| `room` | Owns display and audio state in `config/rooms/<room>/room.conf`: the desktop resolution, the display mode whitelist, both Dolby Vision settings, and the five audio passthrough flags in `guisettings.xml`. Opt-in: never expanded from `baseline`; must be requested explicitly with `--component room --room NAME` |
+| `baseline` | Alias for every implemented component: `core,cec,addons,services,skin`; it excludes `room`, which is opt-in |
 
 Dependencies are expanded before device contact, cycle-checked, and reported
 in stable effective order:
@@ -152,7 +192,7 @@ in stable effective order:
 | `addons` | none |
 | `services` | `addons` |
 | `skin` | `core`, `addons` |
-| `room` | `core` in the reserved graph, but the request is rejected because `room` is not implemented |
+| `room` | `core`, because the whitelist only takes effect once `core`'s `videoplayer.adjustrefreshrate=2` is in place |
 | `baseline` | expands to `core,cec,addons,services,skin` |
 
 Use `--print-component-plan` to inspect normalization without contacting a

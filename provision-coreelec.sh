@@ -24,6 +24,12 @@ EFFECTIVE_COMPONENTS=()
 CLI_COMPONENTS=()
 COMPONENTS_EXPLICIT="0"
 PRINT_COMPONENT_PLAN="0"
+ROOM_NAME=""
+ROOM_CONFIG_FILE=""
+# Resolved by coreelec_resolve_room_display before the transaction opens. Declared
+# here so that a probe that returned nothing reaches its own die message rather
+# than an unbound-variable abort under set -u.
+ROOM_DISPLAY_RESOLUTION_INDEX=""
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
@@ -77,9 +83,15 @@ Options:
                              rejected.
   --component NAME          Apply only this component and its dependencies;
                              repeatable. Implemented components are baseline,
-                             core, cec, addons, services, and skin. The room
-                             name is reserved and rejected as unimplemented.
-                             Dependencies are expanded and reported.
+                             core, cec, addons, services, skin, and room.
+                             baseline does not include room: room is opt-in
+                             and requires --room. Dependencies are expanded
+                             and reported.
+  --room NAME               Room whose desired display and audio state applies,
+                             read from config/rooms/NAME/room.conf. Required
+                             with --component room and rejected without it.
+                             The display must be powered on and selected to
+                             this device for the run to proceed.
   --report-dir PATH         Local report directory
   --expected-release VER    Required CoreELEC release substring (default: 21.3)
   --no-kodi                 Skip Kodi and Home Assistant baseline configuration
@@ -104,8 +116,9 @@ Internal:
                              contacts a device.
   --emit-remote-script NAME [ROOT]
                           Print the remote 'backup', 'payload', 'stage',
-                           'deploy', 'rollback', 'finalize', 'verify', or
-                           'verify-probe' program for ROOT (default /storage),
+                           'deploy', 'rollback', 'finalize', 'verify',
+                           'verify-probe', or 'display-probe' program for ROOT
+                           (default /storage),
                            then exit. Used by the test suites; it never
                            contacts a device.
   --render-remote-deploy-script [ROOT]
@@ -154,10 +167,8 @@ in the config file, and TARGET is never a config-file key. See
 config/README.md for every supported key, the repeated ADDON_ARTIFACT
 grammar, and the full secret list.
 
-This script deliberately does not configure audio codecs or the display mode
-whitelist (room-specific, live HDMI-dependent), and it cannot perform Emby
-server sign-in -- that add-on is always left for the operator to finish by
-hand.
+This script cannot perform Emby server sign-in -- that add-on is always left
+for the operator to finish by hand.
 USAGE
 }
 
@@ -270,6 +281,7 @@ COMPONENT_PAYLOAD_KEYS = (
     "APPLY_COMPONENT_ADDONS",
     "APPLY_COMPONENT_SERVICES",
     "APPLY_COMPONENT_SKIN",
+    "APPLY_COMPONENT_ROOM",
 )
 
 
@@ -629,10 +641,11 @@ def main(argv):
     apply_addons = config("APPLY_COMPONENT_ADDONS") == "1"
     apply_services = config("APPLY_COMPONENT_SERVICES") == "1"
     apply_skin = config("APPLY_COMPONENT_SKIN") == "1"
+    apply_room = config("APPLY_COMPONENT_ROOM") == "1"
 
     userdata = os.path.join(storage_root, ".kodi", "userdata")
     addon_data = os.path.join(userdata, "addon_data")
-    if apply_core or apply_skin:
+    if apply_core or apply_skin or apply_room:
         register_managed_directory(userdata)
     if apply_services or apply_skin:
         register_managed_directory(addon_data)
@@ -687,8 +700,37 @@ def main(argv):
             "lookandfeel.skin": SKIN_ID,
             "lookandfeel.soundskin": "resource.uisounds.fromashes",
         })
+    if apply_room:
+        def room_bool(key):
+            return "true" if config(key) == "1" else "false"
 
-    if apply_core or apply_skin or (apply_services and weather_configured):
+        kodi_values.update({
+            "videoscreen.whitelist": config("ROOM_DISPLAY_WHITELIST"),
+            # The configuration states Dolby Vision positively; Kodi's setting
+            # states it negatively. This is the one inverted write in the
+            # component.
+            "coreelec.amlogic.disabledolbyvision":
+                "false" if config("ROOM_DOLBY_VISION") == "1" else "true",
+            "coreelec.amlogic.dolbyvisionled":
+                "1" if config("ROOM_DOLBY_VISION_MODE") == "player-led" else "0",
+            "audiooutput.passthrough": room_bool("ROOM_AUDIO_PASSTHROUGH"),
+            "audiooutput.ac3passthrough": room_bool("ROOM_AUDIO_AC3"),
+            "audiooutput.eac3passthrough": room_bool("ROOM_AUDIO_EAC3"),
+            "audiooutput.dtspassthrough": room_bool("ROOM_AUDIO_DTS"),
+            "audiooutput.truehdpassthrough": room_bool("ROOM_AUDIO_TRUEHD"),
+            "audiooutput.dtshdpassthrough": room_bool("ROOM_AUDIO_DTSHD"),
+        })
+        # The index is resolved by the pre-transaction display probe against
+        # the running Kodi, because Kodi's resolution enumeration is internal
+        # and unstable across releases and displays. With no resolved index
+        # the desktop resolution is left exactly as it was rather than pinned
+        # to a number that may mean something else.
+        resolution_index = config("ROOM_DISPLAY_RESOLUTION_INDEX")
+        if resolution_index:
+            kodi_values["videoscreen.resolution"] = resolution_index
+
+    if apply_core or apply_skin or apply_room \
+            or (apply_services and weather_configured):
         guisettings_path = os.path.join(userdata, "guisettings.xml")
         guisettings_tree, guisettings_root = load_kodi_settings(
             guisettings_path
@@ -1064,7 +1106,7 @@ detect_selected_cec_path() {
 
 scoped_settings_paths() {
   if [ "${apply_core}" = "1" ] || [ "${apply_services}" = "1" ] \
-      || [ "${apply_skin}" = "1" ]; then
+      || [ "${apply_skin}" = "1" ] || [ "${apply_room}" = "1" ]; then
     printf '%s\n' '.kodi/userdata/guisettings.xml'
   fi
   if [ "${apply_core}" = "1" ]; then
@@ -1112,7 +1154,7 @@ MANAGED_SETTINGS_FUNCTION
 coreelec_remote_backup_script() {
   local root="${1:-/storage}"
   local scope="${2:-baseline}" component remainder
-  local apply_core=0 apply_cec=0 apply_addons=0 apply_services=0 apply_skin=0
+  local apply_core=0 apply_cec=0 apply_addons=0 apply_services=0 apply_skin=0 apply_room=0
   if [[ "${scope}" == "baseline" ]]; then
     scope="core,cec,addons,services,skin"
   fi
@@ -1130,6 +1172,7 @@ coreelec_remote_backup_script() {
       addons) apply_addons=1 ;;
       services) apply_services=1 ;;
       skin) apply_skin=1 ;;
+      room) apply_room=1 ;;
       *) die "Unsupported component in remote backup scope: ${component}" ;;
     esac
   done
@@ -1145,6 +1188,7 @@ apply_cec="${apply_cec}"
 apply_addons="${apply_addons}"
 apply_services="${apply_services}"
 apply_skin="${apply_skin}"
+apply_room="${apply_room}"
 cec_relative=""
 REMOTE_BACKUP_HEADER
   coreelec_managed_settings_paths_block
@@ -1288,6 +1332,7 @@ apply_cec=""
 apply_addons=""
 apply_services=""
 apply_skin=""
+apply_room=""
 plan_addon_count=0
 # Set when the list of paths the transformer applied could not be rebuilt, so
 # rollback can neither remove what this run created nor claim it restored the
@@ -1333,7 +1378,7 @@ valid_directory_name() {
 
 valid_component_name() {
   case "$1" in
-    core|cec|addons|services|skin) return 0 ;;
+    core|cec|addons|services|skin|room) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -1378,6 +1423,8 @@ load_deployment_plan() {
   seen_addons=0
   seen_services=0
   seen_skin=0
+  apply_room=""
+  seen_room=0
   seen_addon_ids="|"
   plan_addon_count=0
 
@@ -1417,6 +1464,11 @@ load_deployment_plan() {
             seen_skin=1
             apply_skin="${plan_field2}"
             ;;
+          room)
+            [ "${seen_room}" -eq 0 ] || fail "deployment plan repeats component room"
+            seen_room=1
+            apply_room="${plan_field2}"
+            ;;
         esac
         ;;
       addon)
@@ -1440,7 +1492,8 @@ load_deployment_plan() {
   [ "${seen_addons}" -eq 1 ] || fail "deployment plan is missing component addons"
   [ "${seen_services}" -eq 1 ] || fail "deployment plan is missing component services"
   [ "${seen_skin}" -eq 1 ] || fail "deployment plan is missing component skin"
-  [ "$((apply_core + apply_cec + apply_addons + apply_services + apply_skin))" -gt 0 ] \
+  [ "${seen_room}" -eq 1 ] || fail "deployment plan is missing component room"
+  [ "$((apply_core + apply_cec + apply_addons + apply_services + apply_skin + apply_room))" -gt 0 ] \
     || fail "deployment plan selects no component"
   if [ "${apply_services}" = "1" ] && [ "${apply_addons}" != "1" ]; then
     fail "deployment plan selects services without required component addons"
@@ -1448,6 +1501,9 @@ load_deployment_plan() {
   if [ "${apply_skin}" = "1" ] \
     && { [ "${apply_core}" != "1" ] || [ "${apply_addons}" != "1" ]; }; then
     fail "deployment plan selects skin without required components core and addons"
+  fi
+  if [ "${apply_room}" = "1" ] && [ "${apply_core}" != "1" ]; then
+    fail "deployment plan selects room without required component core"
   fi
   if [ "${apply_addons}" = "0" ] && [ "${plan_addon_count}" -ne 0 ]; then
     fail "deployment plan contains add-ons while component addons is disabled"
@@ -1686,6 +1742,7 @@ COMPONENTS = (
     ("APPLY_COMPONENT_ADDONS", "addons"),
     ("APPLY_COMPONENT_SERVICES", "services"),
     ("APPLY_COMPONENT_SKIN", "skin"),
+    ("APPLY_COMPONENT_ROOM", "room"),
 )
 required = dict(COMPONENTS)
 values = {}
@@ -2294,7 +2351,20 @@ CORE_SETTING_IDS = [
 ]
 SKIN_SETTING_IDS = ["lookandfeel.skin"]
 SERVICE_SETTING_IDS = ["weather.addon"]
-SETTING_IDS = CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
+ROOM_SETTING_IDS = [
+    "videoscreen.resolution",
+    "videoscreen.whitelist",
+    "coreelec.amlogic.disabledolbyvision",
+    "coreelec.amlogic.dolbyvisionled",
+    "audiooutput.passthrough",
+    "audiooutput.ac3passthrough",
+    "audiooutput.eac3passthrough",
+    "audiooutput.dtspassthrough",
+    "audiooutput.truehdpassthrough",
+    "audiooutput.dtshdpassthrough",
+]
+SETTING_IDS = (CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
+               + ROOM_SETTING_IDS)
 
 # `date +%Z%z` output: a zone abbreviation followed by a UTC offset. Anything
 # else -- an unexpanded format string, an error line, an empty answer -- is not
@@ -2564,7 +2634,18 @@ def setting_value(entries, setting_id):
     if value is None:
         return ""
     if isinstance(value, list):
-        return " ".join(["%s" % (item,) for item in value])
+        return " ".join([render_setting_scalar(item) for item in value])
+    return render_setting_scalar(value)
+
+
+# Kodi answers boolean settings with a JSON boolean, and Python renders those
+# as "True"/"False" while every other representation of them -- guisettings.xml,
+# room.conf, the desired values this report compares against -- is lowercase.
+# Rendering them lowercase here is what makes an observed boolean comparable at
+# all; without it every boolean setting reports a mismatch against itself.
+def render_setting_scalar(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
     return "%s" % (value,)
 
 
@@ -2799,7 +2880,7 @@ def main(argv):
     def have(key):
         return request.get("HAVE_" + key, "0") == "1"
 
-    canonical_components = ["core", "cec", "addons", "services", "skin"]
+    canonical_components = ["core", "cec", "addons", "services", "skin", "room"]
     component_text = config("EFFECTIVE_COMPONENTS")
     components = component_text.split(",")
     if (not component_text or any(not item for item in components)
@@ -2817,6 +2898,8 @@ def main(argv):
         setting_ids.extend(SKIN_SETTING_IDS)
     if selected("services"):
         setting_ids.extend(SERVICE_SETTING_IDS)
+    if selected("room"):
+        setting_ids.extend(ROOM_SETTING_IDS)
     addon_ids = (
         [line.strip() for line in config("ADDON_IDS").split("\n")
          if line.strip()]
@@ -3408,6 +3491,134 @@ grep -Fq "${key_blob}" "${authorized}"
 REMOTE_AUTHORIZED_KEY_INSTALL
 }
 
+# Resolves a room's desired resolution label into Kodi's internal index and
+# asserts the display still reports every pinned whitelist mode. Runs while
+# Kodi is up and before the backup exists, because the transformer writes
+# guisettings.xml with Kodi stopped and can no longer ask.
+#
+# stdin carries the parameters (Kodi user, password, port, resolution label,
+# whitelist), so this program cannot be streamed to `sh -s` like most of the
+# others; it travels inside a single-quoted remote `sh -c` argument and
+# therefore must never contain a single quote of its own. That is why the trap
+# is double-quoted and the inner here-document delimiters are unquoted: neither
+# the JSON request nor the Python body contains a dollar sign, backtick, or
+# backslash for the device shell to expand.
+coreelec_remote_display_probe_script() {
+  cat <<'REMOTE_DISPLAY_PROBE_BODY'
+set -eu
+umask 077
+probe_user=""
+probe_password=""
+probe_port="8080"
+probe_resolution=""
+probe_whitelist=""
+while IFS= read -r probe_line; do
+  case "${probe_line}" in
+    KODI_WEB_USER=*) probe_user="${probe_line#KODI_WEB_USER=}" ;;
+    KODI_WEB_PASSWORD=*) probe_password="${probe_line#KODI_WEB_PASSWORD=}" ;;
+    KODI_PORT=*) probe_port="${probe_line#KODI_PORT=}" ;;
+    ROOM_DISPLAY_RESOLUTION=*) probe_resolution="${probe_line#ROOM_DISPLAY_RESOLUTION=}" ;;
+    ROOM_DISPLAY_WHITELIST=*) probe_whitelist="${probe_line#ROOM_DISPLAY_WHITELIST=}" ;;
+    "") ;;
+    *) printf "display probe rejected an unknown parameter\n" >&2; exit 1 ;;
+  esac
+done
+
+[ -n "${probe_user}" ] || { printf "display probe requires a Kodi user\n" >&2; exit 1; }
+[ -n "${probe_resolution}" ] || { printf "display probe requires a resolution label\n" >&2; exit 1; }
+[ -n "${probe_whitelist}" ] || { printf "display probe requires a whitelist\n" >&2; exit 1; }
+
+probe_dir="$(mktemp -d)"
+trap "rm -rf -- ${probe_dir}" EXIT INT TERM
+
+# The password reaches curl only through a mode-600 configuration file in a
+# directory the trap removes: it never appears in argv or in the process list.
+printf "user = \"%s:%s\"\n" "${probe_user}" "${probe_password}" \
+  > "${probe_dir}/curlrc"
+cat > "${probe_dir}/request.json" <<PROBE_REQUEST
+{"jsonrpc":"2.0","id":1,"method":"Settings.GetSettings","params":{"level":"expert","filter":{"section":"system","category":"display"}}}
+PROBE_REQUEST
+
+if ! curl --silent --show-error --fail --max-time 20 \
+  --config "${probe_dir}/curlrc" \
+  --header "Content-Type: application/json" \
+  --data "@${probe_dir}/request.json" \
+  "http://127.0.0.1:${probe_port}/jsonrpc" > "${probe_dir}/response.json"; then
+  printf "display probe could not reach Kodi on port %s\n" "${probe_port}" >&2
+  exit 1
+fi
+
+printf "%s\n%s\n" "${probe_resolution}" "${probe_whitelist}" \
+  > "${probe_dir}/expected"
+
+python3 - "${probe_dir}/response.json" "${probe_dir}/expected" <<PROBE_PARSE
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    try:
+        document = json.load(handle)
+    except ValueError:
+        raise SystemExit("display probe could not parse Kodi response")
+
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    wanted_label = handle.readline().strip()
+    wanted_modes = [item for item in handle.readline().strip().split(",") if item]
+
+settings = document.get("result", {}).get("settings")
+if not isinstance(settings, list):
+    raise SystemExit("display probe did not receive a settings list")
+
+by_id = {}
+for setting in settings:
+    if isinstance(setting, dict) and "id" in setting:
+        by_id[setting["id"]] = setting
+
+
+def option_pairs(setting_id):
+    setting = by_id.get(setting_id)
+    if setting is None:
+        raise SystemExit(
+            "display probe: Kodi did not report %s; is the display powered on "
+            "and selected to this device?" % setting_id)
+    raw = setting.get("options")
+    if not isinstance(raw, list):
+        definition = setting.get("definition")
+        if isinstance(definition, dict):
+            raw = definition.get("options")
+    if not isinstance(raw, list):
+        return []
+    pairs = []
+    for option in raw:
+        if isinstance(option, dict) and "label" in option and "value" in option:
+            pairs.append((str(option["label"]).strip(), option["value"]))
+    return pairs
+
+
+resolution_pairs = option_pairs("videoscreen.resolution")
+matches = [value for label, value in resolution_pairs if label == wanted_label]
+if not matches:
+    raise SystemExit(
+        "display probe: the display does not offer resolution %s; it offers: %s"
+        % (wanted_label, ", ".join(sorted(
+            label for label, _ in resolution_pairs)) or "nothing"))
+if len(matches) > 1:
+    raise SystemExit(
+        "display probe: resolution %s is ambiguous; Kodi reports it %d times"
+        % (wanted_label, len(matches)))
+
+reported_modes = set(str(value) for _, value in option_pairs("videoscreen.whitelist"))
+missing = [mode for mode in wanted_modes if mode not in reported_modes]
+if missing:
+    raise SystemExit(
+        "display probe: the display no longer reports pinned display "
+        "mode(s): %s" % ", ".join(missing))
+
+print("resolution_index=%s" % matches[0])
+PROBE_PARSE
+REMOTE_DISPLAY_PROBE_BODY
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
@@ -3420,9 +3631,10 @@ coreelec_emit_remote_script() {
     finalize) coreelec_remote_finalize_script "${root}" ;;
     verify) coreelec_remote_verify_script "${root}" ;;
     verify-probe) coreelec_remote_verify_probe_source ;;
+    display-probe) coreelec_remote_display_probe_script ;;
     authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, or authorized-key, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, or authorized-key, not: ${name}"
       ;;
   esac
 }
@@ -3436,7 +3648,7 @@ coreelec_component_known() {
 
 coreelec_component_implemented() {
   case "$1" in
-    baseline|core|cec|addons|services|skin) return 0 ;;
+    baseline|core|cec|addons|services|skin|room) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -3539,6 +3751,30 @@ coreelec_prepare_component_plan() {
       fi
     done
   fi
+}
+
+# Resolves --room against config/rooms and loads it. Called after the
+# component plan is prepared so both failure directions can be checked, and
+# before --print-component-plan exits so a plan printed for the room component
+# has already proven its configuration parses.
+coreelec_select_room() {
+  local file
+
+  if coreelec_component_effective room; then
+    [[ -n "${ROOM_NAME}" ]] \
+      || die "--component room requires --room NAME"
+  elif [[ -n "${ROOM_NAME}" ]]; then
+    die "--room requires the room component; add --component room"
+  else
+    return 0
+  fi
+
+  file="${SCRIPT_DIR}/config/rooms/${ROOM_NAME}/room.conf"
+  [[ -r "${file}" ]] \
+    || die "No room configuration for ${ROOM_NAME}: ${file} is not readable"
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  coreelec_room_config_validate
 }
 
 coreelec_components_csv() {
@@ -3687,6 +3923,12 @@ while (( $# > 0 )); do
       CLI_COMPONENTS+=("$2")
       shift 2
       ;;
+    --room)
+      (( $# >= 2 )) || die "--room requires a value"
+      coreelec_validate_room_name "$2"
+      ROOM_NAME="$2"
+      shift 2
+      ;;
     --print-component-plan)
       PRINT_COMPONENT_PLAN="1"
       shift
@@ -3770,6 +4012,7 @@ while (( $# > 0 )); do
 done
 
 coreelec_prepare_component_plan
+coreelec_select_room
 if [[ "${PRINT_COMPONENT_PLAN}" == "1" ]]; then
   coreelec_print_component_plan
   exit 0
@@ -3901,6 +4144,67 @@ coreelec_report_comparison() {
   printf '%s.expected=%s\n' "${prefix}" "${expected}"
   printf '%s.observed=%s\n' "${prefix}" "${observed}"
   if [[ "${expected}" == "${observed}" ]]; then
+    printf '%s.status=ok\n' "${prefix}"
+    return 0
+  fi
+  printf '%s.status=mismatch\n' "${prefix}"
+  return 1
+}
+
+# Like coreelec_report_comparison, but tells "Kodi never reported this
+# setting" apart from "Kodi reported a different value": the room vocabulary
+# has a status the plain comparator does not (unobservable), so a room
+# comparison cannot use `|| true` to paper over a missing observation.
+coreelec_room_compare_setting() {
+  local prefix="$1" expected="$2" observation_key="$3" observations="$4" observed
+  if ! observed="$(coreelec_observation_value "${observation_key}" "${observations}")"; then
+    printf '%s.expected=%s\n' "${prefix}" "${expected}"
+    printf '%s.observed=\n' "${prefix}"
+    printf '%s.status=unobservable\n' "${prefix}"
+    return 1
+  fi
+  printf '%s.expected=%s\n' "${prefix}" "${expected}"
+  printf '%s.observed=%s\n' "${prefix}" "${observed}"
+  if [[ "${expected}" == "${observed}" ]]; then
+    printf '%s.status=ok\n' "${prefix}"
+    return 0
+  fi
+  printf '%s.status=mismatch\n' "${prefix}"
+  return 1
+}
+
+# The verify probe's setting_value joins Kodi list values with a single
+# space; ROOM_DISPLAY_WHITELIST is stored comma-separated. Both sides are
+# normalized to commas before comparison so a separator difference is never
+# reported as a mismatch. Order is significant to Kodi's mode selection and
+# is deliberately never sorted.
+coreelec_normalize_mode_list() {
+  printf '%s' "$1" | tr ' ' ',' | tr -s ','
+}
+
+# The whitelist gets its own comparator because it has a status the others do
+# not: `unsupported`. Kodi answers this setting with an empty list when none
+# of the pinned modes are still offered by the display, which is a different
+# device fact from "Kodi reported some other list" (mismatch) or "Kodi did
+# not answer this setting at all" (unobservable).
+coreelec_room_compare_whitelist() {
+  local prefix="$1" expected="$2" observations="$3"
+  local observed normalized_expected normalized_observed
+  normalized_expected="$(coreelec_normalize_mode_list "${expected}")"
+  if ! observed="$(coreelec_observation_value setting.videoscreen.whitelist "${observations}")"; then
+    printf '%s.expected=%s\n' "${prefix}" "${normalized_expected}"
+    printf '%s.observed=\n' "${prefix}"
+    printf '%s.status=unobservable\n' "${prefix}"
+    return 1
+  fi
+  normalized_observed="$(coreelec_normalize_mode_list "${observed}")"
+  printf '%s.expected=%s\n' "${prefix}" "${normalized_expected}"
+  printf '%s.observed=%s\n' "${prefix}" "${normalized_observed}"
+  if [[ -z "${normalized_observed}" ]]; then
+    printf '%s.status=unsupported\n' "${prefix}"
+    return 1
+  fi
+  if [[ "${normalized_expected}" == "${normalized_observed}" ]]; then
     printf '%s.status=ok\n' "${prefix}"
     return 0
   fi
@@ -4287,6 +4591,96 @@ verify_remote_baseline() {
   fi
   fi
 
+  # Room desired state. Every status below is one of ok/mismatch/unsupported/
+  # unobservable; only ok passes, so any other value is counted as a failure.
+  if coreelec_component_effective room; then
+    local dv_disable_expected dv_disable_observed dv_disable_found=0
+    local dv_led_expected dv_led_observed dv_led_found=0
+
+    coreelec_room_compare_whitelist "room.display.whitelist" \
+      "${ROOM_DISPLAY_WHITELIST}" "${observations}" \
+      || failures=$((failures + 1))
+
+    # The device reports videoscreen.resolution as Kodi's internal numeric
+    # index, never as the label the room configuration states; the index is
+    # unstable across Kodi releases and displays, which is why the
+    # pre-transaction display probe (Task 5) resolves it once, before the
+    # transaction, into ROOM_DISPLAY_RESOLUTION_INDEX. Verification compares
+    # the observed index against that resolved index -- the only value the
+    # index can be honestly compared with -- and never against the label.
+    # Without a resolved index there is nothing correct to compare the
+    # observation to, so the setting is reported unobservable rather than
+    # guessed at.
+    if [[ -n "${ROOM_DISPLAY_RESOLUTION_INDEX}" ]]; then
+      coreelec_room_compare_setting "room.display.resolution" \
+        "${ROOM_DISPLAY_RESOLUTION_INDEX}" "setting.videoscreen.resolution" \
+        "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'room.display.resolution.expected=%s\n' "${ROOM_DISPLAY_RESOLUTION}"
+      printf 'room.display.resolution.observed=%s\n' \
+        "$(coreelec_observation_value setting.videoscreen.resolution "${observations}" || true)"
+      printf 'room.display.resolution.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
+
+    # Dolby Vision is one logical setting split across two Kodi keys (a
+    # negated enable and an LED mode); both must be observed and both must
+    # match for the pair to read as one ok/mismatch/unobservable verdict.
+    dv_disable_expected="true"
+    [[ "${ROOM_DOLBY_VISION}" == "1" ]] && dv_disable_expected="false"
+    dv_led_expected="0"
+    [[ "${ROOM_DOLBY_VISION_MODE}" == "player-led" ]] && dv_led_expected="1"
+    if ! dv_disable_observed="$(coreelec_observation_value \
+        setting.coreelec.amlogic.disabledolbyvision "${observations}")"; then
+      dv_disable_found=1
+    fi
+    if ! dv_led_observed="$(coreelec_observation_value \
+        setting.coreelec.amlogic.dolbyvisionled "${observations}")"; then
+      dv_led_found=1
+    fi
+    printf 'room.dolbyvision.expected=%s,%s\n' "${dv_disable_expected}" "${dv_led_expected}"
+    printf 'room.dolbyvision.observed=%s,%s\n' "${dv_disable_observed}" "${dv_led_observed}"
+    if (( dv_disable_found == 1 || dv_led_found == 1 )); then
+      printf 'room.dolbyvision.status=unobservable\n'
+      failures=$((failures + 1))
+    elif [[ "${dv_disable_observed}" == "${dv_disable_expected}" \
+        && "${dv_led_observed}" == "${dv_led_expected}" ]]; then
+      printf 'room.dolbyvision.status=ok\n'
+    else
+      printf 'room.dolbyvision.status=mismatch\n'
+      failures=$((failures + 1))
+    fi
+
+    # Each audio codec is its own independent pass/fail: one codec left
+    # passing through incorrectly must never be hidden behind another
+    # codec's correct state.
+    coreelec_room_compare_setting "room.audio.passthrough" \
+      "$([[ "${ROOM_AUDIO_PASSTHROUGH}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.passthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.ac3" \
+      "$([[ "${ROOM_AUDIO_AC3}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.ac3passthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.eac3" \
+      "$([[ "${ROOM_AUDIO_EAC3}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.eac3passthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.dts" \
+      "$([[ "${ROOM_AUDIO_DTS}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.dtspassthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.truehd" \
+      "$([[ "${ROOM_AUDIO_TRUEHD}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.truehdpassthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.dtshd" \
+      "$([[ "${ROOM_AUDIO_DTSHD}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.dtshdpassthrough" "${observations}" \
+      || failures=$((failures + 1))
+  fi
+
   printf 'verification_failures=%s\n' "${failures}"
   if (( failures == 0 )); then
     printf 'verification_result=pass\n'
@@ -4406,7 +4800,7 @@ coreelec_report_manual_actions() {
 # section, and it is fenced by begin/end markers.
 coreelec_report_render() {
   local manifest="$1" name value index filename
-  local report_component_set report_addons=0 report_services=0
+  local report_component_set report_addons=0 report_services=0 report_room=0
   local requested_csv effective_csv dependencies_csv
   report_component_set="${EFFECTIVE_COMPONENT_SET:-$'\ncore\ncec\naddons\nservices\nskin\n'}"
   case "${report_component_set}" in
@@ -4414,6 +4808,9 @@ coreelec_report_render() {
   esac
   case "${report_component_set}" in
     *$'\n'services$'\n'*) report_services=1 ;;
+  esac
+  case "${report_component_set}" in
+    *$'\n'room$'\n'*) report_room=1 ;;
   esac
   printf 'report_format=coreelec-provisioning-report-2\n'
   printf 'script_version=%s\n' "${SCRIPT_VERSION}"
@@ -4436,6 +4833,9 @@ coreelec_report_render() {
   printf 'kodi_jsonrpc_reachable_from_host=%s\n' "${KODI_JSONRPC_LOCAL_REACHABLE}"
   if [[ -n "${REMOTE_BACKUP_PATH}" ]]; then
     printf 'remote_backup_path=%s\n' "${REMOTE_BACKUP_PATH}"
+  fi
+  if [[ "${report_room}" == "1" ]]; then
+    printf 'room.name=%s\n' "${ROOM_NAME}"
   fi
 
   if [[ "${report_addons}" == "1" ]]; then
@@ -4651,6 +5051,16 @@ coreelec_report_path() {
 # the test suite exercises the same functions a real run uses without a device.
 
 if (( ${#VERIFY_FIXTURE[@]} > 0 )); then
+  # The display probe is a fourth device call, and on a real run it is what
+  # resolves ROOM_DISPLAY_RESOLUTION_INDEX before the transaction opens. A
+  # fixture stands in for it with a resolved.room.display.resolution line.
+  # Without this seam the suite can only ever reach the unobservable branch of
+  # the resolution comparison, leaving the ok and mismatch branches -- the ones
+  # a real device exercises first -- untested.
+  ROOM_DISPLAY_RESOLUTION_INDEX="$(
+    coreelec_observation_value resolved.room.display.resolution \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
   verify_remote_baseline "${VERIFY_FIXTURE[0]}" "${VERIFY_FIXTURE[1]}"
   exit $?
 fi
@@ -4899,6 +5309,43 @@ validate_remote() {
   fi
 }
 
+# Runs after the administrator key is installed (which is idempotent and
+# independently reversible) and before create_remote_backup, which is the
+# first real state change. A display that is off, on another input, or no
+# longer reporting a pinned mode aborts the run here, with nothing to undo.
+coreelec_resolve_room_display() {
+  local script output line
+  coreelec_component_effective room || return 0
+
+  script="$(coreelec_remote_display_probe_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote display probe script must not contain a single quote"
+
+  info "Resolving the ${ROOM_NAME} display mode against the running Kodi" >&2
+  output="$(
+    {
+      printf 'KODI_WEB_USER=%s\n' "${KODI_USER}"
+      printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
+      printf 'KODI_PORT=%s\n' "${KODI_PORT}"
+      printf 'ROOM_DISPLAY_RESOLUTION=%s\n' "${ROOM_DISPLAY_RESOLUTION}"
+      printf 'ROOM_DISPLAY_WHITELIST=%s\n' "${ROOM_DISPLAY_WHITELIST}"
+    } | ssh_keyed "sh -c '${script}'"
+  )" || die "The display probe failed. The display must be powered on and selected to this device for the room component to apply. Nothing on the device has been changed apart from the administrator key."
+
+  while IFS= read -r line; do
+    case "${line}" in
+      resolution_index=*) ROOM_DISPLAY_RESOLUTION_INDEX="${line#resolution_index=}" ;;
+    esac
+  done <<< "${output}"
+
+  case "${ROOM_DISPLAY_RESOLUTION_INDEX}" in
+    ""|*[!0-9]*)
+      die "The display probe did not return a usable resolution index for ${ROOM_DISPLAY_RESOLUTION}"
+      ;;
+  esac
+  info "Resolved ${ROOM_DISPLAY_RESOLUTION} to Kodi resolution index ${ROOM_DISPLAY_RESOLUTION_INDEX}" >&2
+}
+
 create_remote_backup() {
   local component_scope
   info "Creating a selective pre-provisioning backup on the CoreELEC STORAGE partition" >&2
@@ -4969,6 +5416,8 @@ coreelec_settings_payload() {
     "$(coreelec_component_effective services && printf 1 || printf 0)"
   coreelec_settings_payload_entry APPLY_COMPONENT_SKIN \
     "$(coreelec_component_effective skin && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_ROOM \
+    "$(coreelec_component_effective room && printf 1 || printf 0)"
   coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
   coreelec_settings_payload_entry TIMEZONE_COUNTRY "${TIMEZONE_COUNTRY}"
   coreelec_settings_payload_entry LOCALE_LANGUAGE "${LOCALE_LANGUAGE}"
@@ -4994,6 +5443,24 @@ coreelec_settings_payload() {
   coreelec_settings_payload_secret MDBLIST_API_KEY "${MDBLIST_API_KEY:-}"
   coreelec_settings_payload_secret HOME_ASSISTANT_TOKEN "${HOME_ASSISTANT_TOKEN:-}"
   coreelec_settings_payload_secret NEXTPVR_PIN "${NEXTPVR_PIN:-}"
+
+  # A run without room in scope must carry no room data at all: emitting these
+  # only when room is effective keeps an out-of-scope run from leaking a
+  # previous room's desired state onto the wire.
+  if coreelec_component_effective room; then
+    coreelec_settings_payload_entry ROOM_NAME "${ROOM_NAME}"
+    coreelec_settings_payload_entry ROOM_DISPLAY_RESOLUTION_INDEX \
+      "${ROOM_DISPLAY_RESOLUTION_INDEX}"
+    coreelec_settings_payload_entry ROOM_DISPLAY_WHITELIST "${ROOM_DISPLAY_WHITELIST}"
+    coreelec_settings_payload_entry ROOM_DOLBY_VISION "${ROOM_DOLBY_VISION}"
+    coreelec_settings_payload_entry ROOM_DOLBY_VISION_MODE "${ROOM_DOLBY_VISION_MODE}"
+    coreelec_settings_payload_entry ROOM_AUDIO_PASSTHROUGH "${ROOM_AUDIO_PASSTHROUGH}"
+    coreelec_settings_payload_entry ROOM_AUDIO_AC3 "${ROOM_AUDIO_AC3}"
+    coreelec_settings_payload_entry ROOM_AUDIO_EAC3 "${ROOM_AUDIO_EAC3}"
+    coreelec_settings_payload_entry ROOM_AUDIO_DTS "${ROOM_AUDIO_DTS}"
+    coreelec_settings_payload_entry ROOM_AUDIO_TRUEHD "${ROOM_AUDIO_TRUEHD}"
+    coreelec_settings_payload_entry ROOM_AUDIO_DTSHD "${ROOM_AUDIO_DTSHD}"
+  fi
 }
 
 upload_kodi_settings_payload() {
@@ -5388,6 +5855,8 @@ if [[ "${APPLY_KODI}" == "1" ]]; then
 fi
 
 install_public_key_if_needed
+
+coreelec_resolve_room_display
 
 REMOTE_BACKUP_PATH="$(create_remote_backup)"
 info "Remote backup created: ${REMOTE_BACKUP_PATH}"

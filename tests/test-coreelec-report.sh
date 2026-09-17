@@ -337,6 +337,90 @@ arctic_fuse.playlist.NewMovies.configured=1
 OBSERVATIONS
 }
 
+# What the remote probe reports for the room component, layered onto
+# write_pass_observations' regional baseline (room depends on core so its
+# observations must be present too). Every room setting matches a room.conf
+# whose whitelist is the single default mode below and whose Dolby Vision and
+# audio settings are all "on"/"tv-led" -- run_room_verification's default
+# room.conf agrees with these values unless a test overrides both sides.
+# `key=value` replaces one room observation; `omit=<setting id or short
+# name>` drops it entirely, the way a device that never answered that
+# setting would.
+write_room_observations() {
+  local file="$1" whitelist="0384002160060.00000pstd" resolution="41" \
+    disabledolbyvision="false" dolbyvisionled="0" passthrough="true" \
+    ac3passthrough="true" eac3passthrough="true" dtspassthrough="true" \
+    truehdpassthrough="true" dtshdpassthrough="true"
+  local omit_whitelist=0 omit_resolution=0 omit_disabledolbyvision=0 \
+    omit_dolbyvisionled=0 omit_passthrough=0 omit_ac3passthrough=0 \
+    omit_eac3passthrough=0 omit_dtspassthrough=0 omit_truehdpassthrough=0 \
+    omit_dtshdpassthrough=0
+  local arg key value
+  shift
+
+  write_pass_observations "${file}"
+
+  for arg in "$@"; do
+    key="${arg%%=*}"
+    value="${arg#*=}"
+    if [[ "${key}" == "omit" ]]; then
+      case "${value}" in
+        *whitelist) omit_whitelist=1 ;;
+        *resolution) omit_resolution=1 ;;
+        *disabledolbyvision) omit_disabledolbyvision=1 ;;
+        *dolbyvisionled) omit_dolbyvisionled=1 ;;
+        *.ac3passthrough|ac3passthrough) omit_ac3passthrough=1 ;;
+        *.eac3passthrough|eac3passthrough) omit_eac3passthrough=1 ;;
+        *.dtspassthrough|dtspassthrough) omit_dtspassthrough=1 ;;
+        *.truehdpassthrough|truehdpassthrough) omit_truehdpassthrough=1 ;;
+        *.dtshdpassthrough|dtshdpassthrough) omit_dtshdpassthrough=1 ;;
+        *.passthrough|passthrough) omit_passthrough=1 ;;
+        *)
+          printf 'write_room_observations: unknown setting to omit: %s\n' "${value}" >&2
+          return 1
+          ;;
+      esac
+      continue
+    fi
+    case "${key}" in
+      whitelist) whitelist="${value}" ;;
+      resolution) resolution="${value}" ;;
+      disabledolbyvision) disabledolbyvision="${value}" ;;
+      dolbyvisionled) dolbyvisionled="${value}" ;;
+      passthrough) passthrough="${value}" ;;
+      ac3passthrough) ac3passthrough="${value}" ;;
+      eac3passthrough) eac3passthrough="${value}" ;;
+      dtspassthrough) dtspassthrough="${value}" ;;
+      truehdpassthrough) truehdpassthrough="${value}" ;;
+      dtshdpassthrough) dtshdpassthrough="${value}" ;;
+      *)
+        printf 'write_room_observations: unknown override: %s\n' "${key}" >&2
+        return 1
+        ;;
+    esac
+  done
+
+  {
+    (( omit_whitelist )) || printf 'setting.videoscreen.whitelist=%s\n' "${whitelist}"
+    (( omit_resolution )) || printf 'setting.videoscreen.resolution=%s\n' "${resolution}"
+    (( omit_disabledolbyvision )) \
+      || printf 'setting.coreelec.amlogic.disabledolbyvision=%s\n' "${disabledolbyvision}"
+    (( omit_dolbyvisionled )) \
+      || printf 'setting.coreelec.amlogic.dolbyvisionled=%s\n' "${dolbyvisionled}"
+    (( omit_passthrough )) || printf 'setting.audiooutput.passthrough=%s\n' "${passthrough}"
+    (( omit_ac3passthrough )) \
+      || printf 'setting.audiooutput.ac3passthrough=%s\n' "${ac3passthrough}"
+    (( omit_eac3passthrough )) \
+      || printf 'setting.audiooutput.eac3passthrough=%s\n' "${eac3passthrough}"
+    (( omit_dtspassthrough )) \
+      || printf 'setting.audiooutput.dtspassthrough=%s\n' "${dtspassthrough}"
+    (( omit_truehdpassthrough )) \
+      || printf 'setting.audiooutput.truehdpassthrough=%s\n' "${truehdpassthrough}"
+    (( omit_dtshdpassthrough )) \
+      || printf 'setting.audiooutput.dtshdpassthrough=%s\n' "${dtshdpassthrough}"
+  } >> "${file}"
+}
+
 # Rewrites one observation line in place, so each test states exactly the one
 # device fact it changes.
 set_observation() {
@@ -366,6 +450,59 @@ run_verify_components() {
   HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
     NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
     bash "${PROVISIONER}" --config "${config}" --component "${component}" \
+    --verify-fixture "${observations}" "${manifest}"
+}
+
+# Runs the full baseline (no --component), which never includes room, so a
+# report rendered from it must contain no room.* keys at all.
+run_baseline_verification() {
+  local dir="$1" config manifest observations
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  run_verify "${config}" "${observations}" "${manifest}"
+}
+
+# Runs the host-side comparator with --component room --room NAME against a
+# throwaway room.conf this helper writes and removes. `dir` supplies the
+# provision config, manifest, and observations paths; `whitelist` is the
+# configured (comma-separated) ROOM_DISPLAY_WHITELIST; `resolution` is the
+# configured ROOM_DISPLAY_RESOLUTION label. Every other room key is fixed to
+# the value write_room_observations' defaults agree with, so a test that only
+# cares about one setting does not have to restate the rest.
+run_room_verification() {
+  local dir="$1" whitelist="$2" resolution="${3:-3840x2160p}"
+  local config manifest observations room_name room_root
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.env"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  [[ -f "${observations}" ]] || write_room_observations "${observations}"
+
+  room_name="task6fixture$$"
+  room_root="${SCRIPT_DIR}/../config/rooms/${room_name}"
+  trap 'rm -rf -- "${room_root}"' RETURN
+  mkdir -p "${room_root}"
+  cat > "${room_root}/room.conf" <<ROOMCONF
+ROOM_DISPLAY_RESOLUTION=${resolution}
+ROOM_DISPLAY_WHITELIST=${whitelist}
+ROOM_DOLBY_VISION=1
+ROOM_DOLBY_VISION_MODE=tv-led
+ROOM_AUDIO_PASSTHROUGH=1
+ROOM_AUDIO_AC3=1
+ROOM_AUDIO_EAC3=1
+ROOM_AUDIO_DTS=1
+ROOM_AUDIO_TRUEHD=1
+ROOM_AUDIO_DTSHD=1
+ROOMCONF
+
+  HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-https://homeassistant.example.lan:8123}" \
+    NEXTPVR_HOST="${NEXTPVR_HOST:-nextpvr.example.lan}" \
+    bash "${PROVISIONER}" --config "${config}" --component room --room "${room_name}" \
     --verify-fixture "${observations}" "${manifest}"
 }
 
@@ -2003,6 +2140,32 @@ run_remote_probe_with_path() {
   bash "${PROVISIONER}" --emit-remote-script verify-probe > "${probe}"
   JSONRPC_STUB_DIR="${dir}/stub" PATH="${path_value}" TZ="${PROBE_AMBIENT_TZ:-UTC}" \
     python3 "${probe}" "${root}" "${request}" "${dir}/curl.conf" "${dir}/system/"
+}
+
+# Runs the remote probe with an arbitrary EFFECTIVE_COMPONENTS scope (for
+# example "core,room" or "core,skin"), so a test can prove which observation
+# keys a component adds without caring what the device answers for them: the
+# probe emits "setting.<id>=" for every setting ID the scope selects even
+# when the stubbed JSON-RPC response has no entry for it.
+run_verify_probe_with_components() {
+  local components="$1" dir root bin_dir request
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<ENTRIES
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+EFFECTIVE_COMPONENTS=${components}
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+  run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}"
 }
 
 # What a correct device would print for one zone, read from this machine's own
@@ -4223,7 +4386,406 @@ test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment() {
     "TMDb Helper with both keys is configured" || return 1
 }
 
+# --- Pre-transaction display probe -----------------------------------------
+
+# Serves a Settings.GetSettings response shaped after the live device (see the
+# captured expert dump): videoscreen.resolution carries its choices in a
+# top-level `options` list of {label, value}, where the label is the resolution
+# string (with a trailing space) and the value is Kodi's internal index;
+# videoscreen.whitelist carries its choices under `definition.options`, where
+# the mode string the config pins lives in the option's `value` (its `label` is
+# a human-readable "3840x2160p  60.00Hz"). The stub gives the whitelist a label
+# distinct from the mode value so a parser that matched on the label instead of
+# the value would fail. curl ignores its arguments and prints the response.
+write_display_probe_stub() {
+  local dir="$1" label="$2" index="$3"
+  shift 3
+  local bin_dir="${dir}/bin" response="${dir}/stub-response.json"
+  mkdir -p "${bin_dir}"
+  python3 - "${response}" "${label}" "${index}" "$@" <<'PYEOF'
+import json
+import sys
+
+path, label, index = sys.argv[1], sys.argv[2], sys.argv[3]
+modes = sys.argv[4:]
+document = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "settings": [
+            {"id": "videoscreen.resolution",
+             "options": [{"label": label, "value": int(index)}]},
+            {"id": "videoscreen.whitelist",
+             "definition": {"options": [
+                 {"label": "mode " + mode, "value": mode} for mode in modes]}},
+        ]
+    },
+}
+with open(path, "w") as handle:
+    json.dump(document, handle)
+PYEOF
+  cat > "${bin_dir}/curl" <<STUB
+#!/bin/sh
+cat "${response}"
+STUB
+  chmod +x "${bin_dir}/curl"
+}
+
+# A curl that always fails, standing in for a Kodi the probe cannot reach.
+write_failing_curl_stub() {
+  local dir="$1" bin_dir="$1/bin"
+  mkdir -p "${bin_dir}"
+  cat > "${bin_dir}/curl" <<'STUB'
+#!/bin/sh
+exit 7
+STUB
+  chmod +x "${bin_dir}/curl"
+}
+
+# Runs the emitted probe exactly the way the device does: the five KEY=value
+# parameter lines arrive on stdin, the stubbed curl is first on PATH, and
+# TMPDIR points at a private directory so the probe's mktemp -d and its cleanup
+# are observable.
+run_display_probe() {
+  local dir="$1" label="$2" whitelist="$3" script
+  mkdir -p "${dir}/tmp"
+  script="$(bash "${PROVISIONER}" --emit-remote-script display-probe)"
+  printf 'KODI_WEB_USER=%s\nKODI_WEB_PASSWORD=%s\nKODI_PORT=%s\nROOM_DISPLAY_RESOLUTION=%s\nROOM_DISPLAY_WHITELIST=%s\n' \
+    "kodi" "hunter2" "8080" "${label}" "${whitelist}" \
+    | PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" sh -c "${script}"
+}
+
+test_display_probe_resolves_a_label_to_an_index() {
+  local dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" \
+    '3840x2160p ' 41 \
+    '0409602160024.00000pstd' '0384002160060.00000pstd'
+  output="$(run_display_probe "${dir}" \
+    '3840x2160p' \
+    '0409602160024.00000pstd,0384002160060.00000pstd')"
+  assert_contains "${output}" "resolution_index=41"
+}
+
+test_display_probe_rejects_an_unreported_resolution() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" '1920x1080p ' 16 '0192001080060.00000pstd'
+  set +e
+  output="$(run_display_probe "${dir}" '3840x2160p' '0192001080060.00000pstd' 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreported resolution must abort the probe"
+  assert_contains "${output}" "3840x2160p"
+}
+
+test_display_probe_rejects_an_unreported_whitelist_mode() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" '3840x2160p ' 41 '0384002160060.00000pstd'
+  set +e
+  output="$(run_display_probe "${dir}" '3840x2160p' \
+    '0384002160060.00000pstd,0409602160024.00000pstd' 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a mode the display no longer reports must abort"
+  assert_contains "${output}" "0409602160024.00000pstd"
+}
+
+test_display_probe_reports_an_unreachable_kodi_clearly() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_failing_curl_stub "${dir}"
+  set +e
+  output="$(run_display_probe "${dir}" '3840x2160p' '0384002160060.00000pstd' 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreachable Kodi must abort the probe"
+  assert_contains "${output}" "display probe could not reach Kodi"
+}
+
+test_display_probe_program_contains_no_single_quote() {
+  local output
+  output="$(bash "${PROVISIONER}" --emit-remote-script display-probe 2>&1)"
+  assert_not_contains "${output}" "'"
+}
+
+test_display_probe_program_carries_no_parameters() {
+  local output
+  output="$(bash "${PROVISIONER}" --emit-remote-script display-probe 2>&1)"
+  assert_not_contains "${output}" "3840x2160p"
+  assert_not_contains "${output}" "0384002160060.00000pstd"
+  assert_contains "${output}" "mktemp -d"
+  assert_contains "${output}" "trap"
+}
+
+test_display_probe_leaves_no_files_behind() {
+  local dir before after
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" '3840x2160p ' 41 '0384002160060.00000pstd'
+  mkdir -p "${dir}/tmp"
+  before="$(find "${dir}/tmp" -type f | wc -l | tr -d ' ')"
+  run_display_probe "${dir}" '3840x2160p' '0384002160060.00000pstd' >/dev/null
+  after="$(find "${dir}/tmp" -type f | wc -l | tr -d ' ')"
+  assert_eq "${before}" "${after}" "the probe must remove its temporary files"
+}
+
+# --- Room verification and reporting ---------------------------------------
+
+test_room_report_normalizes_the_whitelist_separator() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" \
+    whitelist='0409602160024.00000pstd 0384002160060.00000pstd'
+  set +e
+  report="$(run_room_verification "${dir}" \
+    '0409602160024.00000pstd,0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=ok"
+}
+
+test_room_report_flags_a_whitelist_mismatch() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" \
+    whitelist='0384002160060.00000pstd'
+  set +e
+  report="$(run_room_verification "${dir}" \
+    '0409602160024.00000pstd,0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=mismatch"
+  assert_contains "${report}" "verification_result=fail"
+}
+
+test_room_report_flags_an_unobservable_setting() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" omit=videoscreen.whitelist
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=unobservable"
+  assert_contains "${report}" "verification_result=fail"
+}
+
+# Pins the "unsupported" branch of the whitelist vocabulary: Kodi answered
+# the setting (it is not omitted, so this is not "unobservable"), but with an
+# empty list, which means none of the pinned modes are still offered rather
+# than "Kodi wrote something else" (mismatch).
+test_room_report_flags_an_unsupported_whitelist() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" whitelist=''
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=unsupported"
+  assert_contains "${report}" "verification_result=fail"
+}
+
+# The verify-fixture entry point never runs the pre-transaction display
+# probe, so ROOM_DISPLAY_RESOLUTION_INDEX is always empty here -- exactly the
+# state a real run is in only before that probe has resolved anything. This
+# pins the documented decision: without a resolved index there is nothing
+# honest to compare Kodi's observed index against, so the setting is
+# unobservable rather than compared against the configured label.
+# The fixture path cannot run the pre-transaction display probe, so it seeds
+# the index the probe would have resolved. These two tests are the only
+# coverage of the resolution comparison's ok and mismatch branches -- on a real
+# device this is the first room check to fire and the least proven.
+test_room_report_accepts_a_matching_resolution_index() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" resolution='41'
+  printf 'resolved.room.display.resolution=41\n' >> "${dir}/observations.env"
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.resolution.status=ok"
+  assert_contains "${report}" "verification_result=pass"
+}
+
+test_room_report_flags_a_renumbered_resolution_index() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" resolution='42'
+  printf 'resolved.room.display.resolution=41\n' >> "${dir}/observations.env"
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.resolution.status=mismatch"
+  assert_contains "${report}" "verification_result=fail"
+}
+
+test_room_report_resolution_is_unobservable_without_a_resolved_index() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" resolution='41'
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.resolution.status=unobservable"
+  assert_contains "${report}" "verification_result=fail"
+}
+
+test_room_report_reports_dolby_vision_positively() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" disabledolbyvision=false
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.dolbyvision.status=ok"
+  # The device stores this inverted, as disabledolbyvision. The report speaks
+  # the room config's positive vocabulary, so the inverted key name must never
+  # reach the operator -- reading "disabled=false" inverts the meaning twice in
+  # the reader's head and is exactly how this setting gets misread.
+  assert_not_contains "${report}" "disabledolbyvision"
+}
+
+# The inverse of the test above. Dolby Vision is the one room setting written
+# inverted, so a device that has it switched off must report mismatch rather
+# than quietly reading as ok: an inversion bug passes one direction and fails
+# the other, never both.
+test_room_report_flags_dolby_vision_switched_off_on_the_device() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" disabledolbyvision=true
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.dolbyvision.status=mismatch"
+}
+
+# Whitelist order is significant: Kodi prefers earlier modes, so the same modes
+# in a different order is a different display policy, not a cosmetic variation.
+# The comparison normalizes the separator (the probe joins list values with a
+# space, the config stores commas) and must not sort, so a pure reordering has
+# to read as a mismatch.
+test_room_report_treats_a_reordered_whitelist_as_a_mismatch() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" \
+    whitelist='0384002160060.00000pstd 0384002160024.00000pstd'
+  set +e
+  report="$(run_room_verification "${dir}" \
+    '0384002160024.00000pstd,0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=mismatch"
+}
+
+# The same two modes in the configured order, differing only in separator,
+# must read as ok -- otherwise the test above would pass for the wrong reason.
+test_room_report_accepts_a_whitelist_differing_only_in_separator() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" \
+    whitelist='0384002160024.00000pstd 0384002160060.00000pstd'
+  set +e
+  report="$(run_room_verification "${dir}" \
+    '0384002160024.00000pstd,0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=ok"
+}
+
+test_room_report_flags_each_audio_codec_independently() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" truehdpassthrough=false
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.audio.truehd.status=mismatch"
+  assert_contains "${report}" "room.audio.dts.status=ok"
+  assert_contains "${report}" "room.audio.eac3.status=ok"
+}
+
+test_report_omits_room_keys_when_room_is_out_of_scope() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  report="$(run_baseline_verification "${dir}")"
+  assert_not_contains "${report}" "room."
+}
+
+test_verify_probe_requests_room_settings_only_when_selected() {
+  local output
+  output="$(run_verify_probe_with_components "core,room")"
+  assert_contains "${output}" "videoscreen.whitelist"
+  output="$(run_verify_probe_with_components "core,skin")"
+  assert_not_contains "${output}" "videoscreen.whitelist"
+}
+
+# Kodi answers boolean settings with a JSON boolean. Python renders those as
+# "True"/"False", while guisettings.xml, room.conf, and every desired value the
+# report compares against are lowercase. The live run on the device found this:
+# all seven boolean room settings reported a mismatch against themselves, which
+# no fixture caught because every fixture had written the observed side by hand.
+test_verify_probe_renders_boolean_settings_lowercase() {
+  local dir root bin_dir request output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<ENTRIES
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+EFFECTIVE_COMPONENTS=core,room
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  python3 - "${dir}/stub/response-default.json" <<'PYEOF'
+import json
+import sys
+
+batch = [{"jsonrpc": "2.0", "id": "version", "result": {"version": {"major": 13}}}]
+for setting_id, value in (
+    ("audiooutput.ac3passthrough", True),
+    ("audiooutput.dtspassthrough", False),
+    ("coreelec.amlogic.disabledolbyvision", False),
+):
+    batch.append({"jsonrpc": "2.0", "id": "setting:" + setting_id,
+                  "result": {"value": value}})
+with open(sys.argv[1], "w") as handle:
+    json.dump(batch, handle)
+PYEOF
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}")"
+  assert_contains "${output}" "setting.audiooutput.ac3passthrough=true"
+  assert_contains "${output}" "setting.audiooutput.dtspassthrough=false"
+  assert_contains "${output}" "setting.coreelec.amlogic.disabledolbyvision=false"
+  assert_not_contains "${output}" "=True"
+  assert_not_contains "${output}" "=False"
+}
+
 run_all_tests \
+  test_verify_probe_renders_boolean_settings_lowercase \
+  test_display_probe_resolves_a_label_to_an_index \
+  test_display_probe_rejects_an_unreported_resolution \
+  test_display_probe_rejects_an_unreported_whitelist_mode \
+  test_display_probe_reports_an_unreachable_kodi_clearly \
+  test_display_probe_program_contains_no_single_quote \
+  test_display_probe_program_carries_no_parameters \
+  test_display_probe_leaves_no_files_behind \
   test_reviewed_manifest_fixture_uses_sequential_indices_and_filenames \
   test_all_expected_addon_versions_are_verified \
   test_disabled_addon_is_failure \
@@ -4349,4 +4911,18 @@ run_all_tests \
   test_each_ratings_key_presence_is_verified_separately \
   test_report_names_every_arctic_fuse_surface \
   test_report_never_contains_ratings_key_values_or_managed_file_contents \
-  test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment
+  test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment \
+  test_room_report_normalizes_the_whitelist_separator \
+  test_room_report_flags_a_whitelist_mismatch \
+  test_room_report_flags_an_unobservable_setting \
+  test_room_report_flags_an_unsupported_whitelist \
+  test_room_report_accepts_a_matching_resolution_index \
+  test_room_report_flags_a_renumbered_resolution_index \
+  test_room_report_resolution_is_unobservable_without_a_resolved_index \
+  test_room_report_reports_dolby_vision_positively \
+  test_room_report_flags_dolby_vision_switched_off_on_the_device \
+  test_room_report_treats_a_reordered_whitelist_as_a_mismatch \
+  test_room_report_accepts_a_whitelist_differing_only_in_separator \
+  test_room_report_flags_each_audio_codec_independently \
+  test_report_omits_room_keys_when_room_is_out_of_scope \
+  test_verify_probe_requests_room_settings_only_when_selected

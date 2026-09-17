@@ -15,9 +15,10 @@ remains true for the legacy `--addon ID` form: it filters the locked artifact
 selection but does not narrow shared settings. Explicit components narrow
 Kodi/add-on mutation, backup, verification, and reporting to the dependency-
 expanded effective scope. `services` adds `addons`; `skin` adds `core` and
-`addons`; `core`, `cec`, and `addons` have no dependencies. `baseline` expands
-to all five implemented components. `room` is reserved and currently fails as
-unimplemented rather than applying an empty room plan.
+`addons`; `room` adds `core`; `core`, `cec`, and `addons` have no dependencies.
+`baseline` expands to `core,cec,addons,services,skin`; it never includes
+`room`. `room` is opt-in and must be requested explicitly with
+`--component room --room NAME`.
 
 The exact ownership and dependency tables are in
 [the configuration contract](../../config/README.md#provisioning-component-contract).
@@ -74,6 +75,58 @@ It must not contain Arctic Fuse, service, room, or add-on verdicts. The
 provisioner retries complete device-local verification samples for up to 60
 seconds (13 samples separated by 5 seconds) so selected runtime state can
 converge; it commits only a complete passing sample.
+
+### Applying a room's display and audio state
+
+The `room` component writes the display and audio settings recorded in
+`config/rooms/<room>/room.conf`. It is opt-in — never included by a bare
+`--target` run or by `--component baseline` — and requires an explicit room
+name.
+
+**Before running this, the display must be powered on and switched to this
+device's HDMI input.** The provisioner probes the running Kodi over JSON-RPC
+immediately before it changes anything, to resolve the configured resolution
+label and confirm the display still offers every whitelisted mode. If the
+display is off or on another input, the probe fails and the run aborts with
+nothing changed on the device except the administrator key — no backup taken,
+no settings written.
+
+```bash
+./provision-coreelec.sh --target ugoos-theater --component room --room theater
+```
+
+Because `room` depends on `core` (the whitelist only takes effect once
+`core`'s refresh-rate matching is in place), the effective plan is `core,room`,
+not `room` alone. A committed report should show:
+
+```text
+components.requested=room
+components.effective=core,room
+components.dependencies_added=core
+deployment_state=committed
+verification_result=pass
+verification_failures=0
+room.display.whitelist.status=ok
+room.display.resolution.status=ok
+room.dolbyvision.status=ok
+room.audio.passthrough.status=ok
+room.audio.ac3.status=ok
+room.audio.eac3.status=ok
+room.audio.dts.status=ok
+room.audio.truehd.status=ok
+room.audio.dtshd.status=ok
+```
+
+Every `room.*.status` must read `ok`; any other value blocks the commit. A
+`mismatch` means Kodi reports something other than what was written — check
+for a manual UI change after the fact. `unsupported` on
+`room.display.whitelist` means Kodi answered but reported an empty whitelist —
+recheck that the display is still powered on and on the right input, then
+re-run. `unobservable` means Kodi never answered for that setting at all, or,
+for `room.display.resolution` specifically, that no resolution index was ever
+resolved for this run. The full report vocabulary, the configuration keys, the
+display mode string format, and the Dolby Vision inversion are documented in
+the [room desired-state reference](../devices/ugoos-am6b-plus/room-desired-state.md).
 
 Scoped maintenance uses the existing shared transaction process unchanged.
 Persistent selected-scope failure triggers automatic rollback. If the report
@@ -214,16 +267,24 @@ the effective scope, while the dated backup remains on the device.
     ha core check
     ```
 
-16. Apply only the room-specific Dolby Vision, whitelist, and audio settings.
+16. With the display powered on and switched to this device's HDMI input,
+    apply the room's display and audio desired state (see
+    [Applying a room's display and audio state](#applying-a-rooms-display-and-audio-state)
+    above):
+
+    ```bash
+    ./provision-coreelec.sh --target <hostname-or-IP> --component room --room <room>
+    ```
+
 17. Verify room playback, device control, network reachability, and Home
     Assistant automations.
 18. Create a CoreELEC backup before optional eMMC migration.
 
 ## Current rollout limits
 
-Component scoping does not configure the reserved room desired state and does
-not fix weather data or remux buffering. Emby sign-in and the documented Trakt
-tag/library synchronization remain manual. The Sony and Denon configuration
-boundary is unchanged. The onboarding order, restart checkpoints, and
+Component scoping does not fix weather data or remux buffering. Emby sign-in
+and the documented Trakt tag/library synchronization remain manual. The Sony
+and Denon configuration boundary is unchanged: `room` configures the CoreELEC
+playback host only. The onboarding order, restart checkpoints, and
 completion signals are defined in the
 [add-on onboarding and restart contract](../devices/ugoos-am6b-plus/addon-onboarding-contract.md).

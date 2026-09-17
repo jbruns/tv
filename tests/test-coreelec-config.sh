@@ -311,14 +311,65 @@ test_unknown_component_is_rejected() {
   assert_contains "${output}" "Unknown component: imaginary"
 }
 
-test_unimplemented_room_component_is_rejected() {
+test_room_component_requires_a_room_name() {
   local output rc
   set +e
   output="$(bash "${PROVISIONER}" --component room --print-component-plan 2>&1)"
   rc=$?
   set -e
-  assert_failure "${rc}" "room component must be rejected until implemented"
-  assert_contains "${output}" "Component is not implemented: room"
+  assert_failure "${rc}" "--component room must require --room"
+  assert_contains "${output}" "--component room requires --room NAME"
+}
+
+test_room_name_without_the_room_component_is_rejected() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --room theater --component cec \
+    --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "--room must require the room component"
+  assert_contains "${output}" "--room requires the room component"
+}
+
+test_room_component_plan_includes_its_dependency() {
+  local output
+  output="$(bash "${PROVISIONER}" --component room --room theater \
+    --print-component-plan 2>&1)"
+  assert_contains "${output}" "room"
+  assert_contains "${output}" "core"
+  assert_not_contains "${output}" "Component is not implemented"
+}
+
+test_baseline_plan_excludes_the_room_component() {
+  local output
+  output="$(bash "${PROVISIONER}" --print-component-plan 2>&1)"
+  assert_contains "${output}" "skin"
+  assert_not_contains "${output}" "room"
+}
+
+test_unknown_room_is_rejected_by_name() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --component room --room kitchen \
+    --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unknown room must be rejected"
+  assert_contains "${output}" "kitchen"
+}
+
+test_room_flag_rejects_path_traversal() {
+  local output rc name
+  for name in '..' '../../etc' 'theater/../..'; do
+    set +e
+    output="$(bash "${PROVISIONER}" --component room --room "${name}" \
+      --print-component-plan 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "--room must reject: ${name}"
+    assert_contains "${output}" "Room name"
+  done
 }
 
 test_no_kodi_conflicts_with_explicit_components() {
@@ -785,6 +836,188 @@ test_production_config_takes_binary_addons_from_the_installed_branch() {
   done
 }
 
+test_room_config_parses_every_key() {
+  local dir file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  cat > "${file}" <<'CONF'
+# theater
+ROOM_DISPLAY_RESOLUTION=3840x2160p
+ROOM_DISPLAY_WHITELIST=0409602160024.00000pstd,0384002160060.00000pstd
+ROOM_DOLBY_VISION=1
+ROOM_DOLBY_VISION_MODE=tv-led
+ROOM_AUDIO_PASSTHROUGH=1
+ROOM_AUDIO_AC3=1
+ROOM_AUDIO_EAC3=1
+ROOM_AUDIO_DTS=1
+ROOM_AUDIO_TRUEHD=1
+ROOM_AUDIO_DTSHD=0
+CONF
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  coreelec_room_config_validate
+  assert_eq "3840x2160p" "${ROOM_DISPLAY_RESOLUTION}" "resolution label"
+  assert_eq "0409602160024.00000pstd,0384002160060.00000pstd" \
+    "${ROOM_DISPLAY_WHITELIST}" "whitelist"
+  assert_eq "tv-led" "${ROOM_DOLBY_VISION_MODE}" "dolby vision mode"
+  assert_eq "0" "${ROOM_AUDIO_DTSHD}" "dts-hd passthrough"
+}
+
+# Regression: coreelec_room_config_defaults used to reset ROOM_NAME, which the
+# CLI had already set from --room and which no room.conf can restore, because
+# ROOM_NAME is not an accepted room key. The live run surfaced it as an empty
+# room.name in the audit report.
+test_room_config_defaults_preserve_the_selected_room_name() {
+  local dir file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  cat > "${file}" <<'CONF'
+ROOM_DISPLAY_RESOLUTION=3840x2160p
+ROOM_DISPLAY_WHITELIST=0384002160060.00000pstd
+ROOM_DOLBY_VISION=1
+ROOM_DOLBY_VISION_MODE=tv-led
+ROOM_AUDIO_PASSTHROUGH=1
+ROOM_AUDIO_AC3=1
+ROOM_AUDIO_EAC3=1
+ROOM_AUDIO_DTS=1
+ROOM_AUDIO_TRUEHD=1
+ROOM_AUDIO_DTSHD=1
+CONF
+  ROOM_NAME="theater"
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  coreelec_room_config_validate
+  assert_eq "theater" "${ROOM_NAME}" "the selected room name survives loading"
+  assert_eq "${file}" "${ROOM_CONFIG_FILE}" "the loaded file is recorded"
+}
+
+# ROOM_NAME is CLI state, not a room key, so a room.conf that tries to set it
+# must still be rejected -- keeping it out of the defaults reset must not have
+# quietly made it assignable.
+test_room_config_rejects_room_name_as_a_key() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  printf 'ROOM_NAME=elsewhere\n' > "${file}"
+  ROOM_NAME="theater"
+  coreelec_room_config_defaults
+  set +e
+  output="$(coreelec_room_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_eq "1" "${rc}" "a room.conf setting ROOM_NAME is rejected"
+  assert_contains "${output}" "unknown room configuration key: ROOM_NAME"
+}
+
+test_room_config_missing_key_is_rejected() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  cat > "${file}" <<'CONF'
+ROOM_DISPLAY_RESOLUTION=3840x2160p
+CONF
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  set +e
+  output="$(coreelec_room_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an incomplete room file must be rejected"
+  assert_contains "${output}" "ROOM_DISPLAY_WHITELIST"
+}
+
+test_room_config_rejects_provision_keys_and_secrets() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  printf 'KODI_PORT=8181\n' > "${file}"
+  coreelec_room_config_defaults
+  set +e
+  output="$(coreelec_room_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a provision.conf key must not be accepted in room.conf"
+  assert_contains "${output}" "unknown room configuration key: KODI_PORT"
+
+  printf 'KODI_WEB_PASSWORD=hunter2\n' > "${file}"
+  coreelec_room_config_defaults
+  set +e
+  output="$(coreelec_room_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a secret must not be accepted in room.conf"
+  assert_contains "${output}" "is a secret"
+  assert_not_contains "${output}" "hunter2"
+}
+
+test_room_config_rejects_room_keys_in_provision_conf() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+  printf 'ROOM_DISPLAY_RESOLUTION=3840x2160p\n' > "${file}"
+  coreelec_config_defaults
+  set +e
+  output="$(coreelec_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a room key must not be accepted in provision.conf"
+  assert_contains "${output}" "unknown configuration key: ROOM_DISPLAY_RESOLUTION"
+}
+
+test_room_config_rejects_malformed_values() {
+  local dir file rc output entry
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  for entry in \
+    'ROOM_DISPLAY_RESOLUTION=3840*2160p' \
+    'ROOM_DISPLAY_WHITELIST=not-a-mode' \
+    'ROOM_DISPLAY_WHITELIST=0384002160060.00000pstd,' \
+    'ROOM_DOLBY_VISION_MODE=player' \
+    'ROOM_AUDIO_DTS=yes'; do
+    printf '%s\n' "${entry}" > "${file}"
+    coreelec_room_config_defaults
+    set +e
+    output="$(coreelec_room_config_load "${file}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "malformed entry must be rejected: ${entry}"
+    assert_contains "${output}" "${entry%%=*}"
+  done
+}
+
+test_room_name_rejects_path_traversal() {
+  local name rc output
+  for name in '.' '..' 'a/b' '' '-theater'; do
+    set +e
+    output="$(coreelec_validate_room_name "${name}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "room name must be rejected: '${name}'"
+  done
+  set +e
+  coreelec_validate_room_name theater >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" "a plain room name is accepted"
+}
+
+test_shipped_theater_room_config_is_complete() {
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${SCRIPT_DIR}/../config/rooms/theater/room.conf"
+  coreelec_room_config_validate
+  assert_eq "3840x2160p" "${ROOM_DISPLAY_RESOLUTION}" "theater resolution"
+  assert_eq "tv-led" "${ROOM_DOLBY_VISION_MODE}" "theater dolby vision mode"
+  assert_eq "1" "${ROOM_AUDIO_TRUEHD}" "theater truehd passthrough"
+  assert_contains "${ROOM_DISPLAY_WHITELIST}" "0384002160060.00000pstd"
+}
+
 run_all_tests \
   test_defaults_are_pacific_english_us \
   test_comments_blank_lines_and_values_are_parsed \
@@ -808,7 +1041,12 @@ run_all_tests \
   test_duplicate_component_requests_are_normalized \
   test_explicit_baseline_expands_full_plan \
   test_unknown_component_is_rejected \
-  test_unimplemented_room_component_is_rejected \
+  test_room_component_requires_a_room_name \
+  test_room_name_without_the_room_component_is_rejected \
+  test_room_component_plan_includes_its_dependency \
+  test_baseline_plan_excludes_the_room_component \
+  test_unknown_room_is_rejected_by_name \
+  test_room_flag_rejects_path_traversal \
   test_no_kodi_conflicts_with_explicit_components \
   test_empty_component_request_is_rejected \
   test_service_secret_without_endpoint_is_rejected \
@@ -826,4 +1064,13 @@ run_all_tests \
   test_production_config_records_each_artifact_exactly_once \
   test_production_config_artifact_records_are_well_formed \
   test_production_config_has_no_blocked_pins \
-  test_production_config_takes_binary_addons_from_the_installed_branch
+  test_production_config_takes_binary_addons_from_the_installed_branch \
+  test_room_config_parses_every_key \
+  test_room_config_defaults_preserve_the_selected_room_name \
+  test_room_config_rejects_room_name_as_a_key \
+  test_room_config_missing_key_is_rejected \
+  test_room_config_rejects_provision_keys_and_secrets \
+  test_room_config_rejects_room_keys_in_provision_conf \
+  test_room_config_rejects_malformed_values \
+  test_room_name_rejects_path_traversal \
+  test_shipped_theater_room_config_is_complete

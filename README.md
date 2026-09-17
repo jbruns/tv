@@ -11,6 +11,7 @@ integrations.
 - [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)
 - [Shared Ugoos setup guide](docs/devices/ugoos-am6b-plus/coreelec-21.3.md)
 - [Ugoos provisioning operations guide](docs/operations/provision-ugoos.md)
+- [Room desired-state reference](docs/devices/ugoos-am6b-plus/room-desired-state.md)
 - [Network onboarding guide](docs/network/pfsense-plus-26.07-onboarding.md)
 - [Ugoos Kodi lifecycle guide](docs/home-assistant/ugoos-kodi-lifecycle.md)
 - [Theater overview](rooms/theater/README.md)

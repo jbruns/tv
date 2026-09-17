@@ -63,9 +63,20 @@ as required by the selected guide. For the theater lifecycle package, follow
 
 ## 6. Apply room playback settings, verify, and back up device state
 
-Apply the room-specific display, Dolby Vision, resolution whitelist, and audio
-playback settings. Then verify the installed room behaves as documented:
-playback, device control, network reachability, and Home Assistant automations
-all match the selected guides. Create backups and copy them to another system.
-For Ugoos devices, keep the proven removable media as recovery media until any
-optional migration is complete.
+For Ugoos/CoreELEC rooms, apply the room's display, Dolby Vision, resolution
+whitelist, and audio passthrough desired state with the `room` provisioning
+component, with the display powered on and switched to this device's HDMI
+input:
+
+```bash
+./provision-coreelec.sh --target <hostname-or-IP> --component room --room <room>
+```
+
+The configuration keys, the display mode string format, and the report
+statuses are documented in the
+[room desired-state reference](devices/ugoos-am6b-plus/room-desired-state.md).
+Then verify the installed room behaves as documented: playback, device
+control, network reachability, and Home Assistant automations all match the
+selected guides. Create backups and copy them to another system. For Ugoos
+devices, keep the proven removable media as recovery media until any optional
+migration is complete.
