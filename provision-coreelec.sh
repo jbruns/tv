@@ -2351,7 +2351,20 @@ CORE_SETTING_IDS = [
 ]
 SKIN_SETTING_IDS = ["lookandfeel.skin"]
 SERVICE_SETTING_IDS = ["weather.addon"]
-SETTING_IDS = CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
+ROOM_SETTING_IDS = [
+    "videoscreen.resolution",
+    "videoscreen.whitelist",
+    "coreelec.amlogic.disabledolbyvision",
+    "coreelec.amlogic.dolbyvisionled",
+    "audiooutput.passthrough",
+    "audiooutput.ac3passthrough",
+    "audiooutput.eac3passthrough",
+    "audiooutput.dtspassthrough",
+    "audiooutput.truehdpassthrough",
+    "audiooutput.dtshdpassthrough",
+]
+SETTING_IDS = (CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
+               + ROOM_SETTING_IDS)
 
 # `date +%Z%z` output: a zone abbreviation followed by a UTC offset. Anything
 # else -- an unexpanded format string, an error line, an empty answer -- is not
@@ -2856,7 +2869,7 @@ def main(argv):
     def have(key):
         return request.get("HAVE_" + key, "0") == "1"
 
-    canonical_components = ["core", "cec", "addons", "services", "skin"]
+    canonical_components = ["core", "cec", "addons", "services", "skin", "room"]
     component_text = config("EFFECTIVE_COMPONENTS")
     components = component_text.split(",")
     if (not component_text or any(not item for item in components)
@@ -2874,6 +2887,8 @@ def main(argv):
         setting_ids.extend(SKIN_SETTING_IDS)
     if selected("services"):
         setting_ids.extend(SERVICE_SETTING_IDS)
+    if selected("room"):
+        setting_ids.extend(ROOM_SETTING_IDS)
     addon_ids = (
         [line.strip() for line in config("ADDON_IDS").split("\n")
          if line.strip()]
@@ -4125,6 +4140,67 @@ coreelec_report_comparison() {
   return 1
 }
 
+# Like coreelec_report_comparison, but tells "Kodi never reported this
+# setting" apart from "Kodi reported a different value": the room vocabulary
+# has a status the plain comparator does not (unobservable), so a room
+# comparison cannot use `|| true` to paper over a missing observation.
+coreelec_room_compare_setting() {
+  local prefix="$1" expected="$2" observation_key="$3" observations="$4" observed
+  if ! observed="$(coreelec_observation_value "${observation_key}" "${observations}")"; then
+    printf '%s.expected=%s\n' "${prefix}" "${expected}"
+    printf '%s.observed=\n' "${prefix}"
+    printf '%s.status=unobservable\n' "${prefix}"
+    return 1
+  fi
+  printf '%s.expected=%s\n' "${prefix}" "${expected}"
+  printf '%s.observed=%s\n' "${prefix}" "${observed}"
+  if [[ "${expected}" == "${observed}" ]]; then
+    printf '%s.status=ok\n' "${prefix}"
+    return 0
+  fi
+  printf '%s.status=mismatch\n' "${prefix}"
+  return 1
+}
+
+# The verify probe's setting_value joins Kodi list values with a single
+# space; ROOM_DISPLAY_WHITELIST is stored comma-separated. Both sides are
+# normalized to commas before comparison so a separator difference is never
+# reported as a mismatch. Order is significant to Kodi's mode selection and
+# is deliberately never sorted.
+coreelec_normalize_mode_list() {
+  printf '%s' "$1" | tr ' ' ',' | tr -s ','
+}
+
+# The whitelist gets its own comparator because it has a status the others do
+# not: `unsupported`. Kodi answers this setting with an empty list when none
+# of the pinned modes are still offered by the display, which is a different
+# device fact from "Kodi reported some other list" (mismatch) or "Kodi did
+# not answer this setting at all" (unobservable).
+coreelec_room_compare_whitelist() {
+  local prefix="$1" expected="$2" observations="$3"
+  local observed normalized_expected normalized_observed
+  normalized_expected="$(coreelec_normalize_mode_list "${expected}")"
+  if ! observed="$(coreelec_observation_value setting.videoscreen.whitelist "${observations}")"; then
+    printf '%s.expected=%s\n' "${prefix}" "${normalized_expected}"
+    printf '%s.observed=\n' "${prefix}"
+    printf '%s.status=unobservable\n' "${prefix}"
+    return 1
+  fi
+  normalized_observed="$(coreelec_normalize_mode_list "${observed}")"
+  printf '%s.expected=%s\n' "${prefix}" "${normalized_expected}"
+  printf '%s.observed=%s\n' "${prefix}" "${normalized_observed}"
+  if [[ -z "${normalized_observed}" ]]; then
+    printf '%s.status=unsupported\n' "${prefix}"
+    return 1
+  fi
+  if [[ "${normalized_expected}" == "${normalized_observed}" ]]; then
+    printf '%s.status=ok\n' "${prefix}"
+    return 0
+  fi
+  printf '%s.status=mismatch\n' "${prefix}"
+  return 1
+}
+
 coreelec_weather_configured() {
   [[ -n "${HOME_ASSISTANT_URL}" && -n "${HOME_ASSISTANT_WEATHER_ENTITY}" \
      && -n "${HOME_ASSISTANT_TOKEN:-}" ]]
@@ -4504,6 +4580,96 @@ verify_remote_baseline() {
   fi
   fi
 
+  # Room desired state. Every status below is one of ok/mismatch/unsupported/
+  # unobservable; only ok passes, so any other value is counted as a failure.
+  if coreelec_component_effective room; then
+    local dv_disable_expected dv_disable_observed dv_disable_found=0
+    local dv_led_expected dv_led_observed dv_led_found=0
+
+    coreelec_room_compare_whitelist "room.display.whitelist" \
+      "${ROOM_DISPLAY_WHITELIST}" "${observations}" \
+      || failures=$((failures + 1))
+
+    # The device reports videoscreen.resolution as Kodi's internal numeric
+    # index, never as the label the room configuration states; the index is
+    # unstable across Kodi releases and displays, which is why the
+    # pre-transaction display probe (Task 5) resolves it once, before the
+    # transaction, into ROOM_DISPLAY_RESOLUTION_INDEX. Verification compares
+    # the observed index against that resolved index -- the only value the
+    # index can be honestly compared with -- and never against the label.
+    # Without a resolved index there is nothing correct to compare the
+    # observation to, so the setting is reported unobservable rather than
+    # guessed at.
+    if [[ -n "${ROOM_DISPLAY_RESOLUTION_INDEX}" ]]; then
+      coreelec_room_compare_setting "room.display.resolution" \
+        "${ROOM_DISPLAY_RESOLUTION_INDEX}" "setting.videoscreen.resolution" \
+        "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'room.display.resolution.expected=%s\n' "${ROOM_DISPLAY_RESOLUTION}"
+      printf 'room.display.resolution.observed=%s\n' \
+        "$(coreelec_observation_value setting.videoscreen.resolution "${observations}" || true)"
+      printf 'room.display.resolution.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
+
+    # Dolby Vision is one logical setting split across two Kodi keys (a
+    # negated enable and an LED mode); both must be observed and both must
+    # match for the pair to read as one ok/mismatch/unobservable verdict.
+    dv_disable_expected="true"
+    [[ "${ROOM_DOLBY_VISION}" == "1" ]] && dv_disable_expected="false"
+    dv_led_expected="0"
+    [[ "${ROOM_DOLBY_VISION_MODE}" == "player-led" ]] && dv_led_expected="1"
+    if ! dv_disable_observed="$(coreelec_observation_value \
+        setting.coreelec.amlogic.disabledolbyvision "${observations}")"; then
+      dv_disable_found=1
+    fi
+    if ! dv_led_observed="$(coreelec_observation_value \
+        setting.coreelec.amlogic.dolbyvisionled "${observations}")"; then
+      dv_led_found=1
+    fi
+    printf 'room.dolbyvision.expected=%s,%s\n' "${dv_disable_expected}" "${dv_led_expected}"
+    printf 'room.dolbyvision.observed=%s,%s\n' "${dv_disable_observed}" "${dv_led_observed}"
+    if (( dv_disable_found == 1 || dv_led_found == 1 )); then
+      printf 'room.dolbyvision.status=unobservable\n'
+      failures=$((failures + 1))
+    elif [[ "${dv_disable_observed}" == "${dv_disable_expected}" \
+        && "${dv_led_observed}" == "${dv_led_expected}" ]]; then
+      printf 'room.dolbyvision.status=ok\n'
+    else
+      printf 'room.dolbyvision.status=mismatch\n'
+      failures=$((failures + 1))
+    fi
+
+    # Each audio codec is its own independent pass/fail: one codec left
+    # passing through incorrectly must never be hidden behind another
+    # codec's correct state.
+    coreelec_room_compare_setting "room.audio.passthrough" \
+      "$([[ "${ROOM_AUDIO_PASSTHROUGH}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.passthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.ac3" \
+      "$([[ "${ROOM_AUDIO_AC3}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.ac3passthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.eac3" \
+      "$([[ "${ROOM_AUDIO_EAC3}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.eac3passthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.dts" \
+      "$([[ "${ROOM_AUDIO_DTS}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.dtspassthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.truehd" \
+      "$([[ "${ROOM_AUDIO_TRUEHD}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.truehdpassthrough" "${observations}" \
+      || failures=$((failures + 1))
+    coreelec_room_compare_setting "room.audio.dtshd" \
+      "$([[ "${ROOM_AUDIO_DTSHD}" == "1" ]] && printf true || printf false)" \
+      "setting.audiooutput.dtshdpassthrough" "${observations}" \
+      || failures=$((failures + 1))
+  fi
+
   printf 'verification_failures=%s\n' "${failures}"
   if (( failures == 0 )); then
     printf 'verification_result=pass\n'
@@ -4623,7 +4789,7 @@ coreelec_report_manual_actions() {
 # section, and it is fenced by begin/end markers.
 coreelec_report_render() {
   local manifest="$1" name value index filename
-  local report_component_set report_addons=0 report_services=0
+  local report_component_set report_addons=0 report_services=0 report_room=0
   local requested_csv effective_csv dependencies_csv
   report_component_set="${EFFECTIVE_COMPONENT_SET:-$'\ncore\ncec\naddons\nservices\nskin\n'}"
   case "${report_component_set}" in
@@ -4631,6 +4797,9 @@ coreelec_report_render() {
   esac
   case "${report_component_set}" in
     *$'\n'services$'\n'*) report_services=1 ;;
+  esac
+  case "${report_component_set}" in
+    *$'\n'room$'\n'*) report_room=1 ;;
   esac
   printf 'report_format=coreelec-provisioning-report-2\n'
   printf 'script_version=%s\n' "${SCRIPT_VERSION}"
@@ -4653,6 +4822,9 @@ coreelec_report_render() {
   printf 'kodi_jsonrpc_reachable_from_host=%s\n' "${KODI_JSONRPC_LOCAL_REACHABLE}"
   if [[ -n "${REMOTE_BACKUP_PATH}" ]]; then
     printf 'remote_backup_path=%s\n' "${REMOTE_BACKUP_PATH}"
+  fi
+  if [[ "${report_room}" == "1" ]]; then
+    printf 'room.name=%s\n' "${ROOM_NAME}"
   fi
 
   if [[ "${report_addons}" == "1" ]]; then
