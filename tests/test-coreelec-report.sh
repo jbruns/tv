@@ -4598,6 +4598,36 @@ test_room_report_flags_an_unsupported_whitelist() {
 # pins the documented decision: without a resolved index there is nothing
 # honest to compare Kodi's observed index against, so the setting is
 # unobservable rather than compared against the configured label.
+# The fixture path cannot run the pre-transaction display probe, so it seeds
+# the index the probe would have resolved. These two tests are the only
+# coverage of the resolution comparison's ok and mismatch branches -- on a real
+# device this is the first room check to fire and the least proven.
+test_room_report_accepts_a_matching_resolution_index() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" resolution='41'
+  printf 'resolved.room.display.resolution=41\n' >> "${dir}/observations.env"
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.resolution.status=ok"
+  assert_contains "${report}" "verification_result=pass"
+}
+
+test_room_report_flags_a_renumbered_resolution_index() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" resolution='42'
+  printf 'resolved.room.display.resolution=41\n' >> "${dir}/observations.env"
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.resolution.status=mismatch"
+  assert_contains "${report}" "verification_result=fail"
+}
+
 test_room_report_resolution_is_unobservable_without_a_resolved_index() {
   local dir report
   dir="$(make_scratch_dir)"
@@ -4841,6 +4871,8 @@ run_all_tests \
   test_room_report_flags_a_whitelist_mismatch \
   test_room_report_flags_an_unobservable_setting \
   test_room_report_flags_an_unsupported_whitelist \
+  test_room_report_accepts_a_matching_resolution_index \
+  test_room_report_flags_a_renumbered_resolution_index \
   test_room_report_resolution_is_unobservable_without_a_resolved_index \
   test_room_report_reports_dolby_vision_positively \
   test_room_report_flags_dolby_vision_switched_off_on_the_device \

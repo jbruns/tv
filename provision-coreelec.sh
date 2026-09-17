@@ -5040,6 +5040,16 @@ coreelec_report_path() {
 # the test suite exercises the same functions a real run uses without a device.
 
 if (( ${#VERIFY_FIXTURE[@]} > 0 )); then
+  # The display probe is a fourth device call, and on a real run it is what
+  # resolves ROOM_DISPLAY_RESOLUTION_INDEX before the transaction opens. A
+  # fixture stands in for it with a resolved.room.display.resolution line.
+  # Without this seam the suite can only ever reach the unobservable branch of
+  # the resolution comparison, leaving the ok and mismatch branches -- the ones
+  # a real device exercises first -- untested.
+  ROOM_DISPLAY_RESOLUTION_INDEX="$(
+    coreelec_observation_value resolved.room.display.resolution \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
   verify_remote_baseline "${VERIFY_FIXTURE[0]}" "${VERIFY_FIXTURE[1]}"
   exit $?
 fi
