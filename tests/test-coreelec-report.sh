@@ -4223,7 +4223,163 @@ test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment() {
     "TMDb Helper with both keys is configured" || return 1
 }
 
+# --- Pre-transaction display probe -----------------------------------------
+
+# Serves a Settings.GetSettings response shaped after the live device (see the
+# captured expert dump): videoscreen.resolution carries its choices in a
+# top-level `options` list of {label, value}, where the label is the resolution
+# string (with a trailing space) and the value is Kodi's internal index;
+# videoscreen.whitelist carries its choices under `definition.options`, where
+# the mode string the config pins lives in the option's `value` (its `label` is
+# a human-readable "3840x2160p  60.00Hz"). The stub gives the whitelist a label
+# distinct from the mode value so a parser that matched on the label instead of
+# the value would fail. curl ignores its arguments and prints the response.
+write_display_probe_stub() {
+  local dir="$1" label="$2" index="$3"
+  shift 3
+  local bin_dir="${dir}/bin" response="${dir}/stub-response.json"
+  mkdir -p "${bin_dir}"
+  python3 - "${response}" "${label}" "${index}" "$@" <<'PYEOF'
+import json
+import sys
+
+path, label, index = sys.argv[1], sys.argv[2], sys.argv[3]
+modes = sys.argv[4:]
+document = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "settings": [
+            {"id": "videoscreen.resolution",
+             "options": [{"label": label, "value": int(index)}]},
+            {"id": "videoscreen.whitelist",
+             "definition": {"options": [
+                 {"label": "mode " + mode, "value": mode} for mode in modes]}},
+        ]
+    },
+}
+with open(path, "w") as handle:
+    json.dump(document, handle)
+PYEOF
+  cat > "${bin_dir}/curl" <<STUB
+#!/bin/sh
+cat "${response}"
+STUB
+  chmod +x "${bin_dir}/curl"
+}
+
+# A curl that always fails, standing in for a Kodi the probe cannot reach.
+write_failing_curl_stub() {
+  local dir="$1" bin_dir="$1/bin"
+  mkdir -p "${bin_dir}"
+  cat > "${bin_dir}/curl" <<'STUB'
+#!/bin/sh
+exit 7
+STUB
+  chmod +x "${bin_dir}/curl"
+}
+
+# Runs the emitted probe exactly the way the device does: the five KEY=value
+# parameter lines arrive on stdin, the stubbed curl is first on PATH, and
+# TMPDIR points at a private directory so the probe's mktemp -d and its cleanup
+# are observable.
+run_display_probe() {
+  local dir="$1" label="$2" whitelist="$3" script
+  mkdir -p "${dir}/tmp"
+  script="$(bash "${PROVISIONER}" --emit-remote-script display-probe)"
+  printf 'KODI_WEB_USER=%s\nKODI_WEB_PASSWORD=%s\nKODI_PORT=%s\nROOM_DISPLAY_RESOLUTION=%s\nROOM_DISPLAY_WHITELIST=%s\n' \
+    "kodi" "hunter2" "8080" "${label}" "${whitelist}" \
+    | PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" sh -c "${script}"
+}
+
+test_display_probe_resolves_a_label_to_an_index() {
+  local dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" \
+    '3840x2160p ' 41 \
+    '0409602160024.00000pstd' '0384002160060.00000pstd'
+  output="$(run_display_probe "${dir}" \
+    '3840x2160p' \
+    '0409602160024.00000pstd,0384002160060.00000pstd')"
+  assert_contains "${output}" "resolution_index=41"
+}
+
+test_display_probe_rejects_an_unreported_resolution() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" '1920x1080p ' 16 '0192001080060.00000pstd'
+  set +e
+  output="$(run_display_probe "${dir}" '3840x2160p' '0192001080060.00000pstd' 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreported resolution must abort the probe"
+  assert_contains "${output}" "3840x2160p"
+}
+
+test_display_probe_rejects_an_unreported_whitelist_mode() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" '3840x2160p ' 41 '0384002160060.00000pstd'
+  set +e
+  output="$(run_display_probe "${dir}" '3840x2160p' \
+    '0384002160060.00000pstd,0409602160024.00000pstd' 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a mode the display no longer reports must abort"
+  assert_contains "${output}" "0409602160024.00000pstd"
+}
+
+test_display_probe_reports_an_unreachable_kodi_clearly() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_failing_curl_stub "${dir}"
+  set +e
+  output="$(run_display_probe "${dir}" '3840x2160p' '0384002160060.00000pstd' 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unreachable Kodi must abort the probe"
+  assert_contains "${output}" "display probe could not reach Kodi"
+}
+
+test_display_probe_program_contains_no_single_quote() {
+  local output
+  output="$(bash "${PROVISIONER}" --emit-remote-script display-probe 2>&1)"
+  assert_not_contains "${output}" "'"
+}
+
+test_display_probe_program_carries_no_parameters() {
+  local output
+  output="$(bash "${PROVISIONER}" --emit-remote-script display-probe 2>&1)"
+  assert_not_contains "${output}" "3840x2160p"
+  assert_not_contains "${output}" "0384002160060.00000pstd"
+  assert_contains "${output}" "mktemp -d"
+  assert_contains "${output}" "trap"
+}
+
+test_display_probe_leaves_no_files_behind() {
+  local dir before after
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_display_probe_stub "${dir}" '3840x2160p ' 41 '0384002160060.00000pstd'
+  mkdir -p "${dir}/tmp"
+  before="$(find "${dir}/tmp" -type f | wc -l | tr -d ' ')"
+  run_display_probe "${dir}" '3840x2160p' '0384002160060.00000pstd' >/dev/null
+  after="$(find "${dir}/tmp" -type f | wc -l | tr -d ' ')"
+  assert_eq "${before}" "${after}" "the probe must remove its temporary files"
+}
+
 run_all_tests \
+  test_display_probe_resolves_a_label_to_an_index \
+  test_display_probe_rejects_an_unreported_resolution \
+  test_display_probe_rejects_an_unreported_whitelist_mode \
+  test_display_probe_reports_an_unreachable_kodi_clearly \
+  test_display_probe_program_contains_no_single_quote \
+  test_display_probe_program_carries_no_parameters \
+  test_display_probe_leaves_no_files_behind \
   test_reviewed_manifest_fixture_uses_sequential_indices_and_filenames \
   test_all_expected_addon_versions_are_verified \
   test_disabled_addon_is_failure \

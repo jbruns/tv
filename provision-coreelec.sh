@@ -112,8 +112,9 @@ Internal:
                              contacts a device.
   --emit-remote-script NAME [ROOT]
                           Print the remote 'backup', 'payload', 'stage',
-                           'deploy', 'rollback', 'finalize', 'verify', or
-                           'verify-probe' program for ROOT (default /storage),
+                           'deploy', 'rollback', 'finalize', 'verify',
+                           'verify-probe', or 'display-probe' program for ROOT
+                           (default /storage),
                            then exit. Used by the test suites; it never
                            contacts a device.
   --render-remote-deploy-script [ROOT]
@@ -3460,6 +3461,138 @@ grep -Fq "${key_blob}" "${authorized}"
 REMOTE_AUTHORIZED_KEY_INSTALL
 }
 
+# Resolves a room's desired resolution label into Kodi's internal index and
+# asserts the display still reports every pinned whitelist mode. Runs while
+# Kodi is up and before the backup exists, because the transformer writes
+# guisettings.xml with Kodi stopped and can no longer ask.
+#
+# stdin carries the parameters (Kodi user, password, port, resolution label,
+# whitelist), so this program cannot be streamed to `sh -s` like most of the
+# others; it travels inside a single-quoted remote `sh -c` argument and
+# therefore must never contain a single quote of its own. That is why the trap
+# is double-quoted and the inner here-document delimiters are unquoted: neither
+# the JSON request nor the Python body contains a dollar sign, backtick, or
+# backslash for the device shell to expand.
+coreelec_remote_display_probe_script() {
+  local root="${1:-/storage}"
+  cat <<REMOTE_DISPLAY_PROBE
+set -eu
+umask 077
+storage_root="${root}"
+REMOTE_DISPLAY_PROBE
+  cat <<'REMOTE_DISPLAY_PROBE_BODY'
+probe_user=""
+probe_password=""
+probe_port="8080"
+probe_resolution=""
+probe_whitelist=""
+while IFS= read -r probe_line; do
+  case "${probe_line}" in
+    KODI_WEB_USER=*) probe_user="${probe_line#KODI_WEB_USER=}" ;;
+    KODI_WEB_PASSWORD=*) probe_password="${probe_line#KODI_WEB_PASSWORD=}" ;;
+    KODI_PORT=*) probe_port="${probe_line#KODI_PORT=}" ;;
+    ROOM_DISPLAY_RESOLUTION=*) probe_resolution="${probe_line#ROOM_DISPLAY_RESOLUTION=}" ;;
+    ROOM_DISPLAY_WHITELIST=*) probe_whitelist="${probe_line#ROOM_DISPLAY_WHITELIST=}" ;;
+    "") ;;
+    *) printf "display probe rejected an unknown parameter\n" >&2; exit 1 ;;
+  esac
+done
+
+[ -n "${probe_user}" ] || { printf "display probe requires a Kodi user\n" >&2; exit 1; }
+[ -n "${probe_resolution}" ] || { printf "display probe requires a resolution label\n" >&2; exit 1; }
+[ -n "${probe_whitelist}" ] || { printf "display probe requires a whitelist\n" >&2; exit 1; }
+
+probe_dir="$(mktemp -d)"
+trap "rm -rf -- ${probe_dir}" EXIT INT TERM
+
+# The password reaches curl only through a mode-600 configuration file in a
+# directory the trap removes: it never appears in argv or in the process list.
+printf "user = \"%s:%s\"\n" "${probe_user}" "${probe_password}" \
+  > "${probe_dir}/curlrc"
+cat > "${probe_dir}/request.json" <<PROBE_REQUEST
+{"jsonrpc":"2.0","id":1,"method":"Settings.GetSettings","params":{"level":"expert","filter":{"section":"system","category":"display"}}}
+PROBE_REQUEST
+
+if ! curl --silent --show-error --fail --max-time 20 \
+  --config "${probe_dir}/curlrc" \
+  --header "Content-Type: application/json" \
+  --data "@${probe_dir}/request.json" \
+  "http://127.0.0.1:${probe_port}/jsonrpc" > "${probe_dir}/response.json"; then
+  printf "display probe could not reach Kodi on port %s\n" "${probe_port}" >&2
+  exit 1
+fi
+
+printf "%s\n%s\n" "${probe_resolution}" "${probe_whitelist}" \
+  > "${probe_dir}/expected"
+
+python3 - "${probe_dir}/response.json" "${probe_dir}/expected" <<PROBE_PARSE
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    try:
+        document = json.load(handle)
+    except ValueError:
+        raise SystemExit("display probe could not parse Kodi response")
+
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    wanted_label = handle.readline().strip()
+    wanted_modes = [item for item in handle.readline().strip().split(",") if item]
+
+settings = document.get("result", {}).get("settings")
+if not isinstance(settings, list):
+    raise SystemExit("display probe did not receive a settings list")
+
+by_id = {}
+for setting in settings:
+    if isinstance(setting, dict) and "id" in setting:
+        by_id[setting["id"]] = setting
+
+
+def option_pairs(setting_id):
+    setting = by_id.get(setting_id)
+    if setting is None:
+        raise SystemExit(
+            "display probe: Kodi did not report %s; is the display powered on "
+            "and selected to this device?" % setting_id)
+    raw = setting.get("options")
+    if not isinstance(raw, list):
+        definition = setting.get("definition")
+        if isinstance(definition, dict):
+            raw = definition.get("options")
+    if not isinstance(raw, list):
+        return []
+    pairs = []
+    for option in raw:
+        if isinstance(option, dict) and "label" in option and "value" in option:
+            pairs.append((str(option["label"]).strip(), option["value"]))
+    return pairs
+
+
+resolution_pairs = option_pairs("videoscreen.resolution")
+matches = [value for label, value in resolution_pairs if label == wanted_label]
+if not matches:
+    raise SystemExit(
+        "display probe: the display does not offer resolution %s; it offers: %s"
+        % (wanted_label, ", ".join(sorted(
+            label for label, _ in resolution_pairs)) or "nothing"))
+if len(matches) > 1:
+    raise SystemExit(
+        "display probe: resolution %s is ambiguous; Kodi reports it %d times"
+        % (wanted_label, len(matches)))
+
+reported_modes = set(str(value) for _, value in option_pairs("videoscreen.whitelist"))
+missing = [mode for mode in wanted_modes if mode not in reported_modes]
+if missing:
+    raise SystemExit(
+        "display probe: the display no longer reports pinned display "
+        "mode(s): %s" % ", ".join(missing))
+
+print("resolution_index=%s" % matches[0])
+PROBE_PARSE
+REMOTE_DISPLAY_PROBE_BODY
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
@@ -3472,9 +3605,10 @@ coreelec_emit_remote_script() {
     finalize) coreelec_remote_finalize_script "${root}" ;;
     verify) coreelec_remote_verify_script "${root}" ;;
     verify-probe) coreelec_remote_verify_probe_source ;;
+    display-probe) coreelec_remote_display_probe_script "${root}" ;;
     authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, or authorized-key, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, or authorized-key, not: ${name}"
       ;;
   esac
 }
@@ -4982,6 +5116,43 @@ validate_remote() {
   fi
 }
 
+# Runs after the administrator key is installed (which is idempotent and
+# independently reversible) and before create_remote_backup, which is the
+# first real state change. A display that is off, on another input, or no
+# longer reporting a pinned mode aborts the run here, with nothing to undo.
+coreelec_resolve_room_display() {
+  local script output line
+  coreelec_component_effective room || return 0
+
+  script="$(coreelec_remote_display_probe_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote display probe script must not contain a single quote"
+
+  info "Resolving the ${ROOM_NAME} display mode against the running Kodi" >&2
+  output="$(
+    {
+      printf 'KODI_WEB_USER=%s\n' "${KODI_USER}"
+      printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
+      printf 'KODI_PORT=%s\n' "${KODI_PORT}"
+      printf 'ROOM_DISPLAY_RESOLUTION=%s\n' "${ROOM_DISPLAY_RESOLUTION}"
+      printf 'ROOM_DISPLAY_WHITELIST=%s\n' "${ROOM_DISPLAY_WHITELIST}"
+    } | ssh_keyed "sh -c '${script}'"
+  )" || die "The display probe failed. The display must be powered on and selected to this device for the room component to apply. Nothing on the device has been changed apart from the administrator key."
+
+  while IFS= read -r line; do
+    case "${line}" in
+      resolution_index=*) ROOM_DISPLAY_RESOLUTION_INDEX="${line#resolution_index=}" ;;
+    esac
+  done <<< "${output}"
+
+  case "${ROOM_DISPLAY_RESOLUTION_INDEX}" in
+    ""|*[!0-9]*)
+      die "The display probe did not return a usable resolution index for ${ROOM_DISPLAY_RESOLUTION}"
+      ;;
+  esac
+  info "Resolved ${ROOM_DISPLAY_RESOLUTION} to Kodi resolution index ${ROOM_DISPLAY_RESOLUTION_INDEX}" >&2
+}
+
 create_remote_backup() {
   local component_scope
   info "Creating a selective pre-provisioning backup on the CoreELEC STORAGE partition" >&2
@@ -5491,6 +5662,8 @@ if [[ "${APPLY_KODI}" == "1" ]]; then
 fi
 
 install_public_key_if_needed
+
+coreelec_resolve_room_display
 
 REMOTE_BACKUP_PATH="$(create_remote_backup)"
 info "Remote backup created: ${REMOTE_BACKUP_PATH}"
