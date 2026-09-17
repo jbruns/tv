@@ -192,7 +192,7 @@ and narrows only the artifact set. When components are explicit, each
 | `addons` | The selected, checksum-locked artifacts and their installed add-on directories |
 | `services` | Settings owned by `plugin.video.themoviedb.helper`, `weather.ha`, `pvr.nextpvr`, and `script.plexmod` |
 | `skin` | Active Arctic Fuse selection, Arctic Fuse settings, Skin Variables widget JSON, managed video playlists, and skin-specific shared Kodi defaults |
-| `room` | Owns display and audio state in `config/rooms/<room>/room.conf`: the desktop resolution, the display mode whitelist, both Dolby Vision settings, the five audio passthrough flags, and the decoded-audio channel layout in `guisettings.xml`. Opt-in: never expanded from `baseline`; must be requested explicitly with `--component room --room NAME` |
+| `room` | Owns display and audio state in `config/rooms/<room>/room.conf`: the desktop resolution, the display mode whitelist, both Dolby Vision settings, the six audio passthrough flags, and the decoded-audio channel layout in `guisettings.xml`. Opt-in: never expanded from `baseline`; must be requested explicitly with `--component room --room NAME` |
 | `baseline` | Alias for every implemented component: `core,cec,addons,services,skin`; it excludes `room`, which is opt-in |
 
 Dependencies are expanded before device contact, cycle-checked, and reported

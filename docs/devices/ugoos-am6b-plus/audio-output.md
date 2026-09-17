@@ -4,8 +4,8 @@ This is the reference for the three Kodi audio output settings the
 provisioner brings under management: the output device, the passthrough
 device, and the decoded-audio channel layout. It exists so that drift in any
 of the three is **reported**, not silently absorbed. Two of the three are
-`core` state, shared by every AM6B+ unit; the third is `room` state, because
-it depends on the room's AVR. See the
+`core` state, treated as a shared per-model baseline across every AM6B+ unit;
+the third is `room` state, because it depends on the room's AVR. See the
 [room desired-state reference](room-desired-state.md) for the other room
 settings and how they are requested.
 
@@ -95,8 +95,10 @@ timing the room display probe uses.
 ## Which settings are baseline and which are room state
 
 `AUDIO_DEVICE` and `AUDIO_PASSTHROUGH_DEVICE` are `core` (shared baseline)
-state: the ALSA device strings they resolve to are AM6B+ hardware facts,
-identical on every unit of this model, regardless of which room it sits in.
+state: the output intent they resolve is a per-model baseline, treated as
+shared across every AM6B+ unit regardless of which room it sits in. It does
+not depend on the room's AVR, unlike the speaker layout below, which is why
+it is `core` rather than `room` scope.
 
 `ROOM_AUDIO_CHANNELS` is `room` state: the correct speaker layout depends on
 the connected AVR, which differs by room. It is a **required** key in every
@@ -127,7 +129,7 @@ one of:
 | --- | --- | --- |
 | `ok` | The resolved value was written and Kodi reports it back unchanged. | None. |
 | `mismatch` | Kodi reports a value different from what was resolved and written. | Investigate; something changed the setting after the transaction wrote it. |
-| `unobservable` | This run never resolved a value for that setting (the owning component was not requested), so there was nothing to compare Kodi's report against. | Confirm the run requested `--component core` and/or `--component room --room NAME` as appropriate, and re-run. |
+| `unobservable` | Kodi's report never included this setting, so there was nothing to compare the expected value against. This happens either because the owning component was not requested (no expected value was ever resolved) or because the setting was requested but the device's Kodi never reported it back at all. | Confirm the run requested `--component core` and/or `--component room --room NAME` as appropriate. If the component was requested and this still occurs, investigate why Kodi's JSON-RPC report omitted the setting; it is a real condition, not just an unrequested-component signal. |
 
 If the probe itself fails before the transaction opens, the failure message
 names the setting and lists every output (or channel layout) Kodi actually

@@ -10,7 +10,7 @@ evidence and design rationale behind this contract are recorded in the
 ## What `room` manages, and what it deliberately does not
 
 `room` owns exactly eleven Kodi settings: the desktop resolution, the display
-mode whitelist, both Dolby Vision settings, the five audio passthrough flags,
+mode whitelist, both Dolby Vision settings, the six audio passthrough flags,
 and the decoded-audio channel layout. It writes only `guisettings.xml`, and
 only the room-scoped identifiers below.
 
@@ -19,10 +19,10 @@ It does not manage:
 - **`advancedsettings.xml`.** The 4K remux buffering work tracked as #9 owns
   that file exclusively; `room` never touches it.
 - **The ALSA audio device strings** (`audiooutput.audiodevice` and
-  `audiooutput.passthroughdevice`). These are AM6B+ hardware facts, identical
-  in every room, not room state. They are managed by the `core` component
-  instead; see [managed audio output](audio-output.md) for how they are
-  resolved.
+  `audiooutput.passthroughdevice`). These are treated as a per-model
+  baseline shared across every AM6B+ unit, not room state. They are managed
+  by the `core` component instead; see [managed audio output](audio-output.md)
+  for how they are resolved.
 - Anything about the Sony or the Denon. `room` configures the CoreELEC
   playback host only.
 - Hostname, DHCP reservation, DNS, or CEC policy. Those belong to the network
