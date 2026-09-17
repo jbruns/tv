@@ -122,6 +122,12 @@ would pin a number that can silently come to mean a different resolution.
 device resolves that label to the index that matters for this run in a
 pre-transaction probe, described next.
 
+This is not a theoretical concern. During the first two provisioning runs
+against the theater, minutes apart on one unchanged CoreELEC release and one
+unchanged display, `3840x2160p` resolved to index `41` and then to index `40`.
+A configuration pinning the raw index would have been wrong by the second run.
+Resolving the label on every run is what makes the setting stable.
+
 ## The pre-transaction display probe
 
 Immediately after the administrator key is installed, and immediately before
