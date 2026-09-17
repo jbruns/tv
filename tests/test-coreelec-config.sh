@@ -853,6 +853,7 @@ ROOM_AUDIO_EAC3=1
 ROOM_AUDIO_DTS=1
 ROOM_AUDIO_TRUEHD=1
 ROOM_AUDIO_DTSHD=0
+ROOM_AUDIO_CHANNELS=7.1
 CONF
   coreelec_room_config_defaults
   coreelec_room_config_load "${file}"
@@ -884,6 +885,7 @@ ROOM_AUDIO_EAC3=1
 ROOM_AUDIO_DTS=1
 ROOM_AUDIO_TRUEHD=1
 ROOM_AUDIO_DTSHD=1
+ROOM_AUDIO_CHANNELS=7.1
 CONF
   ROOM_NAME="theater"
   coreelec_room_config_defaults
@@ -928,6 +930,33 @@ CONF
   set -e
   assert_failure "${rc}" "an incomplete room file must be rejected"
   assert_contains "${output}" "ROOM_DISPLAY_WHITELIST"
+}
+
+test_room_config_missing_audio_channels_is_rejected() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  cat > "${file}" <<'CONF'
+ROOM_DISPLAY_RESOLUTION=3840x2160p
+ROOM_DISPLAY_WHITELIST=0384002160060.00000pstd
+ROOM_DOLBY_VISION=1
+ROOM_DOLBY_VISION_MODE=tv-led
+ROOM_AUDIO_PASSTHROUGH=1
+ROOM_AUDIO_AC3=1
+ROOM_AUDIO_EAC3=1
+ROOM_AUDIO_DTS=1
+ROOM_AUDIO_TRUEHD=1
+ROOM_AUDIO_DTSHD=1
+CONF
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  set +e
+  output="$(coreelec_room_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "room.conf omitting ROOM_AUDIO_CHANNELS must be rejected"
+  assert_contains "${output}" "ROOM_AUDIO_CHANNELS"
 }
 
 test_room_config_rejects_provision_keys_and_secrets() {
@@ -1018,6 +1047,94 @@ test_shipped_theater_room_config_is_complete() {
   assert_contains "${ROOM_DISPLAY_WHITELIST}" "0384002160060.00000pstd"
 }
 
+test_audio_device_intents_are_validated() {
+  local dir rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+
+  printf 'AUDIO_DEVICE=hdmi-multichannel\nAUDIO_PASSTHROUGH_DEVICE=hdmi\n' \
+    > "${dir}/ok.conf"
+  set +e
+  (
+    coreelec_config_defaults
+    coreelec_config_load "${dir}/ok.conf"
+    [[ "${AUDIO_DEVICE}" == "hdmi-multichannel" ]] || exit 1
+    [[ "${AUDIO_PASSTHROUGH_DEVICE}" == "hdmi" ]] || exit 1
+  )
+  rc=$?
+  set -e
+  assert_success "${rc}" "valid audio intents must load" || return 1
+
+  printf 'AUDIO_DEVICE=surround71\n' > "${dir}/bad.conf"
+  set +e
+  output="$(
+    (
+      coreelec_config_defaults
+      coreelec_config_load "${dir}/bad.conf"
+    ) 2>&1
+  )"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an ALSA selector token is not a valid intent" || return 1
+  assert_contains "${output}" "AUDIO_DEVICE" \
+    "the rejection names the offending key" || return 1
+
+  printf 'ROOM_AUDIO_CHANNELS=7.1\n' > "${dir}/room.conf"
+  set +e
+  output="$(
+    (
+      coreelec_config_defaults
+      coreelec_config_load "${dir}/room.conf"
+    ) 2>&1
+  )"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a room key must not be accepted by the shared parser" || return 1
+}
+
+test_room_audio_channels_is_validated() {
+  local dir rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+
+  printf 'ROOM_AUDIO_CHANNELS=7.1\n' > "${dir}/ok.conf"
+  set +e
+  (
+    coreelec_room_config_defaults
+    coreelec_room_config_load "${dir}/ok.conf"
+    [[ "${ROOM_AUDIO_CHANNELS}" == "7.1" ]] || exit 1
+  )
+  rc=$?
+  set -e
+  assert_success "${rc}" "a valid layout must load" || return 1
+
+  printf 'ROOM_AUDIO_CHANNELS=10\n' > "${dir}/index.conf"
+  set +e
+  output="$(
+    (
+      coreelec_room_config_defaults
+      coreelec_room_config_load "${dir}/index.conf"
+    ) 2>&1
+  )"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "Kodi's enum ordinal is not a valid layout label" || return 1
+  assert_contains "${output}" "ROOM_AUDIO_CHANNELS" \
+    "the rejection names the offending key" || return 1
+
+  printf 'AUDIO_DEVICE=hdmi\n' > "${dir}/shared.conf"
+  set +e
+  output="$(
+    (
+      coreelec_room_config_defaults
+      coreelec_room_config_load "${dir}/shared.conf"
+    ) 2>&1
+  )"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a shared key must not be accepted by the room parser" || return 1
+}
+
 run_all_tests \
   test_defaults_are_pacific_english_us \
   test_comments_blank_lines_and_values_are_parsed \
@@ -1069,8 +1186,11 @@ run_all_tests \
   test_room_config_defaults_preserve_the_selected_room_name \
   test_room_config_rejects_room_name_as_a_key \
   test_room_config_missing_key_is_rejected \
+  test_room_config_missing_audio_channels_is_rejected \
   test_room_config_rejects_provision_keys_and_secrets \
   test_room_config_rejects_room_keys_in_provision_conf \
   test_room_config_rejects_malformed_values \
   test_room_name_rejects_path_traversal \
+  test_audio_device_intents_are_validated \
+  test_room_audio_channels_is_validated \
   test_shipped_theater_room_config_is_complete

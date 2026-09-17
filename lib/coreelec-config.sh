@@ -250,6 +250,9 @@ coreelec_config_defaults() {
   KEYBOARD_LAYOUT="English QWERTY"
   ADDON_UPDATE_MODE="notify"
 
+  AUDIO_DEVICE=""
+  AUDIO_PASSTHROUGH_DEVICE=""
+
   HOME_ASSISTANT_URL="${HOME_ASSISTANT_URL:-}"
   HOME_ASSISTANT_WEATHER_ENTITY=""
   HOME_ASSISTANT_SUN_ENTITY=""
@@ -348,6 +351,16 @@ coreelec_config_assign() {
     ADDON_UPDATE_MODE)
       coreelec_config_validate_enum "ADDON_UPDATE_MODE" "${value}" "notify" "auto"
       ADDON_UPDATE_MODE="${value}"
+      ;;
+    AUDIO_DEVICE)
+      coreelec_config_validate_enum "AUDIO_DEVICE" "${value}" \
+        "analog" "sysdefault" "hdmi-multichannel" "spdif" "hdmi"
+      AUDIO_DEVICE="${value}"
+      ;;
+    AUDIO_PASSTHROUGH_DEVICE)
+      coreelec_config_validate_enum "AUDIO_PASSTHROUGH_DEVICE" "${value}" \
+        "analog" "sysdefault" "hdmi-multichannel" "spdif" "hdmi"
+      AUDIO_PASSTHROUGH_DEVICE="${value}"
       ;;
     HOME_ASSISTANT_WEATHER_ENTITY)
       validate_identifier "HOME_ASSISTANT_WEATHER_ENTITY" "${value}"
@@ -458,8 +471,10 @@ coreelec_room_config_defaults() {
   ROOM_AUDIO_DTS=""
   ROOM_AUDIO_TRUEHD=""
   ROOM_AUDIO_DTSHD=""
+  ROOM_AUDIO_CHANNELS=""
   # Resolved by the pre-transaction display probe, never by configuration.
   ROOM_DISPLAY_RESOLUTION_INDEX=""
+  ROOM_AUDIO_CHANNELS_INDEX=""
   COREELEC_ROOM_CONFIG_SEEN_KEYS=$'\n'
 }
 
@@ -515,6 +530,11 @@ coreelec_room_config_assign() {
       coreelec_config_validate_bool "ROOM_AUDIO_DTSHD" "${value}"
       ROOM_AUDIO_DTSHD="${value}"
       ;;
+    ROOM_AUDIO_CHANNELS)
+      coreelec_config_validate_enum "ROOM_AUDIO_CHANNELS" "${value}" \
+        "2.0" "2.1" "3.0" "3.1" "4.0" "4.1" "5.0" "5.1" "7.0" "7.1"
+      ROOM_AUDIO_CHANNELS="${value}"
+      ;;
     *)
       die "${location}: unknown room configuration key: ${key}"
       ;;
@@ -544,7 +564,8 @@ coreelec_room_config_validate() {
   local key
   for key in ROOM_DISPLAY_RESOLUTION ROOM_DISPLAY_WHITELIST ROOM_DOLBY_VISION \
     ROOM_DOLBY_VISION_MODE ROOM_AUDIO_PASSTHROUGH ROOM_AUDIO_AC3 \
-    ROOM_AUDIO_EAC3 ROOM_AUDIO_DTS ROOM_AUDIO_TRUEHD ROOM_AUDIO_DTSHD; do
+    ROOM_AUDIO_EAC3 ROOM_AUDIO_DTS ROOM_AUDIO_TRUEHD ROOM_AUDIO_DTSHD \
+    ROOM_AUDIO_CHANNELS; do
     case "${COREELEC_ROOM_CONFIG_SEEN_KEYS}" in
       *$'\n'"${key}"$'\n'*) ;;
       *) die "${ROOM_CONFIG_FILE:-room configuration}: missing required room configuration key: ${key}" ;;
