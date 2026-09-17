@@ -4,3 +4,6 @@
 coreelec-provision-reports/
 coreelec-lifecycle-reports/
 /2h2025/
+
+# Scratch trees left behind when a test run is interrupted before its trap fires.
+.coreelec-test.*/
