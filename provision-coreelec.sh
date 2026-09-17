@@ -2634,7 +2634,18 @@ def setting_value(entries, setting_id):
     if value is None:
         return ""
     if isinstance(value, list):
-        return " ".join(["%s" % (item,) for item in value])
+        return " ".join([render_setting_scalar(item) for item in value])
+    return render_setting_scalar(value)
+
+
+# Kodi answers boolean settings with a JSON boolean, and Python renders those
+# as "True"/"False" while every other representation of them -- guisettings.xml,
+# room.conf, the desired values this report compares against -- is lowercase.
+# Rendering them lowercase here is what makes an observed boolean comparable at
+# all; without it every boolean setting reports a mismatch against itself.
+def render_setting_scalar(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
     return "%s" % (value,)
 
 

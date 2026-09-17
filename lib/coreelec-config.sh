@@ -443,8 +443,11 @@ coreelec_config_validate() {
 # parser and is rejected naming the key.
 
 coreelec_room_config_defaults() {
-  ROOM_NAME=""
-  ROOM_CONFIG_FILE=""
+  # ROOM_NAME and ROOM_CONFIG_FILE are deliberately absent. They are CLI and
+  # derived state, declared at the top of the provisioner and owned by --room,
+  # not keys a room.conf may set -- coreelec_room_config_assign rejects both as
+  # unknown keys. Resetting them here would clear the name the operator asked
+  # for, which no room.conf then restores.
   ROOM_DISPLAY_RESOLUTION=""
   ROOM_DISPLAY_WHITELIST=""
   ROOM_DOLBY_VISION=""

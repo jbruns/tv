@@ -864,6 +864,54 @@ CONF
   assert_eq "0" "${ROOM_AUDIO_DTSHD}" "dts-hd passthrough"
 }
 
+# Regression: coreelec_room_config_defaults used to reset ROOM_NAME, which the
+# CLI had already set from --room and which no room.conf can restore, because
+# ROOM_NAME is not an accepted room key. The live run surfaced it as an empty
+# room.name in the audit report.
+test_room_config_defaults_preserve_the_selected_room_name() {
+  local dir file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  cat > "${file}" <<'CONF'
+ROOM_DISPLAY_RESOLUTION=3840x2160p
+ROOM_DISPLAY_WHITELIST=0384002160060.00000pstd
+ROOM_DOLBY_VISION=1
+ROOM_DOLBY_VISION_MODE=tv-led
+ROOM_AUDIO_PASSTHROUGH=1
+ROOM_AUDIO_AC3=1
+ROOM_AUDIO_EAC3=1
+ROOM_AUDIO_DTS=1
+ROOM_AUDIO_TRUEHD=1
+ROOM_AUDIO_DTSHD=1
+CONF
+  ROOM_NAME="theater"
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  coreelec_room_config_validate
+  assert_eq "theater" "${ROOM_NAME}" "the selected room name survives loading"
+  assert_eq "${file}" "${ROOM_CONFIG_FILE}" "the loaded file is recorded"
+}
+
+# ROOM_NAME is CLI state, not a room key, so a room.conf that tries to set it
+# must still be rejected -- keeping it out of the defaults reset must not have
+# quietly made it assignable.
+test_room_config_rejects_room_name_as_a_key() {
+  local dir file rc output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/room.conf"
+  printf 'ROOM_NAME=elsewhere\n' > "${file}"
+  ROOM_NAME="theater"
+  coreelec_room_config_defaults
+  set +e
+  output="$(coreelec_room_config_load "${file}" 2>&1)"
+  rc=$?
+  set -e
+  assert_eq "1" "${rc}" "a room.conf setting ROOM_NAME is rejected"
+  assert_contains "${output}" "unknown room configuration key: ROOM_NAME"
+}
+
 test_room_config_missing_key_is_rejected() {
   local dir file rc output
   dir="$(make_scratch_dir)"
@@ -1018,6 +1066,8 @@ run_all_tests \
   test_production_config_has_no_blocked_pins \
   test_production_config_takes_binary_addons_from_the_installed_branch \
   test_room_config_parses_every_key \
+  test_room_config_defaults_preserve_the_selected_room_name \
+  test_room_config_rejects_room_name_as_a_key \
   test_room_config_missing_key_is_rejected \
   test_room_config_rejects_provision_keys_and_secrets \
   test_room_config_rejects_room_keys_in_provision_conf \

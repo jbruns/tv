@@ -4733,7 +4733,52 @@ test_verify_probe_requests_room_settings_only_when_selected() {
   assert_not_contains "${output}" "videoscreen.whitelist"
 }
 
+# Kodi answers boolean settings with a JSON boolean. Python renders those as
+# "True"/"False", while guisettings.xml, room.conf, and every desired value the
+# report compares against are lowercase. The live run on the device found this:
+# all seven boolean room settings reported a mismatch against themselves, which
+# no fixture caught because every fixture had written the observed side by hand.
+test_verify_probe_renders_boolean_settings_lowercase() {
+  local dir root bin_dir request output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<ENTRIES
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+EFFECTIVE_COMPONENTS=core,room
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  python3 - "${dir}/stub/response-default.json" <<'PYEOF'
+import json
+import sys
+
+batch = [{"jsonrpc": "2.0", "id": "version", "result": {"version": {"major": 13}}}]
+for setting_id, value in (
+    ("audiooutput.ac3passthrough", True),
+    ("audiooutput.dtspassthrough", False),
+    ("coreelec.amlogic.disabledolbyvision", False),
+):
+    batch.append({"jsonrpc": "2.0", "id": "setting:" + setting_id,
+                  "result": {"value": value}})
+with open(sys.argv[1], "w") as handle:
+    json.dump(batch, handle)
+PYEOF
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}")"
+  assert_contains "${output}" "setting.audiooutput.ac3passthrough=true"
+  assert_contains "${output}" "setting.audiooutput.dtspassthrough=false"
+  assert_contains "${output}" "setting.coreelec.amlogic.disabledolbyvision=false"
+  assert_not_contains "${output}" "=True"
+  assert_not_contains "${output}" "=False"
+}
+
 run_all_tests \
+  test_verify_probe_renders_boolean_settings_lowercase \
   test_display_probe_resolves_a_label_to_an_index \
   test_display_probe_rejects_an_unreported_resolution \
   test_display_probe_rejects_an_unreported_whitelist_mode \
