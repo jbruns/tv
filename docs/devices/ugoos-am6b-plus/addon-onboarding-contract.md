@@ -95,7 +95,7 @@ it never performs network I/O:
   `service.script.plexmod.server_bound=0`.
 - token present and server bound: `complete`, with `server_bound=1`.
 - settings unreadable or malformed: `manual-required`, with the existing
-  `token-state-unreadable` observation.
+  `server-state-unreadable` observation.
 
 A Plex account that has authenticated but never selected a server is **not**
 complete; it reports `manual-required`.

@@ -265,7 +265,7 @@ and the onboarding fact moves to `onboarding_status`.
   `service.script.plexmod.server_bound=0`.
 - token present and server bound: `complete`, with `server_bound=1`.
 - settings unreadable or malformed: `manual-required`, with the existing
-  `token-state-unreadable` observation.
+  `server-state-unreadable` observation.
 
 `plugin.service.emby-next-gen`, evaluated in order:
 

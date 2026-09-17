@@ -1469,69 +1469,92 @@ test_guided_flow_refuses_addon_version_mismatch_before_private_steps() {
 }
 
 test_emby_password_never_appears_in_argv_log_or_report() {
-  local dir bin_dir python_bin_dir config env_file report_dir report output argv_logs secret
+  local dir bin_dir python_bin_dir output argv_logs secret
+  local report_dir env_file config report report_output
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   python_bin_dir="$(install_python3_argv_stub "${dir}")"
-  config="${dir}/provision.conf"
-  env_file="${dir}/.env"
-  report_dir="${dir}/reports"
   secret="emby-password-secret"
-  printf 'KODI_WEB_PASSWORD=%q\nEMBY_PASSWORD=%q\n' \
-    "kodi-web-password-secret" "${secret}" > "${env_file}"
-  write_config "${config}" plugin.service.emby-next-gen
-  cat >> "${config}" <<'CONFIG'
-EMBY_SERVER_URL=https://emby.example.test
-EMBY_USERNAME=media-user
-CONFIG
 
-  write_introspection_response "${dir}/stub/response-1.json"
-  write_addon_details_response "${dir}/stub/response-2.json" "plugin.service.emby-next-gen" "11.1.27"
-  printf 'absent\n' > "${dir}/stub/response-3.json"
-  write_gui_state_response "${dir}/stub/response-4.json" "Videos" "[..]"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"jsonrpc-notifyall","result":"OK"}' > "${dir}/stub/response-5.json"
-  write_gui_state_response "${dir}/stub/response-6.json" "Videos" "[..]"
-  write_gui_state_response "${dir}/stub/response-7.json" "Select dialog" "Add server"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-8.json"
-  write_gui_state_response "${dir}/stub/response-9.json" "Select main server" "Manually add server"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-10.json"
+  # assist_emby_login has no production caller yet (nothing wires the CLI's
+  # --addon plugin.service.emby-next-gen path to it), so this exercises the
+  # function directly, the same way its sibling scenario tests do, with the
+  # real SSH-backed helpers driving a guided sign-in through every dialog.
+  write_addon_details_response "${dir}/stub/response-1.json" "plugin.service.emby-next-gen" "11.1.27"
+  printf 'absent\n' > "${dir}/stub/response-2.json"
+  write_gui_state_response "${dir}/stub/response-3.json" "Videos" "[..]"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"jsonrpc-notifyall","result":"OK"}' > "${dir}/stub/response-4.json"
+  write_gui_state_response "${dir}/stub/response-5.json" "Videos" "[..]"
+  write_gui_state_response "${dir}/stub/response-6.json" "Select dialog" "Add server"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-7.json"
+  write_gui_state_response "${dir}/stub/response-8.json" "Select main server" "Manually add server"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-9.json"
+  write_gui_state_response "${dir}/stub/response-10.json" "Manage servers" "Host"
   write_gui_state_response "${dir}/stub/response-11.json" "Manage servers" "Host"
-  write_gui_state_response "${dir}/stub/response-12.json" "Manage servers" "Host"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-13.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-12.json"
+  write_gui_state_response "${dir}/stub/response-13.json" "Please sign in" "Username"
   write_gui_state_response "${dir}/stub/response-14.json" "Please sign in" "Username"
-  write_gui_state_response "${dir}/stub/response-15.json" "Please sign in" "Username"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-16.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-15.json"
+  write_gui_state_response "${dir}/stub/response-16.json" "Please sign in" "Password"
   write_gui_state_response "${dir}/stub/response-17.json" "Please sign in" "Password"
-  write_gui_state_response "${dir}/stub/response-18.json" "Please sign in" "Password"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-19.json"
-  write_gui_state_response "${dir}/stub/response-20.json" "Please sign in" "Sign in"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-21.json"
-  printf 'configured\n' > "${dir}/stub/response-22.json"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-sendtext","result":"OK"}' > "${dir}/stub/response-18.json"
+  write_gui_state_response "${dir}/stub/response-19.json" "Please sign in" "Sign in"
+  printf '%s\n' '{"jsonrpc":"2.0","id":"input-executeaction","result":"OK"}' > "${dir}/stub/response-20.json"
+  printf 'handshake-complete\n' > "${dir}/stub/response-21.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
     export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
-    COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0" \
+    COREELEC_GUIDED_FLOW_POLL_INTERVAL_SECONDS="0"
+    TARGET="coreelec-theater"
+    SSH_PORT="22"
+    KODI_PORT="8080"
+    KODI_USER="homeassistant"
+    KODI_WEB_PASSWORD="kodi-web-password-secret"
+    LOCALE_LANGUAGE="resource.language.en_us"
+    ADDON_ARTIFACTS=("$(addon_record plugin.service.emby-next-gen)")
+    EMBY_PASSWORD="${secret}"
+    printf 'workflow_status=%s\n' \
+      "$(assist_emby_login "https://emby.example.test" "media-user" "${EMBY_PASSWORD}")"
+  } 2>&1)"
+
+  argv_logs="$(cat "${dir}"/stub/argv-*.log; python3_argv_logs "${dir}")"
+  assert_contains "${output}" "workflow_status=configured" \
+    "successful Emby assistance is reported" || return 1
+  assert_contains "$(cat "${dir}/stub/stdin-4.log")" '"method":"JSONRPC.NotifyAll"' \
+    "Emby assistance asks the running service to open its server manager" || return 1
+  assert_contains "$(cat "${dir}/stub/stdin-4.log")" '"sender":"Other","message":"manageserver"' \
+    "Emby assistance uses the add-on's supported manage-server notification" || return 1
+  assert_not_contains "${output}" "${secret}" "Emby password must not appear in output" || return 1
+  assert_not_contains "${argv_logs}" "${secret}" "Emby password must not appear in process arguments" || return 1
+
+  # The CLI's report writer never routes through assist_emby_login (it has
+  # no production caller yet), but it does read EMBY_PASSWORD from the
+  # shared environment file for the same add-on, so the report path is
+  # exercised separately here to guard against a future leak.
+  report_dir="${dir}/reports"
+  env_file="${dir}/.env"
+  config="${dir}/provision.conf"
+  printf 'KODI_WEB_PASSWORD=%q\nEMBY_PASSWORD=%q\n' \
+    "kodi-web-password-secret" "${secret}" > "${env_file}"
+  write_config "${config}" plugin.service.emby-next-gen
+  write_introspection_response "${dir}/stub/response-22.json"
+  printf 'absent\n' > "${dir}/stub/response-23.json"
+  report_output="$({
+    export COREELEC_SSH_STUB_DIR="${dir}/stub"
+    export PATH="${python_bin_dir}:${bin_dir}:${PATH}"
     UGOOS_ENV_FILE="${env_file}" \
       bash "${CLI_SCRIPT}" \
         --config "${config}" \
         --target coreelec-theater \
-        --interactive \
         --addon plugin.service.emby-next-gen \
         --report-dir "${report_dir}"
   } 2>&1)"
-
   report="$(find_single_report "${report_dir}")"
-  argv_logs="$(cat "${dir}"/stub/argv-*.log; python3_argv_logs "${dir}")"
   assert_contains "$(cat "${report}")" "addon.plugin.service.emby-next-gen.config_status=configured" \
-    "successful Emby assistance is reported" || return 1
-  assert_contains "$(cat "${dir}/stub/stdin-5.log")" '"method":"JSONRPC.NotifyAll"' \
-    "Emby assistance asks the running service to open its server manager" || return 1
-  assert_contains "$(cat "${dir}/stub/stdin-5.log")" '"sender":"Other","message":"manageserver"' \
-    "Emby assistance uses the add-on's supported manage-server notification" || return 1
-  assert_not_contains "${output}" "${secret}" "Emby password must not appear in output" || return 1
-  assert_not_contains "${argv_logs}" "${secret}" "Emby password must not appear in process arguments" || return 1
+    "the report captures the Emby configuration status" || return 1
+  assert_not_contains "${report_output}" "${secret}" "Emby password must not appear in the report run's output" || return 1
   assert_not_contains "$(cat "${report}")" "${secret}" "Emby password must not appear in the report"
 }
 
@@ -2088,6 +2111,7 @@ run_all_tests \
   test_guided_flow_times_out_as_manual_required \
   test_guided_flow_detects_persisted_tokens_without_printing_them \
   test_guided_flow_refuses_addon_version_mismatch_before_private_steps \
+  test_emby_password_never_appears_in_argv_log_or_report \
   test_emby_account_state_reports_each_credential_condition \
   test_emby_sync_state_separates_handshake_from_completed_sync \
   test_pm4k_server_binding_is_checked_separately_from_the_account_token \
