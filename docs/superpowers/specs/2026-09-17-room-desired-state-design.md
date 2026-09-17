@@ -230,18 +230,29 @@ The probe issues a single `Settings.GetSettings` call and does two things:
    the modes.
 
 Both are aborts in the preflight sense: they happen before the backup is taken
-and before anything on the device is modified, in the same spirit as
-`coreelec_validate_addon_selection` (`:3853`), which refuses an unknown
-`--addon` before the run has changed the device at all.
+and before any device state the run would have to roll back is modified, in the
+same spirit as `coreelec_validate_addon_selection` (`:3853`), which refuses an
+unknown `--addon` before the run has changed the device at all.
+
+Concretely, the probe runs immediately after `install_public_key_if_needed` and
+immediately before `create_remote_backup`. It cannot run earlier: before the
+administrator key is installed the only transport is `ssh_password`, which
+would prompt the operator for the temporary root password a second time.
+Installing the public key is idempotent and independently reversible, while
+`create_remote_backup` opens the transaction and is the first change a rollback
+must undo — so the guarantee that matters is intact.
 
 This placement is deliberate and is better than asserting display support after
 mutation. A run against a powered-off display fails before touching the device,
 with a message naming the modes the display is not reporting, instead of
 applying state and then reporting a failure the operator must interpret.
 
-The probe reuses the existing verify-request and remote-probe transport rather
-than introducing a second way to talk to Kodi. It runs only when `room` is in
-effective scope.
+The probe reuses the existing remote-script emitter and SSH conventions rather
+than introducing a second way to talk to Kodi. Because its parameters travel on
+stdin, the emitted program cannot be streamed to `sh -s` the way most remote
+programs are; it travels inside a single-quoted remote `sh -c` argument, as the
+payload and stage programs already do, and therefore must contain no single
+quote of its own. It runs only when `room` is in effective scope.
 
 The resolved index travels to the transformer in the settings payload as
 `ROOM_DISPLAY_RESOLUTION_INDEX`. The transformer never resolves labels itself;
