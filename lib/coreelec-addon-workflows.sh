@@ -390,6 +390,69 @@ sys.stdout.write("1" if token else "0")
 PYEOF
 }
 
+coreelec_postdeploy_pm4k_server_bound() {
+  local settings_xml
+  settings_xml="$(coreelec_postdeploy_read_addon_data_file "script.plexmod" "settings.xml")" || return 1
+  SETTINGS_XML="${settings_xml}" python3 - <<'PYEOF'
+import json
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+text = os.environ.get("SETTINGS_XML", "")
+if not text.strip():
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    root = ET.fromstring(text)
+except Exception:
+    raise SystemExit(1)
+
+settings = {}
+for node in root.findall(".//setting"):
+    settings[node.attrib.get("id", "")] = (node.text or "").strip()
+
+account_state = settings.get("myplex.MyPlexAccount", "").strip()
+if not account_state:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    account_id = (json.loads(account_state).get("ID") or "")
+except Exception:
+    raise SystemExit(1)
+account_id = str(account_id).strip()
+if not account_id:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+selected = settings.get("lastServerId.%s" % account_id, "").strip()
+if not selected:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+manager_state = settings.get("None.PlexServerManager", "").strip()
+if not manager_state:
+    sys.stdout.write("0")
+    raise SystemExit(0)
+
+try:
+    servers = json.loads(manager_state).get("servers") or []
+except Exception:
+    raise SystemExit(1)
+
+known = set()
+for server in servers:
+    if isinstance(server, dict):
+        uuid = server.get("uuid")
+        if isinstance(uuid, str) and uuid.strip():
+            known.add(uuid.strip())
+
+sys.stdout.write("1" if selected in known else "0")
+PYEOF
+}
+
 coreelec_postdeploy_guided_timeout_seconds() {
   local value="${COREELEC_GUIDED_FLOW_TIMEOUT_SECONDS:-300}"
   case "${value}" in
@@ -593,12 +656,108 @@ database = os.path.expanduser(
 if not os.path.isfile(database):
     sys.stdout.write("handshake-pending\n")
     raise SystemExit(0)
-sys.stdout.write("configured\n")
+# The database is created at handshake, before any library content is
+# synchronized. Completion is decided by coreelec_postdeploy_emby_sync_state.
+sys.stdout.write("handshake-complete\n")
 PYEOF
 EOF
 )"
   printf '%s\n' "${server_url}" \
     | coreelec_ssh_command "${remote_command}"
+}
+
+coreelec_postdeploy_emby_account_program() {
+  cat <<'EOF'
+set -eu
+python3 - <<'PYEOF'
+import glob
+import json
+import os
+import sys
+
+paths = sorted(glob.glob(os.path.expanduser(
+    "~/.kodi/userdata/addon_data/plugin.service.emby-next-gen/servers_*.json")))
+if not paths:
+    sys.stdout.write("absent\n")
+    raise SystemExit(0)
+if len(paths) != 1:
+    sys.stdout.write("ambiguous\n")
+    raise SystemExit(0)
+
+try:
+    with open(paths[0], "r", encoding="utf-8") as handle:
+        server = json.load(handle)
+except Exception:
+    sys.stdout.write("invalid\n")
+    raise SystemExit(0)
+
+if not isinstance(server, dict):
+    sys.stdout.write("invalid\n")
+    raise SystemExit(0)
+
+server_id = server.get("ServerId")
+token = server.get("AccessToken")
+user_id = server.get("UserId")
+if not all(isinstance(value, str) and value.strip()
+           for value in (server_id, token, user_id)):
+    sys.stdout.write("incomplete\n")
+    raise SystemExit(0)
+
+if os.path.basename(paths[0]) != "servers_%s.json" % server_id:
+    sys.stdout.write("invalid\n")
+    raise SystemExit(0)
+
+sys.stdout.write("present\n")
+PYEOF
+EOF
+}
+
+coreelec_postdeploy_emby_account_state() {
+  coreelec_ssh_command "$(coreelec_postdeploy_emby_account_program)"
+}
+
+coreelec_postdeploy_emby_sync_program() {
+  cat <<'EOF'
+set -eu
+python3 - <<'PYEOF'
+import glob
+import os
+import sqlite3
+import sys
+
+paths = sorted(glob.glob(os.path.expanduser(
+    "~/.kodi/userdata/Database/emby_*.db")))
+if not paths:
+    sys.stdout.write("database-absent 0 0\n")
+    raise SystemExit(0)
+if len(paths) != 1:
+    sys.stdout.write("unreadable 0 0\n")
+    raise SystemExit(0)
+
+try:
+    connection = sqlite3.connect("file:%s?mode=ro" % paths[0], uri=True)
+    synced = connection.execute(
+        "SELECT COUNT(*) FROM LibrarySynced").fetchone()[0]
+    attempted = connection.execute(
+        "SELECT COUNT(*) FROM LibrarySyncedMirrow").fetchone()[0]
+    connection.close()
+except Exception:
+    sys.stdout.write("unreadable 0 0\n")
+    raise SystemExit(0)
+
+# LibrarySyncedMirrow is written before each library's content loop and
+# LibrarySynced only after it completes, so equal non-empty counts are the
+# only proof that every attempted library finished.
+if synced and synced == attempted:
+    sys.stdout.write("synced %d %d\n" % (synced, attempted))
+else:
+    sys.stdout.write("sync-pending %d %d\n" % (synced, attempted))
+PYEOF
+EOF
+}
+
+coreelec_postdeploy_emby_sync_state() {
+  coreelec_ssh_command "$(coreelec_postdeploy_emby_sync_program)"
 }
 
 coreelec_postdeploy_emby_fail() {
@@ -638,7 +797,7 @@ assist_emby_login() {
 
   state="$(coreelec_postdeploy_emby_state "${server_url}" 2>/dev/null || true)"
   case "${state}" in
-    configured)
+    handshake-complete)
       coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
       printf 'already-configured\n'
       return 0
@@ -681,7 +840,7 @@ assist_emby_login() {
     if (( signin_selected == 1 )); then
       state="$(coreelec_postdeploy_emby_state "${server_url}" 2>/dev/null || true)"
       case "${state}" in
-        configured)
+        handshake-complete)
           coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.credentials_verified" "1"
           coreelec_postdeploy_observe "service.plugin.service.emby-next-gen.handshake_database" "present"
           printf 'configured\n'
@@ -1299,34 +1458,126 @@ check_nextpvr() {
   printf 'configured\n'
 }
 
+coreelec_postdeploy_emby_onboarding_status() {
+  local account_state sync_state sync_word synced attempted
+  account_state="$(coreelec_postdeploy_emby_account_state 2>/dev/null || true)"
+  case "${account_state}" in
+    absent)
+      printf 'pending-authentication\n'
+      return 0
+      ;;
+    incomplete)
+      printf 'pending-authentication\n'
+      return 0
+      ;;
+    present) ;;
+    *)
+      coreelec_postdeploy_observe \
+        "service.plugin.service.emby-next-gen.account_state" "${account_state:-unreadable}"
+      printf 'manual-required\n'
+      return 0
+      ;;
+  esac
+
+  sync_state="$(coreelec_postdeploy_emby_sync_state 2>/dev/null || true)"
+  IFS=' ' read -r sync_word synced attempted <<EOF
+${sync_state}
+EOF
+  coreelec_postdeploy_observe \
+    "service.plugin.service.emby-next-gen.libraries_synced" "${synced:-0}"
+  coreelec_postdeploy_observe \
+    "service.plugin.service.emby-next-gen.libraries_attempted" "${attempted:-0}"
+
+  case "${sync_word}" in
+    synced) printf 'complete\n' ;;
+    sync-pending|database-absent) printf 'pending-sync\n' ;;
+    *) printf 'manual-required\n' ;;
+  esac
+}
+
+coreelec_postdeploy_pm4k_onboarding_status() {
+  local authorization="$1" bound
+  case "${authorization}" in
+    configured|already-configured) ;;
+    authorization-required)
+      printf 'pending-authentication\n'
+      return 0
+      ;;
+    *)
+      printf 'manual-required\n'
+      return 0
+      ;;
+  esac
+
+  bound="$(coreelec_postdeploy_pm4k_server_bound 2>/dev/null || true)"
+  if [[ ! "${bound}" =~ ^[01]$ ]]; then
+    coreelec_postdeploy_observe "service.script.plexmod.failure" "server-state-unreadable"
+    printf 'manual-required\n'
+    return 0
+  fi
+  coreelec_postdeploy_observe "service.script.plexmod.server_bound" "${bound}"
+  if [[ "${bound}" == "1" ]]; then
+    printf 'complete\n'
+  else
+    printf 'manual-required\n'
+  fi
+}
+
+coreelec_postdeploy_normalize_config_status() {
+  local raw="$1"
+  case "${raw}" in
+    configured|already-configured|skipped|failed|dry-run)
+      printf '%s\n' "${raw}"
+      ;;
+    *)
+      printf 'failed\n'
+      ;;
+  esac
+}
+
 run_addon_workflow() {
-  case "$1" in
+  local addon_id="$1" config_status onboarding_status authorization
+
+  case "${addon_id}" in
     weather.ha)
       if coreelec_postdeploy_weather_ready; then
-        check_home_assistant_weather
+        config_status="$(coreelec_postdeploy_normalize_config_status "$(check_home_assistant_weather)")"
       else
-        printf 'skipped\n'
+        config_status="skipped"
       fi
+      onboarding_status="not-required"
       ;;
     pvr.nextpvr)
       if coreelec_postdeploy_nextpvr_ready; then
-        check_nextpvr
+        config_status="$(coreelec_postdeploy_normalize_config_status "$(check_nextpvr)")"
       else
-        printf 'skipped\n'
+        config_status="skipped"
       fi
+      onboarding_status="not-required"
       ;;
     script.plexmod)
+      config_status="configured"
       if [[ "${INTERACTIVE:-0}" == "1" ]]; then
-        authorize_pm4k_account
+        authorization="$(authorize_pm4k_account)"
       else
-        printf 'authorization-required\n'
+        authorization="authorization-required"
       fi
+      case "${authorization}" in
+        configured) config_status="configured" ;;
+        already-configured) config_status="already-configured" ;;
+        authorization-required) config_status="configured" ;;
+        *) config_status="failed" ;;
+      esac
+      onboarding_status="$(coreelec_postdeploy_pm4k_onboarding_status "${authorization}")"
       ;;
     plugin.service.emby-next-gen)
-      printf 'authorization-required\n'
+      config_status="configured"
+      onboarding_status="$(coreelec_postdeploy_emby_onboarding_status)"
       ;;
     *)
       die "No post-deployment workflow is defined for add-on: $1"
       ;;
   esac
+
+  printf '%s %s\n' "${config_status}" "${onboarding_status}"
 }
