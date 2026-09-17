@@ -220,6 +220,15 @@ coreelec_validate_room_name() {
   esac
 }
 
+coreelec_config_reject_secret_key() {
+  local key="$1" location="$2"
+  case "${key}" in
+    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|HOME_ASSISTANT_URL|HOME_ASSISTANT_TOKEN|NEXTPVR_HOST|NEXTPVR_PIN|TMDB_API_KEY)
+      die "${location}: ${key} is a secret and must be supplied only as an environment variable"
+      ;;
+  esac
+}
+
 # --- Defaults ---
 
 coreelec_config_defaults() {
@@ -268,11 +277,7 @@ coreelec_config_assign() {
     location="command line (${key})"
   fi
 
-  case "${key}" in
-    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|HOME_ASSISTANT_URL|HOME_ASSISTANT_TOKEN|NEXTPVR_HOST|NEXTPVR_PIN|TMDB_API_KEY)
-      die "${location}: ${key} is a secret and must be supplied only as an environment variable"
-      ;;
-  esac
+  coreelec_config_reject_secret_key "${key}" "${location}"
 
   if [[ "${is_cli}" != "1" && "${key}" != "ADDON_ARTIFACT" ]]; then
     case "${COREELEC_CONFIG_SEEN_KEYS}" in
@@ -459,11 +464,7 @@ coreelec_room_config_assign() {
   local source="$1" line_number="$2" key="$3" value="$4"
   local location="${source}:${line_number}"
 
-  case "${key}" in
-    KODI_WEB_PASSWORD|OMDB_API_KEY|MDBLIST_API_KEY|HOME_ASSISTANT_URL|HOME_ASSISTANT_TOKEN|NEXTPVR_HOST|NEXTPVR_PIN|TMDB_API_KEY)
-      die "${location}: ${key} is a secret and must be supplied only as an environment variable"
-      ;;
-  esac
+  coreelec_config_reject_secret_key "${key}" "${location}"
 
   case "${COREELEC_ROOM_CONFIG_SEEN_KEYS}" in
     *$'\n'"${key}"$'\n'*) die "${location}: duplicate room configuration key: ${key}" ;;
