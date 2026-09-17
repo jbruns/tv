@@ -319,17 +319,29 @@ fetches, and checks that every pinned mode appears in the reported set.
 
 | Value | Meaning |
 |---|---|
-| `ok` | desired value written, and every pinned mode is reported by the display |
+| `ok` | the written value matches the desired value |
 | `mismatch` | the written value differs from the desired value |
-| `unsupported` | the written value is correct, but the display no longer reports some pinned mode |
-| `unobservable` | the reported option list could not be read at all |
+| `unsupported` | Kodi answered but reported an empty whitelist |
+| `unobservable` | Kodi did not report the setting at all |
 
-`unsupported` names the offending modes in
-`room.display.whitelist.unsupported`. Only `ok` passes; `unobservable` is a
-failure, because unproven is not proven.
+Only `ok` passes. `mismatch`, `unsupported`, and `unobservable` all fail:
+unproven is not proven.
 
-`room.display.resolution.status` uses the same vocabulary, where `unsupported`
-means the configured label matches no reported option.
+**Amended during implementation.** This table originally defined `unsupported`
+as "the display no longer reports some pinned mode," which implied that
+verification re-reads Kodi's live option list after the transaction. It does
+not. Verification re-reads the *written setting value*; the option-list check
+belongs solely to the pre-transaction probe, which is the right place for it,
+because it runs while Kodi is up and can still abort before anything is
+written. Post-transaction, a partially dropped whitelist reports `mismatch` and
+a wholly empty one reports `unsupported`. Both fail, so the narrowing cannot
+produce a false pass; it only means the report says less about *why* than this
+table once promised.
+
+`room.display.resolution.status` uses the same vocabulary. Because verification
+cannot re-probe a stopped Kodi, it compares the observed index against the
+index the pre-transaction probe resolved, and reports `unobservable` when no
+index was resolved.
 
 ### The powered-off display case
 
@@ -340,8 +352,8 @@ aborts before the backup is taken, naming the missing modes, so the device is
 left untouched and the operator is told exactly what to fix.
 
 If a display is powered off *after* that probe and before verification, the
-post-transaction report records `unsupported` instead. The desired state is
-still correctly written — writing XML does not depend on the display — and a
+post-transaction report records `mismatch` or `unsupported` depending on what
+Kodi still reports. The desired state is still correctly written — writing XML does not depend on the display — and a
 later verification with the display on will pass.
 
 The operations runbook must state that room runs are performed with the display
@@ -376,7 +388,7 @@ hints only; implementation locates each site by content.
 |---|---|
 | `test-coreelec-config.sh` | `ROOM_*` grammar: every key required, value-form validation, rejection of secrets and of `provision.conf` keys, `--room` name validation including `.`, `..`, and `/` |
 | `test-coreelec-settings.sh` | transform fixture writes exactly the room settings and no others; `ROOM_SETTING_IDS` disjoint from core/skin/service; the transformer writes the supplied `ROOM_DISPLAY_RESOLUTION_INDEX` without resolving labels itself |
-| `test-coreelec-report.sh` | all four `room.display.whitelist.status` values; `unsupported` names the missing modes; room verdicts absent when room is not in effective scope; the pre-transaction probe resolves a label to an index, aborts on an unmatched label, and aborts naming the modes a degraded display fails to report |
+| `test-coreelec-report.sh` | all four `room.display.whitelist.status` values; whitelist order is significant across the separator normalization; the resolution index compares ok and mismatch against a seeded index and is unobservable without one; room verdicts absent when room is not in effective scope; the pre-transaction probe resolves a label to an index, aborts on an unmatched label, and aborts naming the modes a degraded display fails to report |
 | `test-coreelec-artifacts.sh` | deployment plan accepts room, rejects a repeated room key, rejects a missing one |
 
 Fail-closed selection is tested at both gates: `--component room` without
