@@ -24,6 +24,8 @@ EFFECTIVE_COMPONENTS=()
 CLI_COMPONENTS=()
 COMPONENTS_EXPLICIT="0"
 PRINT_COMPONENT_PLAN="0"
+ROOM_NAME=""
+ROOM_CONFIG_FILE=""
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
@@ -77,9 +79,15 @@ Options:
                              rejected.
   --component NAME          Apply only this component and its dependencies;
                              repeatable. Implemented components are baseline,
-                             core, cec, addons, services, and skin. The room
-                             name is reserved and rejected as unimplemented.
-                             Dependencies are expanded and reported.
+                             core, cec, addons, services, skin, and room.
+                             baseline does not include room: room is opt-in
+                             and requires --room. Dependencies are expanded
+                             and reported.
+  --room NAME               Room whose desired display and audio state applies,
+                             read from config/rooms/NAME/room.conf. Required
+                             with --component room and rejected without it.
+                             The display must be powered on and selected to
+                             this device for the run to proceed.
   --report-dir PATH         Local report directory
   --expected-release VER    Required CoreELEC release substring (default: 21.3)
   --no-kodi                 Skip Kodi and Home Assistant baseline configuration
@@ -154,10 +162,8 @@ in the config file, and TARGET is never a config-file key. See
 config/README.md for every supported key, the repeated ADDON_ARTIFACT
 grammar, and the full secret list.
 
-This script deliberately does not configure audio codecs or the display mode
-whitelist (room-specific, live HDMI-dependent), and it cannot perform Emby
-server sign-in -- that add-on is always left for the operator to finish by
-hand.
+This script cannot perform Emby server sign-in -- that add-on is always left
+for the operator to finish by hand.
 USAGE
 }
 
@@ -3436,7 +3442,7 @@ coreelec_component_known() {
 
 coreelec_component_implemented() {
   case "$1" in
-    baseline|core|cec|addons|services|skin) return 0 ;;
+    baseline|core|cec|addons|services|skin|room) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -3539,6 +3545,30 @@ coreelec_prepare_component_plan() {
       fi
     done
   fi
+}
+
+# Resolves --room against config/rooms and loads it. Called after the
+# component plan is prepared so both failure directions can be checked, and
+# before --print-component-plan exits so a plan printed for the room component
+# has already proven its configuration parses.
+coreelec_select_room() {
+  local file
+
+  if coreelec_component_effective room; then
+    [[ -n "${ROOM_NAME}" ]] \
+      || die "--component room requires --room NAME"
+  elif [[ -n "${ROOM_NAME}" ]]; then
+    die "--room requires the room component; add --component room"
+  else
+    return 0
+  fi
+
+  file="${SCRIPT_DIR}/config/rooms/${ROOM_NAME}/room.conf"
+  [[ -r "${file}" ]] \
+    || die "No room configuration for ${ROOM_NAME}: ${file} is not readable"
+  coreelec_room_config_defaults
+  coreelec_room_config_load "${file}"
+  coreelec_room_config_validate
 }
 
 coreelec_components_csv() {
@@ -3687,6 +3717,12 @@ while (( $# > 0 )); do
       CLI_COMPONENTS+=("$2")
       shift 2
       ;;
+    --room)
+      (( $# >= 2 )) || die "--room requires a value"
+      coreelec_validate_room_name "$2"
+      ROOM_NAME="$2"
+      shift 2
+      ;;
     --print-component-plan)
       PRINT_COMPONENT_PLAN="1"
       shift
@@ -3770,6 +3806,7 @@ while (( $# > 0 )); do
 done
 
 coreelec_prepare_component_plan
+coreelec_select_room
 if [[ "${PRINT_COMPONENT_PLAN}" == "1" ]]; then
   coreelec_print_component_plan
   exit 0

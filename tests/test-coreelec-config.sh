@@ -311,14 +311,65 @@ test_unknown_component_is_rejected() {
   assert_contains "${output}" "Unknown component: imaginary"
 }
 
-test_unimplemented_room_component_is_rejected() {
+test_room_component_requires_a_room_name() {
   local output rc
   set +e
   output="$(bash "${PROVISIONER}" --component room --print-component-plan 2>&1)"
   rc=$?
   set -e
-  assert_failure "${rc}" "room component must be rejected until implemented"
-  assert_contains "${output}" "Component is not implemented: room"
+  assert_failure "${rc}" "--component room must require --room"
+  assert_contains "${output}" "--component room requires --room NAME"
+}
+
+test_room_name_without_the_room_component_is_rejected() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --room theater --component cec \
+    --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "--room must require the room component"
+  assert_contains "${output}" "--room requires the room component"
+}
+
+test_room_component_plan_includes_its_dependency() {
+  local output
+  output="$(bash "${PROVISIONER}" --component room --room theater \
+    --print-component-plan 2>&1)"
+  assert_contains "${output}" "room"
+  assert_contains "${output}" "core"
+  assert_not_contains "${output}" "Component is not implemented"
+}
+
+test_baseline_plan_excludes_the_room_component() {
+  local output
+  output="$(bash "${PROVISIONER}" --print-component-plan 2>&1)"
+  assert_contains "${output}" "skin"
+  assert_not_contains "${output}" "room"
+}
+
+test_unknown_room_is_rejected_by_name() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --component room --room kitchen \
+    --print-component-plan 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unknown room must be rejected"
+  assert_contains "${output}" "kitchen"
+}
+
+test_room_flag_rejects_path_traversal() {
+  local output rc name
+  for name in '..' '../../etc' 'theater/../..'; do
+    set +e
+    output="$(bash "${PROVISIONER}" --component room --room "${name}" \
+      --print-component-plan 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "--room must reject: ${name}"
+    assert_contains "${output}" "Room name"
+  done
 }
 
 test_no_kodi_conflicts_with_explicit_components() {
@@ -942,7 +993,12 @@ run_all_tests \
   test_duplicate_component_requests_are_normalized \
   test_explicit_baseline_expands_full_plan \
   test_unknown_component_is_rejected \
-  test_unimplemented_room_component_is_rejected \
+  test_room_component_requires_a_room_name \
+  test_room_name_without_the_room_component_is_rejected \
+  test_room_component_plan_includes_its_dependency \
+  test_baseline_plan_excludes_the_room_component \
+  test_unknown_room_is_rejected_by_name \
+  test_room_flag_rejects_path_traversal \
   test_no_kodi_conflicts_with_explicit_components \
   test_empty_component_request_is_rejected \
   test_service_secret_without_endpoint_is_rejected \
