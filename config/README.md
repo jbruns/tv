@@ -13,10 +13,11 @@ takes its controller key paths from CLI flags and uses the shared `.env` file
 for secrets like the other entry points.
 
 The shipped file carries only the shared baseline: release guard, regional
-defaults, add-on update policy, site-specific endpoint placeholders, and the
-locked add-on artifact set. Keep room-specific hostname/reservation values,
-HDMI topology, Dolby Vision mode, whitelist entries, and audio choices outside
-this file.
+defaults, audio output device intent, add-on update policy, site-specific
+endpoint placeholders, and the locked add-on artifact set. Keep
+room-specific hostname/reservation values, HDMI topology, Dolby Vision mode,
+whitelist entries, and audio passthrough/channel-layout choices outside this
+file.
 
 ## Shared secret boundary
 
@@ -84,9 +85,9 @@ configuration key, and a room key written into `provision.conf` is rejected
 as an unknown configuration key. Room files hold no secrets; the same reserved
 secret keys listed above are rejected outright from a room file too.
 
-Every one of the following ten keys is required; there is no default for any
-of them, because a silent default for a display or audio setting is exactly
-the unverifiable state the `room` component exists to eliminate.
+Every one of the following eleven keys is required; there is no default for
+any of them, because a silent default for a display or audio setting is
+exactly the unverifiable state the `room` component exists to eliminate.
 
 | Key | Accepted values |
 | --- | --- |
@@ -100,13 +101,17 @@ the unverifiable state the `room` component exists to eliminate.
 | `ROOM_AUDIO_DTS` | `0` or `1` |
 | `ROOM_AUDIO_TRUEHD` | `0` or `1` |
 | `ROOM_AUDIO_DTSHD` | `0` or `1` |
+| `ROOM_AUDIO_CHANNELS` | a layout label: `2.0`, `2.1`, `3.0`, `3.1`, `4.0`, `4.1`, `5.0`, `5.1`, `7.0`, or `7.1` |
 
 `ROOM_DOLBY_VISION` is written inverted onto Kodi's own
 `coreelec.amlogic.disabledolbyvision` setting: `ROOM_DOLBY_VISION=1` writes
 `disabledolbyvision=false`. There is no Atmos key; Atmos rides on
-`ROOM_AUDIO_TRUEHD` and `ROOM_AUDIO_EAC3`. The full meaning of every key, the
-display mode string format, and the pre-transaction display probe are
-documented in the
+`ROOM_AUDIO_TRUEHD` and `ROOM_AUDIO_EAC3`. `ROOM_AUDIO_CHANNELS` governs only
+decoded (non-bitstreamed) audio and does not affect any passthrough codec
+above; see [managed audio output](../docs/devices/ugoos-am6b-plus/audio-output.md)
+for how its label resolves to Kodi's channel setting. The full meaning of
+every key, the display mode string format, and the pre-transaction display
+probe are documented in the
 [room desired-state reference](../docs/devices/ugoos-am6b-plus/room-desired-state.md).
 
 ## Supported inputs
@@ -138,12 +143,20 @@ documented in the
 | `LOCALE_COUNTRY` | `USA (12h)` | free-text display charset |
 | `KEYBOARD_LAYOUT` | `English QWERTY` | free-text display charset |
 | `ADDON_UPDATE_MODE` | `notify` | `notify` or `auto` |
+| `AUDIO_DEVICE` | `hdmi-multichannel` | `analog`, `sysdefault`, `hdmi-multichannel`, `spdif`, or `hdmi` |
+| `AUDIO_PASSTHROUGH_DEVICE` | `hdmi` | `analog`, `sysdefault`, `hdmi-multichannel`, `spdif`, or `hdmi` |
 | `HOME_ASSISTANT_WEATHER_ENTITY` | unset | identifier charset |
 | `HOME_ASSISTANT_SUN_ENTITY` | unset | identifier charset |
 | `NEXTPVR_PORT` | unset | `1`-`65535` |
 | `NEXTPVR_PROTOCOL` | unset | `http` or `https` |
 | `NEXTPVR_INSTANCE_NAME` | unset | free-text display charset |
 | `ADDON_ARTIFACT` | (41 records shipped) | repeatable, see below |
+
+`AUDIO_DEVICE` and `AUDIO_PASSTHROUGH_DEVICE` state intent, not the concrete
+ALSA device string; a pre-transaction probe resolves the intent against
+whatever the running Kodi reports. See
+[managed audio output](../docs/devices/ugoos-am6b-plus/audio-output.md) for
+the resolution mechanism and the report statuses it produces.
 
 ### Add-on artifact lock
 
@@ -174,12 +187,12 @@ and narrows only the artifact set. When components are explicit, each
 
 | Component | Owned state |
 | --- | --- |
-| `core` | Regional, locale, timezone, keyboard, Kodi web-access, update-policy, and shared non-room Kodi defaults; the timezone cache and `/etc/localtime` |
+| `core` | Regional, locale, timezone, keyboard, Kodi web-access, update-policy, the shared audio output/passthrough device intent, and shared non-room Kodi defaults; the timezone cache and `/etc/localtime` |
 | `cec` | Exactly one detected Kodi CEC peripheral file: `activate_source=0`, `wake_devices=231`, `standby_devices=231`, `standby_tv_on_pc_standby=0`, and `standby_pc_on_tv_standby=36028` (reported as `cec.tv_off_action`) |
 | `addons` | The selected, checksum-locked artifacts and their installed add-on directories |
 | `services` | Settings owned by `plugin.video.themoviedb.helper`, `weather.ha`, `pvr.nextpvr`, and `script.plexmod` |
 | `skin` | Active Arctic Fuse selection, Arctic Fuse settings, Skin Variables widget JSON, managed video playlists, and skin-specific shared Kodi defaults |
-| `room` | Owns display and audio state in `config/rooms/<room>/room.conf`: the desktop resolution, the display mode whitelist, both Dolby Vision settings, and the five audio passthrough flags in `guisettings.xml`. Opt-in: never expanded from `baseline`; must be requested explicitly with `--component room --room NAME` |
+| `room` | Owns display and audio state in `config/rooms/<room>/room.conf`: the desktop resolution, the display mode whitelist, both Dolby Vision settings, the five audio passthrough flags, and the decoded-audio channel layout in `guisettings.xml`. Opt-in: never expanded from `baseline`; must be requested explicitly with `--component room --room NAME` |
 | `baseline` | Alias for every implemented component: `core,cec,addons,services,skin`; it excludes `room`, which is opt-in |
 
 Dependencies are expanded before device contact, cycle-checked, and reported
