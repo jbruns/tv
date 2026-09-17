@@ -117,8 +117,8 @@ Internal:
   --emit-remote-script NAME [ROOT]
                           Print the remote 'backup', 'payload', 'stage',
                            'deploy', 'rollback', 'finalize', 'verify',
-                           'verify-probe', or 'display-probe' program for ROOT
-                           (default /storage),
+                           'verify-probe', 'display-probe', or 'audio-probe'
+                           program for ROOT (default /storage),
                            then exit. Used by the test suites; it never
                            contacts a device.
   --render-remote-deploy-script [ROOT]
@@ -3619,6 +3619,166 @@ PROBE_PARSE
 REMOTE_DISPLAY_PROBE_BODY
 }
 
+# Resolves audio output intent against the enumeration the running Kodi
+# offers. The concrete ALSA strings embed the kernel card name, and the
+# channel setting is an opaque enum ordinal; neither is a stable fact worth
+# hard-coding into configuration that ships to every room. An intent Kodi does
+# not offer fails the probe rather than silently selecting something else --
+# "the output I asked for is gone" is exactly the drift this manages.
+coreelec_remote_audio_probe_script() {
+  cat <<'REMOTE_AUDIO_PROBE_BODY'
+set -eu
+umask 077
+probe_user=""
+probe_password=""
+probe_port="8080"
+probe_device=""
+probe_passthrough=""
+probe_channels=""
+while IFS= read -r probe_line; do
+  case "${probe_line}" in
+    KODI_WEB_USER=*) probe_user="${probe_line#KODI_WEB_USER=}" ;;
+    KODI_WEB_PASSWORD=*) probe_password="${probe_line#KODI_WEB_PASSWORD=}" ;;
+    KODI_PORT=*) probe_port="${probe_line#KODI_PORT=}" ;;
+    AUDIO_DEVICE=*) probe_device="${probe_line#AUDIO_DEVICE=}" ;;
+    AUDIO_PASSTHROUGH_DEVICE=*) probe_passthrough="${probe_line#AUDIO_PASSTHROUGH_DEVICE=}" ;;
+    ROOM_AUDIO_CHANNELS=*) probe_channels="${probe_line#ROOM_AUDIO_CHANNELS=}" ;;
+    "") ;;
+    *) printf "audio probe rejected an unknown parameter\n" >&2; exit 1 ;;
+  esac
+done
+
+[ -n "${probe_user}" ] || { printf "audio probe requires a Kodi user\n" >&2; exit 1; }
+if [ -z "${probe_device}" ] && [ -z "${probe_passthrough}" ] && [ -z "${probe_channels}" ]; then
+  printf "audio probe requires at least one intent\n" >&2
+  exit 1
+fi
+
+probe_dir="$(mktemp -d)"
+trap "rm -rf -- ${probe_dir}" EXIT INT TERM
+
+# The password reaches curl only through a mode-600 configuration file in a
+# directory the trap removes: it never appears in argv or in the process list.
+printf "user = \"%s:%s\"\n" "${probe_user}" "${probe_password}" \
+  > "${probe_dir}/curlrc"
+# The category is audio. audiooutput is not a valid category and Kodi 21
+# answers it with Invalid params (-32602).
+cat > "${probe_dir}/request.json" <<PROBE_REQUEST
+{"jsonrpc":"2.0","id":1,"method":"Settings.GetSettings","params":{"level":"expert","filter":{"section":"system","category":"audio"}}}
+PROBE_REQUEST
+
+if ! curl --silent --show-error --fail --max-time 20 \
+  --config "${probe_dir}/curlrc" \
+  --header "Content-Type: application/json" \
+  --data "@${probe_dir}/request.json" \
+  "http://127.0.0.1:${probe_port}/jsonrpc" > "${probe_dir}/response.json"; then
+  printf "audio probe could not reach Kodi on port %s\n" "${probe_port}" >&2
+  exit 1
+fi
+
+printf "%s\n%s\n%s\n" "${probe_device}" "${probe_passthrough}" "${probe_channels}" \
+  > "${probe_dir}/wanted"
+
+python3 - "${probe_dir}/response.json" "${probe_dir}/wanted" <<PROBE_PARSE
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    try:
+        document = json.load(handle)
+    except ValueError:
+        raise SystemExit("audio probe could not parse Kodi response")
+
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    wanted_device = handle.readline().strip()
+    wanted_passthrough = handle.readline().strip()
+    wanted_channels = handle.readline().strip()
+
+settings = document.get("result", {}).get("settings")
+if not isinstance(settings, list):
+    raise SystemExit("audio probe did not receive a settings list")
+
+by_id = {}
+for setting in settings:
+    if isinstance(setting, dict) and "id" in setting:
+        by_id[setting["id"]] = setting
+
+TOKENS = {
+    "analog": "@",
+    "sysdefault": "sysdefault",
+    "hdmi-multichannel": "surround71",
+    "spdif": "iec958",
+    "hdmi": "hdmi",
+}
+
+
+def option_pairs(setting_id):
+    setting = by_id.get(setting_id)
+    if setting is None:
+        raise SystemExit("audio probe: Kodi did not report %s" % setting_id)
+    raw = setting.get("options")
+    if not isinstance(raw, list):
+        definition = setting.get("definition")
+        if isinstance(definition, dict):
+            raw = definition.get("options")
+    if not isinstance(raw, list):
+        return []
+    pairs = []
+    for option in raw:
+        if isinstance(option, dict) and "label" in option and "value" in option:
+            pairs.append((str(option["label"]).strip(), option["value"]))
+    return pairs
+
+
+def resolve_device(setting_id, intent):
+    token = TOKENS.get(intent)
+    if token is None:
+        raise SystemExit("audio probe: unknown audio intent: %s" % intent)
+    offered = []
+    matches = []
+    for _label, value in option_pairs(setting_id):
+        text = str(value)
+        if not text.startswith("ALSA:"):
+            continue
+        selector = text[5:].split("|")[0]
+        offered.append(selector.split(":")[0])
+        if selector.split(":")[0] == token:
+            matches.append(text)
+    if len(matches) != 1:
+        raise SystemExit(
+            "audio probe: %s offers no single %s output for intent %s; "
+            "Kodi offers: %s"
+            % (setting_id, token, intent, ", ".join(offered) or "nothing"))
+    return matches[0]
+
+
+def resolve_channels(layout):
+    offered = []
+    matches = []
+    for label, value in option_pairs("audiooutput.channels"):
+        offered.append(label)
+        if label == layout:
+            matches.append(value)
+    if len(matches) != 1:
+        raise SystemExit(
+            "audio probe: audiooutput.channels does not offer layout %s; "
+            "Kodi offers: %s" % (layout, ", ".join(offered) or "nothing"))
+    return matches[0]
+
+
+if wanted_device:
+    sys.stdout.write("audio_device=%s\n"
+                     % resolve_device("audiooutput.audiodevice", wanted_device))
+if wanted_passthrough:
+    sys.stdout.write(
+        "audio_passthrough_device=%s\n"
+        % resolve_device("audiooutput.passthroughdevice", wanted_passthrough))
+if wanted_channels:
+    sys.stdout.write("audio_channels=%s\n" % resolve_channels(wanted_channels))
+PROBE_PARSE
+REMOTE_AUDIO_PROBE_BODY
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
@@ -3632,9 +3792,10 @@ coreelec_emit_remote_script() {
     verify) coreelec_remote_verify_script "${root}" ;;
     verify-probe) coreelec_remote_verify_probe_source ;;
     display-probe) coreelec_remote_display_probe_script ;;
+    audio-probe) coreelec_remote_audio_probe_script ;;
     authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, or authorized-key, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, audio-probe, or authorized-key, not: ${name}"
       ;;
   esac
 }
