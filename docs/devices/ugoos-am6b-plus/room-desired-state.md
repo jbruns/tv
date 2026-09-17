@@ -76,11 +76,12 @@ exists to eliminate.
 | `ROOM_AUDIO_DTSHD` | `audiooutput.dtshdpassthrough` | `0` or `1` | DTS-HD passthrough. |
 | `ROOM_AUDIO_CHANNELS` | `audiooutput.channels` | a layout label, e.g. `7.1` | The decoded (non-bitstreamed) audio channel layout, stated as a label rather than Kodi's internal enum ordinal. See [managed audio output](audio-output.md) for how the label is resolved and why it does not affect passthrough. |
 
-**There is no Atmos setting.** Kodi exposes five audio passthrough flags, and
-none of them is Atmos. Atmos rides inside TrueHD (Blu-ray) and E-AC-3
-(streaming), so it is enabled by `ROOM_AUDIO_TRUEHD` and `ROOM_AUDIO_EAC3`. An
-operator looking for a `ROOM_AUDIO_ATMOS` key will not find one; there is
-nothing to add.
+**There is no Atmos setting.** Of the six audio passthrough flags, one
+(`ROOM_AUDIO_PASSTHROUGH`) is the master switch and the other five are
+codec-specific, and none of those five codec flags is Atmos. Atmos rides
+inside TrueHD (Blu-ray) and E-AC-3 (streaming), so it is enabled by
+`ROOM_AUDIO_TRUEHD` and `ROOM_AUDIO_EAC3`. An operator looking for a
+`ROOM_AUDIO_ATMOS` key will not find one; there is nothing to add.
 
 ### `ROOM_DOLBY_VISION` is inverted on write
 
