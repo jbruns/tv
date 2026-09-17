@@ -4619,7 +4619,59 @@ test_room_report_reports_dolby_vision_positively() {
   report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
   set -e
   assert_contains "${report}" "room.dolbyvision.status=ok"
-  assert_not_contains "${report}" "room.dolbyvision.disabled"
+  # The device stores this inverted, as disabledolbyvision. The report speaks
+  # the room config's positive vocabulary, so the inverted key name must never
+  # reach the operator -- reading "disabled=false" inverts the meaning twice in
+  # the reader's head and is exactly how this setting gets misread.
+  assert_not_contains "${report}" "disabledolbyvision"
+}
+
+# The inverse of the test above. Dolby Vision is the one room setting written
+# inverted, so a device that has it switched off must report mismatch rather
+# than quietly reading as ok: an inversion bug passes one direction and fails
+# the other, never both.
+test_room_report_flags_dolby_vision_switched_off_on_the_device() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" disabledolbyvision=true
+  set +e
+  report="$(run_room_verification "${dir}" '0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.dolbyvision.status=mismatch"
+}
+
+# Whitelist order is significant: Kodi prefers earlier modes, so the same modes
+# in a different order is a different display policy, not a cosmetic variation.
+# The comparison normalizes the separator (the probe joins list values with a
+# space, the config stores commas) and must not sort, so a pure reordering has
+# to read as a mismatch.
+test_room_report_treats_a_reordered_whitelist_as_a_mismatch() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" \
+    whitelist='0384002160060.00000pstd 0384002160024.00000pstd'
+  set +e
+  report="$(run_room_verification "${dir}" \
+    '0384002160024.00000pstd,0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=mismatch"
+}
+
+# The same two modes in the configured order, differing only in separator,
+# must read as ok -- otherwise the test above would pass for the wrong reason.
+test_room_report_accepts_a_whitelist_differing_only_in_separator() {
+  local dir report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_room_observations "${dir}/observations.env" \
+    whitelist='0384002160024.00000pstd 0384002160060.00000pstd'
+  set +e
+  report="$(run_room_verification "${dir}" \
+    '0384002160024.00000pstd,0384002160060.00000pstd')"
+  set -e
+  assert_contains "${report}" "room.display.whitelist.status=ok"
 }
 
 test_room_report_flags_each_audio_codec_independently() {
@@ -4791,6 +4843,9 @@ run_all_tests \
   test_room_report_flags_an_unsupported_whitelist \
   test_room_report_resolution_is_unobservable_without_a_resolved_index \
   test_room_report_reports_dolby_vision_positively \
+  test_room_report_flags_dolby_vision_switched_off_on_the_device \
+  test_room_report_treats_a_reordered_whitelist_as_a_mismatch \
+  test_room_report_accepts_a_whitelist_differing_only_in_separator \
   test_room_report_flags_each_audio_codec_independently \
   test_report_omits_room_keys_when_room_is_out_of_scope \
   test_verify_probe_requests_room_settings_only_when_selected
