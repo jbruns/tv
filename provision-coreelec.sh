@@ -26,6 +26,10 @@ COMPONENTS_EXPLICIT="0"
 PRINT_COMPONENT_PLAN="0"
 ROOM_NAME=""
 ROOM_CONFIG_FILE=""
+# Resolved by coreelec_resolve_room_display before the transaction opens. Declared
+# here so that a probe that returned nothing reaches its own die message rather
+# than an unbound-variable abort under set -u.
+ROOM_DISPLAY_RESOLUTION_INDEX=""
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
@@ -3474,13 +3478,9 @@ REMOTE_AUTHORIZED_KEY_INSTALL
 # the JSON request nor the Python body contains a dollar sign, backtick, or
 # backslash for the device shell to expand.
 coreelec_remote_display_probe_script() {
-  local root="${1:-/storage}"
-  cat <<REMOTE_DISPLAY_PROBE
+  cat <<'REMOTE_DISPLAY_PROBE_BODY'
 set -eu
 umask 077
-storage_root="${root}"
-REMOTE_DISPLAY_PROBE
-  cat <<'REMOTE_DISPLAY_PROBE_BODY'
 probe_user=""
 probe_password=""
 probe_port="8080"
@@ -3605,7 +3605,7 @@ coreelec_emit_remote_script() {
     finalize) coreelec_remote_finalize_script "${root}" ;;
     verify) coreelec_remote_verify_script "${root}" ;;
     verify-probe) coreelec_remote_verify_probe_source ;;
-    display-probe) coreelec_remote_display_probe_script "${root}" ;;
+    display-probe) coreelec_remote_display_probe_script ;;
     authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
       die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, or authorized-key, not: ${name}"

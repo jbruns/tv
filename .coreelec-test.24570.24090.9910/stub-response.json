@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "id": 1, "result": {"settings": [{"id": "videoscreen.resolution", "options": [{"label": "3840x2160p ", "value": 41}]}, {"id": "videoscreen.whitelist", "definition": {"options": [{"label": "mode 0409602160024.00000pstd", "value": "0409602160024.00000pstd"}, {"label": "mode 0384002160060.00000pstd", "value": "0384002160060.00000pstd"}]}}]}}
