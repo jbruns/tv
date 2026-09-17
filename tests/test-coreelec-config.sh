@@ -956,7 +956,10 @@ CONF
   rc=$?
   set -e
   assert_failure "${rc}" "room.conf omitting ROOM_AUDIO_CHANNELS must be rejected"
-  assert_contains "${output}" "ROOM_AUDIO_CHANNELS"
+  assert_contains "${output}" "missing required room configuration key" \
+    "the rejection message mentions the cause" || return 1
+  assert_contains "${output}" "ROOM_AUDIO_CHANNELS" \
+    "the rejection message names the offending key" || return 1
 }
 
 test_room_config_rejects_provision_keys_and_secrets() {
