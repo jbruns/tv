@@ -2497,6 +2497,72 @@ XML
   assert_setting_equals "${settings}" "audiooutput.passthrough" "true"
 }
 
+test_core_transform_writes_the_resolved_audio_devices() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  payload="${dir}/payload"
+  write_scoped_base_payload "${payload}" 1 0 0 0 0 0
+  append_payload_entry "${payload}" "AUDIO_DEVICE_VALUE" \
+    "ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND"
+  append_payload_entry "${payload}" "AUDIO_PASSTHROUGH_DEVICE_VALUE" \
+    "ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_setting_equals "${settings}" "audiooutput.audiodevice" \
+    "ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND"
+  assert_setting_equals "${settings}" "audiooutput.passthroughdevice" \
+    "ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND"
+}
+
+# The device strings are core state; a room-only run must not write them.
+test_room_transform_writes_channels_but_not_the_devices() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  payload="${dir}/payload"
+  write_scoped_base_payload "${payload}" 0 0 0 0 0 1
+  append_payload_entry "${payload}" "ROOM_NAME" "theater"
+  append_payload_entry "${payload}" "ROOM_DISPLAY_WHITELIST" \
+    "0384002160060.00000pstd"
+  append_payload_entry "${payload}" "ROOM_DOLBY_VISION" "1"
+  append_payload_entry "${payload}" "ROOM_DOLBY_VISION_MODE" "tv-led"
+  append_payload_entry "${payload}" "ROOM_AUDIO_PASSTHROUGH" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_AC3" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_EAC3" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_DTS" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_TRUEHD" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_DTSHD" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_CHANNELS_INDEX" "10"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_setting_equals "${settings}" "audiooutput.channels" "10"
+  assert_setting_absent "${settings}" "audiooutput.audiodevice"
+  assert_setting_absent "${settings}" "audiooutput.passthroughdevice"
+}
+
+# An unresolved value is never written: leaving the device exactly as it was
+# beats pinning it to something that may mean a different output.
+test_transform_skips_unresolved_audio_values() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/root"
+  payload="${dir}/payload"
+  write_scoped_base_payload "${payload}" 1 0 0 0 0 0
+  append_payload_entry "${payload}" "AUDIO_DEVICE_VALUE" ""
+  append_payload_entry "${payload}" "AUDIO_PASSTHROUGH_DEVICE_VALUE" ""
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_setting_absent "${settings}" "audiooutput.audiodevice"
+  assert_setting_absent "${settings}" "audiooutput.passthroughdevice"
+}
+
 run_all_tests \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
@@ -2561,4 +2627,7 @@ run_all_tests \
   test_room_transform_skips_resolution_without_a_resolved_index \
   test_room_transform_touches_no_other_component_setting \
   test_core_and_skin_transform_touch_no_room_setting \
-  test_room_transform_preserves_unmanaged_settings
+  test_room_transform_preserves_unmanaged_settings \
+  test_core_transform_writes_the_resolved_audio_devices \
+  test_room_transform_writes_channels_but_not_the_devices \
+  test_transform_skips_unresolved_audio_values

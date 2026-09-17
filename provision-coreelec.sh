@@ -30,6 +30,12 @@ ROOM_CONFIG_FILE=""
 # here so that a probe that returned nothing reaches its own die message rather
 # than an unbound-variable abort under set -u.
 ROOM_DISPLAY_RESOLUTION_INDEX=""
+# Resolved by coreelec_resolve_audio_devices before the transaction opens.
+# Declared here so a probe that returns nothing reaches its own die rather
+# than an unbound-variable abort under set -u.
+AUDIO_DEVICE_VALUE=""
+AUDIO_PASSTHROUGH_DEVICE_VALUE=""
+ROOM_AUDIO_CHANNELS_INDEX=""
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
@@ -693,6 +699,12 @@ def main(argv):
                 "services.webserverssl": "false",
                 "services.webserverusername": config("KODI_WEB_USER"),
             })
+        audio_device = config("AUDIO_DEVICE_VALUE")
+        if audio_device:
+            kodi_values["audiooutput.audiodevice"] = audio_device
+        audio_passthrough = config("AUDIO_PASSTHROUGH_DEVICE_VALUE")
+        if audio_passthrough:
+            kodi_values["audiooutput.passthroughdevice"] = audio_passthrough
     if apply_services and weather_configured:
         kodi_values["weather.addon"] = WEATHER_ADDON_ID
     if apply_skin:
@@ -728,6 +740,12 @@ def main(argv):
         resolution_index = config("ROOM_DISPLAY_RESOLUTION_INDEX")
         if resolution_index:
             kodi_values["videoscreen.resolution"] = resolution_index
+        # Kodi's channel setting is an opaque enum ordinal resolved by the
+        # audio probe. With nothing resolved the layout is left exactly as it
+        # was rather than pinned to a number that may mean another layout.
+        channels_index = config("ROOM_AUDIO_CHANNELS_INDEX")
+        if channels_index:
+            kodi_values["audiooutput.channels"] = channels_index
 
     if apply_core or apply_skin or apply_room \
             or (apply_services and weather_configured):
@@ -5507,6 +5525,74 @@ coreelec_resolve_room_display() {
   info "Resolved ${ROOM_DISPLAY_RESOLUTION} to Kodi resolution index ${ROOM_DISPLAY_RESOLUTION_INDEX}" >&2
 }
 
+# Runs in the same pre-transaction window as the display probe: after the
+# administrator key is installed and before create_remote_backup, so a failure
+# aborts with nothing to undo. Device intents belong to core, the channel
+# layout to room, so a run resolves only what its component scope asks for.
+coreelec_resolve_audio_devices() {
+  local script output line want_core=0 want_room=0
+
+  coreelec_component_effective core && want_core=1
+  coreelec_component_effective room && want_room=1
+  (( want_core == 1 || want_room == 1 )) || return 0
+
+  if (( want_core == 1 )); then
+    [[ -n "${AUDIO_DEVICE}" ]] \
+      || die "The core component requires AUDIO_DEVICE in the shared configuration"
+    [[ -n "${AUDIO_PASSTHROUGH_DEVICE}" ]] \
+      || die "The core component requires AUDIO_PASSTHROUGH_DEVICE in the shared configuration"
+  fi
+  if (( want_room == 1 )); then
+    [[ -n "${ROOM_AUDIO_CHANNELS}" ]] \
+      || die "The room component requires ROOM_AUDIO_CHANNELS in the room configuration"
+  fi
+
+  script="$(coreelec_remote_audio_probe_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote audio probe script must not contain a single quote"
+
+  info "Resolving audio output against the running Kodi" >&2
+  output="$(
+    {
+      printf 'KODI_WEB_USER=%s\n' "${KODI_USER}"
+      printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
+      printf 'KODI_PORT=%s\n' "${KODI_PORT}"
+      if (( want_core == 1 )); then
+        printf 'AUDIO_DEVICE=%s\n' "${AUDIO_DEVICE}"
+        printf 'AUDIO_PASSTHROUGH_DEVICE=%s\n' "${AUDIO_PASSTHROUGH_DEVICE}"
+      fi
+      if (( want_room == 1 )); then
+        printf 'ROOM_AUDIO_CHANNELS=%s\n' "${ROOM_AUDIO_CHANNELS}"
+      fi
+    } | ssh_keyed "sh -c '${script}'"
+  )" || die "The audio probe failed. Nothing on the device has been changed apart from the administrator key."
+
+  while IFS= read -r line; do
+    case "${line}" in
+      audio_device=*) AUDIO_DEVICE_VALUE="${line#audio_device=}" ;;
+      audio_passthrough_device=*) AUDIO_PASSTHROUGH_DEVICE_VALUE="${line#audio_passthrough_device=}" ;;
+      audio_channels=*) ROOM_AUDIO_CHANNELS_INDEX="${line#audio_channels=}" ;;
+    esac
+  done <<< "${output}"
+
+  if (( want_core == 1 )); then
+    [[ -n "${AUDIO_DEVICE_VALUE}" ]] \
+      || die "The audio probe did not resolve an output device for ${AUDIO_DEVICE}"
+    [[ -n "${AUDIO_PASSTHROUGH_DEVICE_VALUE}" ]] \
+      || die "The audio probe did not resolve a passthrough device for ${AUDIO_PASSTHROUGH_DEVICE}"
+    info "Resolved ${AUDIO_DEVICE} to ${AUDIO_DEVICE_VALUE}" >&2
+    info "Resolved ${AUDIO_PASSTHROUGH_DEVICE} to ${AUDIO_PASSTHROUGH_DEVICE_VALUE}" >&2
+  fi
+  if (( want_room == 1 )); then
+    case "${ROOM_AUDIO_CHANNELS_INDEX}" in
+      ""|*[!0-9]*)
+        die "The audio probe did not return a usable channel index for ${ROOM_AUDIO_CHANNELS}"
+        ;;
+    esac
+    info "Resolved ${ROOM_AUDIO_CHANNELS} to Kodi channel index ${ROOM_AUDIO_CHANNELS_INDEX}" >&2
+  fi
+}
+
 create_remote_backup() {
   local component_scope
   info "Creating a selective pre-provisioning backup on the CoreELEC STORAGE partition" >&2
@@ -5608,6 +5694,13 @@ coreelec_settings_payload() {
   # A run without room in scope must carry no room data at all: emitting these
   # only when room is effective keeps an out-of-scope run from leaking a
   # previous room's desired state onto the wire.
+  # The two device strings are AM6B+ hardware facts and belong to core; only
+  # the channel layout is room state.
+  if coreelec_component_effective core; then
+    coreelec_settings_payload_entry AUDIO_DEVICE_VALUE "${AUDIO_DEVICE_VALUE}"
+    coreelec_settings_payload_entry AUDIO_PASSTHROUGH_DEVICE_VALUE \
+      "${AUDIO_PASSTHROUGH_DEVICE_VALUE}"
+  fi
   if coreelec_component_effective room; then
     coreelec_settings_payload_entry ROOM_NAME "${ROOM_NAME}"
     coreelec_settings_payload_entry ROOM_DISPLAY_RESOLUTION_INDEX \
@@ -5621,6 +5714,8 @@ coreelec_settings_payload() {
     coreelec_settings_payload_entry ROOM_AUDIO_DTS "${ROOM_AUDIO_DTS}"
     coreelec_settings_payload_entry ROOM_AUDIO_TRUEHD "${ROOM_AUDIO_TRUEHD}"
     coreelec_settings_payload_entry ROOM_AUDIO_DTSHD "${ROOM_AUDIO_DTSHD}"
+    coreelec_settings_payload_entry ROOM_AUDIO_CHANNELS_INDEX \
+      "${ROOM_AUDIO_CHANNELS_INDEX}"
   fi
 }
 
@@ -6018,6 +6113,7 @@ fi
 install_public_key_if_needed
 
 coreelec_resolve_room_display
+coreelec_resolve_audio_devices
 
 REMOTE_BACKUP_PATH="$(create_remote_backup)"
 info "Remote backup created: ${REMOTE_BACKUP_PATH}"
