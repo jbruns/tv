@@ -147,6 +147,34 @@ write_full_payload() {
   write_scoped_full_payload "$1" 1 1 1 1 1
 }
 
+# Appends the ten room settings keys, letting named overrides replace
+# individual values so each test states only what it is testing.
+write_room_payload_values() {
+  local file="$1"; shift
+  local index=41 dv=1 mode=tv-led pass=1 ac3=1 eac3=1 dts=1 truehd=1 dtshd=1
+  local entry
+  for entry in "$@"; do
+    case "${entry}" in
+      INDEX=*) index="${entry#INDEX=}" ;;
+      DV=*) dv="${entry#DV=}" ;;
+      MODE=*) mode="${entry#MODE=}" ;;
+      *) printf 'unknown room payload override: %s\n' "${entry}" >&2; return 1 ;;
+    esac
+  done
+  append_payload_entry "${file}" "ROOM_NAME" "theater"
+  append_payload_entry "${file}" "ROOM_DISPLAY_RESOLUTION_INDEX" "${index}"
+  append_payload_entry "${file}" "ROOM_DISPLAY_WHITELIST" \
+    "0409602160024.00000pstd,0384002160060.00000pstd"
+  append_payload_entry "${file}" "ROOM_DOLBY_VISION" "${dv}"
+  append_payload_entry "${file}" "ROOM_DOLBY_VISION_MODE" "${mode}"
+  append_payload_entry "${file}" "ROOM_AUDIO_PASSTHROUGH" "${pass}"
+  append_payload_entry "${file}" "ROOM_AUDIO_AC3" "${ac3}"
+  append_payload_entry "${file}" "ROOM_AUDIO_EAC3" "${eac3}"
+  append_payload_entry "${file}" "ROOM_AUDIO_DTS" "${dts}"
+  append_payload_entry "${file}" "ROOM_AUDIO_TRUEHD" "${truehd}"
+  append_payload_entry "${file}" "ROOM_AUDIO_DTSHD" "${dtshd}"
+}
+
 guisettings_path() {
   printf '%s/.kodi/userdata/guisettings.xml' "$1"
 }
@@ -185,6 +213,20 @@ root = ET.parse(path).getroot()
 sys.stdout.write(str(sum(1 for node in root.iter("setting")
                          if node.get("id") == setting_id)))
 PYEOF
+}
+
+# Asserts a guisettings.xml setting carries exactly the expected value.
+assert_setting_equals() {
+  local path="$1" setting_id="$2" expected="$3"
+  assert_eq "${expected}" "$(xml_setting "${path}" "${setting_id}")" \
+    "${setting_id}"
+}
+
+# Asserts a guisettings.xml setting node is entirely absent.
+assert_setting_absent() {
+  local path="$1" setting_id="$2"
+  assert_eq "0" "$(xml_setting_count "${path}" "${setting_id}")" \
+    "${setting_id} is absent"
 }
 
 xml_setting_type() {
@@ -2332,6 +2374,129 @@ test_arctic_fuse_replaces_obsolete_recently_released_playlists() {
     "unrelated playlist beside new files is unchanged"
 }
 
+# --- Room display and audio settings ----------------------------------------
+
+test_room_transform_writes_display_and_audio_settings() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.env"
+  write_scoped_base_payload "${payload}" 0 0 0 0 0 1
+  append_payload_entry "${payload}" "ROOM_NAME" "theater"
+  append_payload_entry "${payload}" "ROOM_DISPLAY_RESOLUTION_INDEX" "41"
+  append_payload_entry "${payload}" "ROOM_DISPLAY_WHITELIST" \
+    "0409602160024.00000pstd,0384002160060.00000pstd"
+  append_payload_entry "${payload}" "ROOM_DOLBY_VISION" "1"
+  append_payload_entry "${payload}" "ROOM_DOLBY_VISION_MODE" "tv-led"
+  append_payload_entry "${payload}" "ROOM_AUDIO_PASSTHROUGH" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_AC3" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_EAC3" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_DTS" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_TRUEHD" "1"
+  append_payload_entry "${payload}" "ROOM_AUDIO_DTSHD" "0"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_setting_equals "${settings}" "videoscreen.resolution" "41"
+  assert_setting_equals "${settings}" "videoscreen.whitelist" \
+    "0409602160024.00000pstd,0384002160060.00000pstd"
+  assert_setting_equals "${settings}" "audiooutput.passthrough" "true"
+  assert_setting_equals "${settings}" "audiooutput.truehdpassthrough" "true"
+  assert_setting_equals "${settings}" "audiooutput.dtshdpassthrough" "false"
+  assert_setting_equals "${settings}" "coreelec.amlogic.dolbyvisionled" "0"
+}
+
+test_room_transform_inverts_dolby_vision() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.env"
+  write_scoped_base_payload "${payload}" 0 0 0 0 0 1
+  write_room_payload_values "${payload}" DV=1 MODE=player-led
+  run_transform "${root}" "${payload}" >/dev/null
+  settings="$(guisettings_path "${root}")"
+  assert_setting_equals "${settings}" "coreelec.amlogic.disabledolbyvision" "false"
+  assert_setting_equals "${settings}" "coreelec.amlogic.dolbyvisionled" "1"
+
+  rm -rf -- "${root}"
+  write_scoped_base_payload "${payload}" 0 0 0 0 0 1
+  write_room_payload_values "${payload}" DV=0 MODE=tv-led
+  run_transform "${root}" "${payload}" >/dev/null
+  assert_setting_equals "${settings}" "coreelec.amlogic.disabledolbyvision" "true"
+}
+
+test_room_transform_skips_resolution_without_a_resolved_index() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.env"
+  write_scoped_base_payload "${payload}" 0 0 0 0 0 1
+  write_room_payload_values "${payload}" INDEX=
+  run_transform "${root}" "${payload}" >/dev/null
+  settings="$(guisettings_path "${root}")"
+  assert_setting_absent "${settings}" "videoscreen.resolution"
+  assert_setting_equals "${settings}" "audiooutput.passthrough" "true"
+}
+
+test_room_transform_touches_no_other_component_setting() {
+  local dir root payload settings setting
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.env"
+  write_scoped_base_payload "${payload}" 0 0 0 0 0 1
+  write_room_payload_values "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  settings="$(guisettings_path "${root}")"
+  for setting in locale.language locale.country locale.timezone \
+    videoplayer.adjustrefreshrate videoplayer.usedisplayasclock \
+    lookandfeel.skin weather.addon services.webserver; do
+    assert_setting_absent "${settings}" "${setting}"
+  done
+}
+
+test_core_and_skin_transform_touch_no_room_setting() {
+  local dir root payload settings setting
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.env"
+  write_scoped_base_payload "${payload}" 1 0 1 1 1 0
+  run_transform "${root}" "${payload}" >/dev/null
+  settings="$(guisettings_path "${root}")"
+  for setting in videoscreen.resolution videoscreen.whitelist \
+    audiooutput.passthrough audiooutput.ac3passthrough \
+    audiooutput.eac3passthrough audiooutput.dtspassthrough \
+    audiooutput.truehdpassthrough audiooutput.dtshdpassthrough \
+    coreelec.amlogic.disabledolbyvision coreelec.amlogic.dolbyvisionled; do
+    assert_setting_absent "${settings}" "${setting}"
+  done
+}
+
+test_room_transform_preserves_unmanaged_settings() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.env"
+  mkdir -p "${root}/.kodi/userdata"
+  settings="$(guisettings_path "${root}")"
+  cat > "${settings}" <<'XML'
+<settings version="2">
+    <setting id="audiooutput.audiodevice">ALSA:@</setting>
+    <setting id="audiooutput.passthrough" default="true">false</setting>
+</settings>
+XML
+  write_scoped_base_payload "${payload}" 0 0 0 0 0 1
+  write_room_payload_values "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  assert_setting_equals "${settings}" "audiooutput.audiodevice" "ALSA:@"
+  assert_setting_equals "${settings}" "audiooutput.passthrough" "true"
+}
+
 run_all_tests \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
@@ -2390,4 +2555,10 @@ run_all_tests \
   test_arctic_fuse_managed_settings_carry_type_string \
   test_each_scoped_backup_covers_transformer_applied_paths \
   test_arctic_fuse_replaces_obsolete_recently_released_playlists \
-  test_arctic_fuse_failed_write_cleans_temporary_files
+  test_arctic_fuse_failed_write_cleans_temporary_files \
+  test_room_transform_writes_display_and_audio_settings \
+  test_room_transform_inverts_dolby_vision \
+  test_room_transform_skips_resolution_without_a_resolved_index \
+  test_room_transform_touches_no_other_component_setting \
+  test_core_and_skin_transform_touch_no_room_setting \
+  test_room_transform_preserves_unmanaged_settings

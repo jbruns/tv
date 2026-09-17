@@ -636,10 +636,11 @@ def main(argv):
     apply_addons = config("APPLY_COMPONENT_ADDONS") == "1"
     apply_services = config("APPLY_COMPONENT_SERVICES") == "1"
     apply_skin = config("APPLY_COMPONENT_SKIN") == "1"
+    apply_room = config("APPLY_COMPONENT_ROOM") == "1"
 
     userdata = os.path.join(storage_root, ".kodi", "userdata")
     addon_data = os.path.join(userdata, "addon_data")
-    if apply_core or apply_skin:
+    if apply_core or apply_skin or apply_room:
         register_managed_directory(userdata)
     if apply_services or apply_skin:
         register_managed_directory(addon_data)
@@ -694,8 +695,37 @@ def main(argv):
             "lookandfeel.skin": SKIN_ID,
             "lookandfeel.soundskin": "resource.uisounds.fromashes",
         })
+    if apply_room:
+        def room_bool(key):
+            return "true" if config(key) == "1" else "false"
 
-    if apply_core or apply_skin or (apply_services and weather_configured):
+        kodi_values.update({
+            "videoscreen.whitelist": config("ROOM_DISPLAY_WHITELIST"),
+            # The configuration states Dolby Vision positively; Kodi's setting
+            # states it negatively. This is the one inverted write in the
+            # component.
+            "coreelec.amlogic.disabledolbyvision":
+                "false" if config("ROOM_DOLBY_VISION") == "1" else "true",
+            "coreelec.amlogic.dolbyvisionled":
+                "1" if config("ROOM_DOLBY_VISION_MODE") == "player-led" else "0",
+            "audiooutput.passthrough": room_bool("ROOM_AUDIO_PASSTHROUGH"),
+            "audiooutput.ac3passthrough": room_bool("ROOM_AUDIO_AC3"),
+            "audiooutput.eac3passthrough": room_bool("ROOM_AUDIO_EAC3"),
+            "audiooutput.dtspassthrough": room_bool("ROOM_AUDIO_DTS"),
+            "audiooutput.truehdpassthrough": room_bool("ROOM_AUDIO_TRUEHD"),
+            "audiooutput.dtshdpassthrough": room_bool("ROOM_AUDIO_DTSHD"),
+        })
+        # The index is resolved by the pre-transaction display probe against
+        # the running Kodi, because Kodi's resolution enumeration is internal
+        # and unstable across releases and displays. With no resolved index
+        # the desktop resolution is left exactly as it was rather than pinned
+        # to a number that may mean something else.
+        resolution_index = config("ROOM_DISPLAY_RESOLUTION_INDEX")
+        if resolution_index:
+            kodi_values["videoscreen.resolution"] = resolution_index
+
+    if apply_core or apply_skin or apply_room \
+            or (apply_services and weather_configured):
         guisettings_path = os.path.join(userdata, "guisettings.xml")
         guisettings_tree, guisettings_root = load_kodi_settings(
             guisettings_path
