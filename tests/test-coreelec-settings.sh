@@ -78,6 +78,7 @@ write_payload() {
 write_scoped_base_payload() {
   local file="$1" apply_core="$2" apply_cec="$3" apply_addons="$4"
   local apply_services="$5" apply_skin="$6"
+  local apply_room="${7:-0}"
   write_payload "${file}" <<ENTRIES
 TIMEZONE=America/Los_Angeles
 TIMEZONE_COUNTRY=United States
@@ -91,6 +92,7 @@ APPLY_COMPONENT_CEC=${apply_cec}
 APPLY_COMPONENT_ADDONS=${apply_addons}
 APPLY_COMPONENT_SERVICES=${apply_services}
 APPLY_COMPONENT_SKIN=${apply_skin}
+APPLY_COMPONENT_ROOM=${apply_room}
 ENTRIES
 }
 
@@ -104,6 +106,7 @@ write_base_payload() {
 write_scoped_full_payload() {
   local file="$1" apply_core="$2" apply_cec="$3" apply_addons="$4"
   local apply_services="$5" apply_skin="$6"
+  local apply_room="${7:-0}"
   write_payload "${file}" <<ENTRIES
 TIMEZONE=America/Los_Angeles
 TIMEZONE_COUNTRY=United States
@@ -136,6 +139,7 @@ APPLY_COMPONENT_CEC=${apply_cec}
 APPLY_COMPONENT_ADDONS=${apply_addons}
 APPLY_COMPONENT_SERVICES=${apply_services}
 APPLY_COMPONENT_SKIN=${apply_skin}
+APPLY_COMPONENT_ROOM=${apply_room}
 ENTRIES
 }
 
@@ -789,7 +793,8 @@ test_host_payload_renders_every_effective_component() {
 APPLY_COMPONENT_CEC=1
 APPLY_COMPONENT_ADDONS=1
 APPLY_COMPONENT_SERVICES=0
-APPLY_COMPONENT_SKIN=0'
+APPLY_COMPONENT_SKIN=0
+APPLY_COMPONENT_ROOM=0'
   assert_eq "${expected}" "${flags}" \
     "the settings payload carries one strict flag for every component"
 }

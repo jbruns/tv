@@ -594,6 +594,7 @@ APPLY_COMPONENT_CEC=1
 APPLY_COMPONENT_ADDONS=1
 APPLY_COMPONENT_SERVICES=1
 APPLY_COMPONENT_SKIN=1
+APPLY_COMPONENT_ROOM=0
 TIMEZONE=America/Los_Angeles
 TIMEZONE_COUNTRY=United States
 LOCALE_LANGUAGE=resource.language.en_us
@@ -607,17 +608,19 @@ ENTRIES
 
 set_remote_component_scope() {
   local root="$1" core="$2" cec="$3" addons="$4" services="$5" skin="$6"
+  local room="${7:-0}"
   local payload="${root}/.cache/coreelec-provision/settings-payload.conf"
   local filtered="${payload}.without-components" key value
   grep -v '^APPLY_COMPONENT_' "${payload}" > "${filtered}"
   mv "${filtered}" "${payload}"
-  for key in CORE CEC ADDONS SERVICES SKIN; do
+  for key in CORE CEC ADDONS SERVICES SKIN ROOM; do
     case "${key}" in
       CORE) value="${core}" ;;
       CEC) value="${cec}" ;;
       ADDONS) value="${addons}" ;;
       SERVICES) value="${services}" ;;
       SKIN) value="${skin}" ;;
+      ROOM) value="${room}" ;;
     esac
     printf 'APPLY_COMPONENT_%s=%s\n' \
       "${key}" "$(printf '%s' "${value}" | openssl base64 -A)" >> "${payload}"
@@ -633,6 +636,36 @@ replace_remote_payload_entry() {
   printf '%s=%s\n' "${key}" "${encoded}" >> "${filtered}"
   mv "${filtered}" "${payload}"
   chmod 600 "${payload}"
+}
+
+# Writes a deployment plan's component rows directly, one "name=value" pair
+# per component in the order given, so a test can drive load_deployment_plan
+# with an exact, hand-picked set of rows rather than a full staged transaction.
+write_component_plan() {
+  local file="$1" pair name value
+  shift
+  : > "${file}"
+  for pair in "$@"; do
+    name="${pair%%=*}"
+    value="${pair#*=}"
+    printf 'component\t%s\t%s\n' "${name}" "${value}" >> "${file}"
+  done
+}
+
+# Runs load_deployment_plan against a plan file inside the shared transaction
+# prologue, the same program text the device itself runs, and reports the
+# validator's own stdout/rc so a test can assert on acceptance or rejection
+# without re-deriving the prologue.
+run_deploy_plan_validator() {
+  local plan_file="$1" phase="${2:-complete}" dir program
+  dir="$(dirname "${plan_file}")"
+  program="${dir}/plan-validator.sh"
+  {
+    extract_transaction_prologue "${dir}/storage"
+    printf 'load_deployment_plan %q %q\n' "${plan_file}" "${phase}"
+    printf 'printf "plan valid\\n"\n'
+  } > "${program}"
+  sh "${program}"
 }
 
 # Recreates what upload_artifact_bundle leaves on the device: one fixture ZIP
@@ -956,7 +989,7 @@ test_cec_only_transaction_accepts_no_artifacts_and_rolls_back_only_cec() {
   applied_paths="$(cat "${transaction}/APPLIED.txt")"
   assert_eq "${cec_path}" "${applied_paths}" \
     "the scoped applied plan contains only the CEC file"
-  assert_eq $'component\tcore\t0\ncomponent\tcec\t1\ncomponent\taddons\t0\ncomponent\tservices\t0\ncomponent\tskin\t0' \
+  assert_eq $'component\tcore\t0\ncomponent\tcec\t1\ncomponent\taddons\t0\ncomponent\tservices\t0\ncomponent\tskin\t0\ncomponent\troom\t0' \
     "$(cat "${transaction}/PLAN.tsv")" \
     "the persisted remote plan records the complete CEC-only scope"
 
@@ -1031,7 +1064,7 @@ test_cec_and_addons_transaction_mutates_only_selected_surfaces() {
     "the selected prior add-on directory is rollback material"
   assert_eq "${cec_path}" "$(cat "${transaction}/APPLIED.txt")" \
     "the mixed scoped applied plan contains only the selected settings path"
-  assert_eq $'component\tcore\t0\ncomponent\tcec\t1\ncomponent\taddons\t1\ncomponent\tservices\t0\ncomponent\tskin\t0\naddon\t1.zip\tscript.plexmod\tplex-for-kodi-fixture' \
+  assert_eq $'component\tcore\t0\ncomponent\tcec\t1\ncomponent\taddons\t1\ncomponent\tservices\t0\ncomponent\tskin\t0\ncomponent\troom\t0\naddon\t1.zip\tscript.plexmod\tplex-for-kodi-fixture' \
     "$(cat "${transaction}/PLAN.tsv")" \
     "the persisted remote plan records components and the selected PM4K artifact"
 
@@ -3246,6 +3279,77 @@ test_automatic_rollback_restores_skin_managed_paths() {
     "the obsolete movie playlist is restored by the rollback"
 }
 
+# --- room component deployment-plan and payload plumbing --------------------
+
+test_deployment_plan_accepts_the_room_component() {
+  local dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_component_plan "${dir}/plan.tsv" core=1 cec=0 addons=0 services=0 \
+    skin=0 room=1
+  output="$(run_deploy_plan_validator "${dir}/plan.tsv" partial 2>&1)"
+  assert_success "$?" "a plan selecting room must validate"
+}
+
+test_deployment_plan_rejects_a_repeated_room_component() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_component_plan "${dir}/plan.tsv" core=1 cec=0 addons=0 services=0 \
+    skin=0 room=1
+  printf 'component\troom\t1\n' >> "${dir}/plan.tsv"
+  set +e
+  output="$(run_deploy_plan_validator "${dir}/plan.tsv" partial 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a repeated room component must be rejected"
+  assert_contains "${output}" "deployment plan repeats component room"
+}
+
+test_deployment_plan_rejects_a_missing_room_component() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_component_plan "${dir}/plan.tsv" core=1 cec=0 addons=0 services=0 skin=0
+  set +e
+  output="$(run_deploy_plan_validator "${dir}/plan.tsv" partial 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a plan omitting room must be rejected"
+  assert_contains "${output}" "deployment plan is missing component room"
+}
+
+test_deployment_plan_rejects_room_without_core() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_component_plan "${dir}/plan.tsv" core=0 cec=0 addons=0 services=0 \
+    skin=0 room=1
+  set +e
+  output="$(run_deploy_plan_validator "${dir}/plan.tsv" partial 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "room without core must be rejected"
+  assert_contains "${output}" "selects room without required component core"
+}
+
+test_room_scope_backs_up_guisettings() {
+  local output
+  output="$(bash "${PROVISIONER}" --emit-remote-script backup /storage core,room 2>&1)"
+  assert_contains "${output}" 'apply_room="1"'
+  assert_contains "${output}" '.kodi/userdata/guisettings.xml'
+}
+
+test_backup_scope_rejects_an_unknown_component() {
+  local output rc
+  set +e
+  output="$(bash "${PROVISIONER}" --emit-remote-script backup /storage core,kitchen 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unknown backup scope component must be rejected"
+  assert_contains "${output}" "Unsupported component in remote backup scope: kitchen"
+}
+
 run_all_tests \
   test_reviewed_manifest_fixture_uses_sequential_indices_and_filenames \
   test_artifact_record_requires_four_fields \
@@ -3324,4 +3428,10 @@ run_all_tests \
   test_a_keyed_but_failing_identity_read_fails_with_an_actionable_error \
   test_real_kodi_deployment_requires_both_ratings_keys_before_device_contact \
   test_no_kodi_deployment_does_not_require_ratings_keys \
-  test_the_audit_report_is_key_value_and_names_the_pending_transaction
+  test_the_audit_report_is_key_value_and_names_the_pending_transaction \
+  test_deployment_plan_accepts_the_room_component \
+  test_deployment_plan_rejects_a_repeated_room_component \
+  test_deployment_plan_rejects_a_missing_room_component \
+  test_deployment_plan_rejects_room_without_core \
+  test_room_scope_backs_up_guisettings \
+  test_backup_scope_rejects_an_unknown_component

@@ -276,6 +276,7 @@ COMPONENT_PAYLOAD_KEYS = (
     "APPLY_COMPONENT_ADDONS",
     "APPLY_COMPONENT_SERVICES",
     "APPLY_COMPONENT_SKIN",
+    "APPLY_COMPONENT_ROOM",
 )
 
 
@@ -1070,7 +1071,7 @@ detect_selected_cec_path() {
 
 scoped_settings_paths() {
   if [ "${apply_core}" = "1" ] || [ "${apply_services}" = "1" ] \
-      || [ "${apply_skin}" = "1" ]; then
+      || [ "${apply_skin}" = "1" ] || [ "${apply_room}" = "1" ]; then
     printf '%s\n' '.kodi/userdata/guisettings.xml'
   fi
   if [ "${apply_core}" = "1" ]; then
@@ -1118,7 +1119,7 @@ MANAGED_SETTINGS_FUNCTION
 coreelec_remote_backup_script() {
   local root="${1:-/storage}"
   local scope="${2:-baseline}" component remainder
-  local apply_core=0 apply_cec=0 apply_addons=0 apply_services=0 apply_skin=0
+  local apply_core=0 apply_cec=0 apply_addons=0 apply_services=0 apply_skin=0 apply_room=0
   if [[ "${scope}" == "baseline" ]]; then
     scope="core,cec,addons,services,skin"
   fi
@@ -1136,6 +1137,7 @@ coreelec_remote_backup_script() {
       addons) apply_addons=1 ;;
       services) apply_services=1 ;;
       skin) apply_skin=1 ;;
+      room) apply_room=1 ;;
       *) die "Unsupported component in remote backup scope: ${component}" ;;
     esac
   done
@@ -1151,6 +1153,7 @@ apply_cec="${apply_cec}"
 apply_addons="${apply_addons}"
 apply_services="${apply_services}"
 apply_skin="${apply_skin}"
+apply_room="${apply_room}"
 cec_relative=""
 REMOTE_BACKUP_HEADER
   coreelec_managed_settings_paths_block
@@ -1294,6 +1297,7 @@ apply_cec=""
 apply_addons=""
 apply_services=""
 apply_skin=""
+apply_room=""
 plan_addon_count=0
 # Set when the list of paths the transformer applied could not be rebuilt, so
 # rollback can neither remove what this run created nor claim it restored the
@@ -1339,7 +1343,7 @@ valid_directory_name() {
 
 valid_component_name() {
   case "$1" in
-    core|cec|addons|services|skin) return 0 ;;
+    core|cec|addons|services|skin|room) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -1384,6 +1388,8 @@ load_deployment_plan() {
   seen_addons=0
   seen_services=0
   seen_skin=0
+  apply_room=""
+  seen_room=0
   seen_addon_ids="|"
   plan_addon_count=0
 
@@ -1423,6 +1429,11 @@ load_deployment_plan() {
             seen_skin=1
             apply_skin="${plan_field2}"
             ;;
+          room)
+            [ "${seen_room}" -eq 0 ] || fail "deployment plan repeats component room"
+            seen_room=1
+            apply_room="${plan_field2}"
+            ;;
         esac
         ;;
       addon)
@@ -1446,7 +1457,8 @@ load_deployment_plan() {
   [ "${seen_addons}" -eq 1 ] || fail "deployment plan is missing component addons"
   [ "${seen_services}" -eq 1 ] || fail "deployment plan is missing component services"
   [ "${seen_skin}" -eq 1 ] || fail "deployment plan is missing component skin"
-  [ "$((apply_core + apply_cec + apply_addons + apply_services + apply_skin))" -gt 0 ] \
+  [ "${seen_room}" -eq 1 ] || fail "deployment plan is missing component room"
+  [ "$((apply_core + apply_cec + apply_addons + apply_services + apply_skin + apply_room))" -gt 0 ] \
     || fail "deployment plan selects no component"
   if [ "${apply_services}" = "1" ] && [ "${apply_addons}" != "1" ]; then
     fail "deployment plan selects services without required component addons"
@@ -1454,6 +1466,9 @@ load_deployment_plan() {
   if [ "${apply_skin}" = "1" ] \
     && { [ "${apply_core}" != "1" ] || [ "${apply_addons}" != "1" ]; }; then
     fail "deployment plan selects skin without required components core and addons"
+  fi
+  if [ "${apply_room}" = "1" ] && [ "${apply_core}" != "1" ]; then
+    fail "deployment plan selects room without required component core"
   fi
   if [ "${apply_addons}" = "0" ] && [ "${plan_addon_count}" -ne 0 ]; then
     fail "deployment plan contains add-ons while component addons is disabled"
@@ -1692,6 +1707,7 @@ COMPONENTS = (
     ("APPLY_COMPONENT_ADDONS", "addons"),
     ("APPLY_COMPONENT_SERVICES", "services"),
     ("APPLY_COMPONENT_SKIN", "skin"),
+    ("APPLY_COMPONENT_ROOM", "room"),
 )
 required = dict(COMPONENTS)
 values = {}
@@ -5006,6 +5022,8 @@ coreelec_settings_payload() {
     "$(coreelec_component_effective services && printf 1 || printf 0)"
   coreelec_settings_payload_entry APPLY_COMPONENT_SKIN \
     "$(coreelec_component_effective skin && printf 1 || printf 0)"
+  coreelec_settings_payload_entry APPLY_COMPONENT_ROOM \
+    "$(coreelec_component_effective room && printf 1 || printf 0)"
   coreelec_settings_payload_entry TIMEZONE "${TIMEZONE}"
   coreelec_settings_payload_entry TIMEZONE_COUNTRY "${TIMEZONE_COUNTRY}"
   coreelec_settings_payload_entry LOCALE_LANGUAGE "${LOCALE_LANGUAGE}"
@@ -5031,6 +5049,24 @@ coreelec_settings_payload() {
   coreelec_settings_payload_secret MDBLIST_API_KEY "${MDBLIST_API_KEY:-}"
   coreelec_settings_payload_secret HOME_ASSISTANT_TOKEN "${HOME_ASSISTANT_TOKEN:-}"
   coreelec_settings_payload_secret NEXTPVR_PIN "${NEXTPVR_PIN:-}"
+
+  # A run without room in scope must carry no room data at all: emitting these
+  # only when room is effective keeps an out-of-scope run from leaking a
+  # previous room's desired state onto the wire.
+  if coreelec_component_effective room; then
+    coreelec_settings_payload_entry ROOM_NAME "${ROOM_NAME}"
+    coreelec_settings_payload_entry ROOM_DISPLAY_RESOLUTION_INDEX \
+      "${ROOM_DISPLAY_RESOLUTION_INDEX}"
+    coreelec_settings_payload_entry ROOM_DISPLAY_WHITELIST "${ROOM_DISPLAY_WHITELIST}"
+    coreelec_settings_payload_entry ROOM_DOLBY_VISION "${ROOM_DOLBY_VISION}"
+    coreelec_settings_payload_entry ROOM_DOLBY_VISION_MODE "${ROOM_DOLBY_VISION_MODE}"
+    coreelec_settings_payload_entry ROOM_AUDIO_PASSTHROUGH "${ROOM_AUDIO_PASSTHROUGH}"
+    coreelec_settings_payload_entry ROOM_AUDIO_AC3 "${ROOM_AUDIO_AC3}"
+    coreelec_settings_payload_entry ROOM_AUDIO_EAC3 "${ROOM_AUDIO_EAC3}"
+    coreelec_settings_payload_entry ROOM_AUDIO_DTS "${ROOM_AUDIO_DTS}"
+    coreelec_settings_payload_entry ROOM_AUDIO_TRUEHD "${ROOM_AUDIO_TRUEHD}"
+    coreelec_settings_payload_entry ROOM_AUDIO_DTSHD "${ROOM_AUDIO_DTSHD}"
+  fi
 }
 
 upload_kodi_settings_payload() {
