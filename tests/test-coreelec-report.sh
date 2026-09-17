@@ -4920,6 +4920,10 @@ test_audio_probe_fails_closed_on_an_unavailable_output() {
     && { fail "an unavailable passthrough output must fail the probe"; return 1; }
   assert_contains "${output}" "audiooutput.passthroughdevice" \
     "the failure names the setting" || return 1
+  assert_contains "${output}" "Kodi offers:" \
+    "the failure lists available options" || return 1
+  assert_contains "${output}" "iec958" \
+    "the failure includes an available passthrough device" || return 1
 }
 
 test_audio_probe_fails_closed_on_an_unavailable_layout() {
@@ -4931,6 +4935,10 @@ test_audio_probe_fails_closed_on_an_unavailable_layout() {
     && { fail "a layout Kodi does not offer must fail the probe"; return 1; }
   assert_contains "${output}" "audiooutput.channels" \
     "the failure names the setting" || return 1
+  assert_contains "${output}" "Kodi offers:" \
+    "the failure lists available options" || return 1
+  assert_contains "${output}" "7.1" \
+    "the failure includes an available layout" || return 1
 }
 
 test_audio_probe_rejects_an_unknown_parameter() {
