@@ -5013,13 +5013,23 @@ test_audio_verification_passes_when_the_device_matches() {
   set_observation "${observations}" "setting.audiooutput.audiodevice" "${device}"
   set_observation "${observations}" "setting.audiooutput.channels" "10"
   write_resolved_audio "${observations}" "${device}" "" "10"
+  # room.display.resolution is Task 5's concern, not this task's; it must
+  # still be seeded here so the overall verification_result can reach pass,
+  # since a mismatch/unobservable branch left over on that key would
+  # otherwise dominate the result and mask what this test is actually
+  # pinning about audio.
+  set_observation "${observations}" "resolved.room.display.resolution" "41"
   set +e
   output="$(run_room_verification "${dir}" '0384002160060.00000pstd' 2>&1)"
   set -e
   assert_contains "${output}" "audio.device.status=ok" \
     "a matching output device passes" || return 1
+  assert_contains "${output}" "audio.passthroughdevice.status=ok" \
+    "a matching passthrough device passes" || return 1
   assert_contains "${output}" "room.audio.channels.status=ok" \
     "a matching channel layout passes" || return 1
+  assert_contains "${output}" "verification_result=pass" \
+    "an all-matching run passes overall" || return 1
 }
 
 test_audio_verification_reports_a_changed_device() {
@@ -5048,6 +5058,32 @@ test_audio_verification_reports_a_changed_device() {
     "a drifted output device fails the run" || return 1
 }
 
+test_audio_verification_reports_a_changed_passthrough_device() {
+  local dir config manifest observations output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  # The passthrough device drifted to the analog output: TrueHD/DTS-HD would
+  # silently stop being carried, which is the exact failure this work exists
+  # to catch. write_pass_observations already seeds resolved.audio.passthroughdevice
+  # with the matching (hdmi) value, so overwriting only the observed setting
+  # is what puts the two sides out of step.
+  set_observation "${observations}" "setting.audiooutput.passthroughdevice" \
+    "ALSA:sysdefault:CARD=AMLAUGESOUND|AML-AUGESOUND"
+  set +e
+  output="$(run_verify_components core "${config}" "${observations}" "${manifest}" 2>&1)"
+  set -e
+  assert_contains "${output}" "audio.passthroughdevice.status=mismatch" \
+    "a drifted passthrough device is reported" || return 1
+  assert_contains "${output}" "verification_result=fail" \
+    "a drifted passthrough device fails the run" || return 1
+}
+
 test_audio_verification_is_unobservable_without_a_resolved_value() {
   local dir config manifest observations output
   dir="$(make_scratch_dir)"
@@ -5065,7 +5101,7 @@ test_audio_verification_is_unobservable_without_a_resolved_value() {
   grep -v '^resolved.audio.device=' "${observations}" > "${observations}.tmp"
   mv "${observations}.tmp" "${observations}"
   set_observation "${observations}" "setting.audiooutput.audiodevice" \
-    "ALSA:hdmi:CARD=X,DEV=0|X"
+    "ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND"
   set +e
   output="$(run_verify_components core "${config}" "${observations}" "${manifest}" 2>&1)"
   set -e
@@ -5085,12 +5121,13 @@ test_audio_channels_are_not_verified_outside_the_room_scope() {
   write_configured_config "${config}"
   write_manifest "${manifest}"
   write_pass_observations "${observations}"
-  set_observation "${observations}" "setting.audiooutput.audiodevice" \
-    "ALSA:hdmi:CARD=X,DEV=0|X"
-  write_resolved_audio "${observations}" "ALSA:hdmi:CARD=X,DEV=0|X" "" "10"
   set +e
   output="$(run_verify_components core "${config}" "${observations}" "${manifest}" 2>&1)"
   set -e
+  assert_contains "${output}" "audio.device.status=ok" \
+    "a core-only run still verifies core audio keys" || return 1
+  assert_contains "${output}" "audio.passthroughdevice.status=ok" \
+    "a core-only run still verifies core passthrough keys" || return 1
   assert_not_contains "${output}" "room.audio.channels" \
     "a core-only run reports no room channel state" || return 1
 }
@@ -5266,6 +5303,7 @@ run_all_tests \
   test_audio_probe_requests_the_audio_category \
   test_audio_verification_passes_when_the_device_matches \
   test_audio_verification_reports_a_changed_device \
+  test_audio_verification_reports_a_changed_passthrough_device \
   test_audio_verification_is_unobservable_without_a_resolved_value \
   test_audio_channels_are_not_verified_outside_the_room_scope \
   test_verify_probe_observes_the_audio_settings
