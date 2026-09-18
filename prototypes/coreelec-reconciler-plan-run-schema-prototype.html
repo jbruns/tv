@@ -1,0 +1,1455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Throwaway Plan and Run Report Schema Prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212b;
+      --muted: #5e6b78;
+      --line: #d7dee5;
+      --paper: #ffffff;
+      --wash: #f4f7f9;
+      --accent: #176b87;
+      --accent-soft: #e8f4f7;
+      --good: #176b3a;
+      --warn: #875b08;
+      --bad: #9b2c2c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--wash);
+      color: var(--ink);
+      font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1500px, calc(100% - 32px)); margin: 24px auto 64px; }
+    h1, h2, h3 { line-height: 1.2; margin: 0 0 10px; }
+    h1 { font-size: clamp(25px, 3vw, 38px); }
+    h2 { font-size: 20px; }
+    h3 { font-size: 16px; }
+    p { margin: 6px 0 12px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .banner, .panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    .banner { border-top: 5px solid var(--accent); }
+    .throwaway {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #fff0d6;
+      color: #714800;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    .question { font-size: 18px; font-weight: 700; max-width: 1100px; }
+    .muted { color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-7 { grid-column: span 7; }
+    .span-6 { grid-column: span 6; }
+    .span-5 { grid-column: span 5; }
+    .span-4 { grid-column: span 4; }
+    @media (max-width: 980px) {
+      .span-8, .span-7, .span-6, .span-5, .span-4 { grid-column: span 12; }
+    }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+    label { display: grid; gap: 4px; font-weight: 650; }
+    select, button {
+      font: inherit;
+      border: 1px solid #aeb9c3;
+      border-radius: 7px;
+      background: white;
+      color: var(--ink);
+      padding: 8px 11px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); background: var(--accent-soft); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    button.danger { border-color: #cf8d8d; color: var(--bad); }
+    button.done { background: #edf7f0; border-color: #9fc5aa; }
+    .tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; }
+    .tab { white-space: nowrap; }
+    .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .walkthrough { background: var(--accent-soft); border: 1px solid #b9dce5; border-radius: 8px; padding: 14px; }
+    .steps { display: flex; flex-wrap: wrap; gap: 8px; }
+    .step::before { content: attr(data-step) ". "; font-weight: 800; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 10px; }
+    .stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fbfcfd; }
+    .stat b { display: block; font-size: 13px; color: var(--muted); }
+    .stat span { font-weight: 750; overflow-wrap: anywhere; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #edf1f4;
+      font-size: 12px;
+      font-weight: 750;
+      margin: 1px 3px 1px 0;
+    }
+    .pill.good { background: #e5f4ea; color: var(--good); }
+    .pill.warn { background: #fff2d7; color: var(--warn); }
+    .pill.bad { background: #fde7e7; color: var(--bad); }
+    .transition { border-left: 5px solid var(--accent); }
+    .transition.rejected { border-left-color: var(--bad); background: #fff8f8; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 7px 6px; overflow-wrap: anywhere; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .025em; }
+    .scroll { overflow: auto; }
+    pre {
+      margin: 0;
+      max-height: 620px;
+      overflow: auto;
+      background: #101820;
+      color: #e8eef3;
+      padding: 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      tab-size: 2;
+      white-space: pre;
+    }
+    details summary { cursor: pointer; font-weight: 750; }
+    .callout { padding: 10px 12px; border-radius: 7px; background: #f7f9fa; border: 1px solid var(--line); }
+    .good-text { color: var(--good); }
+    .bad-text { color: var(--bad); }
+    .warn-text { color: var(--warn); }
+    ul.compact { margin: 6px 0; padding-left: 20px; }
+  </style>
+</head>
+<body>
+<main>
+  <section class="banner">
+    <span class="throwaway">Throwaway logic/data-contract prototype — not implementation code</span>
+    <h1>Canonical Plan and Run report candidates</h1>
+    <p class="question">Do these canonical Plan and Run report documents preserve enough stable evidence for safe approval, execution, recovery, and automation without making human presentation part of the contract?</p>
+    <p class="muted">This prototype deliberately offers candidate shapes and policies for maintainer judgment. It does not settle Plan/Run ID generation or the exact recovery workspace lifecycle deferred to issue #43.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Guided walkthroughs</h2>
+    <div id="tabs" class="tabs"></div>
+    <div id="walkthrough" class="walkthrough"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Free play</h2>
+    <div class="controls">
+      <label>Scenario seed
+        <select id="scenario-select"></select>
+      </label>
+      <label>Candidate approval policy
+        <select id="approval-policy">
+          <option value="resource_scoped">Continue independent authorized work</option>
+          <option value="whole_run">Block the entire Run</option>
+        </select>
+      </label>
+      <label>Candidate ID behavior
+        <select id="id-strategy">
+          <option value="random_stable">Opaque stable IDs (random candidate)</option>
+          <option value="content_derived">Content-derived IDs (candidate)</option>
+        </select>
+      </label>
+      <button class="primary" data-action="CREATE_PLAN">Create Plan</button>
+      <button data-action="APPROVE_SCOPE" data-scope="impact.non-disruptive">Approve non-disruptive</button>
+      <button data-action="APPROVE_SCOPE" data-scope="impact.service-disruptive">Approve service-disruptive</button>
+      <button data-action="APPROVE_SCOPE" data-scope="impact.destructive">Approve destructive</button>
+      <button data-action="START_RUN">Start Run</button>
+      <button data-action="SIMULATE_DRIFT">Simulate external drift</button>
+      <button data-action="APPLY_NEXT">Apply next Change</button>
+      <button data-action="VERIFY_NEXT">Verify next Resource</button>
+      <button data-action="ARM_MUTATION_FAILURE">Fail next mutation</button>
+      <button data-action="ARM_VERIFICATION_FAILURE">Fail next Verification</button>
+      <button data-action="EXECUTE_EFFECT">Execute next Effect</button>
+      <button data-action="INTERRUPT">Interrupt Run</button>
+      <button data-action="RESUME_VERIFICATION">Resume Verification</button>
+      <button data-action="ARM_ROLLBACK_FAILURE">Fail next rollback</button>
+      <button data-action="ROLLBACK">Rollback eligible Resource</button>
+      <button data-action="FINALIZE">Finalize</button>
+      <button data-action="CHANGE_PRESENTATION">Change human wording/order</button>
+      <button data-action="CHANGE_SEMANTIC_FIELD">Change semantic field</button>
+      <button data-action="CONSUMER_CHECK">Automation consumer check</button>
+      <button class="danger" data-action="RESET">Reset seed</button>
+    </div>
+  </section>
+
+  <section id="last-transition" class="panel transition"></section>
+
+  <section class="grid">
+    <section class="panel span-12">
+      <h2>Lifecycle / state machine</h2>
+      <div id="lifecycle" class="stat-grid"></div>
+    </section>
+
+    <section class="panel span-7">
+      <h2>Human summary <span class="pill">derived presentation, not contract</span></h2>
+      <div id="human-summary"></div>
+    </section>
+    <section class="panel span-5">
+      <h2>Semantic and canonical digest comparison</h2>
+      <div id="digest-comparison"></div>
+    </section>
+
+    <section class="panel span-12">
+      <h2>Per-Resource convergence matrix</h2>
+      <div class="scroll"><table id="resource-table"></table></div>
+    </section>
+
+    <section class="panel span-12">
+      <h2>Change / precondition / evidence table</h2>
+      <div class="scroll"><table id="change-table"></table></div>
+    </section>
+
+    <section class="panel span-6">
+      <h2>Approval and impact</h2>
+      <div id="approval-table" class="scroll"></div>
+    </section>
+    <section class="panel span-6">
+      <h2>Effect barriers</h2>
+      <div id="effects" class="scroll"></div>
+    </section>
+
+    <section class="panel span-6">
+      <h2>Rollback and recovery</h2>
+      <div id="recovery"></div>
+    </section>
+    <section class="panel span-6">
+      <h2>Stable automation contract fields</h2>
+      <div id="automation-fields"></div>
+    </section>
+
+    <section class="panel span-6">
+      <h2>Canonical Plan JSON candidate</h2>
+      <p class="muted">Deterministic key and array ordering. Human wording is generated elsewhere.</p>
+      <pre id="plan-json"></pre>
+    </section>
+    <section class="panel span-6">
+      <h2>Canonical Run report JSON candidate</h2>
+      <p class="muted">Mutable while in progress; final report is canonical evidence, not a claim of whole-Run atomicity.</p>
+      <pre id="run-json"></pre>
+    </section>
+
+    <section class="panel span-12">
+      <details>
+        <summary>Full relevant prototype state (rendered after every action)</summary>
+        <pre id="full-state"></pre>
+      </details>
+    </section>
+  </section>
+</main>
+
+<script>
+const PlanRunLogic = (() => {
+  "use strict";
+
+  const PLAN_SCHEMA_VERSION = 1;
+  const RUN_SCHEMA_VERSION = 1;
+  const CONTROLLER = Object.freeze({ name: "coreelec-reconciler", version: "0.0-prototype" });
+  const DEVICE = Object.freeze({
+    logical_id: "living-room.ugoos-am6b-plus",
+    endpoint_fingerprint: "sha256:endpoint-fingerprint-demo-7c6a"
+  });
+  const DIGESTS = Object.freeze({
+    input: "sha256:authored-configuration-demo-a11c",
+    artifact: "sha256:artifact-catalog-demo-b22d",
+    profile: "sha256:resolved-profile-demo-c33e",
+    capability: "sha256:observation-snapshot-demo-d44f"
+  });
+  const RECOVERY_ACTIONS = ["inspect", "resume-verification", "rollback", "finalize"];
+
+  const RESOURCE_CATALOG = Object.freeze({
+    playlist: {
+      resource_id: "skin.playlist.new-shows",
+      resource_type: "KodiSmartPlaylist",
+      desired_state: {
+        presence: "present",
+        semantic_digest: "sha256:desired-new-shows-v1",
+        summary_code: "playlist.new-shows.present"
+      },
+      state_addresses: ["special://profile/playlists/video/NewShows.xsp"],
+      dependencies: [],
+      impact: "non_disruptive",
+      approval_scopes: [],
+      effect_ids: [],
+      change_type: "update",
+      rollback: "verified_supported"
+    },
+    independent: {
+      resource_id: "ssh.banner",
+      resource_type: "SshBanner",
+      desired_state: {
+        presence: "present",
+        semantic_digest: "sha256:desired-ssh-banner-v1",
+        summary_code: "ssh.banner.present"
+      },
+      state_addresses: ["file:///storage/.config/ssh/banner"],
+      dependencies: [],
+      impact: "non_disruptive",
+      approval_scopes: [],
+      effect_ids: [],
+      change_type: "update",
+      rollback: "verified_supported"
+    },
+    effectful: {
+      resource_id: "kodi.gui.language",
+      resource_type: "KodiGuiSettings",
+      desired_state: {
+        presence: "present",
+        semantic_digest: "sha256:desired-kodi-language-v1",
+        summary_code: "kodi.gui.language.en-gb"
+      },
+      state_addresses: ["kodi://settings/locale.language"],
+      dependencies: ["skin.playlist.new-shows"],
+      impact: "service_disruptive",
+      approval_scopes: ["impact.service-disruptive"],
+      effect_ids: ["effect.kodi.restart"],
+      change_type: "update",
+      rollback: "verified_supported"
+    }
+  });
+
+  const SCENARIOS = Object.freeze({
+    noop: {
+      title: "Second-Run no-op",
+      description: "Every fresh Observation already matches Desired State. The Plan contains evidence but no Changes or approval requirement.",
+      resources: ["playlist", "independent"],
+      observations: { playlist: "converged", independent: "converged" }
+    },
+    actionable: {
+      title: "Actionable managed-file update",
+      description: "The smart playlist differs. A typed update with a fresh evidence precondition is approved, applied, and independently verified.",
+      resources: ["playlist"],
+      observations: { playlist: "drifted" }
+    },
+    blocked: {
+      title: "Plan blocked before execution",
+      description: "The playlist Observation reports a symlink safety failure. A stable blocker prevents any Run from beginning.",
+      resources: ["playlist"],
+      observations: { playlist: "unsafe_symlink" }
+    },
+    stale: {
+      title: "Stale precondition",
+      description: "The Device changes after planning. Apply detects the evidence digest mismatch before mutation and requires a new Plan.",
+      resources: ["playlist"],
+      observations: { playlist: "drifted" }
+    },
+    missingApproval: {
+      title: "Missing impact approval",
+      description: "A disruptive Kodi settings Change lacks its scope while an independent non-disruptive playlist Change is authorized. Toggle the candidate policy.",
+      resources: ["playlist", "effectful"],
+      observations: { playlist: "drifted", effectful: "drifted" }
+    },
+    partial: {
+      title: "Partial convergence",
+      description: "The independent playlist converges while the SSH banner mutation fails. The report remains explicitly partially converged.",
+      resources: ["playlist", "independent"],
+      observations: { playlist: "drifted", independent: "drifted" }
+    },
+    mutationRollback: {
+      title: "Mutation failure and verified rollback",
+      description: "A mutation reports failure after possible write. The Resource is rolled back and the restored state is independently verified.",
+      resources: ["playlist"],
+      observations: { playlist: "drifted" }
+    },
+    verificationRollbackFail: {
+      title: "Verification and rollback failure",
+      description: "Mutation completes, fresh Verification fails, rollback also fails, and the final state remains unknown behind an opaque recovery pointer.",
+      resources: ["playlist"],
+      observations: { playlist: "drifted" }
+    },
+    effect: {
+      title: "Coalesced Effect barrier",
+      description: "Two conceptual settings Changes coalesce onto one Kodi restart barrier; mandatory post-Effect re-observation proves persisted state.",
+      resources: ["playlist", "effectful"],
+      observations: { effectful: "drifted", playlist: "drifted" },
+      coalescedEffect: true
+    },
+    interrupted: {
+      title: "Interrupted Run and recovery actions",
+      description: "An interrupted Run advertises typed, explicitly legal candidate report operations without deciding issue #43 workspace lifecycle.",
+      resources: ["playlist"],
+      observations: { playlist: "drifted" }
+    },
+    canonical: {
+      title: "Canonical JSON versus human presentation",
+      description: "Human wording and display order change without changing the automation digest; a semantic field change changes the digest.",
+      resources: ["playlist", "independent"],
+      observations: { playlist: "drifted", independent: "converged" }
+    },
+    mismatch: {
+      title: "Schema or unknown-code mismatch",
+      description: "A strict automation consumer rejects unsupported schema versions and unknown stable codes rather than guessing.",
+      resources: ["playlist"],
+      observations: { playlist: "drifted" },
+      consumerMismatch: true
+    }
+  });
+
+  const WALKTHROUGHS = Object.freeze([
+    { scenario: "noop", steps: [["CREATE_PLAN", "Create no-op Plan"], ["START_RUN", "Start evidence-only Run"], ["FINALIZE", "Finalize converged report"]] },
+    { scenario: "actionable", steps: [["CREATE_PLAN", "Create actionable Plan"], ["START_RUN", "Start Run"], ["APPLY_NEXT", "Apply playlist Change"], ["VERIFY_NEXT", "Freshly verify playlist"], ["FINALIZE", "Finalize converged report"]] },
+    { scenario: "blocked", steps: [["CREATE_PLAN", "Create blocked Plan"], ["START_RUN", "Try to start Run (rejected)"]] },
+    { scenario: "stale", steps: [["CREATE_PLAN", "Create Plan"], ["START_RUN", "Start Run"], ["SIMULATE_DRIFT", "Drift Device after Plan"], ["APPLY_NEXT", "Try apply (stale, no mutation)"]] },
+    { scenario: "missingApproval", steps: [["CREATE_PLAN", "Create mixed-impact Plan"], ["START_RUN", "Start with missing scope"], ["APPLY_NEXT", "Apply authorized independent Change"], ["VERIFY_NEXT", "Verify independent Resource"], ["FINALIZE", "Finalize partial report"]] },
+    { scenario: "partial", steps: [["CREATE_PLAN", "Create Plan"], ["START_RUN", "Start Run"], ["APPLY_NEXT", "Apply first independent Change"], ["VERIFY_NEXT", "Verify first Resource"], ["ARM_MUTATION_FAILURE", "Arm mutation failure"], ["APPLY_NEXT", "Fail second mutation"], ["FINALIZE", "Finalize partial convergence"]] },
+    { scenario: "mutationRollback", steps: [["CREATE_PLAN", "Create Plan"], ["START_RUN", "Start Run"], ["ARM_MUTATION_FAILURE", "Arm ambiguous mutation failure"], ["APPLY_NEXT", "Record failed mutation"], ["ROLLBACK", "Rollback and verify restored state"], ["FINALIZE", "Finalize failed-but-restored report"]] },
+    { scenario: "verificationRollbackFail", steps: [["CREATE_PLAN", "Create Plan"], ["START_RUN", "Start Run"], ["APPLY_NEXT", "Apply Change"], ["ARM_VERIFICATION_FAILURE", "Arm Verification failure"], ["VERIFY_NEXT", "Fail fresh Verification"], ["ARM_ROLLBACK_FAILURE", "Arm rollback failure"], ["ROLLBACK", "Fail rollback"], ["FINALIZE", "Finalize unknown final state"]] },
+    { scenario: "effect", steps: [["CREATE_PLAN", "Create Effect Plan"], ["APPROVE_SCOPE:impact.service-disruptive", "Approve disruptive scope"], ["START_RUN", "Start Run"], ["APPLY_NEXT", "Apply independent Change"], ["APPLY_NEXT", "Apply first Effect-declaring Change"], ["APPLY_NEXT", "Apply second Effect-declaring Change"], ["EXECUTE_EFFECT", "Execute coalesced Kodi Effect"], ["VERIFY_NEXT", "Verify independent Resource"], ["VERIFY_NEXT", "Post-Effect re-observe affected Resource"], ["FINALIZE", "Finalize"]] },
+    { scenario: "interrupted", steps: [["CREATE_PLAN", "Create Plan"], ["START_RUN", "Start Run"], ["APPLY_NEXT", "Apply Change"], ["INTERRUPT", "Interrupt before Verification"], ["RESUME_VERIFICATION", "Resume Verification (legal)"], ["VERIFY_NEXT", "Verify Resource"], ["FINALIZE", "Finalize"]] },
+    { scenario: "canonical", steps: [["CREATE_PLAN", "Create Plan"], ["CHANGE_PRESENTATION", "Change wording and display order"], ["CHANGE_SEMANTIC_FIELD", "Change semantic warning field"]] },
+    { scenario: "mismatch", steps: [["CREATE_PLAN", "Create candidate Plan"], ["CONSUMER_CHECK", "Strict consumer rejects mismatch"]] }
+  ]);
+
+  function clone(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  }
+
+  function stableSort(value) {
+    if (Array.isArray(value)) return value.map(stableSort);
+    if (value && typeof value === "object") {
+      return Object.keys(value).sort().reduce((out, key) => {
+        out[key] = stableSort(value[key]);
+        return out;
+      }, {});
+    }
+    return value;
+  }
+
+  function canonicalJson(value) {
+    return JSON.stringify(stableSort(value), null, 2);
+  }
+
+  function demoDigest(value) {
+    const text = typeof value === "string" ? value : canonicalJson(value);
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return "demo-fnv1a32:" + (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function semanticPlan(plan) {
+    if (!plan) return null;
+    const copy = clone(plan);
+    delete copy.created_at;
+    delete copy.plan_id;
+    return copy;
+  }
+
+  function planDigest(plan) {
+    return plan ? demoDigest(semanticPlan(plan)) : null;
+  }
+
+  function stableId(prefix, strategy, semanticValue, serial) {
+    return strategy === "content_derived"
+      ? prefix + ".candidate." + demoDigest(semanticValue).split(":")[1]
+      : prefix + ".candidate." + String(serial).padStart(4, "0");
+  }
+
+  function evidenceFor(key, observation, serial) {
+    const resource = RESOURCE_CATALOG[key];
+    const safe = !["unsafe_symlink", "unsafe_non_regular", "unreadable"].includes(observation);
+    return {
+      evidence_ref: "evidence." + resource.resource_id + ".observation." + serial,
+      evidence_digest: demoDigest({ resource_id: resource.resource_id, observation, serial }),
+      evidence_version: 1,
+      observed_at: "2026-09-18T23:" + String(10 + serial).padStart(2, "0") + ":00Z",
+      observation_code: observation === "converged" ? "observation.desired-state-match"
+        : observation === "drifted" ? "observation.desired-state-mismatch"
+        : "observation." + observation.replaceAll("_", "-"),
+      safe_to_mutate: safe,
+      semantic_state_digest: observation === "converged"
+        ? resource.desired_state.semantic_digest
+        : demoDigest({ resource_id: resource.resource_id, observed: observation })
+    };
+  }
+
+  function resourceEntry(key, observation, index, scenario) {
+    const base = clone(RESOURCE_CATALOG[key]);
+    const evidence = evidenceFor(key, observation, index + 1);
+    const blocker = evidence.safe_to_mutate ? [] : [{
+      code: observation === "unsafe_symlink" ? "plan.blocked.unsafe-symlink"
+        : observation === "unreadable" ? "plan.blocked.unreadable-observation"
+        : "plan.blocked.unsafe-file-type",
+      resource_id: base.resource_id,
+      evidence_ref: evidence.evidence_ref
+    }];
+    const changes = observation === "drifted" ? [{
+      change_id: "change." + base.resource_id + ".01",
+      change_type: base.change_type,
+      resource_id: base.resource_id,
+      state_addresses: base.state_addresses,
+      before_evidence_ref: evidence.evidence_ref,
+      before_evidence_digest: evidence.evidence_digest,
+      desired_state_digest: base.desired_state.semantic_digest,
+      field_differences: [{
+        field_code: key === "playlist" ? "playlist.limit" : key === "effectful" ? "kodi.locale.language" : "file.content",
+        before_digest: evidence.semantic_state_digest,
+        after_digest: base.desired_state.semantic_digest
+      }],
+      preconditions: [{
+        precondition_id: "precondition." + base.resource_id + ".fresh-observation",
+        type: "evidence_digest_matches",
+        expected_evidence_digest: evidence.evidence_digest,
+        expected_evidence_version: evidence.evidence_version,
+        failure_code: "run.precondition.stale-observation"
+      }],
+      impact: base.impact,
+      required_approval_scopes: base.approval_scopes,
+      declared_effect_ids: base.effect_ids
+    }] : [];
+    if (scenario.coalescedEffect && key === "effectful") {
+      const second = clone(changes[0]);
+      second.change_id = "change." + base.resource_id + ".02";
+      second.field_differences = [{
+        field_code: "kodi.locale.timezone-country",
+        before_digest: demoDigest("old-timezone"),
+        after_digest: demoDigest("desired-timezone")
+      }];
+      changes.push(second);
+    }
+    return {
+      order: index + 1,
+      resource_id: base.resource_id,
+      resource_type: base.resource_type,
+      desired_state: base.desired_state,
+      observation: evidence,
+      state_addresses: base.state_addresses,
+      dependencies: base.dependencies,
+      impact: base.impact,
+      required_approval_scopes: base.approval_scopes,
+      declared_effect_ids: base.effect_ids,
+      rollback_capability: base.rollback,
+      changes,
+      blocked_reasons: blocker,
+      warnings: []
+    };
+  }
+
+  function effectEntries(resources) {
+    const requestingChanges = resources.flatMap(resource =>
+      resource.changes.filter(change => change.declared_effect_ids.includes("effect.kodi.restart")).map(change => change.change_id)
+    );
+    if (!requestingChanges.length) return [];
+    return [{
+      effect_id: "effect.kodi.restart",
+      effect_type: "KodiRestart",
+      impact: "service_disruptive",
+      required_approval_scopes: ["impact.service-disruptive"],
+      coalesced_change_ids: requestingChanges.sort(),
+      barrier: {
+        barrier_id: "barrier.kodi.restart.01",
+        after_change_ids: requestingChanges.sort(),
+        before_resource_ids: []
+      },
+      post_effect_reobservation_resource_ids: resources
+        .filter(resource => resource.declared_effect_ids.includes("effect.kodi.restart"))
+        .map(resource => resource.resource_id).sort()
+    }];
+  }
+
+  function createPlan(state) {
+    const scenario = SCENARIOS[state.scenario];
+    const resources = scenario.resources.map((key, index) =>
+      resourceEntry(key, scenario.observations[key], index, scenario)
+    ).sort((a, b) => a.order - b.order || a.resource_id.localeCompare(b.resource_id));
+    const blockers = resources.flatMap(resource => resource.blocked_reasons).sort((a, b) => a.code.localeCompare(b.code));
+    const changes = resources.flatMap(resource => resource.changes);
+    const disposition = blockers.length ? "blocked" : changes.length ? "actionable" : "noop";
+    const requiredScopes = [...new Set(changes.flatMap(change => change.required_approval_scopes))].sort();
+    const semanticCore = {
+      kind: "CoreElecReconcilerPlan",
+      schema_version: PLAN_SCHEMA_VERSION,
+      controller: CONTROLLER,
+      device: DEVICE,
+      bindings: DIGESTS,
+      disposition,
+      resources,
+      effects: effectEntries(resources),
+      blocked_reasons: blockers,
+      warnings: [{ code: "plan.advisory.prototype-candidate", severity: "advisory" }],
+      required_approval_scopes: requiredScopes
+    };
+    const planId = stableId("plan", state.idStrategy, semanticCore, state.serial + 1);
+    const plan = {
+      kind: semanticCore.kind,
+      schema_version: semanticCore.schema_version,
+      plan_id: planId,
+      created_at: "2026-09-18T23:20:00Z",
+      controller: semanticCore.controller,
+      device: semanticCore.device,
+      bindings: semanticCore.bindings,
+      disposition: semanticCore.disposition,
+      resources: semanticCore.resources,
+      effects: semanticCore.effects,
+      blocked_reasons: semanticCore.blocked_reasons,
+      warnings: semanticCore.warnings,
+      required_approval_scopes: semanticCore.required_approval_scopes,
+      prohibited_content_assertion: {
+        secret_values: false,
+        transport_commands: false,
+        rendered_shell: false,
+        host_private_details: false
+      }
+    };
+    return {
+      ...state,
+      serial: state.serial + 1,
+      plan,
+      run: null,
+      approvals: [],
+      driftedEvidence: {},
+      armedFailure: null,
+      consumer: { status: "not_checked", code: null },
+      lifecycle: disposition === "blocked" ? "plan_blocked" : "plan_ready",
+      lastTransition: accepted("plan.created", "Canonical candidate Plan created with disposition " + disposition + ".")
+    };
+  }
+
+  function initialExecutionResource(resource) {
+    return {
+      resource_id: resource.resource_id,
+      resource_type: resource.resource_type,
+      desired_state: resource.desired_state,
+      observed_state: {
+        before_evidence_ref: resource.observation.evidence_ref,
+        before_evidence_digest: resource.observation.evidence_digest,
+        before_observation_code: resource.observation.observation_code,
+        after_evidence_ref: null,
+        after_evidence_digest: null,
+        after_observation_code: null
+      },
+      mutation_outcome: resource.changes.length ? "pending" : "not_required",
+      verification_outcome: resource.changes.length ? "pending" : "matched",
+      final_convergence: resource.changes.length ? "pending" : "converged",
+      change_attempt_ids: [],
+      blocked_reason_codes: [],
+      skipped_reason_codes: [],
+      rollback: {
+        eligibility: resource.rollback_capability,
+        attempt: "not_attempted",
+        result: null,
+        verification: null
+      },
+      failures: []
+    };
+  }
+
+  function startRun(state) {
+    if (!state.plan) return reject(state, "transition.plan-required", "Create a Plan before starting a Run.");
+    if (state.plan.disposition === "blocked") {
+      return reject(state, "transition.blocked-plan-cannot-run", "A blocked Plan cannot begin a Run; resolve the Guard/Observation and re-plan.");
+    }
+    if (state.run) return reject(state, "transition.run-already-exists", "This prototype Plan already has a Run.");
+    const missing = state.plan.required_approval_scopes.filter(scope => !state.approvals.includes(scope));
+    if (missing.length && state.approvalPolicy === "whole_run") {
+      return reject(state, "run.approval.whole-run-blocked", "Candidate whole-Run policy rejects start because approval is missing: " + missing.join(", "));
+    }
+    const digest = planDigest(state.plan);
+    const semantic = { plan_id: state.plan.plan_id, plan_digest: digest, device_id: DEVICE.logical_id };
+    const runId = stableId("run", state.idStrategy, semantic, state.serial + 1);
+    const resources = state.plan.resources.map(initialExecutionResource);
+    const unauthorizedChangeIds = state.plan.resources.flatMap(resource =>
+      resource.changes.filter(change =>
+        change.required_approval_scopes.some(scope => !state.approvals.includes(scope))
+      ).map(change => change.change_id)
+    );
+    resources.forEach(resource => {
+      const resourcePlan = state.plan.resources.find(item => item.resource_id === resource.resource_id);
+      const allUnauthorized = resourcePlan.changes.length > 0
+        && resourcePlan.changes.every(change => unauthorizedChangeIds.includes(change.change_id));
+      if (allUnauthorized) {
+        resource.mutation_outcome = "blocked";
+        resource.verification_outcome = "not_attempted";
+        resource.final_convergence = "blocked";
+        resource.blocked_reason_codes.push("run.approval.scope-missing");
+      }
+    });
+    const run = {
+      kind: "CoreElecReconcilerRunReport",
+      schema_version: RUN_SCHEMA_VERSION,
+      run_id: runId,
+      plan_reference: { plan_id: state.plan.plan_id, plan_digest: digest },
+      started_at: "2026-09-18T23:30:00Z",
+      ended_at: null,
+      actor: { type: "controller-user", id: "actor.local-admin" },
+      controller: CONTROLLER,
+      device: DEVICE,
+      recovery_pointer: "run-workspace://" + runId,
+      status: "in_progress",
+      convergence_summary: { converged: 0, failed: 0, blocked: resources.filter(r => r.final_convergence === "blocked").length, pending: resources.filter(r => r.final_convergence.includes("pending")).length, unknown: 0 },
+      resource_executions: resources,
+      change_attempts: [],
+      effect_executions: state.plan.effects.map(effect => {
+        const entirelyUnauthorized = effect.coalesced_change_ids.every(id => unauthorizedChangeIds.includes(id));
+        return {
+          effect_id: effect.effect_id,
+          barrier_id: effect.barrier.barrier_id,
+          coalesced_change_ids: effect.coalesced_change_ids,
+          status: entirelyUnauthorized ? "not_required_unauthorized" : "pending",
+          attempts: [],
+          post_effect_reobservation: entirelyUnauthorized ? "not_required" : "required"
+        };
+      }),
+      recovery: {
+        workspace_lifecycle_decision: "deferred-to-issue-43",
+        allowed_actions: legalRecoveryActions("running", resources),
+        finalization: "not_started"
+      },
+      failures: []
+    };
+    if (missing.length) {
+      run.failures.push({
+        code: "run.approval.scope-missing",
+        severity: "nonfatal",
+        resource_id: null,
+        affected_change_ids: unauthorizedChangeIds
+      });
+    }
+    updateRunSummary(run);
+    return {
+      ...state,
+      serial: state.serial + 1,
+      run,
+      lifecycle: "run_in_progress",
+      lastTransition: accepted(
+        missing.length ? "run.started.with-scoped-authorization" : "run.started",
+        missing.length
+          ? "Run started; unauthorized Change path is blocked while independent authorized work may continue under the selected candidate policy."
+          : "Run started against the exact Plan ID and semantic digest."
+      )
+    };
+  }
+
+  function nextPendingChange(state) {
+    if (!state.run) return null;
+    for (const plannedResource of state.plan.resources) {
+      const execution = state.run.resource_executions.find(item => item.resource_id === plannedResource.resource_id);
+      if (execution.mutation_outcome === "blocked") continue;
+      for (const change of plannedResource.changes) {
+        if (!state.run.change_attempts.some(attempt => attempt.change_id === change.change_id)) {
+          return { plannedResource, execution, change };
+        }
+      }
+    }
+    return null;
+  }
+
+  function applyNext(state) {
+    if (!state.run || state.run.status !== "in_progress") {
+      return reject(state, "transition.active-run-required", "Apply requires an in-progress Run.");
+    }
+    const next = nextPendingChange(state);
+    if (!next) return reject(state, "transition.no-ready-change", "No authorized pending Change is ready.");
+    const out = clone(state);
+    const targetExecution = out.run.resource_executions.find(r => r.resource_id === next.execution.resource_id);
+    const currentDigest = out.driftedEvidence[next.execution.resource_id] || next.plannedResource.observation.evidence_digest;
+    const precondition = next.change.preconditions[0];
+    if (currentDigest !== precondition.expected_evidence_digest) {
+      const attempt = {
+        attempt_id: "attempt." + next.change.change_id + ".01",
+        change_id: next.change.change_id,
+        resource_id: next.change.resource_id,
+        started_at: "2026-09-18T23:35:00Z",
+        ended_at: "2026-09-18T23:35:01Z",
+        precondition_result: {
+          status: "stale",
+          code: precondition.failure_code,
+          expected_evidence_digest: precondition.expected_evidence_digest,
+          actual_evidence_digest: currentDigest
+        },
+        mutation_result: { status: "not_attempted", code: "mutation.prevented-by-stale-precondition" }
+      };
+      out.run.change_attempts.push(attempt);
+      targetExecution.change_attempt_ids.push(attempt.attempt_id);
+      targetExecution.mutation_outcome = "blocked";
+      targetExecution.verification_outcome = "not_attempted";
+      targetExecution.final_convergence = "blocked";
+      targetExecution.blocked_reason_codes.push("run.precondition.stale-observation");
+      out.run.failures.push({
+        code: "run.precondition.stale-observation",
+        severity: "fatal_for_resource",
+        resource_id: next.change.resource_id,
+        recovery_hint_code: "recovery.replan-required"
+      });
+      updateRunSummary(out.run);
+      out.lastTransition = accepted("change.prevented.stale-precondition", "Fresh evidence no longer matches the Plan. Mutation did not occur; re-planning is required.");
+      return out;
+    }
+    const fail = out.armedFailure === "mutation";
+    const attempt = {
+      attempt_id: "attempt." + next.change.change_id + ".01",
+      change_id: next.change.change_id,
+      resource_id: next.change.resource_id,
+      started_at: "2026-09-18T23:35:00Z",
+      ended_at: "2026-09-18T23:35:02Z",
+      precondition_result: {
+        status: "matched",
+        code: "run.precondition.matched",
+        expected_evidence_digest: precondition.expected_evidence_digest,
+        actual_evidence_digest: currentDigest
+      },
+      mutation_result: fail
+        ? { status: "failed_ambiguous", code: "mutation.transport-disconnected-after-write" }
+        : { status: "completed", code: "mutation.completed" }
+    };
+    out.run.change_attempts.push(attempt);
+    targetExecution.change_attempt_ids.push(attempt.attempt_id);
+    targetExecution.mutation_outcome = fail ? "failed_ambiguous" : "completed";
+    targetExecution.verification_outcome = fail ? "required_to_determine_state" : "pending";
+    targetExecution.final_convergence = fail ? "unknown" : "pending_verification";
+    if (fail) {
+      const failure = { code: "mutation.transport-disconnected-after-write", severity: "fatal_for_resource", resource_id: next.change.resource_id };
+      targetExecution.failures.push(failure);
+      out.run.failures.push(failure);
+    }
+    out.armedFailure = null;
+    updateRunSummary(out.run);
+    out.lastTransition = accepted(
+      fail ? "change.mutation-failed" : "change.mutation-completed",
+      fail ? "Mutation failed ambiguously. Command/write outcome is not treated as Convergence." : "Mutation completed; fresh independent Verification is still required."
+    );
+    return out;
+  }
+
+  function pendingVerification(state) {
+    if (!state.run) return null;
+    const effectPendingIds = new Set(state.run.effect_executions.filter(e => e.status !== "completed").flatMap(e => e.coalesced_change_ids));
+    return state.run.resource_executions.find(execution => {
+      if (!["pending", "required_to_determine_state"].includes(execution.verification_outcome)) return false;
+      const planned = state.plan.resources.find(resource => resource.resource_id === execution.resource_id);
+      const hasUnattempted = planned.changes.some(change => !state.run.change_attempts.some(attempt => attempt.change_id === change.change_id));
+      const waitingOnEffect = planned.changes.some(change => effectPendingIds.has(change.change_id));
+      return !hasUnattempted && !waitingOnEffect && execution.final_convergence !== "blocked";
+    }) || state.run.resource_executions.find(execution =>
+      execution.mutation_outcome === "not_required" && execution.verification_outcome === "pending"
+    );
+  }
+
+  function verifyNext(state) {
+    if (!state.run || !["in_progress", "recovery_in_progress"].includes(state.run.status)) {
+      return reject(state, "transition.verifiable-run-required", "Verification requires an active or recovery Run.");
+    }
+    const target = pendingVerification(state);
+    if (!target) return reject(state, "transition.no-resource-ready-for-verification", "No Resource is ready for fresh Verification; a Change or Effect may still be pending.");
+    const out = clone(state);
+    const execution = out.run.resource_executions.find(r => r.resource_id === target.resource_id);
+    const fail = out.armedFailure === "verification";
+    const evidence = {
+      evidence_ref: "evidence." + target.resource_id + ".verification." + (out.serial + 1),
+      evidence_digest: demoDigest({ resource_id: target.resource_id, verification: fail ? "mismatch" : "match", serial: out.serial + 1 }),
+      evidence_version: 1,
+      observation_code: fail ? "verification.desired-state-mismatch" : "verification.desired-state-match",
+      observed_at: "2026-09-18T23:40:00Z"
+    };
+    execution.observed_state.after_evidence_ref = evidence.evidence_ref;
+    execution.observed_state.after_evidence_digest = evidence.evidence_digest;
+    execution.observed_state.after_observation_code = evidence.observation_code;
+    execution.verification_outcome = fail ? "failed" : "matched";
+    execution.final_convergence = fail ? "failed" : "converged";
+    if (fail) {
+      const failure = { code: "verification.desired-state-mismatch", severity: "fatal_for_resource", resource_id: target.resource_id };
+      execution.failures.push(failure);
+      out.run.failures.push(failure);
+    }
+    out.run.effect_executions.filter(effect => effect.status === "completed").forEach(effect => {
+      const plannedEffect = out.plan.effects.find(item => item.effect_id === effect.effect_id);
+      const allReobserved = plannedEffect.post_effect_reobservation_resource_ids.every(resourceId => {
+        const affected = out.run.resource_executions.find(item => item.resource_id === resourceId);
+        return affected && ["matched", "failed"].includes(affected.verification_outcome);
+      });
+      if (allReobserved) effect.post_effect_reobservation = "completed";
+    });
+    out.armedFailure = null;
+    out.serial += 1;
+    updateRunSummary(out.run);
+    out.lastTransition = accepted(
+      fail ? "verification.failed" : "verification.converged",
+      fail ? "Fresh Observation does not match Desired State. Mutation completion is not success-shaped fallback." : "Fresh independent Observation matches Desired State."
+    );
+    return out;
+  }
+
+  function executeEffect(state) {
+    if (!state.run || state.run.status !== "in_progress") {
+      return reject(state, "transition.active-run-required", "Effect execution requires an in-progress Run.");
+    }
+    const effect = state.run.effect_executions.find(item => item.status === "pending");
+    if (!effect) return reject(state, "transition.no-pending-effect", "No Effect is pending.");
+    const allChangesAttempted = effect.coalesced_change_ids.every(id =>
+      state.run.change_attempts.some(attempt => attempt.change_id === id && attempt.mutation_result.status === "completed")
+    );
+    if (!allChangesAttempted) {
+      return reject(state, "effect.barrier.not-ready", "The coalesced Effect barrier waits until every declaring Change has completed.");
+    }
+    const out = clone(state);
+    const target = out.run.effect_executions.find(item => item.effect_id === effect.effect_id);
+    target.status = "completed";
+    target.attempts.push({
+      attempt_id: "effect-attempt." + effect.effect_id + ".01",
+      result: "completed",
+      code: "effect.completed",
+      readiness_evidence_digest: demoDigest("kodi-ready-after-restart")
+    });
+    target.post_effect_reobservation = "pending";
+    out.lastTransition = accepted("effect.completed.reobservation-required", "The coalesced Effect completed. Every affected Resource still requires mandatory post-Effect re-observation.");
+    return out;
+  }
+
+  function rollback(state) {
+    if (!state.run) return reject(state, "transition.run-required", "Rollback requires a Run report.");
+    const target = state.run.resource_executions.find(execution =>
+      ["failed", "unknown"].includes(execution.final_convergence)
+      && execution.rollback.eligibility === "verified_supported"
+      && execution.rollback.attempt === "not_attempted"
+    );
+    if (!target) return reject(state, "recovery.rollback.not-eligible", "No failed/unknown Resource currently advertises verified rollback eligibility.");
+    const out = clone(state);
+    const execution = out.run.resource_executions.find(r => r.resource_id === target.resource_id);
+    const fail = out.armedFailure === "rollback";
+    execution.rollback.attempt = "completed";
+    execution.rollback.result = fail ? "failed" : "restored_preimage";
+    execution.rollback.verification = fail ? "unknown" : "matched_before_evidence";
+    if (fail) {
+      execution.final_convergence = "unknown";
+      const failure = { code: "rollback.failed-final-state-unknown", severity: "fatal", resource_id: target.resource_id };
+      execution.failures.push(failure);
+      out.run.failures.push(failure);
+    } else {
+      execution.final_convergence = "rolled_back_verified";
+      execution.verification_outcome = execution.verification_outcome === "pending" ? "not_converged_original_failure" : execution.verification_outcome;
+    }
+    out.armedFailure = null;
+    updateRunSummary(out.run);
+    out.lastTransition = accepted(
+      fail ? "rollback.failed" : "rollback.verified",
+      fail ? "Rollback failed; final Device state remains explicitly unknown and the recovery pointer is retained." : "Pre-image restoration was independently verified. The original failure remains recorded."
+    );
+    return out;
+  }
+
+  function interrupt(state) {
+    if (!state.run || state.run.status !== "in_progress") {
+      return reject(state, "transition.active-run-required", "Only an in-progress Run can be interrupted.");
+    }
+    const out = clone(state);
+    out.run.status = "interrupted";
+    out.lifecycle = "run_interrupted";
+    out.run.failures.push({ code: "run.interrupted", severity: "fatal_for_progress", resource_id: null });
+    out.run.recovery.allowed_actions = legalRecoveryActions("interrupted", out.run.resource_executions);
+    out.lastTransition = accepted("run.interrupted", "Run interrupted. The report exposes candidate legal recovery operations and an opaque pointer; issue #43 still decides lifecycle semantics.");
+    return out;
+  }
+
+  function resumeVerification(state) {
+    if (!state.run || state.run.status !== "interrupted") {
+      return reject(state, "recovery.resume-verification.illegal", "Resume Verification is legal only for an interrupted Run with pending/unknown Verification.");
+    }
+    if (!state.run.recovery.allowed_actions.includes("resume-verification")) {
+      return reject(state, "recovery.resume-verification.illegal", "The report does not advertise resume-verification for this state.");
+    }
+    const out = clone(state);
+    out.run.status = "recovery_in_progress";
+    out.lifecycle = "recovery_in_progress";
+    out.run.recovery.allowed_actions = legalRecoveryActions("recovery_in_progress", out.run.resource_executions);
+    out.lastTransition = accepted("recovery.resume-verification.started", "Recovery entered Verification-only mode; no blind mutation retry is implied.");
+    return out;
+  }
+
+  function finalize(state) {
+    if (!state.run) return reject(state, "transition.run-required", "Finalize requires a Run report.");
+    if (state.run.status === "interrupted") {
+      return reject(state, "recovery.finalize.requires-explicit-resolution", "Candidate policy refuses to finalize ambiguous interrupted state until inspect/resume/rollback resolves it.");
+    }
+    const out = clone(state);
+    const pending = out.run.resource_executions.some(r => ["pending", "pending_verification"].includes(r.final_convergence));
+    if (pending) {
+      return reject(state, "run.finalize.pending-work", "Cannot finalize while authorized Change or Verification work remains pending.");
+    }
+    updateRunSummary(out.run);
+    const values = out.run.resource_executions.map(r => r.final_convergence);
+    if (values.every(v => v === "converged")) out.run.status = "converged";
+    else if (values.some(v => v === "converged") && values.some(v => v !== "converged")) out.run.status = "partially_converged";
+    else if (values.every(v => v === "blocked")) out.run.status = "blocked";
+    else out.run.status = "failed";
+    out.run.ended_at = "2026-09-18T23:50:00Z";
+    out.run.recovery.finalization = "reported";
+    out.run.recovery.allowed_actions = legalRecoveryActions(out.run.status, out.run.resource_executions);
+    out.lifecycle = "run_finalized";
+    out.lastTransition = accepted("run.finalized." + out.run.status, "Run finalized as " + out.run.status.replaceAll("_", " ") + "; every original and recovery outcome remains visible.");
+    return out;
+  }
+
+  function updateRunSummary(run) {
+    const values = run.resource_executions.map(r => r.final_convergence);
+    run.convergence_summary = {
+      converged: values.filter(v => v === "converged").length,
+      rolled_back_verified: values.filter(v => v === "rolled_back_verified").length,
+      failed: values.filter(v => v === "failed").length,
+      blocked: values.filter(v => v === "blocked").length,
+      pending: values.filter(v => v.startsWith("pending")).length,
+      unknown: values.filter(v => v === "unknown").length
+    };
+    run.recovery.allowed_actions = legalRecoveryActions(run.status, run.resource_executions);
+  }
+
+  function legalRecoveryActions(status, resources) {
+    const actions = ["inspect"];
+    const hasPendingVerification = resources.some(r => ["pending_verification", "unknown"].includes(r.final_convergence));
+    const hasPendingWork = resources.some(r => ["pending", "pending_verification"].includes(r.final_convergence));
+    const rollbackEligible = resources.some(r =>
+      ["failed", "unknown"].includes(r.final_convergence)
+      && r.rollback.eligibility === "verified_supported"
+      && r.rollback.attempt === "not_attempted"
+    );
+    if (["interrupted", "recovery_in_progress"].includes(status) && hasPendingVerification) actions.push("resume-verification");
+    if (rollbackEligible) actions.push("rollback");
+    if (!hasPendingWork && status !== "interrupted") actions.push("finalize");
+    return RECOVERY_ACTIONS.filter(action => actions.includes(action));
+  }
+
+  function changePresentation(state) {
+    const out = clone(state);
+    out.presentation.variant = out.presentation.variant === "plain" ? "operator_alt" : "plain";
+    out.presentation.resourceOrder = [...out.presentation.resourceOrder].reverse();
+    out.lastTransition = accepted("presentation.changed", "Only derived wording and display order changed. Canonical automation digest should remain unchanged.");
+    return out;
+  }
+
+  function changeSemanticField(state) {
+    if (!state.plan) return reject(state, "transition.plan-required", "Create a Plan before changing a semantic field.");
+    const out = clone(state);
+    const code = out.plan.warnings.some(w => w.code === "plan.advisory.maintenance-window")
+      ? "plan.advisory.prototype-candidate"
+      : "plan.advisory.maintenance-window";
+    out.plan.warnings = [{ code, severity: "advisory" }];
+    out.lastTransition = accepted("plan.semantic-field.changed", "A stable semantic warning code changed; canonical and semantic digests must change.");
+    return out;
+  }
+
+  function consumerCheck(state) {
+    if (!state.plan) return reject(state, "transition.plan-required", "Create a Plan before consumer validation.");
+    const out = clone(state);
+    if (SCENARIOS[state.scenario].consumerMismatch) {
+      const simulated = clone(out.plan);
+      simulated.schema_version = 99;
+      simulated.warnings.push({ code: "plan.advisory.unknown-future-code", severity: "advisory" });
+      out.consumer = {
+        status: "rejected",
+        code: "consumer.unsupported-schema-version",
+        details: {
+          received_schema_version: simulated.schema_version,
+          supported_schema_versions: [1],
+          secondary_code: "consumer.unknown-stable-code"
+        }
+      };
+      out.lastTransition = accepted("consumer.rejected-contract-mismatch", "Strict automation consumer rejected unsupported schema version 99 and an unknown stable code.");
+    } else {
+      out.consumer = { status: "accepted", code: "consumer.contract-supported" };
+      out.lastTransition = accepted("consumer.accepted", "Automation consumer recognizes the schema version and stable codes.");
+    }
+    return out;
+  }
+
+  function reject(state, code, message) {
+    return { ...state, lastTransition: { accepted: false, code, message } };
+  }
+
+  function accepted(code, message) {
+    return { accepted: true, code, message };
+  }
+
+  function initialState(scenario = "actionable") {
+    return {
+      prototype: "throwaway-plan-run-schema-candidate",
+      scenario,
+      lifecycle: "seed_ready",
+      approvalPolicy: "resource_scoped",
+      idStrategy: "random_stable",
+      serial: 0,
+      plan: null,
+      run: null,
+      approvals: [],
+      driftedEvidence: {},
+      armedFailure: null,
+      presentation: {
+        variant: "plain",
+        resourceOrder: SCENARIOS[scenario].resources.map(key => RESOURCE_CATALOG[key].resource_id)
+      },
+      consumer: { status: "not_checked", code: null },
+      lastTransition: accepted("seed.loaded", "Scenario seed loaded. Create a Plan to begin.")
+    };
+  }
+
+  function dispatch(state, action) {
+    switch (action.type) {
+      case "RESET": {
+        const reset = initialState(action.scenario || state.scenario);
+        reset.approvalPolicy = action.approvalPolicy || state.approvalPolicy;
+        reset.idStrategy = action.idStrategy || state.idStrategy;
+        return reset;
+      }
+      case "SET_SCENARIO": {
+        const next = initialState(action.scenario);
+        next.approvalPolicy = state.approvalPolicy;
+        next.idStrategy = state.idStrategy;
+        return next;
+      }
+      case "SET_APPROVAL_POLICY":
+        return { ...state, approvalPolicy: action.policy, lastTransition: accepted("candidate.approval-policy.changed", "Candidate policy set to " + action.policy + ".") };
+      case "SET_ID_STRATEGY":
+        return { ...state, idStrategy: action.strategy, lastTransition: accepted("candidate.id-strategy.changed", "Candidate ID behavior set to " + action.strategy + "; no final decision is implied.") };
+      case "CREATE_PLAN": return createPlan(state);
+      case "APPROVE_SCOPE": {
+        if (!state.plan) return reject(state, "transition.plan-required", "Approval must refer to a created Plan.");
+        if (!state.plan.required_approval_scopes.includes(action.scope) && action.scope !== "impact.non-disruptive") {
+          return reject(state, "approval.scope.not-required", "This Plan does not require " + action.scope + ".");
+        }
+        if (state.approvals.includes(action.scope)) return reject(state, "approval.scope.already-approved", action.scope + " is already approved.");
+        return { ...state, approvals: [...state.approvals, action.scope].sort(), lastTransition: accepted("approval.scope.granted", "Approved stable scope " + action.scope + " for this exact Plan candidate.") };
+      }
+      case "START_RUN": return startRun(state);
+      case "SIMULATE_DRIFT": {
+        if (!state.plan) return reject(state, "transition.plan-required", "External drift is meaningful only after a Plan captures evidence.");
+        const resource = state.plan.resources.find(r => r.changes.length);
+        if (!resource) return reject(state, "transition.no-change-to-drift", "No planned Change has a precondition to invalidate.");
+        return {
+          ...state,
+          driftedEvidence: { ...state.driftedEvidence, [resource.resource_id]: demoDigest({ external: "drift", serial: state.serial + 1 }) },
+          serial: state.serial + 1,
+          lastTransition: accepted("device.external-drift.simulated", "Device evidence changed after planning; the Plan itself remains immutable.")
+        };
+      }
+      case "APPLY_NEXT": return applyNext(state);
+      case "VERIFY_NEXT": return verifyNext(state);
+      case "EXECUTE_EFFECT": return executeEffect(state);
+      case "ARM_MUTATION_FAILURE":
+      case "ARM_VERIFICATION_FAILURE":
+      case "ARM_ROLLBACK_FAILURE": {
+        const type = action.type === "ARM_MUTATION_FAILURE" ? "mutation" : action.type === "ARM_VERIFICATION_FAILURE" ? "verification" : "rollback";
+        return { ...state, armedFailure: type, lastTransition: accepted("simulation.failure-armed." + type, "The next " + type + " action will fail with a typed result.") };
+      }
+      case "INTERRUPT": return interrupt(state);
+      case "RESUME_VERIFICATION": return resumeVerification(state);
+      case "ROLLBACK": return rollback(state);
+      case "FINALIZE": return finalize(state);
+      case "CHANGE_PRESENTATION": return changePresentation(state);
+      case "CHANGE_SEMANTIC_FIELD": return changeSemanticField(state);
+      case "CONSUMER_CHECK": return consumerCheck(state);
+      default: return reject(state, "transition.unknown-action", "Unknown action type: " + action.type);
+    }
+  }
+
+  function presentationDigest(state) {
+    return demoDigest({
+      variant: state.presentation.variant,
+      resourceOrder: state.presentation.resourceOrder,
+      sentence: state.presentation.variant === "plain"
+        ? "Plan is ready for review."
+        : "Review can proceed for this candidate."
+    });
+  }
+
+  return Object.freeze({
+    SCENARIOS,
+    WALKTHROUGHS,
+    initialState,
+    dispatch,
+    canonicalJson,
+    planDigest,
+    semanticPlan,
+    presentationDigest,
+    demoDigest
+  });
+})();
+</script>
+
+<script>
+(() => {
+  "use strict";
+  let state = PlanRunLogic.initialState("actionable");
+  let activeWalkthrough = 0;
+  let completedSteps = {};
+
+  const $ = id => document.getElementById(id);
+  const esc = value => String(value ?? "—").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+  const pretty = value => value == null ? "Not created" : PlanRunLogic.canonicalJson(value);
+  const pill = (value, tone = "") => `<span class="pill ${tone}">${esc(value)}</span>`;
+  const tone = value => /converged|matched|completed|accepted|noop|verified/.test(value || "") ? "good"
+    : /failed|blocked|stale|unknown|rejected|unsafe/.test(value || "") ? "bad"
+    : /pending|partial|interrupted|actionable|advisory/.test(value || "") ? "warn" : "";
+
+  function actionFromToken(token) {
+    const [type, scope] = token.split(":");
+    return scope ? { type, scope } : { type };
+  }
+
+  function dispatch(action, stepKey = null) {
+    state = PlanRunLogic.dispatch(state, action);
+    if (stepKey && state.lastTransition.accepted) completedSteps[stepKey] = true;
+    render();
+  }
+
+  function renderTabs() {
+    $("tabs").innerHTML = PlanRunLogic.WALKTHROUGHS.map((walkthrough, index) =>
+      `<button class="tab ${index === activeWalkthrough ? "active" : ""}" data-tab="${index}">${index + 1}. ${esc(PlanRunLogic.SCENARIOS[walkthrough.scenario].title)}</button>`
+    ).join("");
+    const walkthrough = PlanRunLogic.WALKTHROUGHS[activeWalkthrough];
+    const scenario = PlanRunLogic.SCENARIOS[walkthrough.scenario];
+    $("walkthrough").innerHTML = `
+      <h3>${activeWalkthrough + 1}. ${esc(scenario.title)}</h3>
+      <p>${esc(scenario.description)}</p>
+      <p><button class="primary" data-start-walkthrough="${activeWalkthrough}">Reset and start this walkthrough</button></p>
+      <div class="steps">${walkthrough.steps.map((step, index) => {
+        const key = activeWalkthrough + ":" + index;
+        return `<button class="step ${completedSteps[key] ? "done" : ""}" data-walk-action="${esc(step[0])}" data-step-key="${key}" data-step="${index + 1}">${esc(step[1])}</button>`;
+      }).join("")}</div>`;
+  }
+
+  function renderTransition() {
+    const node = $("last-transition");
+    node.className = "panel transition" + (state.lastTransition.accepted ? "" : " rejected");
+    node.innerHTML = `<h2>Last transition / rejection</h2>
+      ${pill(state.lastTransition.accepted ? "accepted transition" : "typed rejection", state.lastTransition.accepted ? "good" : "bad")}
+      ${pill(state.lastTransition.code, state.lastTransition.accepted ? "" : "bad")}
+      <p>${esc(state.lastTransition.message)}</p>`;
+  }
+
+  function renderLifecycle() {
+    const runStatus = state.run?.status || "not_started";
+    const disposition = state.plan?.disposition || "not_planned";
+    const allowed = state.run?.recovery.allowed_actions || ["inspect (after a Run exists)"];
+    const items = [
+      ["Prototype lifecycle", state.lifecycle],
+      ["Plan disposition", disposition],
+      ["Run status", runStatus],
+      ["Approval policy candidate", state.approvalPolicy],
+      ["ID behavior candidate", state.idStrategy],
+      ["Armed simulation", state.armedFailure || "none"],
+      ["Recovery report capabilities", allowed.join(", ")],
+      ["Consumer", state.consumer.status]
+    ];
+    $("lifecycle").innerHTML = items.map(([label, value]) =>
+      `<div class="stat"><b>${esc(label)}</b><span>${pill(value, tone(value))}</span></div>`
+    ).join("");
+  }
+
+  function humanResourceOrder() {
+    const resources = state.plan?.resources || [];
+    const lookup = new Map(resources.map(resource => [resource.resource_id, resource]));
+    return state.presentation.resourceOrder.map(id => lookup.get(id)).filter(Boolean);
+  }
+
+  function renderHumanSummary() {
+    if (!state.plan) {
+      $("human-summary").innerHTML = `<p>Create a Plan to see a plain-language explanation alongside the canonical document.</p>`;
+      return;
+    }
+    const variant = state.presentation.variant;
+    const intro = variant === "plain"
+      ? `The Plan is <strong>${esc(state.plan.disposition)}</strong> for Device <code>${esc(state.plan.device.logical_id)}</code>.`
+      : `For <code>${esc(state.plan.device.logical_id)}</code>, review status is <strong>${esc(state.plan.disposition)}</strong>.`;
+    const resources = humanResourceOrder().map(resource => {
+      const execution = state.run?.resource_executions.find(item => item.resource_id === resource.resource_id);
+      const result = execution?.final_convergence || (resource.changes.length ? "Change proposed" : "Observation matches Desired State");
+      return `<li><strong>${esc(resource.resource_id)}</strong>: ${esc(result)}; ${resource.changes.length} typed Change(s); addresses ${resource.state_addresses.map(esc).join(", ")}.</li>`;
+    }).join("");
+    const recoveryNote = state.run
+      ? `Recovery evidence is referenced by <code>${esc(state.run.recovery_pointer)}</code>. Exact workspace lifecycle and recovery semantics remain deferred to issue #43.`
+      : "No Run report exists yet.";
+    $("human-summary").innerHTML = `
+      <p>${intro}</p>
+      <ul class="compact">${resources}</ul>
+      <p>${recoveryNote}</p>
+      <p class="muted">Presentation variant: ${esc(variant)}. This prose and display order are intentionally excluded from canonical automation fields.</p>`;
+  }
+
+  function renderDigests() {
+    const semantic = PlanRunLogic.planDigest(state.plan);
+    const canonical = state.plan ? PlanRunLogic.demoDigest(PlanRunLogic.canonicalJson(state.plan)) : null;
+    const presentation = PlanRunLogic.presentationDigest(state);
+    const idExcluded = state.plan ? PlanRunLogic.demoDigest(PlanRunLogic.semanticPlan(state.plan)) : null;
+    $("digest-comparison").innerHTML = `
+      <table>
+        <tr><th>Digest</th><th>Value</th><th>Meaning</th></tr>
+        <tr><td>Semantic Plan</td><td><code>${esc(semantic)}</code></td><td>Excludes <code>created_at</code> and <code>plan_id</code>.</td></tr>
+        <tr><td>Canonical full document</td><td><code>${esc(canonical)}</code></td><td>Changes if timestamp or candidate ID changes.</td></tr>
+        <tr><td>ID/timestamp-excluded check</td><td><code>${esc(idExcluded)}</code></td><td>Matches semantic digest in this prototype.</td></tr>
+        <tr><td>Human presentation</td><td><code>${esc(presentation)}</code></td><td>May change independently; not an automation contract.</td></tr>
+      </table>
+      <p class="callout"><strong>Candidate, not decision:</strong> timestamps/nonces are visibly excluded from semantic equality. Choose opaque/random or content-derived IDs above to judge the trade-off.</p>`;
+  }
+
+  function renderResourceTable() {
+    const resources = state.plan?.resources || [];
+    $("resource-table").innerHTML = `<thead><tr>
+      <th>Order / Resource</th><th>Desired State</th><th>Observed before</th><th>Mutation outcome</th>
+      <th>Fresh Verification</th><th>Final convergence</th><th>Dependencies / addresses</th>
+    </tr></thead><tbody>${resources.map(resource => {
+      const execution = state.run?.resource_executions.find(item => item.resource_id === resource.resource_id);
+      return `<tr>
+        <td>${resource.order}. <strong>${esc(resource.resource_id)}</strong><br>${esc(resource.resource_type)}</td>
+        <td>${pill(resource.desired_state.presence)}<br><code>${esc(resource.desired_state.semantic_digest)}</code></td>
+        <td>${pill(resource.observation.observation_code, tone(resource.observation.observation_code))}<br><code>${esc(resource.observation.evidence_digest)}</code></td>
+        <td>${pill(execution?.mutation_outcome || "not_started", tone(execution?.mutation_outcome))}</td>
+        <td>${pill(execution?.verification_outcome || "not_started", tone(execution?.verification_outcome))}<br>${esc(execution?.observed_state.after_evidence_ref || "")}</td>
+        <td>${pill(execution?.final_convergence || "not_started", tone(execution?.final_convergence))}</td>
+        <td>requires: ${resource.dependencies.length ? resource.dependencies.map(esc).join(", ") : "none"}<br>${resource.state_addresses.map(address => `<code>${esc(address)}</code>`).join("<br>")}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="7">Create a Plan.</td></tr>`}</tbody>`;
+  }
+
+  function renderChangeTable() {
+    const changes = (state.plan?.resources || []).flatMap(resource => resource.changes.map(change => ({ resource, change })));
+    $("change-table").innerHTML = `<thead><tr>
+      <th>Change</th><th>Typed difference</th><th>Precondition</th><th>Attempt / mutation</th><th>Evidence chain</th>
+    </tr></thead><tbody>${changes.map(({ resource, change }) => {
+      const attempt = state.run?.change_attempts.find(item => item.change_id === change.change_id);
+      const execution = state.run?.resource_executions.find(item => item.resource_id === resource.resource_id);
+      return `<tr>
+        <td><strong>${esc(change.change_id)}</strong><br>${pill(change.change_type)} ${pill(change.impact, tone(change.impact))}</td>
+        <td>${change.field_differences.map(diff => `<code>${esc(diff.field_code)}</code><br>${esc(diff.before_digest)} → ${esc(diff.after_digest)}`).join("<br>")}</td>
+        <td>${esc(change.preconditions[0].type)}<br>expected v${change.preconditions[0].expected_evidence_version}: <code>${esc(change.preconditions[0].expected_evidence_digest)}</code></td>
+        <td>${pill(attempt?.precondition_result.status || "not_attempted", tone(attempt?.precondition_result.status))}<br>${pill(attempt?.mutation_result.status || execution?.mutation_outcome || "not_attempted", tone(attempt?.mutation_result.status || execution?.mutation_outcome))}</td>
+        <td>before: <code>${esc(change.before_evidence_ref)}</code><br>after: <code>${esc(execution?.observed_state.after_evidence_ref || "not observed")}</code></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="5">No Changes. A no-op Plan still retains Observation evidence.</td></tr>`}</tbody>`;
+  }
+
+  function renderApprovalTable() {
+    const changes = (state.plan?.resources || []).flatMap(resource => resource.changes);
+    const rows = changes.map(change => {
+      const missing = change.required_approval_scopes.filter(scope => !state.approvals.includes(scope));
+      return `<tr><td>${esc(change.change_id)}</td><td>${pill(change.impact, tone(change.impact))}</td><td>${change.required_approval_scopes.map(scope => pill(scope, state.approvals.includes(scope) ? "good" : "bad")).join("") || pill("none", "good")}</td><td>${missing.length ? pill("unauthorized path", "bad") : pill("authorized", "good")}</td></tr>`;
+    }).join("");
+    $("approval-table").innerHTML = `<table><thead><tr><th>Change</th><th>Impact</th><th>Required scopes</th><th>Candidate result</th></tr></thead><tbody>${rows || `<tr><td colspan="4">No approval-bearing Changes.</td></tr>`}</tbody></table>
+      <p class="muted">Selected policy: <strong>${esc(state.approvalPolicy)}</strong>. This is exposed for judgment rather than silently decided.</p>`;
+  }
+
+  function renderEffects() {
+    const effects = state.plan?.effects || [];
+    $("effects").innerHTML = effects.length ? `<table><thead><tr><th>Effect</th><th>Coalescing</th><th>Barrier</th><th>Execution / re-observation</th></tr></thead><tbody>${effects.map(effect => {
+      const execution = state.run?.effect_executions.find(item => item.effect_id === effect.effect_id);
+      return `<tr><td><strong>${esc(effect.effect_id)}</strong><br>${esc(effect.effect_type)}</td>
+        <td>${effect.coalesced_change_ids.map(id => `<code>${esc(id)}</code>`).join("<br>")}</td>
+        <td><code>${esc(effect.barrier.barrier_id)}</code><br>after all declaring Changes</td>
+        <td>${pill(execution?.status || "not_started", tone(execution?.status))}<br>post-Effect: ${pill(execution?.post_effect_reobservation || "required", "warn")}</td></tr>`;
+    }).join("")}</tbody></table>` : `<p>No Effects declared. The <code>KodiSmartPlaylist</code> candidate has none by default, matching the first Resource decision.</p>`;
+  }
+
+  function renderRecovery() {
+    const run = state.run;
+    if (!run) {
+      $("recovery").innerHTML = `<p>No Run report exists. Recovery details are report capabilities, not settled workspace semantics.</p>`;
+      return;
+    }
+    const rows = run.resource_executions.map(resource => `<tr>
+      <td>${esc(resource.resource_id)}</td><td>${pill(resource.rollback.eligibility)}</td>
+      <td>${pill(resource.rollback.attempt, tone(resource.rollback.attempt))}</td>
+      <td>${pill(resource.rollback.result || "—", tone(resource.rollback.result))}</td>
+      <td>${pill(resource.rollback.verification || "—", tone(resource.rollback.verification))}</td>
+    </tr>`).join("");
+    $("recovery").innerHTML = `
+      <p><strong>Opaque pointer:</strong> <code>${esc(run.recovery_pointer)}</code></p>
+      <p><strong>Candidate legal actions now:</strong> ${run.recovery.allowed_actions.map(action => pill(action, "good")).join("") || pill("none", "bad")}</p>
+      <p class="muted">Exact storage paths, retention, cleanup, and recovery semantics are explicitly deferred to issue #43.</p>
+      <table><thead><tr><th>Resource</th><th>Eligibility</th><th>Attempt</th><th>Result</th><th>Verification</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function renderAutomationFields() {
+    const fields = [
+      ["Document identity", "kind, integer schema_version, stable Plan/Run ID"],
+      ["Bindings", "exact plan_id + plan digest; Device logical ID + endpoint fingerprint"],
+      ["Inputs", "authored configuration, Artifact catalog, resolved Profile, capability/Observation snapshot digests"],
+      ["Stable vocabulary", "Resource/Change/Effect/evidence IDs; typed statuses, impacts, failure/blocker/warning codes"],
+      ["Safety evidence", "expected evidence digest/version, stale result, independent before/after evidence"],
+      ["Execution truth", "desired, observed, mutation, Verification, final Convergence kept separate"],
+      ["Recovery surface", "opaque pointer + explicitly allowed inspect/resume-verification/rollback/finalize capabilities"],
+      ["Excluded", "secret values, transport commands, rendered shell, host-private details, localized prose"]
+    ];
+    $("automation-fields").innerHTML = `<table>${fields.map(([name, value]) => `<tr><th>${esc(name)}</th><td>${esc(value)}</td></tr>`).join("")}</table>
+      <p><strong>Consumer result:</strong> ${pill(state.consumer.status, tone(state.consumer.status))} ${state.consumer.code ? pill(state.consumer.code, tone(state.consumer.code)) : ""}</p>`;
+  }
+
+  function renderJson() {
+    $("plan-json").textContent = pretty(state.plan);
+    $("run-json").textContent = pretty(state.run);
+    $("full-state").textContent = pretty(state);
+  }
+
+  function render() {
+    $("scenario-select").value = state.scenario;
+    $("approval-policy").value = state.approvalPolicy;
+    $("id-strategy").value = state.idStrategy;
+    renderTabs();
+    renderTransition();
+    renderLifecycle();
+    renderHumanSummary();
+    renderDigests();
+    renderResourceTable();
+    renderChangeTable();
+    renderApprovalTable();
+    renderEffects();
+    renderRecovery();
+    renderAutomationFields();
+    renderJson();
+  }
+
+  $("scenario-select").innerHTML = Object.entries(PlanRunLogic.SCENARIOS)
+    .map(([id, scenario]) => `<option value="${esc(id)}">${esc(scenario.title)}</option>`).join("");
+
+  document.addEventListener("click", event => {
+    const tab = event.target.closest("[data-tab]");
+    if (tab) {
+      activeWalkthrough = Number(tab.dataset.tab);
+      renderTabs();
+      return;
+    }
+    const start = event.target.closest("[data-start-walkthrough]");
+    if (start) {
+      activeWalkthrough = Number(start.dataset.startWalkthrough);
+      const scenario = PlanRunLogic.WALKTHROUGHS[activeWalkthrough].scenario;
+      completedSteps = {};
+      state = PlanRunLogic.initialState(scenario);
+      state.approvalPolicy = $("approval-policy").value;
+      state.idStrategy = $("id-strategy").value;
+      render();
+      return;
+    }
+    const step = event.target.closest("[data-walk-action]");
+    if (step) {
+      dispatch(actionFromToken(step.dataset.walkAction), step.dataset.stepKey);
+      return;
+    }
+    const button = event.target.closest("[data-action]");
+    if (button) {
+      const action = { type: button.dataset.action };
+      if (button.dataset.scope) action.scope = button.dataset.scope;
+      if (action.type === "RESET") {
+        action.scenario = state.scenario;
+        action.approvalPolicy = state.approvalPolicy;
+        action.idStrategy = state.idStrategy;
+      }
+      dispatch(action);
+    }
+  });
+
+  $("scenario-select").addEventListener("change", event => dispatch({ type: "SET_SCENARIO", scenario: event.target.value }));
+  $("approval-policy").addEventListener("change", event => dispatch({ type: "SET_APPROVAL_POLICY", policy: event.target.value }));
+  $("id-strategy").addEventListener("change", event => dispatch({ type: "SET_ID_STRATEGY", strategy: event.target.value }));
+  render();
+})();
+</script>
+</body>
+</html>
