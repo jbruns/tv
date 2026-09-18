@@ -5567,6 +5567,7 @@ coreelec_conclude_deployment() {
   local retry_delay="${COREELEC_VERIFICATION_RETRY_DELAY:-5}"
 
   DEPLOYMENT_STATE="pending-verification"
+  coreelec_rebuild_skin_viewtypes
   info "Verifying the deployed baseline on the device over localhost JSON-RPC" >&2
   while (( attempt <= max_attempts )); do
     status=0
@@ -5620,6 +5621,41 @@ coreelec_conclude_deployment() {
   DEPLOYMENT_STATE="incomplete-rollback"
   RECOVERY_INSTRUCTIONS="$(coreelec_recovery_instructions rollback)"
   return 1
+}
+
+# The SSH call alone, kept separate from the gate below so the conclude
+# fixture can replace the device round trip without disabling the gate.
+coreelec_run_remote_buildviews() {
+  local script
+  script="$(coreelec_remote_buildviews_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote view rebuild must not contain a single quote"
+  {
+    printf 'KODI_WEB_USER=%s\n' "${KODI_USER}"
+    printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
+    printf 'KODI_PORT=%s\n' "${KODI_PORT}"
+    printf 'STORAGE_ROOT=%s\n' "/storage"
+    printf 'ATTEMPTS=%s\n' "${COREELEC_BUILDVIEWS_ATTEMPTS:-24}"
+    printf 'RETRY_DELAY=%s\n' "${COREELEC_BUILDVIEWS_RETRY_DELAY:-5}"
+    printf 'SETTLE_ATTEMPTS=%s\n' "${COREELEC_BUILDVIEWS_SETTLE_ATTEMPTS:-12}"
+  } | ssh_keyed "sh -c '${script}'" >/dev/null
+}
+
+# Rebuilds the compiled Arctic Fuse view include, between the deployment
+# transaction and verification.
+#
+# This never fails the run. The transaction is already open by the time it is
+# called, and kodi-send cannot report whether Kodi acted, so the stage makes
+# the attempt and verification adjudicates: a rebuild that silently did
+# nothing leaves the include missing or stale, both of which fail the semantic
+# checks and roll the transaction back.
+coreelec_rebuild_skin_viewtypes() {
+  coreelec_component_effective skin || return 0
+
+  info "Rebuilding the Arctic Fuse view include on the device" >&2
+  coreelec_run_remote_buildviews \
+    || warn "The view rebuild did not complete; verification will decide the outcome"
+  return 0
 }
 
 # The exact commands and retained paths an operator needs when the device
@@ -5692,6 +5728,7 @@ if (( ${#REPORT_FIXTURE[@]} > 0 )); then
   coreelec_collect_remote_observations() { cp "${REPORT_FIXTURE[1]}" "$1"; }
   finalize_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
   rollback_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
+  coreelec_run_remote_buildviews() { return "${COREELEC_BUILDVIEWS_FIXTURE_STATUS:-0}"; }
   # As with the verify fixture seam, the pre-transaction audio probe never
   # runs against a fixture, so the resolved values it would have supplied are
   # read from the same resolved.* lines instead.
@@ -5759,6 +5796,10 @@ if (( ${#CONCLUDE_FIXTURE[@]} > 0 )); then
   rollback_remote_deployment() {
     printf 'rollback\n' >> "${CONCLUDE_FIXTURE[4]}"
     return "${CONCLUDE_FIXTURE[3]}"
+  }
+  coreelec_run_remote_buildviews() {
+    printf 'buildviews\n' >> "${CONCLUDE_FIXTURE[4]}"
+    return "${COREELEC_BUILDVIEWS_FIXTURE_STATUS:-0}"
   }
   set +e
   coreelec_conclude_deployment "${CONCLUDE_FIXTURE[1]}"

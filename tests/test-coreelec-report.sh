@@ -558,8 +558,9 @@ run_report_components() {
     --report-fixture "${directory}" "${observations}" "${manifest}" "${reachable}"
 }
 
-# Runs the real verify -> finalize/rollback decision with the three remote
-# calls replaced by recording stubs whose exit status the test chooses.
+# Runs the real verify -> buildviews -> finalize/rollback decision with the
+# four remote calls replaced by recording stubs whose exit status the test
+# chooses.
 run_conclude() {
   local config="$1" observations="$2" manifest="$3"
   local finalize_status="$4" rollback_status="$5" log="$6"
@@ -1713,8 +1714,77 @@ test_verification_success_finalizes_and_commits() {
   assert_contains "${output}" "verification_result=pass" "verification passed" || return 1
   assert_contains "$(cat "${log}")" "finalize" "finalize was invoked" || return 1
   assert_not_contains "$(cat "${log}")" "rollback" "rollback was not invoked" || return 1
-  # Verification must precede the commit, or a bad deployment is unrecoverable.
-  assert_eq "verify" "$(head -n 1 "${log}")" "verification ran before finalize" || return 1
+  assert_eq "$(printf 'buildviews\nverify')" "$(head -n 2 "${log}")" \
+    "the rebuild runs before verification, and verification before finalize" || return 1
+}
+
+# The rebuild has to happen after the transaction has restarted Kodi and
+# before verification reads the compiled include, or verification would
+# observe the state the rebuild was supposed to establish.
+test_the_view_rebuild_runs_between_deployment_and_verification() {
+  local dir config manifest observations log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  run_conclude "${config}" "${observations}" "${manifest}" 0 0 "${log}" >/dev/null
+
+  assert_eq "$(printf 'buildviews\nverify\nfinalize')" "$(cat "${log}")" \
+    "the rebuild precedes verification, which precedes the commit" || return 1
+}
+
+# A run that did not ask for the skin has no business touching skin state.
+test_a_core_only_run_never_rebuilds_the_view_include() {
+  local dir config manifest observations log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  run_conclude_component core "${config}" "${observations}" "${manifest}" \
+    0 0 "${log}" >/dev/null || true
+
+  assert_not_contains "$(cat "${log}")" "buildviews" \
+    "a core-only run leaves the skin alone" || return 1
+}
+
+# kodi-send cannot report success, so the stage cannot either. A failed
+# rebuild must not abort a transaction that is already open: verification
+# reads the real state and rolls back if the views are wrong.
+test_a_failed_view_rebuild_still_reaches_verification() {
+  local dir config manifest observations log output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  # An assignment prefixed to a *function* call is not reliably exported to
+  # the processes that function starts, so the variable is exported outright
+  # and removed again.
+  export COREELEC_BUILDVIEWS_FIXTURE_STATUS=1
+  output="$(run_conclude "${config}" "${observations}" "${manifest}" 0 0 "${log}")"
+  unset COREELEC_BUILDVIEWS_FIXTURE_STATUS
+
+  assert_contains "$(cat "${log}")" "verify" \
+    "verification still runs" || return 1
+  assert_contains "${output}" "verification_result=pass" \
+    "and remains the authority on the outcome" || return 1
 }
 
 test_transient_verification_mismatch_is_retried_before_commit() {
@@ -1739,8 +1809,8 @@ test_transient_verification_mismatch_is_retried_before_commit() {
   assert_success "${rc}" "a transient startup mismatch converges before the deadline" || return 1
   assert_contains "${output}" "deployment_state=committed" \
     "the converged transaction is committed" || return 1
-  assert_eq $'verify\nverify\nfinalize' "$(cat "${log}")" \
-    "verification retries once before committing" || return 1
+  assert_eq $'buildviews\nverify\nverify\nfinalize' "$(cat "${log}")" \
+    "the rebuild runs once, then verification retries before committing" || return 1
 }
 
 test_verification_mismatch_is_fatal() {
@@ -6100,6 +6170,9 @@ run_all_tests \
   test_host_jsonrpc_unreachability_is_environmental_only \
   test_report_fingerprint_tool_is_required_even_without_kodi \
   test_verification_success_finalizes_and_commits \
+  test_the_view_rebuild_runs_between_deployment_and_verification \
+  test_a_core_only_run_never_rebuilds_the_view_include \
+  test_a_failed_view_rebuild_still_reaches_verification \
   test_transient_verification_mismatch_is_retried_before_commit \
   test_verification_mismatch_is_fatal \
   test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse \
