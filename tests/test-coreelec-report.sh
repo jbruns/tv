@@ -5151,6 +5151,192 @@ test_verify_probe_observes_the_audio_settings() {
     "room observes the channel layout" || return 1
 }
 
+# --- Unmanaged add-on inventory -------------------------------------------
+
+# Add-ons the lock does not name are invisible to a run that only ever asks
+# Kodi about the IDs it was handed, which is how repository.kodinerds sat on a
+# device unnoticed. The probe enumerates the user add-on directory instead, so
+# what is actually installed is what gets reported.
+test_remote_probe_names_addons_outside_the_lock() {
+  local dir root bin_dir request output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  mkdir -p "${root}/.kodi/addons/weather.ha" \
+    "${root}/.kodi/addons/repository.kodinerds" \
+    "${root}/.kodi/addons/metadata.generic.albums" \
+    "${root}/.kodi/addons/packages" \
+    "${root}/.kodi/addons/temp" \
+    "${root}/.kodi/addons/leftover.debris"
+  for installed in weather.ha repository.kodinerds metadata.generic.albums; do
+    printf '<addon id="%s"/>\n' "${installed}" \
+      > "${root}/.kodi/addons/${installed}/addon.xml"
+  done
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" \
+    "addon_unmanaged=metadata.generic.albums repository.kodinerds" \
+    "add-ons outside the lock are named, sorted" || return 1
+  assert_not_contains "${output}" "packages" \
+    "the package cache is not an add-on" || return 1
+  assert_not_contains "${output}" "addon_unmanaged=temp" \
+    "the scratch directory is not an add-on" || return 1
+  assert_not_contains "${output}" "leftover.debris" \
+    "a directory without an addon.xml is debris, not an installation" || return 1
+}
+
+test_remote_probe_reports_no_unmanaged_addons_when_the_lock_is_whole() {
+  local dir root bin_dir request output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_probe_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  mkdir -p "${root}/.kodi/addons/weather.ha"
+  printf '<addon id="weather.ha"/>\n' > "${root}/.kodi/addons/weather.ha/addon.xml"
+  request="${dir}/request.conf"
+  write_probe_request "${request}" <<'ENTRIES'
+KODI_WEB_USER=homeassistant
+KODI_WEB_PASSWORD=kodi-web-password-secret
+KODI_PORT=8080
+JSONRPC_ATTEMPTS=1
+ADDON_IDS=weather.ha
+TIMEZONE=America/Los_Angeles
+ENTRIES
+  write_jsonrpc_response "${dir}/stub/response-default.json" true
+  install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
+
+  output="$(run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1)"
+  assert_contains "${output}" "addon_unmanaged=" \
+    "the key is always present so its absence means an old probe" || return 1
+  assert_not_contains "${output}" "addon_unmanaged=weather.ha" \
+    "a locked add-on is managed" || return 1
+}
+
+# Nothing is observed when add-ons are out of scope, because the run made no
+# claim about what should be installed and so cannot call anything drift.
+test_verify_probe_skips_the_addon_inventory_outside_the_addons_scope() {
+  local output
+  output="$(run_verify_probe_with_components "core")"
+  assert_not_contains "${output}" "addon_unmanaged" \
+    "a core-only run makes no claim about installed add-ons" || return 1
+}
+
+test_the_report_names_unmanaged_addons() {
+  local dir config manifest observations report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon_unmanaged" \
+    "metadata.generic.albums repository.kodinerds"
+
+  report="$(run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
+  assert_eq "unmanaged" \
+    "$(report_line "${report}" addon_inventory.repository.kodinerds)" \
+    "an add-on outside the lock is named in the report" || return 1
+  assert_eq "unmanaged" \
+    "$(report_line "${report}" addon_inventory.metadata.generic.albums)" \
+    "every add-on outside the lock is named" || return 1
+  assert_eq "2" "$(report_line "${report}" addons_unmanaged)" \
+    "unmanaged add-ons are counted" || return 1
+  assert_eq "metadata.generic.albums repository.kodinerds" \
+    "$(report_line "${report}" addons_unmanaged_ids)" \
+    "the summary names them so a reader need not scan" || return 1
+  assert_eq "0" "$(report_line "${report}" addons_unmanaged_allowed)" \
+    "nothing is allowlisted by default" || return 1
+}
+
+# Kodi installs its own metadata scrapers on first boot, so an unmanaged
+# add-on is a normal state rather than a fault. Acknowledged ones are still
+# reported -- the inventory stays complete -- but they do not raise the count,
+# because a number that is never zero is a number nobody reads.
+test_allowlisted_unmanaged_addons_are_acknowledged_not_counted() {
+  local dir config manifest observations report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  printf 'ADDON_UNMANAGED_ALLOWED=metadata.generic.albums\n' >> "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon_unmanaged" \
+    "metadata.generic.albums repository.kodinerds"
+
+  report="$(run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
+  assert_eq "unmanaged_allowed" \
+    "$(report_line "${report}" addon_inventory.metadata.generic.albums)" \
+    "an acknowledged add-on is still inventoried" || return 1
+  assert_eq "unmanaged" \
+    "$(report_line "${report}" addon_inventory.repository.kodinerds)" \
+    "an unacknowledged add-on still stands out" || return 1
+  assert_eq "1" "$(report_line "${report}" addons_unmanaged)" \
+    "the count covers only unacknowledged add-ons" || return 1
+  assert_eq "repository.kodinerds" \
+    "$(report_line "${report}" addons_unmanaged_ids)" \
+    "the summary covers only unacknowledged add-ons" || return 1
+  assert_eq "1" "$(report_line "${report}" addons_unmanaged_allowed)" \
+    "acknowledged add-ons are counted separately" || return 1
+}
+
+# The inventory observes; it does not judge. An unmanaged add-on is something
+# for an operator to look at, not grounds to roll a good deployment back.
+test_unmanaged_addons_do_not_fail_verification() {
+  local dir config manifest observations output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon_unmanaged" "repository.kodinerds"
+
+  output="$(run_verify "${config}" "${observations}" "${manifest}")"
+  assert_contains "${output}" "verification_failures=0" \
+    "an unmanaged add-on is not a verification failure" || return 1
+  assert_contains "${output}" "verification_result=pass" \
+    "an unmanaged add-on does not roll a deployment back" || return 1
+}
+
+test_the_report_omits_the_addon_inventory_when_addons_are_out_of_scope() {
+  local dir config manifest observations report
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  set_observation "${observations}" "addon_unmanaged" "repository.kodinerds"
+
+  report="$(run_report_components "core" "${config}" "${dir}/out" \
+    "${observations}" "${manifest}")"
+  assert_not_contains "$(cat "${report}")" "addon_inventory." \
+    "a core-only run inventories nothing" || return 1
+  assert_not_contains "$(cat "${report}")" "addons_unmanaged" \
+    "a core-only run counts nothing" || return 1
+}
+
 run_all_tests \
   test_verify_probe_renders_boolean_settings_lowercase \
   test_display_probe_resolves_a_label_to_an_index \
@@ -5314,4 +5500,11 @@ run_all_tests \
   test_audio_verification_reports_a_changed_passthrough_device \
   test_audio_verification_is_unobservable_without_a_resolved_value \
   test_audio_channels_are_not_verified_outside_the_room_scope \
-  test_verify_probe_observes_the_audio_settings
+  test_verify_probe_observes_the_audio_settings \
+  test_remote_probe_names_addons_outside_the_lock \
+  test_remote_probe_reports_no_unmanaged_addons_when_the_lock_is_whole \
+  test_verify_probe_skips_the_addon_inventory_outside_the_addons_scope \
+  test_the_report_names_unmanaged_addons \
+  test_allowlisted_unmanaged_addons_are_acknowledged_not_counted \
+  test_unmanaged_addons_do_not_fail_verification \
+  test_the_report_omits_the_addon_inventory_when_addons_are_out_of_scope
