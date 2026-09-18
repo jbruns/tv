@@ -2563,6 +2563,51 @@ test_transform_skips_unresolved_audio_values() {
   assert_setting_absent "${settings}" "audiooutput.passthroughdevice"
 }
 
+# The transformer must configure the backend it was given or none at all. It
+# used to fall back to NextPVR's stock 8866/http, which wrote a plausible
+# address nobody had supplied and pointed the client at nothing.
+test_nextpvr_settings_never_invent_a_backend_address() {
+  local dir root payload instance
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  append_payload_entry "${payload}" "NEXTPVR_PORT" ""
+  append_payload_entry "${payload}" "NEXTPVR_PROTOCOL" ""
+  run_transform "${root}" "${payload}" >/dev/null
+
+  instance="$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml"
+  if [[ -f "${instance}" ]]; then
+    assert_eq "" "$(xml_setting "${instance}" port)" \
+      "no port is invented" || return 1
+    assert_eq "" "$(xml_setting "${instance}" hostprotocol)" \
+      "no protocol is invented" || return 1
+    assert_eq "false" "$(xml_setting "${instance}" kodi_addon_instance_enabled)" \
+      "an incomplete backend address leaves the instance disabled" || return 1
+  fi
+}
+
+# The configured address is written through unchanged, including a protocol
+# and port that are not NextPVR's stock pair.
+test_nextpvr_settings_use_the_configured_backend_address() {
+  local dir root payload instance
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_full_payload "${payload}"
+  append_payload_entry "${payload}" "NEXTPVR_PORT" "443"
+  append_payload_entry "${payload}" "NEXTPVR_PROTOCOL" "https"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  instance="$(addon_data_path "${root}" pvr.nextpvr)/instance-settings-1.xml"
+  assert_eq "443" "$(xml_setting "${instance}" port)" "port" || return 1
+  assert_eq "https" "$(xml_setting "${instance}" hostprotocol)" "protocol" || return 1
+  assert_eq "true" "$(xml_setting "${instance}" kodi_addon_instance_enabled)" \
+    "a complete backend address enables the instance" || return 1
+}
+
 run_all_tests \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
@@ -2630,4 +2675,6 @@ run_all_tests \
   test_room_transform_preserves_unmanaged_settings \
   test_core_transform_writes_the_resolved_audio_devices \
   test_room_transform_writes_channels_but_not_the_devices \
-  test_transform_skips_unresolved_audio_values
+  test_transform_skips_unresolved_audio_values \
+  test_nextpvr_settings_never_invent_a_backend_address \
+  test_nextpvr_settings_use_the_configured_backend_address
