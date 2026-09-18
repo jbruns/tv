@@ -996,6 +996,30 @@ def main(argv):
                                    "skinvariables-shortcut-powermenu.json"),
                       power_menu)
 
+    # --- Arctic Fuse view types ---------------------------------------------
+    # `script.skinvariables` owns this file and rewrites it on every rebuild,
+    # merging the skin's own defaults back in. Owning the whole document would
+    # therefore drift the moment Arctic Fuse adds a content type, so only the
+    # two managed keys are set and everything else is left exactly as found.
+    MANAGED_VIEW_TYPES = {"seasons": "509", "episodes": "549"}
+    viewtypes_path = os.path.join(addon_data, "script.skinvariables",
+                                  SKIN_ID + "-viewtypes.json")
+    try:
+        with open(viewtypes_path, "r", encoding="utf-8") as handle:
+            viewtypes = json.load(handle)
+    except Exception:
+        viewtypes = None
+    if not isinstance(viewtypes, dict):
+        # Absent, empty, or unparseable. The add-on's make_defaultjson fills
+        # in the rest on the next rebuild, and our values win that merge.
+        viewtypes = {}
+    library_views = viewtypes.get("library")
+    if not isinstance(library_views, dict):
+        library_views = {}
+        viewtypes["library"] = library_views
+    library_views.update(MANAGED_VIEW_TYPES)
+    write_json_atomic(viewtypes_path, viewtypes)
+
     # --- Arctic Fuse smart playlists ----------------------------------------
     playlists_dir = os.path.join(userdata, "playlists", "video")
     register_managed_directory(os.path.join(userdata, "playlists"))
@@ -1158,6 +1182,7 @@ SERVICE_SETTINGS_PATHS
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json
+.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
 .kodi/userdata/playlists/video/InProgressMovies90Days.xsp
 .kodi/userdata/playlists/video/InProgressShows90Days.xsp
 .kodi/userdata/playlists/video/RecentlyAiredEpisodes30Days.xsp
