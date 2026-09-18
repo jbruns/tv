@@ -4038,9 +4038,14 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
         document = json.load(handle)
     except ValueError:
         raise SystemExit("the view rebuild could not parse the Kodi answer")
-if document.get("result") is not True:
+result = document.get("result") if isinstance(document, dict) else None
+value = result.get("value") if isinstance(result, dict) else None
+if value is False:
     raise SystemExit(
         "the view rebuild needs the Kodi EventServer, and services.esenabled is off")
+if value is not True:
+    sys.stderr.write(
+        "the view rebuild could not confirm services.esenabled; verification will decide\n")
 BUILDVIEWS_ES_CHECK
 
 bv_compiled="${bv_root}/.kodi/addons/${bv_skin}/1080i/script-skinviewtypes-includes.xml"

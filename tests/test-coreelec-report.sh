@@ -5342,51 +5342,130 @@ test_audio_probe_requests_the_audio_category() {
 }
 
 write_buildviews_stubs() {
-  local dir="$1" es_result="${2:-true}"
-  local bin_dir="${dir}/bin"
+  local dir="$1"
+  local default_es='{"id":1,"jsonrpc":"2.0","result":{"value":true}}'
+  local es_document="${2:-$default_es}" ping_failures="${3:-0}" md5_mode="${4:-stable}"
+  local bin_dir="${dir}/bin" tool
   mkdir -p "${bin_dir}"
+  printf '%s\n' "${es_document}" > "${dir}/es-response.json"
+  printf '%s\n' "${ping_failures}" > "${dir}/ping-failures.count"
+  printf '%s\n' "${md5_mode}" > "${dir}/md5-mode"
   cat > "${bin_dir}/curl" <<STUB
 #!/bin/sh
 for arg in "\$@"; do
   case "\${arg}" in
-    *es.json) printf '{"id":1,"jsonrpc":"2.0","result":${es_result}}' ; exit 0 ;;
-    *ping.json) printf '{"id":1,"jsonrpc":"2.0","result":"pong"}' ; exit 0 ;;
+    *es.json)
+      cat "${dir}/es-response.json"
+      exit 0
+      ;;
+    *ping.json)
+      count=0
+      if [ -r "${dir}/ping-attempts.count" ]; then
+        count="\$(cat "${dir}/ping-attempts.count")"
+      fi
+      count=\$((count + 1))
+      printf '%s\n' "\${count}" > "${dir}/ping-attempts.count"
+      failures="\$(cat "${dir}/ping-failures.count")"
+      if [ "\${count}" -le "\${failures}" ]; then
+        printf 'stub curl refused ping attempt %s\n' "\${count}" >&2
+        exit 22
+      fi
+      printf '{"id":1,"jsonrpc":"2.0","result":"pong"}'
+      exit 0
+      ;;
   esac
 done
-exit 0
+printf 'stub curl saw unexpected arguments: %s\n' "\$*" >&2
+exit 64
 STUB
   cat > "${bin_dir}/kodi-send" <<STUB
 #!/bin/sh
 printf '%s\n' "\$*" >> "${dir}/kodi-send.log"
 exit 0
 STUB
+  cat > "${bin_dir}/md5sum" <<STUB
+#!/bin/sh
+mode="\$(cat "${dir}/md5-mode")"
+count=0
+if [ -r "${dir}/md5sum-count" ]; then
+  count="\$(cat "${dir}/md5sum-count")"
+fi
+count=\$((count + 1))
+printf '%s\n' "\${count}" > "${dir}/md5sum-count"
+cat >/dev/null
+case "\${mode}" in
+  stable) printf 'digest-stable  -\n' ;;
+  changing) printf 'digest-%s  -\n' "\${count}" ;;
+  *)
+    printf 'stub md5sum does not know mode %s\n' "\${mode}" >&2
+    exit 64
+    ;;
+esac
+STUB
+  cat > "${bin_dir}/sleep" <<STUB
+#!/bin/sh
+printf '%s\n' "\$1" >> "${dir}/sleep.log"
+exit 0
+STUB
   cat > "${bin_dir}/sh" <<STUB
 #!/bin/sh
 exec /bin/sh "\$@"
 STUB
-  chmod +x "${bin_dir}/curl" "${bin_dir}/kodi-send" "${bin_dir}/sh"
+  for tool in diff cmp stat; do
+    cat > "${bin_dir}/${tool}" <<STUB
+#!/bin/sh
+printf 'stub ${tool} must not run in buildviews tests\n' >&2
+exit 99
+STUB
+  done
+  chmod +x "${bin_dir}/curl" "${bin_dir}/kodi-send" "${bin_dir}/md5sum" \
+    "${bin_dir}/sleep" "${bin_dir}/sh" "${bin_dir}/diff" "${bin_dir}/cmp" \
+    "${bin_dir}/stat"
 }
 
 run_buildviews() {
-  local dir="$1" script
+  local dir="$1" extra_lines="${2:-}" compiled_state="${3:-present}" script
+  local compiled="${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml"
   mkdir -p "${dir}/tmp" "${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i"
-  printf '<includes/>\n' \
-    > "${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml"
+  if [[ "${compiled_state}" == "missing" ]]; then
+    rm -f "${compiled}"
+  else
+    printf '<includes/>\n' > "${compiled}"
+  fi
   script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
   {
     printf 'KODI_WEB_USER=kodi\nKODI_WEB_PASSWORD=hunter2\nKODI_PORT=8080\n'
     printf 'STORAGE_ROOT=%s/storage\n' "${dir}"
     printf 'ATTEMPTS=2\nRETRY_DELAY=0\nSETTLE_ATTEMPTS=3\n'
+    if [[ -n "${extra_lines}" ]]; then
+      printf '%s' "${extra_lines}"
+    fi
   } | PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" sh -c "${script}"
 }
 
-test_the_buildviews_stage_asks_the_addon_to_rebuild() {
-  local dir sent
+test_the_buildviews_stage_accepts_a_realistic_event_server_reply() {
+  local dir rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   write_buildviews_stubs "${dir}"
-  run_buildviews "${dir}" >/dev/null 2>&1 \
-    || { fail "the stage must succeed when the device answers"; return 1; }
+  set +e
+  run_buildviews "${dir}" >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "a real Settings.GetSettingValue reply must let the stage proceed" || return 1
+}
+
+test_the_buildviews_stage_asks_the_addon_to_rebuild() {
+  local dir rc sent
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  set +e
+  run_buildviews "${dir}" >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" "the stage must succeed when the device answers" || return 1
   sent="$(cat "${dir}/kodi-send.log")"
   assert_contains "${sent}" "action=buildviews" \
     "the datagram carries the rebuild action" || return 1
@@ -5394,13 +5473,50 @@ test_the_buildviews_stage_asks_the_addon_to_rebuild() {
     "and suppresses the skin reload" || return 1
 }
 
-test_the_buildviews_stage_fails_when_the_event_server_is_off() {
-  local dir output
+test_the_buildviews_stage_warns_when_the_event_server_state_cannot_be_confirmed() {
+  local dir output rc sent
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
-  write_buildviews_stubs "${dir}" "false"
-  output="$(run_buildviews "${dir}" 2>&1)" \
-    && { fail "a disabled EventServer must fail the stage"; return 1; }
+  write_buildviews_stubs "${dir}" '{"id":1,"jsonrpc":"2.0","result":{}}'
+  set +e
+  output="$(run_buildviews "${dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "an ambiguous EventServer reply must not fail the stage" || return 1
+  assert_contains "${output}" "could not confirm services.esenabled" \
+    "the stage warns when the setting cannot be confirmed" || return 1
+  sent="$(cat "${dir}/kodi-send.log")"
+  assert_contains "${sent}" "action=buildviews" \
+    "the rebuild still runs when the setting is ambiguous" || return 1
+}
+
+test_the_buildviews_stage_warns_when_the_event_server_reply_is_not_an_object() {
+  local dir output rc sent
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" '[]'
+  set +e
+  output="$(run_buildviews "${dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a non-object EventServer reply must not fail the stage" || return 1
+  assert_contains "${output}" "could not confirm services.esenabled" \
+    "the stage warns when the reply has no readable result value" || return 1
+  sent="$(cat "${dir}/kodi-send.log")"
+  assert_contains "${sent}" "action=buildviews" \
+    "the rebuild still runs when the reply shape is unusable" || return 1
+}
+
+test_the_buildviews_stage_fails_when_the_event_server_is_off() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" '{"id":1,"jsonrpc":"2.0","result":{"value":false}}'
+  set +e
+  output="$(run_buildviews "${dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a disabled EventServer must fail the stage" || return 1
   assert_contains "${output}" "services.esenabled" \
     "the failure names the setting an operator has to change" || return 1
   assert_not_contains "$(cat "${dir}/kodi-send.log" 2>/dev/null || printf '')" \
@@ -5432,6 +5548,67 @@ test_the_buildviews_stage_requires_kodi_send() {
     && { fail "a device without kodi-send must fail the stage"; return 1; }
   assert_contains "${output}" "kodi-send" \
     "the failure names the missing program" || return 1
+}
+
+test_the_buildviews_stage_honors_ping_retry_overrides() {
+  local dir output rc sleeps
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" "" "2"
+  set +e
+  output="$(run_buildviews "${dir}" $'ATTEMPTS=3\nRETRY_DELAY=7\nSETTLE_ATTEMPTS=2\n' 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "the stage must retry until the last allowed ping attempt" || return 1
+  assert_eq "3" "$(cat "${dir}/ping-attempts.count")" \
+    "the ping loop stops on the configured final attempt" || return 1
+  sleeps="$(cat "${dir}/sleep.log")"
+  assert_eq $'7\n7\n1\n1' "${sleeps}" \
+    "the retry delay override is used before the settle samples" || return 1
+  assert_not_contains "${output}" "could not reach Kodi" \
+    "the final allowed ping attempt succeeds" || return 1
+}
+
+test_the_buildviews_stage_warns_when_the_compiled_file_never_appears() {
+  local dir output rc sleeps
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  set +e
+  output="$(run_buildviews "${dir}" $'SETTLE_ATTEMPTS=2\n' "missing" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a missing compiled include must warn rather than fail" || return 1
+  assert_contains "${output}" "did not settle; verification will decide" \
+    "the missing file becomes a warning" || return 1
+  sleeps="$(cat "${dir}/sleep.log")"
+  assert_eq $'1\n1' "${sleeps}" \
+    "the settle loop stops after the configured number of samples" || return 1
+  if [[ -e "${dir}/md5sum-count" ]]; then
+    fail "md5sum must not run before the compiled file exists"
+    return 1
+  fi
+}
+
+test_the_buildviews_stage_warns_when_the_compiled_file_keeps_changing() {
+  local dir output rc sleeps
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" "" "0" "changing"
+  set +e
+  output="$(run_buildviews "${dir}" $'SETTLE_ATTEMPTS=3\n' 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "a constantly changing compiled include must warn rather than fail" || return 1
+  assert_contains "${output}" "did not settle; verification will decide" \
+    "the stage warns when the file never stabilizes" || return 1
+  assert_eq "3" "$(cat "${dir}/md5sum-count")" \
+    "the changing file is sampled only up to the configured limit" || return 1
+  sleeps="$(cat "${dir}/sleep.log")"
+  assert_eq $'1\n1\n1' "${sleeps}" \
+    "the settle loop is bounded by the override" || return 1
 }
 
 # Seeds the three resolved.* lines the fixture seam reads, so tests can reach
@@ -6049,10 +6226,16 @@ run_all_tests \
   test_audio_probe_reports_an_unreachable_kodi \
   test_audio_probe_contains_no_single_quote \
   test_audio_probe_requests_the_audio_category \
+  test_the_buildviews_stage_accepts_a_realistic_event_server_reply \
   test_the_buildviews_stage_asks_the_addon_to_rebuild \
+  test_the_buildviews_stage_warns_when_the_event_server_state_cannot_be_confirmed \
+  test_the_buildviews_stage_warns_when_the_event_server_reply_is_not_an_object \
   test_the_buildviews_stage_fails_when_the_event_server_is_off \
   test_the_buildviews_stage_rejects_an_unknown_parameter \
   test_the_buildviews_stage_requires_kodi_send \
+  test_the_buildviews_stage_honors_ping_retry_overrides \
+  test_the_buildviews_stage_warns_when_the_compiled_file_never_appears \
+  test_the_buildviews_stage_warns_when_the_compiled_file_keeps_changing \
   test_audio_verification_passes_when_the_device_matches \
   test_audio_verification_reports_a_changed_device \
   test_audio_verification_reports_a_changed_passthrough_device \
