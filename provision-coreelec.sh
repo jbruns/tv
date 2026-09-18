@@ -883,8 +883,13 @@ def main(argv):
     set_skin_setting("HomeSwitcher.1101.Spotlight.Path",
                      "special://skin/extras/playlists/RandomTvShows.xsp")
     set_skin_setting("HomeSwitcher.1101.Spotlight.Target", "videos")
-    remove_skin_setting("HomeSwitcher.1101.Shortcut.Path")
-    remove_skin_setting("HomeSwitcher.1101.Shortcut.Target")
+    # The skin only builds `ActivateWindow(target, path, return)` when the
+    # target is set; with an empty target it runs the path as a bare builtin.
+    # Both hubs therefore own a path and a target, so selecting them lands on
+    # the library rather than on whatever Arctic Fuse falls back to.
+    set_skin_setting("HomeSwitcher.1101.Shortcut.Path",
+                     "videodb://tvshows/titles/")
+    set_skin_setting("HomeSwitcher.1101.Shortcut.Target", "videos")
 
     set_skin_setting("HomeSwitcher.1102.Name", "Movies")
     set_skin_setting("HomeSwitcher.1102.Toggle", "true")
@@ -896,8 +901,9 @@ def main(argv):
     set_skin_setting("HomeSwitcher.1102.Spotlight.Path",
                      "special://skin/extras/playlists/RandomMovies.xsp")
     set_skin_setting("HomeSwitcher.1102.Spotlight.Target", "videos")
-    remove_skin_setting("HomeSwitcher.1102.Shortcut.Path")
-    remove_skin_setting("HomeSwitcher.1102.Shortcut.Target")
+    set_skin_setting("HomeSwitcher.1102.Shortcut.Path",
+                     "videodb://movies/titles/")
+    set_skin_setting("HomeSwitcher.1102.Shortcut.Target", "videos")
 
     set_skin_setting("HomeSwitcher.1103.Name", "Plex")
     set_skin_setting("HomeSwitcher.1103.Toggle", "true")
@@ -3240,8 +3246,10 @@ def main(argv):
             "special://skin/extras/playlists/RandomTvShows.xsp"),
         managed_setting_is(
             "HomeSwitcher.1101.Spotlight.Target", "videos"),
-        managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Path"),
-        managed_setting_is_unset("HomeSwitcher.1101.Shortcut.Target"),
+        managed_setting_is(
+            "HomeSwitcher.1101.Shortcut.Path",
+            "videodb://tvshows/titles/"),
+        managed_setting_is("HomeSwitcher.1101.Shortcut.Target", "videos"),
     ))
     movies_hub_ok = all((
         managed_setting_is("HomeSwitcher.1102.Name", "Movies"),
@@ -3257,8 +3265,10 @@ def main(argv):
             "special://skin/extras/playlists/RandomMovies.xsp"),
         managed_setting_is(
             "HomeSwitcher.1102.Spotlight.Target", "videos"),
-        managed_setting_is_unset("HomeSwitcher.1102.Shortcut.Path"),
-        managed_setting_is_unset("HomeSwitcher.1102.Shortcut.Target"),
+        managed_setting_is(
+            "HomeSwitcher.1102.Shortcut.Path",
+            "videodb://movies/titles/"),
+        managed_setting_is("HomeSwitcher.1102.Shortcut.Target", "videos"),
     ))
     plex_ok = (
         managed_setting_is("HomeSwitcher.1103.Name", "Plex")

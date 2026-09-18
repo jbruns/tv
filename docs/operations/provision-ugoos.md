@@ -189,6 +189,19 @@ setting that drifted rather than collapsing nine checks into a single opaque
 zero. `lookandfeel.soundskin` is deliberately not in this set: it is the one
 Kodi default the skin owns, and `skin` continues to verify it.
 
+### Where the TV Shows and Movies hubs land
+
+The `skin` component owns where the two library hubs navigate. Selecting
+TV Shows opens `videodb://tvshows/titles/` and selecting Movies opens
+`videodb://movies/titles/` — the flat title lists, not the category roots.
+Both hubs also carry `Shortcut.Target=videos`.
+
+The target is not optional. Arctic Fuse builds
+`ActivateWindow(target, path, return)` only when the target is set; with an
+empty target it executes the path as a bare Kodi builtin, so a library path
+with no target silently does nothing. Drift in either the path or the target
+fails `arctic_fuse.tv_hub_configured` or `arctic_fuse.movies_hub_configured`.
+
 
    and the selected room's Ugoos guide.
 2. Prepare and boot removable media using the

@@ -1672,10 +1672,6 @@ XML
 
   # Managed custom hubs own these slot shapes exactly.
   for setting_id in \
-    "HomeSwitcher.1101.Shortcut.Path" \
-    "HomeSwitcher.1101.Shortcut.Target" \
-    "HomeSwitcher.1102.Shortcut.Path" \
-    "HomeSwitcher.1102.Shortcut.Target" \
     "HomeSwitcher.1103.Shortcut.Target" \
     "HomeSwitcher.1103.Spotlight.Label" \
     "HomeSwitcher.1103.Spotlight.Path" \
@@ -1851,6 +1847,10 @@ XML
     "HomeSwitcher.1102.Spotlight.Label" \
     "HomeSwitcher.1102.Spotlight.Path" \
     "HomeSwitcher.1102.Spotlight.Target" \
+    "HomeSwitcher.1101.Shortcut.Path" \
+    "HomeSwitcher.1101.Shortcut.Target" \
+    "HomeSwitcher.1102.Shortcut.Path" \
+    "HomeSwitcher.1102.Shortcut.Target" \
     "HomeSwitcher.1103.Name" \
     "HomeSwitcher.1103.Toggle" \
     "HomeSwitcher.1103.Icon" \
@@ -1870,6 +1870,12 @@ XML
     "promoted 1102.Name carries the managed value"
   assert_eq "Plex" "$(xml_setting "${skin_file}" "HomeSwitcher.1103.Name")" \
     "promoted 1103.Name carries the managed value"
+  assert_eq "videodb://tvshows/titles/" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Path")" \
+    "promoted 1101.Shortcut.Path carries the managed library root"
+  assert_eq "videodb://movies/titles/" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Path")" \
+    "promoted 1102.Shortcut.Path carries the managed library root"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" \
     "promoted 1107.Toggle carries the managed value"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1108.Toggle")" \
@@ -1877,10 +1883,6 @@ XML
 
   # Removed managed settings are gone from every scope.
   for setting_id in \
-    "HomeSwitcher.1101.Shortcut.Path" \
-    "HomeSwitcher.1101.Shortcut.Target" \
-    "HomeSwitcher.1102.Shortcut.Path" \
-    "HomeSwitcher.1102.Shortcut.Target" \
     "HomeSwitcher.1103.Shortcut.Target" \
     "HomeSwitcher.1103.Spotlight.Label" \
     "HomeSwitcher.1103.Spotlight.Path" \
@@ -1946,8 +1948,8 @@ XML
     "deeply nested 1101.Name converges to one root node"
   assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1107.Toggle")" \
     "deeply nested 1107.Toggle converges to one root node"
-  assert_eq "0 0" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Shortcut.Target")" \
-    "deeply nested managed removals apply everywhere"
+  assert_eq "1 1" "$(skin_setting_scope_counts "${root}" "HomeSwitcher.1101.Shortcut.Target")" \
+    "deeply nested 1101.Shortcut.Target converges to one root node"
   assert_eq "TV Shows" "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" \
     "deeply nested 1101.Name carries the managed value"
   assert_eq "true" "$(xml_setting "${skin_file}" "HomeSwitcher.1107.Toggle")" \
@@ -2719,7 +2721,89 @@ test_shared_library_preferences_require_the_core_component() {
     "a skin-only run does not write core episode-selection preferences"
 }
 
+# The TV Shows and Movies hubs are the two entry points into the library, and
+# without a shortcut they fall through to whatever Arctic Fuse decides. Both
+# own a path and a target: the skin only builds `ActivateWindow(target, path,
+# return)` when the target is set, and executes the path as a bare builtin
+# when it is not.
+test_library_hubs_open_their_library_roots() {
+  local dir root payload skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  skin_file="$(skin_settings_path "${root}")"
+  assert_eq "videodb://tvshows/titles/" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Path")" \
+    "the TV Shows hub opens the TV library"
+  assert_eq "videos" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Target")" \
+    "the TV Shows hub targets the video window"
+  assert_eq "videodb://movies/titles/" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Path")" \
+    "the Movies hub opens the movie library"
+  assert_eq "videos" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Target")" \
+    "the Movies hub targets the video window"
+
+  # The shortcut is additive: the rest of each hub must survive untouched.
+  assert_eq "TV Shows" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Name")" "1101.Name"
+  assert_eq "Movies" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Name")" "1102.Name"
+  assert_eq "special://skin/extras/playlists/RandomTvShows.xsp" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Spotlight.Path")" \
+    "the TV spotlight is unchanged"
+  assert_eq "special://skin/extras/playlists/RandomMovies.xsp" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Spotlight.Path")" \
+    "the movie spotlight is unchanged"
+  assert_eq "Standard" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Mode")" "1101.Mode"
+}
+
+test_library_hub_shortcuts_replace_a_stale_destination() {
+  local dir root payload skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  mkdir -p "$(dirname "$(skin_settings_path "${root}")")"
+  cat > "$(skin_settings_path "${root}")" <<'XML'
+<?xml version='1.0' encoding='UTF-8'?>
+<settings>
+    <setting id="HomeSwitcher.1101.Shortcut.Path">videodb://tvshows/</setting>
+    <setting id="HomeSwitcher.1101.Shortcut.Target">music</setting>
+    <setting id="HOMESWITCHER.1102.SHORTCUT.PATH">stale-case-variant</setting>
+    <setting id="HomeSwitcher.1102.Shortcut.Path">plugin://plugin.video.gone/</setting>
+</settings>
+XML
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  skin_file="$(skin_settings_path "${root}")"
+  assert_eq "videodb://tvshows/titles/" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Path")" \
+    "a stale TV destination converges"
+  assert_eq "videos" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1101.Shortcut.Target")" \
+    "a stale TV target converges"
+  assert_eq "videodb://movies/titles/" \
+    "$(xml_setting "${skin_file}" "HomeSwitcher.1102.Shortcut.Path")" \
+    "a stale movie destination converges"
+  assert_eq "1" \
+    "$(xml_setting_count "${skin_file}" "HomeSwitcher.1102.Shortcut.Path")" \
+    "one 1102.Shortcut.Path node remains"
+  assert_eq "0" \
+    "$(xml_setting_count "${skin_file}" "HOMESWITCHER.1102.SHORTCUT.PATH")" \
+    "the case variant is removed"
+}
+
 run_all_tests \
+  test_library_hubs_open_their_library_roots \
+  test_library_hub_shortcuts_replace_a_stale_destination \
   test_shared_library_preferences_are_created \
   test_shared_library_preferences_collapse_duplicates \
   test_shared_library_preferences_require_the_core_component \
