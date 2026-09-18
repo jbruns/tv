@@ -123,8 +123,9 @@ Internal:
   --emit-remote-script NAME [ROOT]
                           Print the remote 'backup', 'payload', 'stage',
                            'deploy', 'rollback', 'finalize', 'verify',
-                           'verify-probe', 'display-probe', or 'audio-probe'
-                           program for ROOT (default /storage),
+                           'verify-probe', 'display-probe', 'audio-probe',
+                           or 'buildviews' program for ROOT
+                           (default /storage),
                            then exit. Used by the test suites; it never
                            contacts a device.
   --render-remote-deploy-script [ROOT]
@@ -3944,6 +3945,135 @@ PROBE_PARSE
 REMOTE_AUDIO_PROBE_BODY
 }
 
+# --- Remote view rebuild -----------------------------------------------------
+#
+# `script.skinvariables` compiles its view types JSON into an XML include that
+# lives inside the skin add-on directory, which provisioning replaces wholesale.
+# Nothing else rebuilds it -- a Kodi restart provably does not -- so this stage
+# runs on every skin-effective run, between the deployment transaction and
+# verification.
+#
+# The one deterministic trigger is a script invocation, and the only way to
+# reach it is kodi-send: JSON-RPC Addons.ExecuteAddon runs the add-on as a
+# plugin, ignores the action, and returns OK regardless.
+coreelec_remote_buildviews_script() {
+  cat <<'REMOTE_BUILDVIEWS_BODY'
+set -eu
+umask 077
+bv_user=""
+bv_password=""
+bv_port="8080"
+bv_root="/storage"
+bv_skin="skin.arctic.fuse.3"
+bv_attempts="24"
+bv_delay="5"
+bv_settle="12"
+while IFS= read -r bv_line; do
+  case "${bv_line}" in
+    KODI_WEB_USER=*) bv_user="${bv_line#KODI_WEB_USER=}" ;;
+    KODI_WEB_PASSWORD=*) bv_password="${bv_line#KODI_WEB_PASSWORD=}" ;;
+    KODI_PORT=*) bv_port="${bv_line#KODI_PORT=}" ;;
+    STORAGE_ROOT=*) bv_root="${bv_line#STORAGE_ROOT=}" ;;
+    SKIN_ID=*) bv_skin="${bv_line#SKIN_ID=}" ;;
+    ATTEMPTS=*) bv_attempts="${bv_line#ATTEMPTS=}" ;;
+    RETRY_DELAY=*) bv_delay="${bv_line#RETRY_DELAY=}" ;;
+    SETTLE_ATTEMPTS=*) bv_settle="${bv_line#SETTLE_ATTEMPTS=}" ;;
+    "") ;;
+    *) printf "the view rebuild rejected an unknown parameter\n" >&2; exit 1 ;;
+  esac
+done
+
+[ -n "${bv_user}" ] || { printf "the view rebuild requires a Kodi user\n" >&2; exit 1; }
+command -v kodi-send >/dev/null 2>&1 \
+  || { printf "the view rebuild requires kodi-send on the device\n" >&2; exit 1; }
+
+bv_dir="$(mktemp -d)"
+trap "rm -rf -- ${bv_dir}" EXIT INT TERM
+
+# The password reaches curl only through a mode-600 configuration file in a
+# directory the trap removes: it never appears in argv or in the process list.
+printf "user = \"%s:%s\"\n" "${bv_user}" "${bv_password}" > "${bv_dir}/curlrc"
+cat > "${bv_dir}/ping.json" <<BUILDVIEWS_PING
+{"jsonrpc":"2.0","id":1,"method":"JSONRPC.Ping"}
+BUILDVIEWS_PING
+cat > "${bv_dir}/es.json" <<BUILDVIEWS_ES
+{"jsonrpc":"2.0","id":1,"method":"Settings.GetSettingValue","params":{"setting":"services.esenabled"}}
+BUILDVIEWS_ES
+
+bv_ask() {
+  curl --silent --show-error --fail --max-time 20 \
+    --config "${bv_dir}/curlrc" \
+    --header "Content-Type: application/json" \
+    --data "@${bv_dir}/$1" \
+    "http://127.0.0.1:${bv_port}/jsonrpc"
+}
+
+# The deployment transaction restarts Kodi immediately before this stage, so
+# readiness is polled rather than assumed.
+bv_attempt=1
+while :; do
+  if bv_ask ping.json > "${bv_dir}/pong.out" 2>/dev/null; then
+    break
+  fi
+  if [ "${bv_attempt}" -ge "${bv_attempts}" ]; then
+    printf "the view rebuild could not reach Kodi on port %s\n" "${bv_port}" >&2
+    exit 1
+  fi
+  sleep "${bv_delay}"
+  bv_attempt=$((bv_attempt + 1))
+done
+
+# kodi-send speaks to the EventServer over UDP and is fire-and-forget: its
+# exit status reports that a datagram left the box, never that Kodi acted on
+# it. A disabled EventServer would make this whole stage a silent no-op, so
+# the one thing that can be established beforehand is established.
+bv_ask es.json > "${bv_dir}/es.out" \
+  || { printf "the view rebuild could not read services.esenabled\n" >&2; exit 1; }
+python3 - "${bv_dir}/es.out" <<BUILDVIEWS_ES_CHECK
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    try:
+        document = json.load(handle)
+    except ValueError:
+        raise SystemExit("the view rebuild could not parse the Kodi answer")
+if document.get("result") is not True:
+    raise SystemExit(
+        "the view rebuild needs the Kodi EventServer, and services.esenabled is off")
+BUILDVIEWS_ES_CHECK
+
+bv_compiled="${bv_root}/.kodi/addons/${bv_skin}/1080i/script-skinviewtypes-includes.xml"
+kodi-send --action="RunScript(script.skinvariables,action=buildviews,force=True,no_reload=True)" \
+  >/dev/null 2>&1 \
+  || { printf "the view rebuild could not deliver kodi-send\n" >&2; exit 1; }
+
+# The rebuild is not atomic: reading the file mid-write returns an empty one.
+# Two identical non-empty digests in a row is the settling signal. The stage
+# does not adjudicate the result -- verification reads the actual state and
+# decides -- so an unsettled file warns and returns success.
+bv_previous=""
+bv_attempt=1
+bv_settled=0
+while [ "${bv_attempt}" -le "${bv_settle}" ]; do
+  sleep 1
+  if [ -s "${bv_compiled}" ]; then
+    bv_sample="$(md5sum < "${bv_compiled}")"
+    if [ -n "${bv_previous}" ] && [ "${bv_sample}" = "${bv_previous}" ]; then
+      bv_settled=1
+      break
+    fi
+    bv_previous="${bv_sample}"
+  fi
+  bv_attempt=$((bv_attempt + 1))
+done
+if [ "${bv_settled}" != "1" ]; then
+  printf "the rebuilt view include did not settle; verification will decide\n" >&2
+fi
+exit 0
+REMOTE_BUILDVIEWS_BODY
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
@@ -3958,9 +4088,10 @@ coreelec_emit_remote_script() {
     verify-probe) coreelec_remote_verify_probe_source ;;
     display-probe) coreelec_remote_display_probe_script ;;
     audio-probe) coreelec_remote_audio_probe_script ;;
+    buildviews) coreelec_remote_buildviews_script ;;
     authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, audio-probe, or authorized-key, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, audio-probe, buildviews, or authorized-key, not: ${name}"
       ;;
   esac
 }

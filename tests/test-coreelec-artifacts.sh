@@ -3461,6 +3461,36 @@ test_backup_scope_rejects_an_unknown_component() {
   assert_contains "${output}" "Unsupported component in remote backup scope: kitchen"
 }
 
+test_the_buildviews_stage_is_emittable() {
+  local script
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  assert_contains "${script}" "action=buildviews" \
+    "the stage must ask the add-on to rebuild its views" || return 1
+  assert_contains "${script}" "no_reload=True" \
+    "the rebuild must not reload the skin under verification" || return 1
+  assert_contains "${script}" "force=True" \
+    "the rebuild is unconditional" || return 1
+}
+
+test_the_buildviews_stage_contains_no_single_quote() {
+  local script
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  case "${script}" in
+    *"'"*) fail "the buildviews stage must contain no single quote"; return 1 ;;
+  esac
+}
+
+test_an_unknown_remote_stage_is_still_rejected_by_name() {
+  local output
+  set +e
+  output="$(bash "${PROVISIONER}" --emit-remote-script buildview 2>&1)"
+  set -e
+  assert_contains "${output}" "buildviews" \
+    "the rejection lists the stage it almost matched" || return 1
+  assert_contains "${output}" "not: buildview" \
+    "the rejection names what was asked for" || return 1
+}
+
 run_all_tests \
   test_reviewed_manifest_fixture_uses_sequential_indices_and_filenames \
   test_artifact_record_requires_four_fields \
@@ -3550,4 +3580,7 @@ run_all_tests \
   test_room_scope_backs_up_guisettings \
   test_the_deploy_script_backs_up_both_view_type_surfaces \
   test_the_view_type_surfaces_are_scoped_to_the_skin_component \
-  test_backup_scope_rejects_an_unknown_component
+  test_backup_scope_rejects_an_unknown_component \
+  test_the_buildviews_stage_is_emittable \
+  test_the_buildviews_stage_contains_no_single_quote \
+  test_an_unknown_remote_stage_is_still_rejected_by_name

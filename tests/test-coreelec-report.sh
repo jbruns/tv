@@ -5341,6 +5341,99 @@ test_audio_probe_requests_the_audio_category() {
     "audiooutput is not a valid category" || return 1
 }
 
+write_buildviews_stubs() {
+  local dir="$1" es_result="${2:-true}"
+  local bin_dir="${dir}/bin"
+  mkdir -p "${bin_dir}"
+  cat > "${bin_dir}/curl" <<STUB
+#!/bin/sh
+for arg in "\$@"; do
+  case "\${arg}" in
+    *es.json) printf '{"id":1,"jsonrpc":"2.0","result":${es_result}}' ; exit 0 ;;
+    *ping.json) printf '{"id":1,"jsonrpc":"2.0","result":"pong"}' ; exit 0 ;;
+  esac
+done
+exit 0
+STUB
+  cat > "${bin_dir}/kodi-send" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >> "${dir}/kodi-send.log"
+exit 0
+STUB
+  cat > "${bin_dir}/sh" <<STUB
+#!/bin/sh
+exec /bin/sh "\$@"
+STUB
+  chmod +x "${bin_dir}/curl" "${bin_dir}/kodi-send" "${bin_dir}/sh"
+}
+
+run_buildviews() {
+  local dir="$1" script
+  mkdir -p "${dir}/tmp" "${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i"
+  printf '<includes/>\n' \
+    > "${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml"
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  {
+    printf 'KODI_WEB_USER=kodi\nKODI_WEB_PASSWORD=hunter2\nKODI_PORT=8080\n'
+    printf 'STORAGE_ROOT=%s/storage\n' "${dir}"
+    printf 'ATTEMPTS=2\nRETRY_DELAY=0\nSETTLE_ATTEMPTS=3\n'
+  } | PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" sh -c "${script}"
+}
+
+test_the_buildviews_stage_asks_the_addon_to_rebuild() {
+  local dir sent
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  run_buildviews "${dir}" >/dev/null 2>&1 \
+    || { fail "the stage must succeed when the device answers"; return 1; }
+  sent="$(cat "${dir}/kodi-send.log")"
+  assert_contains "${sent}" "action=buildviews" \
+    "the datagram carries the rebuild action" || return 1
+  assert_contains "${sent}" "no_reload=True" \
+    "and suppresses the skin reload" || return 1
+}
+
+test_the_buildviews_stage_fails_when_the_event_server_is_off() {
+  local dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" "false"
+  output="$(run_buildviews "${dir}" 2>&1)" \
+    && { fail "a disabled EventServer must fail the stage"; return 1; }
+  assert_contains "${output}" "services.esenabled" \
+    "the failure names the setting an operator has to change" || return 1
+  assert_not_contains "$(cat "${dir}/kodi-send.log" 2>/dev/null || printf '')" \
+    "buildviews" "and nothing is sent" || return 1
+}
+
+test_the_buildviews_stage_rejects_an_unknown_parameter() {
+  local dir output script
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  output="$(printf 'KODI_WEB_USER=kodi\nNONSENSE=1\n' \
+    | PATH="${dir}/bin:${PATH}" sh -c "${script}" 2>&1)" \
+    && { fail "an unknown parameter must fail the stage"; return 1; }
+  assert_contains "${output}" "unknown parameter" \
+    "the rejection says what went wrong" || return 1
+}
+
+test_the_buildviews_stage_requires_kodi_send() {
+  local dir output script
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  rm -f "${dir}/bin/kodi-send"
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  output="$(printf 'KODI_WEB_USER=kodi\n' \
+    | PATH="${dir}/bin" sh -c "${script}" 2>&1)" \
+    && { fail "a device without kodi-send must fail the stage"; return 1; }
+  assert_contains "${output}" "kodi-send" \
+    "the failure names the missing program" || return 1
+}
+
 # Seeds the three resolved.* lines the fixture seam reads, so tests can reach
 # the ok and mismatch branches rather than only unobservable. Uses
 # set_observation (replace-in-place-or-append) rather than a raw append,
@@ -5956,6 +6049,10 @@ run_all_tests \
   test_audio_probe_reports_an_unreachable_kodi \
   test_audio_probe_contains_no_single_quote \
   test_audio_probe_requests_the_audio_category \
+  test_the_buildviews_stage_asks_the_addon_to_rebuild \
+  test_the_buildviews_stage_fails_when_the_event_server_is_off \
+  test_the_buildviews_stage_rejects_an_unknown_parameter \
+  test_the_buildviews_stage_requires_kodi_send \
   test_audio_verification_passes_when_the_device_matches \
   test_audio_verification_reports_a_changed_device \
   test_audio_verification_reports_a_changed_passthrough_device \
