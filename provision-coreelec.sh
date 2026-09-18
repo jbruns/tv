@@ -684,9 +684,14 @@ def main(argv):
             "locale.language": config("LOCALE_LANGUAGE"),
             "locale.timezone": config("TIMEZONE"),
             "locale.timezonecountry": config("TIMEZONE_COUNTRY"),
+            "filelists.showaddsourcebuttons": "false",
+            "filelists.showextensions": "false",
+            "filelists.showparentdiritems": "false",
             "videolibrary.flattentvshows": "1",
             "videolibrary.ignorevideoextras": "true",
             "videolibrary.ignorevideoversions": "true",
+            "videolibrary.showallitems": "false",
+            "videolibrary.tvshowsselectfirstunwatcheditem": "1",
             "videoplayer.adjustrefreshrate": "2",
             "videoplayer.usedisplayasclock": "false",
         })
@@ -2370,6 +2375,15 @@ CORE_SETTING_IDS = [
     "locale.timezone",
     "audiooutput.audiodevice",
     "audiooutput.passthroughdevice",
+    "input.enablemouse",
+    "filelists.showparentdiritems",
+    "filelists.showextensions",
+    "filelists.showaddsourcebuttons",
+    "videolibrary.showallitems",
+    "videolibrary.tvshowsselectfirstunwatcheditem",
+    "videolibrary.flattentvshows",
+    "videolibrary.ignorevideoextras",
+    "videolibrary.ignorevideoversions",
 ]
 SKIN_SETTING_IDS = ["lookandfeel.skin"]
 SERVICE_SETTING_IDS = ["weather.addon"]
@@ -3319,13 +3333,13 @@ def main(argv):
     observe("arctic_fuse.option_tiles_configured",
             1 if option_tiles_ok else 0)
 
+    # Only the sound skin is skin-owned. The generic library and file-list
+    # preferences are written by `core` and are verified there, against what
+    # Kodi itself reports, so a `core` run can no longer write settings that
+    # only a `skin` run would check.
     kodi_defaults_ok = all((
-        kodi_setting_is("input.enablemouse", "false"),
         kodi_setting_is(
             "lookandfeel.soundskin", "resource.uisounds.fromashes"),
-        kodi_setting_is("videolibrary.flattentvshows", "1"),
-        kodi_setting_is("videolibrary.ignorevideoextras", "true"),
-        kodi_setting_is("videolibrary.ignorevideoversions", "true"),
     ))
     observe("arctic_fuse.kodi_defaults_configured",
             1 if kodi_defaults_ok else 0)
@@ -4567,6 +4581,38 @@ verify_remote_baseline() {
     || failures=$((failures + 1))
   coreelec_report_comparison "regional.timezone_cache" "${TIMEZONE}" \
     "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
+    || failures=$((failures + 1))
+
+  # Generic Kodi library and file-list behaviour. Each preference is compared
+  # on its own key: one setting drifting must name itself rather than hide
+  # inside an aggregate that reports a single opaque zero.
+  coreelec_report_comparison "library.input.enablemouse" "false" \
+    "$(coreelec_observation_value setting.input.enablemouse "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "library.filelists.showparentdiritems" "false" \
+    "$(coreelec_observation_value setting.filelists.showparentdiritems "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "library.filelists.showextensions" "false" \
+    "$(coreelec_observation_value setting.filelists.showextensions "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "library.filelists.showaddsourcebuttons" "false" \
+    "$(coreelec_observation_value setting.filelists.showaddsourcebuttons "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "library.videolibrary.showallitems" "false" \
+    "$(coreelec_observation_value setting.videolibrary.showallitems "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison \
+    "library.videolibrary.tvshowsselectfirstunwatcheditem" "1" \
+    "$(coreelec_observation_value setting.videolibrary.tvshowsselectfirstunwatcheditem "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "library.videolibrary.flattentvshows" "1" \
+    "$(coreelec_observation_value setting.videolibrary.flattentvshows "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "library.videolibrary.ignorevideoextras" "true" \
+    "$(coreelec_observation_value setting.videolibrary.ignorevideoextras "${observations}" || true)" \
+    || failures=$((failures + 1))
+  coreelec_report_comparison "library.videolibrary.ignorevideoversions" "true" \
+    "$(coreelec_observation_value setting.videolibrary.ignorevideoversions "${observations}" || true)" \
     || failures=$((failures + 1))
 
     # Each output is its own independent pass/fail: one output left pointing
