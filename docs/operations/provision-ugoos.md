@@ -202,6 +202,32 @@ empty target it executes the path as a bare Kodi builtin, so a library path
 with no target silently does nothing. Drift in either the path or the target
 fails `arctic_fuse.tv_hub_configured` or `arctic_fuse.movies_hub_configured`.
 
+### What "off" means for a skin setting
+
+Arctic Fuse settings that the baseline disables are verified as absent *or*
+present-but-empty, not as strictly absent.
+
+This is not leniency. Kodi resolves an unset `Skin.String` to the empty
+string, and the skin's own conditions are written as `String.IsEmpty(...)`, so
+absent and empty are the same state to Arctic Fuse. Kodi also writes a node
+for every skin string the skin merely references — empty, and with the id
+lowercased — so `addon_data/skin.arctic.fuse.3/settings.xml` accumulates
+entries like `homeswitcher.1103.shortcut.target` with no value. Requiring
+literal absence asks for a state no running device can hold: the provisioner
+removes the key, Kodi recreates it on the next skin load, and verification
+fails on a difference that has no effect.
+
+A non-empty value still fails. A stale Plex spotlight, a Weather tile aimed at
+a previous destination, or a hub 1104 somebody actually enabled are all still
+caught.
+
+One consequence worth knowing when reading a report: `HomeSwitcher.1104.Name`,
+`.Mode` and `.Icon` are not verified at all. Arctic Fuse writes them on every
+skin load — `Name` from `$LOCALIZE[636]` ("Custom"), `Mode` as `Standard` from
+its own `skinvariables-startup.json` — and they do nothing while
+`HomeSwitcher.1104.Toggle` is empty, which is what actually keeps the hub off
+the home screen.
+
 
    and the selected room's Ugoos guide.
 2. Prepare and boot removable media using the

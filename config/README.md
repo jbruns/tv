@@ -249,6 +249,18 @@ provision YouTube.
   target it runs the path as a bare Kodi builtin, which is why
   `HomeSwitcher.1103.Shortcut.Path` holds `RunAddon(script.plexmod)` and has no
   target.
+- A managed skin setting that must be **off** is verified as absent *or*
+  present-but-empty. Kodi resolves an unset `Skin.String` to the empty string
+  and every Arctic Fuse condition tests `String.IsEmpty`, so the skin cannot
+  distinguish the two. Kodi also materialises a node for every skin string the
+  skin merely references, writing it empty with a lowercased id, so literal
+  absence is not a state a device can hold. A non-empty value in any case
+  variant is still real configuration and still fails verification.
+- Hub 1104 is checked on `Toggle` and its shortcut and spotlight
+  destinations. `HomeSwitcher.1104.Name`, `.Mode` and `.Icon` are not checked:
+  Arctic Fuse writes them itself on every skin load — `Name` defaults to
+  `$LOCALIZE[636]` ("Custom") and `Mode` to `Standard` — and they are inert
+  while `Toggle` is empty.
 - The managed top-level order after Home is TV Shows, Movies, Plex,
   conditional PVR, Add-ons.
 - Home retains its six managed widgets in order: In-Progress Movies,
