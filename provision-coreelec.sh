@@ -3147,17 +3147,20 @@ def main(argv):
         return matches is not None and matches == [
             (setting_id, "string", expected, True)]
 
-    def managed_setting_is_unset(setting_id):
-        """A disabled managed setting has no case variant anywhere."""
-        matches = xml_setting_matches(skin_settings_path, setting_id)
-        return matches is not None and not matches
+    def managed_setting_is_blank(setting_id):
+        """A disabled managed setting is absent, or present but empty.
 
-    def managed_setting_is_unset_or(setting_id, expected):
-        """Accept absence or one inert canonical default recreated by AF3."""
+        Kodi resolves an unset `Skin.String` to the empty string, and every
+        Arctic Fuse condition tests `String.IsEmpty`, so the skin cannot tell
+        the two apart. Kodi also materialises a node for every skin string the
+        skin merely references, writing it empty and with a lowercased id.
+        Demanding literal absence therefore asserts something the platform
+        cannot hold, and fails the moment Kodi loads the skin. A non-empty
+        value in any case variant is still real configuration and still
+        fails."""
         matches = xml_setting_matches(skin_settings_path, setting_id)
-        return matches is not None and (
-            not matches
-            or matches == [(setting_id, "string", expected, True)])
+        return matches is not None and all(
+            not match[2] for match in matches)
 
     def kodi_setting_is(setting_id, expected):
         matches = xml_setting_matches(guisettings_path, setting_id)
@@ -3278,30 +3281,31 @@ def main(argv):
             "special://home/addons/script.plexmod/icon2.png")
         and managed_setting_is(
             "HomeSwitcher.1103.Shortcut.Path", "RunAddon(script.plexmod)")
-        and managed_setting_is_unset("HomeSwitcher.1103.Shortcut.Target")
-        and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Label")
-        and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Path")
-        and managed_setting_is_unset("HomeSwitcher.1103.Spotlight.Target")
+        and managed_setting_is_blank("HomeSwitcher.1103.Shortcut.Target")
+        and managed_setting_is_blank("HomeSwitcher.1103.Spotlight.Label")
+        and managed_setting_is_blank("HomeSwitcher.1103.Spotlight.Path")
+        and managed_setting_is_blank("HomeSwitcher.1103.Spotlight.Target")
     )
-    custom_1104_disabled = (
-        managed_setting_is_unset_or("HomeSwitcher.1104.Name", "Custom")
-        and all(
-            managed_setting_is_unset("HomeSwitcher.1104." + suffix)
-            for suffix in (
-                "Toggle", "Icon", "Mode", "Shortcut.Path",
-                "Shortcut.Target", "Spotlight.Label", "Spotlight.Path",
-                "Spotlight.Target")))
+    # `Toggle` alone decides whether the skin renders hub 1104 at all, so the
+    # check covers it and the destinations that would surface with it. `Name`,
+    # `Mode` and `Icon` are deliberately absent: Arctic Fuse writes them on
+    # every skin load and they are inert while `Toggle` is empty.
+    custom_1104_disabled = all(
+        managed_setting_is_blank("HomeSwitcher.1104." + suffix)
+        for suffix in (
+            "Toggle", "Shortcut.Path", "Shortcut.Target",
+            "Spotlight.Label", "Spotlight.Path", "Spotlight.Target"))
     nextpvr_expected = bool(
         config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
     if nextpvr_expected:
         pvr_hub_ok = managed_setting_is(
             "HomeSwitcher.1107.Toggle", "true")
     else:
-        pvr_hub_ok = managed_setting_is_unset(
+        pvr_hub_ok = managed_setting_is_blank(
             "HomeSwitcher.1107.Toggle")
     pvr_surfaces_ok = (
         all(
-            managed_setting_is_unset("Hub.1107." + suffix)
+            managed_setting_is_blank("Hub.1107." + suffix)
             for suffix in (
                 "DisableSearch", "DisableChannels",
                 "DisableGroups", "DisableRecordings"))
@@ -3330,9 +3334,9 @@ def main(argv):
     weather_tile_ok = all((
         managed_setting_is("optionstiles.03.include", "Weather")
         if weather_expected
-        else managed_setting_is_unset("optionstiles.03.include"),
-        managed_setting_is_unset_or("optionstiles.03.path", ""),
-        managed_setting_is_unset_or("optionstiles.03.target", ""),
+        else managed_setting_is_blank("optionstiles.03.include"),
+        managed_setting_is_blank("optionstiles.03.path"),
+        managed_setting_is_blank("optionstiles.03.target"),
     ))
     option_tiles_ok = all((
         managed_setting_is("optionstiles.01.include", "NowPlaying"),

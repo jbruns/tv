@@ -3144,6 +3144,79 @@ test_probe_arctic_fuse_valid_baseline_emits_all_ones() {
   done
 }
 
+test_probe_empty_skin_strings_read_as_off() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  # Kodi materialises a node for every skin string the skin references, with
+  # an empty value and a lowercased id. Skin.String() cannot tell that apart
+  # from an absent setting, so neither may the probe.
+  add_xml_setting "${skin_file}" "homeswitcher.1103.shortcut.target" ""
+  add_xml_setting "${skin_file}" "homeswitcher.1103.spotlight.target" ""
+  add_xml_setting "${skin_file}" "homeswitcher.1103.spotlight.label" ""
+  add_xml_setting "${skin_file}" "hub.1107.disablesearch" ""
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=1" \
+    "empty skin strings do not make the Plex entry look configured" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
+    "empty skin strings do not fail the hub aggregate" || return 1
+}
+
+test_probe_a_non_empty_disabled_setting_still_fails() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  add_xml_setting "${skin_file}" "HomeSwitcher.1103.Spotlight.Path" \
+    "special://skin/extras/playlists/StalePlexSpotlight.xsp"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.plex_entry_configured=0" \
+    "a real stale Plex spotlight still fails" || return 1
+}
+
+test_probe_skin_written_1104_cosmetics_do_not_fail_the_hub() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  # Arctic Fuse writes these itself on every skin load and they are inert
+  # while Toggle is empty, so they cannot be held against the device.
+  add_xml_setting "${skin_file}" "HomeSwitcher.1104.Name" "Custom"
+  add_xml_setting "${skin_file}" "homeswitcher.1104.mode" "Standard"
+  add_xml_setting "${skin_file}" "homeswitcher.1104.icon" ""
+  add_xml_setting "${skin_file}" "homeswitcher.1104.toggle" ""
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=1" \
+    "skin-written 1104 cosmetics leave the hub disabled" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=1" \
+    "skin-written 1104 cosmetics do not fail the hub aggregate" || return 1
+}
+
+test_probe_a_live_1104_hub_still_fails() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  add_xml_setting "${skin_file}" "HomeSwitcher.1104.Toggle" "true"
+  add_xml_setting "${skin_file}" "HomeSwitcher.1104.Name" "Custom"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.custom_1104_disabled=0" \
+    "a hub someone actually enabled still fails" || return 1
+}
+
 test_probe_hub_shortcut_drift_fails_the_hub_aggregate() {
   local dir root bin_dir output skin_file
   dir="$(make_scratch_dir)"
@@ -3289,6 +3362,22 @@ if len(matches) != 1:
     raise SystemExit("expected one setting: %s" % setting_id)
 matches[0].text = value
 matches[0].attrib.pop("value", None)
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+}
+
+add_xml_setting() {
+  local path="$1" setting_id="$2" value="$3"
+  python3 - "${path}" "${setting_id}" "${value}" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path, setting_id, value = sys.argv[1:4]
+tree = ET.parse(path)
+node = ET.SubElement(tree.getroot(), "setting")
+node.set("id", setting_id)
+node.set("type", "string")
+node.text = value or None
 tree.write(path, encoding="UTF-8", xml_declaration=True)
 PYEOF
 }
@@ -5549,6 +5638,10 @@ run_all_tests \
   test_remote_verify_probe_reports_a_missing_addon \
   test_remote_verify_probe_uses_a_private_curl_config_and_removes_it \
   test_probe_arctic_fuse_valid_baseline_emits_all_ones \
+  test_probe_empty_skin_strings_read_as_off \
+  test_probe_a_non_empty_disabled_setting_still_fails \
+  test_probe_skin_written_1104_cosmetics_do_not_fail_the_hub \
+  test_probe_a_live_1104_hub_still_fails \
   test_probe_hub_shortcut_drift_fails_the_hub_aggregate \
   test_probe_hub_shortcut_target_must_activate_the_video_window \
   test_probe_missing_skin_settings_emits_zero \
