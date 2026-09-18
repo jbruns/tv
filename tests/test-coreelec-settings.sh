@@ -2608,7 +2608,121 @@ test_nextpvr_settings_use_the_configured_backend_address() {
     "a complete backend address enables the instance" || return 1
 }
 
+# --- Shared library and file-list preferences -------------------------------
+
+test_shared_library_preferences_are_created() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "false" \
+    "$(xml_setting "${settings}" filelists.showparentdiritems)" \
+    "parent directory items are hidden"
+  assert_eq "false" "$(xml_setting "${settings}" filelists.showextensions)" \
+    "file extensions are hidden"
+  assert_eq "false" \
+    "$(xml_setting "${settings}" filelists.showaddsourcebuttons)" \
+    "add-source buttons are hidden"
+  assert_eq "false" "$(xml_setting "${settings}" videolibrary.showallitems)" \
+    "the All Items entry is hidden"
+  assert_eq "1" \
+    "$(xml_setting "${settings}" videolibrary.tvshowsselectfirstunwatcheditem)" \
+    "episode lists select the first unwatched item"
+}
+
+test_shared_library_preferences_collapse_duplicates() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  seed_guisettings "${root}"
+  python3 - "$(guisettings_path "${root}")" <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+tree = ET.parse(path)
+root = tree.getroot()
+for setting_id, value in (
+    ("filelists.showparentdiritems", "true"),
+    ("FILELISTS.SHOWPARENTDIRITEMS", "stale-case-variant"),
+    ("filelists.showextensions", "true"),
+    ("filelists.showaddsourcebuttons", "true"),
+    ("videolibrary.showallitems", "true"),
+    ("VIDEOLIBRARY.SHOWALLITEMS", "stale-case-variant"),
+    ("videolibrary.tvshowsselectfirstunwatcheditem", "0"),
+):
+    node = ET.SubElement(root, "setting", {"id": setting_id})
+    node.text = value
+tree.write(path, encoding="UTF-8", xml_declaration=True)
+PYEOF
+  write_base_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "1" \
+    "$(xml_setting_count "${settings}" filelists.showparentdiritems)" \
+    "one filelists.showparentdiritems node remains"
+  assert_eq "false" \
+    "$(xml_setting "${settings}" filelists.showparentdiritems)" \
+    "filelists.showparentdiritems converges to the managed value"
+  assert_eq "0" \
+    "$(xml_setting_count "${settings}" FILELISTS.SHOWPARENTDIRITEMS)" \
+    "the case variant is removed"
+  assert_eq "1" "$(xml_setting_count "${settings}" filelists.showextensions)" \
+    "one filelists.showextensions node remains"
+  assert_eq "false" "$(xml_setting "${settings}" filelists.showextensions)" \
+    "filelists.showextensions converges to the managed value"
+  assert_eq "1" \
+    "$(xml_setting_count "${settings}" filelists.showaddsourcebuttons)" \
+    "one filelists.showaddsourcebuttons node remains"
+  assert_eq "false" \
+    "$(xml_setting "${settings}" filelists.showaddsourcebuttons)" \
+    "filelists.showaddsourcebuttons converges to the managed value"
+  assert_eq "1" "$(xml_setting_count "${settings}" videolibrary.showallitems)" \
+    "one videolibrary.showallitems node remains"
+  assert_eq "false" "$(xml_setting "${settings}" videolibrary.showallitems)" \
+    "videolibrary.showallitems converges to the managed value"
+  assert_eq "0" \
+    "$(xml_setting_count "${settings}" VIDEOLIBRARY.SHOWALLITEMS)" \
+    "the videolibrary case variant is removed"
+  assert_eq "1" \
+    "$(xml_setting_count "${settings}" videolibrary.tvshowsselectfirstunwatcheditem)" \
+    "one videolibrary.tvshowsselectfirstunwatcheditem node remains"
+  assert_eq "1" \
+    "$(xml_setting "${settings}" videolibrary.tvshowsselectfirstunwatcheditem)" \
+    "videolibrary.tvshowsselectfirstunwatcheditem converges to the managed value"
+}
+
+test_shared_library_preferences_require_the_core_component() {
+  local dir root payload settings
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  payload="${dir}/payload.conf"
+  write_scoped_base_payload "${payload}" 0 0 0 0 1
+  run_transform "${root}" "${payload}" >/dev/null
+
+  settings="$(guisettings_path "${root}")"
+  assert_eq "" "$(xml_setting "${settings}" filelists.showparentdiritems)" \
+    "a skin-only run does not write core file-list preferences"
+  assert_eq "" "$(xml_setting "${settings}" videolibrary.showallitems)" \
+    "a skin-only run does not write core library preferences"
+  assert_eq "" \
+    "$(xml_setting "${settings}" videolibrary.tvshowsselectfirstunwatcheditem)" \
+    "a skin-only run does not write core episode-selection preferences"
+}
+
 run_all_tests \
+  test_shared_library_preferences_are_created \
+  test_shared_library_preferences_collapse_duplicates \
+  test_shared_library_preferences_require_the_core_component \
   test_regional_settings_are_created \
   test_duplicate_settings_are_collapsed \
   test_kodi_setting_case_variants_are_removed \

@@ -128,6 +128,15 @@ setting.locale.timezonecountry=United States
 setting.locale.timezone=America/Los_Angeles
 setting.lookandfeel.skin=skin.arctic.fuse.3
 setting.lookandfeel.soundskin=resource.uisounds.fromashes
+setting.input.enablemouse=false
+setting.filelists.showparentdiritems=false
+setting.filelists.showextensions=false
+setting.filelists.showaddsourcebuttons=false
+setting.videolibrary.showallitems=false
+setting.videolibrary.tvshowsselectfirstunwatcheditem=1
+setting.videolibrary.flattentvshows=1
+setting.videolibrary.ignorevideoextras=true
+setting.videolibrary.ignorevideoversions=true
 setting.weather.addon=weather.ha
 setting.audiooutput.audiodevice=ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
 setting.audiooutput.passthroughdevice=ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
@@ -5337,7 +5346,98 @@ test_the_report_omits_the_addon_inventory_when_addons_are_out_of_scope() {
     "a core-only run counts nothing" || return 1
 }
 
+# --- Shared library and file-list preferences -------------------------------
+
+test_shared_library_preferences_are_verified() {
+  local dir config manifest observations output rc key
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "the captured library baseline verifies" || return 1
+  assert_contains "${output}" "library.filelists.showparentdiritems.status=ok" \
+    "parent directory items verified" || return 1
+  assert_contains "${output}" "library.filelists.showextensions.status=ok" \
+    "file extensions verified" || return 1
+  assert_contains "${output}" \
+    "library.filelists.showaddsourcebuttons.status=ok" \
+    "add-source buttons verified" || return 1
+  assert_contains "${output}" "library.videolibrary.showallitems.status=ok" \
+    "the All Items entry verified" || return 1
+  assert_contains "${output}" \
+    "library.videolibrary.tvshowsselectfirstunwatcheditem.expected=1" \
+    "first-unwatched selection reports its expectation" || return 1
+  assert_contains "${output}" "library.videolibrary.flattentvshows.status=ok" \
+    "flattened seasons verified under core" || return 1
+  assert_contains "${output}" "library.input.enablemouse.status=ok" \
+    "mouse input verified under core" || return 1
+
+  # Each setting is its own pass/fail: drift in one must never hide behind
+  # another being correct, and the failing key must name itself.
+  for key in filelists.showparentdiritems filelists.showextensions \
+    filelists.showaddsourcebuttons videolibrary.showallitems \
+    videolibrary.tvshowsselectfirstunwatcheditem \
+    videolibrary.flattentvshows videolibrary.ignorevideoextras \
+    videolibrary.ignorevideoversions input.enablemouse; do
+    write_pass_observations "${observations}"
+    set_observation "${observations}" "setting.${key}" "something-else"
+    set +e
+    output="$(run_verify "${config}" "${observations}" "${manifest}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "drift in ${key} must fail verification" || return 1
+    assert_contains "${output}" "library.${key}.status=mismatch" \
+      "${key} mismatch reported against its own key" || return 1
+  done
+}
+
+test_shared_library_preferences_are_scoped_to_core() {
+  local dir config manifest observations output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_base_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  set +e
+  output="$(run_verify_components cec "${config}" "${observations}" \
+    "${manifest}" 2>&1)"
+  set -e
+  assert_not_contains "${output}" "library." \
+    "a run without core reports no library preferences" || return 1
+}
+
+test_probe_library_drift_is_not_folded_into_the_skin_aggregate() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  set_xml_setting_text "${root}/.kodi/userdata/guisettings.xml" \
+    "videolibrary.flattentvshows" "0"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.kodi_defaults_configured=1" \
+    "a core-owned library setting is not the skin aggregate's business" \
+    || return 1
+}
+
 run_all_tests \
+  test_shared_library_preferences_are_verified \
+  test_shared_library_preferences_are_scoped_to_core \
+  test_probe_library_drift_is_not_folded_into_the_skin_aggregate \
   test_verify_probe_renders_boolean_settings_lowercase \
   test_display_probe_resolves_a_label_to_an_index \
   test_display_probe_rejects_an_unreported_resolution \

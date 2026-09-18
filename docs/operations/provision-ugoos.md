@@ -164,10 +164,32 @@ The inventory observes and does not judge. An unmanaged add-on never raises
 about one is an operator's call. Add-ons bundled with the CoreELEC image are
 out of scope, because they belong to the image rather than to the deployment.
 
-## Order of operations
+### Shared library and file-list behavior
 
-1. Read the
-   [CoreELEC system decision](../decisions/ugoos-coreelec-21.3-system.md)
+The `core` component owns the generic Kodi library and file-list preferences
+that every device of a profile shares, independent of the skin and of the
+room. Each preference is verified on its own report key against the value Kodi
+reports over JSON-RPC, rather than against the file that was written:
+
+```text
+library.filelists.showparentdiritems.expected=false
+library.filelists.showparentdiritems.observed=false
+library.filelists.showparentdiritems.status=ok
+library.videolibrary.tvshowsselectfirstunwatcheditem.status=ok
+```
+
+The managed set is `filelists.showparentdiritems`,
+`filelists.showextensions`, `filelists.showaddsourcebuttons`,
+`videolibrary.showallitems`, `videolibrary.tvshowsselectfirstunwatcheditem`,
+`videolibrary.flattentvshows`, `videolibrary.ignorevideoextras`,
+`videolibrary.ignorevideoversions`, and `input.enablemouse`.
+
+Drift in any one of them fails verification, and the failing key names the
+setting that drifted rather than collapsing nine checks into a single opaque
+zero. `lookandfeel.soundskin` is deliberately not in this set: it is the one
+Kodi default the skin owns, and `skin` continues to verify it.
+
+
    and the selected room's Ugoos guide.
 2. Prepare and boot removable media using the
    [shared device guide](../devices/ugoos-am6b-plus/coreelec-21.3.md).

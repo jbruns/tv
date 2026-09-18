@@ -201,11 +201,11 @@ and narrows only the artifact set. When components are explicit, each
 
 | Component | Owned state |
 | --- | --- |
-| `core` | Regional, locale, timezone, keyboard, Kodi web-access, update-policy, the shared audio output/passthrough device intent, and shared non-room Kodi defaults; the timezone cache and `/etc/localtime` |
+| `core` | Regional, locale, timezone, keyboard, Kodi web-access, update-policy, the shared audio output/passthrough device intent, and the shared non-room Kodi library and file-list preferences; the timezone cache and `/etc/localtime` |
 | `cec` | Exactly one detected Kodi CEC peripheral file: `activate_source=0`, `wake_devices=231`, `standby_devices=231`, `standby_tv_on_pc_standby=0`, and `standby_pc_on_tv_standby=36028` (reported as `cec.tv_off_action`) |
 | `addons` | The selected, checksum-locked artifacts and their installed add-on directories |
 | `services` | Settings owned by `plugin.video.themoviedb.helper`, `weather.ha`, `pvr.nextpvr`, and `script.plexmod` |
-| `skin` | Active Arctic Fuse selection, Arctic Fuse settings, Skin Variables widget JSON, managed video playlists, and skin-specific shared Kodi defaults |
+| `skin` | Active Arctic Fuse selection, Arctic Fuse settings, Skin Variables widget JSON, managed video playlists, and the skin-owned sound skin |
 | `room` | Owns display and audio state in `config/rooms/<room>/room.conf`: the desktop resolution, the display mode whitelist, both Dolby Vision settings, the six audio passthrough flags, and the decoded-audio channel layout in `guisettings.xml`. Opt-in: never expanded from `baseline`; must be requested explicitly with `--component room --room NAME` |
 | `baseline` | Alias for every implemented component: `core,cec,addons,services,skin`; it excludes `room`, which is opt-in |
 
@@ -274,8 +274,14 @@ provision YouTube.
   `target` fields are removed in both configurations.
 - The regional baseline settings are `locale.language`, `locale.country`,
   `locale.keyboardlayouts`, `locale.timezonecountry`, and `locale.timezone`.
-- The five managed Arctic Fuse 3 Kodi behavior defaults are separate from that
-  baseline: `videolibrary.flattentvshows`, `videolibrary.ignorevideoextras`,
-  `videolibrary.ignorevideoversions`, `input.enablemouse`, and
-  `lookandfeel.soundskin`.
-- `lookandfeel.soundskin` is pinned to `resource.uisounds.fromashes`.
+- The shared library and file-list preferences belong to `core`, and each one
+  is verified on its own report key (`library.<setting id>`) against what Kodi
+  itself reports over JSON-RPC: `filelists.showparentdiritems`,
+  `filelists.showextensions`, `filelists.showaddsourcebuttons`,
+  `videolibrary.showallitems`,
+  `videolibrary.tvshowsselectfirstunwatcheditem`,
+  `videolibrary.flattentvshows`, `videolibrary.ignorevideoextras`,
+  `videolibrary.ignorevideoversions`, and `input.enablemouse`. Drift in any one
+  of them fails verification and names the setting that drifted.
+- `lookandfeel.soundskin` is the only Kodi default the `skin` component owns,
+  and it is pinned to `resource.uisounds.fromashes`.
