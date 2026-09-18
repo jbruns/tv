@@ -1183,6 +1183,7 @@ SERVICE_SETTINGS_PATHS
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json
 .kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
+.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
 .kodi/userdata/playlists/video/InProgressMovies90Days.xsp
 .kodi/userdata/playlists/video/InProgressShows90Days.xsp
 .kodi/userdata/playlists/video/RecentlyAiredEpisodes30Days.xsp
