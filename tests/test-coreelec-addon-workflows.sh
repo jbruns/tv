@@ -1164,99 +1164,21 @@ test_nextpvr_check_requires_a_successful_session_login() {
   assert_contains "${output}" "workflow_status=authorization-required" "failed NextPVR login requires new credentials" || return 1
 }
 
-test_pm4k_local_check_requires_identity_and_token_authorized_root() {
-  local success_dir success_bin success_python_bin success_output failure_dir failure_bin failure_output body
-
-  success_dir="$(make_scratch_dir)"
-  trap 'rm -rf -- "${success_dir}" "${failure_dir:-}"' RETURN
-  success_bin="$(install_ssh_stub "${success_dir}")"
-  success_python_bin="$(install_python3_argv_stub "${success_dir}")"
-  write_http_response "${success_dir}/stub/response-1.json" ok 200 '{"MediaContainer":{"machineIdentifier":"plex-machine-1"}}'
-  write_http_response "${success_dir}/stub/response-2.json" ok 200 '{"MediaContainer":{"friendlyName":"Basement Plex"}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${success_dir}/stub/response-3.json"
-
-  success_output="$({
-    export COREELEC_SSH_STUB_DIR="${success_dir}/stub"
-    export PATH="${success_python_bin}:${success_bin}:${PATH}"
-    TARGET="coreelec-theater"
-    SSH_PORT="22"
-    KODI_PORT="8080"
-    KODI_USER="homeassistant"
-    KODI_WEB_PASSWORD="kodi-web-password-secret"
-    PLEX_SERVER_HOST="plex.example.lan"
-    PLEX_SERVER_PORT="32400"
-    PLEX_SERVER_NAME="Basement Plex"
-    PLEX_PROFILE_IDS="11,22"
-    PLEX_TOKEN="plex-token-secret"
-    printf 'workflow_status=%s\n' "$(check_pm4k_local)"
-  } 2>&1)"
-
-  assert_eq "3" "$(ssh_call_count "${success_dir}")" "PM4K local check launches the add-on after both Plex probes pass" || return 1
-  assert_contains "${success_output}" "service.script.plexmod.identity_http_status=200" "PM4K identity probe is reported" || return 1
-  assert_contains "${success_output}" "service.script.plexmod.root_http_status=200" "PM4K authenticated root probe is reported" || return 1
-  assert_contains "${success_output}" "service.script.plexmod.kodi_execute=ok" "PM4K launch is reported" || return 1
-  assert_contains "${success_output}" "workflow_status=configured" "healthy PM4K local configuration is accepted" || return 1
-  assert_not_contains "$(python3_argv_logs "${success_dir}")" "plex-token-secret" \
-    "PM4K token must not leak into local python argv" || return 1
-  assert_python3_stub_recorded_calls "${success_dir}" "$(python3_call_count "${success_dir}")" \
-    "PM4K check should exercise local python helpers through the stub" || return 1
-  body="$(ssh_request_body "${success_dir}" 3)"
-  assert_eq '{"jsonrpc":"2.0","id":"addons-executeaddon","method":"Addons.ExecuteAddon","params":{"addonid":"script.plexmod"}}' \
-    "${body}" "PM4K local check launches script.plexmod after successful validation" || return 1
-
-  failure_dir="$(make_scratch_dir)"
-  failure_bin="$(install_ssh_stub "${failure_dir}")"
-  write_http_response "${failure_dir}/stub/response-1.json" ok 200 '{"MediaContainer":{"machineIdentifier":"plex-machine-1"}}'
-  write_http_response "${failure_dir}/stub/response-2.json" ok 401 '{"errors":[{"code":401,"message":"unauthorized"}]}'
-
-  failure_output="$({
-    export COREELEC_SSH_STUB_DIR="${failure_dir}/stub"
-    export PATH="${failure_bin}:${PATH}"
-    TARGET="coreelec-theater"
-    SSH_PORT="22"
-    KODI_PORT="8080"
-    KODI_USER="homeassistant"
-    KODI_WEB_PASSWORD="kodi-web-password-secret"
-    PLEX_SERVER_HOST="plex.example.lan"
-    PLEX_SERVER_PORT="32400"
-    PLEX_SERVER_NAME="Basement Plex"
-    PLEX_PROFILE_IDS="11,22"
-    PLEX_TOKEN="plex-token-secret"
-    printf 'workflow_status=%s\n' "$(check_pm4k_local)"
-  } 2>&1)"
-
-  assert_eq "2" "$(ssh_call_count "${failure_dir}")" "unauthorized PM4K root access stops before launch" || return 1
-  assert_contains "${failure_output}" "service.script.plexmod.failure=unauthorized" "PM4K auth failure is classified distinctly" || return 1
-  assert_contains "${failure_output}" "service.script.plexmod.root_http_status=401" "PM4K auth failure reports the status code" || return 1
-  assert_contains "${failure_output}" "workflow_status=authorization-required" "PM4K auth failure requires new credentials" || return 1
-}
-
-test_pm4k_local_check_skips_when_local_configuration_is_absent() {
-  local output
-  output="$({
-    unset PLEX_SERVER_HOST PLEX_SERVER_PORT PLEX_SERVER_NAME PLEX_PROFILE_IDS PLEX_TOKEN
-    printf 'workflow_status=%s\n' "$(check_pm4k_local)"
-  } 2>&1)"
-
-  assert_contains "${output}" "service.script.plexmod.failure=not-configured" \
-    "PM4K local check reports the direct-path skip reason" || return 1
-  assert_contains "${output}" "workflow_status=skipped" \
-    "PM4K local check must skip when local mode is not configured" || return 1
-}
-
+# Service checks are read-only observations: they report what the device has
+# without rewriting it. Nothing else in this suite pins that, so a check that
+# began persisting settings would otherwise go unnoticed. The PM4K third of
+# this test went with `check_pm4k_local`, removed in 4f633e4.
 test_service_checks_do_not_modify_addon_settings() {
-  local dir bin_dir root output weather_before weather_after nextpvr_before nextpvr_after pm4k_before pm4k_after
+  local dir bin_dir root output weather_before weather_after nextpvr_before nextpvr_after
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
   bin_dir="$(install_ssh_stub "${dir}")"
   root="${dir}/root/.kodi/userdata/addon_data"
-  mkdir -p "${root}/weather.ha" "${root}/pvr.nextpvr" "${root}/script.plexmod"
+  mkdir -p "${root}/weather.ha" "${root}/pvr.nextpvr"
   printf '%s\n' '<settings><setting id="token">persisted-weather</setting></settings>' > "${root}/weather.ha/settings.xml"
   printf '%s\n' '<settings><setting id="host">persisted-nextpvr</setting></settings>' > "${root}/pvr.nextpvr/instance-settings-1.xml"
-  printf '%s\n' '<settings><setting id="local_mode">persisted-pm4k</setting></settings>' > "${root}/script.plexmod/settings.xml"
   weather_before="$(cat "${root}/weather.ha/settings.xml")"
   nextpvr_before="$(cat "${root}/pvr.nextpvr/instance-settings-1.xml")"
-  pm4k_before="$(cat "${root}/script.plexmod/settings.xml")"
 
   write_http_response "${dir}/stub/response-1.json" ok 200 '{"location_name":"Home"}'
   write_http_response "${dir}/stub/response-2.json" ok 200 '{"entity_id":"weather.forecast_home","state":"sunny"}'
@@ -1265,9 +1187,6 @@ test_service_checks_do_not_modify_addon_settings() {
   write_http_response "${dir}/stub/response-5.json" ok 200 '<rsp stat="ok"><sid>sid-123</sid><salt>salt-456</salt></rsp>' application/xml
   write_http_response "${dir}/stub/response-6.json" ok 200 '<rsp stat="ok"></rsp>' application/xml
   printf '%s\n' '{"jsonrpc":"2.0","id":"pvr-getchannelgroups","result":{"channelgroups":[],"limits":{"start":0,"end":0,"total":0}}}' > "${dir}/stub/response-7.json"
-  write_http_response "${dir}/stub/response-8.json" ok 200 '{"MediaContainer":{"machineIdentifier":"plex-machine-1"}}'
-  write_http_response "${dir}/stub/response-9.json" ok 200 '{"MediaContainer":{"friendlyName":"Basement Plex"}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":"addons-executeaddon","result":"OK"}' > "${dir}/stub/response-10.json"
 
   output="$({
     export COREELEC_SSH_STUB_DIR="${dir}/stub"
@@ -1284,26 +1203,17 @@ test_service_checks_do_not_modify_addon_settings() {
     NEXTPVR_HOST="nextpvr.example.lan"
     NEXTPVR_PORT="8866"
     NEXTPVR_PIN="2468"
-    PLEX_SERVER_HOST="plex.example.lan"
-    PLEX_SERVER_PORT="32400"
-    PLEX_SERVER_NAME="Basement Plex"
-    PLEX_PROFILE_IDS="11,22"
-    PLEX_TOKEN="plex-token-secret"
     printf 'weather_status=%s\n' "$(check_home_assistant_weather)"
     printf 'nextpvr_status=%s\n' "$(check_nextpvr)"
-    printf 'pm4k_status=%s\n' "$(check_pm4k_local)"
   } 2>&1)"
 
   weather_after="$(cat "${root}/weather.ha/settings.xml")"
   nextpvr_after="$(cat "${root}/pvr.nextpvr/instance-settings-1.xml")"
-  pm4k_after="$(cat "${root}/script.plexmod/settings.xml")"
 
   assert_eq "${weather_before}" "${weather_after}" "weather check must not rewrite settings" || return 1
   assert_eq "${nextpvr_before}" "${nextpvr_after}" "NextPVR check must not rewrite settings" || return 1
-  assert_eq "${pm4k_before}" "${pm4k_after}" "PM4K check must not rewrite settings" || return 1
   assert_contains "${output}" "weather_status=configured" "weather check completed" || return 1
-  assert_contains "${output}" "nextpvr_status=configured" "NextPVR check completed" || return 1
-  assert_contains "${output}" "pm4k_status=configured" "PM4K check completed" || return 1
+  assert_contains "${output}" "nextpvr_status=configured" "NextPVR check completed"
 }
 
 test_pm4k_launch_uses_addons_executeaddon() {
@@ -1556,109 +1466,6 @@ test_emby_password_never_appears_in_argv_log_or_report() {
     "the report captures the Emby configuration status" || return 1
   assert_not_contains "${report_output}" "${secret}" "Emby password must not appear in the report run's output" || return 1
   assert_not_contains "$(cat "${report}")" "${secret}" "Emby password must not appear in the report"
-}
-
-test_emby_assistant_does_not_act_on_an_unchanged_pre_notification_dialog() {
-  local dir output actions
-  dir="$(make_scratch_dir)"
-  : > "${dir}/methods.log"
-  cat > "${dir}/scenario.sh" <<EOF
-#!/bin/bash
-set -Eeuo pipefail
-source "${WORKFLOW_LIB}"
-EMBY_SERVER_URL="https://emby.example.test"
-EMBY_USERNAME="media-user"
-LOCALE_LANGUAGE="resource.language.en_us"
-ADDON_ARTIFACTS=("$(addon_record plugin.service.emby-next-gen)")
-coreelec_postdeploy_addon_version() { printf '11.1.27\n'; }
-coreelec_postdeploy_emby_state() { printf 'absent\n'; }
-coreelec_postdeploy_guided_poll_limit() { printf '2\n'; }
-coreelec_postdeploy_guided_poll_interval_seconds() { printf '0\n'; }
-capture_gui_state() {
-  KODI_GUI_WINDOW_LABEL="Select dialog"
-  KODI_GUI_CONTROL_LABEL="Add server"
-}
-kodi_rpc() {
-  printf '%s\n' "\$1" >> "${dir}/methods.log"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"test","result":"OK"}'
-}
-coreelec_postdeploy_guided_select() {
-  printf '%s\n' "Input.ExecuteAction" >> "${dir}/methods.log"
-}
-printf 'workflow_status=%s\n' "\$(assist_emby_login)"
-EOF
-  output="$(EMBY_PASSWORD="emby-password-secret" bash "${dir}/scenario.sh" 2>&1)"
-  actions="$(grep -c '^Input.ExecuteAction$' "${dir}/methods.log" || true)"
-  assert_eq "0" "${actions}" "an unchanged pre-notification dialog receives no GUI input" || return 1
-  assert_contains "${output}" "service.plugin.service.emby-next-gen.failure=timeout" \
-    "an unchanged pre-notification dialog is bounded by the poll limit" || return 1
-  rm -rf -- "${dir}"
-}
-
-test_emby_assistant_stops_on_each_unexpected_dialog() {
-  local dir phase output sent actions
-  for phase in server selection repeat-selection selection-regression skipped-selection url username password; do
-    dir="$(make_scratch_dir)"
-    : > "${dir}/methods.log"
-    cat > "${dir}/scenario.sh" <<EOF
-#!/bin/bash
-set -Eeuo pipefail
-source "${WORKFLOW_LIB}"
-EMBY_SERVER_URL="https://emby.example.test"
-EMBY_USERNAME="media-user"
-LOCALE_LANGUAGE="resource.language.en_us"
-ADDON_ARTIFACTS=("$(addon_record plugin.service.emby-next-gen)")
-gui_calls=0
-coreelec_postdeploy_addon_version() { printf '11.1.27\n'; }
-coreelec_postdeploy_emby_state() { printf 'absent\n'; }
-capture_gui_state() {
-  gui_calls=\$((gui_calls + 1))
-  case "\${EMBY_TEST_PHASE}:\${gui_calls}" in
-    *:1) KODI_GUI_WINDOW_LABEL="Videos"; KODI_GUI_CONTROL_LABEL="[..]" ;;
-    server:2) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
-    selection:2) KODI_GUI_WINDOW_LABEL="Select dialog"; KODI_GUI_CONTROL_LABEL="Add server" ;;
-    selection:3) KODI_GUI_WINDOW_LABEL="Videos"; KODI_GUI_CONTROL_LABEL="[..]" ;;
-    repeat-selection:2|repeat-selection:3) KODI_GUI_WINDOW_LABEL="Select dialog"; KODI_GUI_CONTROL_LABEL="Add server" ;;
-    selection-regression:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
-    selection-regression:3) KODI_GUI_WINDOW_LABEL="Select dialog"; KODI_GUI_CONTROL_LABEL="Add server" ;;
-    skipped-selection:2) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
-    url:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
-    url:3) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
-    username:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
-    username:3|username:4) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
-    username:5) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
-    password:2) KODI_GUI_WINDOW_LABEL="Select main server"; KODI_GUI_CONTROL_LABEL="Manually add server" ;;
-    password:3|password:4) KODI_GUI_WINDOW_LABEL="Manage servers"; KODI_GUI_CONTROL_LABEL="Host" ;;
-    password:5|password:6) KODI_GUI_WINDOW_LABEL="Please sign in"; KODI_GUI_CONTROL_LABEL="Username" ;;
-    password:7) KODI_GUI_WINDOW_LABEL="Unexpected"; KODI_GUI_CONTROL_LABEL="Unknown" ;;
-  esac
-}
-kodi_rpc() {
-  printf '%s\n' "\$1" >> "${dir}/methods.log"
-  printf '%s\n' '{"jsonrpc":"2.0","id":"test","result":"OK"}'
-}
-coreelec_postdeploy_guided_select() {
-  printf '%s\n' "Input.ExecuteAction" >> "${dir}/methods.log"
-}
-printf 'workflow_status=%s\n' "\$(assist_emby_login)"
-EOF
-    output="$(EMBY_TEST_PHASE="${phase}" EMBY_PASSWORD="emby-password-secret" \
-      bash "${dir}/scenario.sh" 2>&1)"
-    sent="$(grep -c '^Input.SendText$' "${dir}/methods.log" || true)"
-    actions="$(grep -c '^Input.ExecuteAction$' "${dir}/methods.log" || true)"
-    case "${phase}" in
-      server|selection|repeat-selection|selection-regression|skipped-selection|url) assert_eq "0" "${sent}" "${phase} drift stops before any text submission" || return 1 ;;
-      username) assert_eq "1" "${sent}" "username drift stops after only the URL submission" || return 1 ;;
-      password) assert_eq "2" "${sent}" "password drift stops after URL and username submissions" || return 1 ;;
-    esac
-    if [[ "${phase}" == "selection-regression" ]]; then
-      assert_eq "1" "${actions}" "selection regression stops before a second GUI action" || return 1
-    fi
-    assert_contains "${output}" "workflow_status=manual-required" "${phase} drift fails closed" || return 1
-    assert_contains "${output}" "service.plugin.service.emby-next-gen.failure=unexpected-dialog" \
-      "${phase} drift is classified explicitly" || return 1
-    rm -rf -- "${dir}"
-  done
 }
 
 make_emby_account_fixture() {
@@ -2122,4 +1929,5 @@ run_all_tests \
   test_weather_workflow_maps_authorization_required_to_failed_config_axis \
   test_nextpvr_workflow_maps_authorization_required_to_failed_config_axis \
   test_addon_workflow_config_axis_fails_closed_on_empty_check_result \
+  test_service_checks_do_not_modify_addon_settings \
   test_report_emits_both_status_axes_under_the_new_format
