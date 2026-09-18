@@ -173,6 +173,33 @@ coreelec_config_validate_id_list() {
   done
 }
 
+# A comma-separated list of Kodi add-on IDs, or empty. Kodi add-on IDs are
+# lowercase dotted identifiers; rejecting anything else keeps a typo from
+# silently acknowledging nothing.
+coreelec_config_validate_addon_id_list() {
+  local label="$1" value="$2" token remainder="$2"
+  [[ -n "${value}" ]] || return 0
+  # A trailing separator leaves an empty final token the loop below never
+  # sees, because consuming the last comma also ends the remainder.
+  case "${value}" in
+    *,) die "${label} must not end with a separator: ${value}" ;;
+  esac
+  while [[ -n "${remainder}" ]]; do
+    token="${remainder%%,*}"
+    token="${token#"${token%%[![:space:]]*}"}"
+    token="${token%"${token##*[![:space:]]}"}"
+    case "${token}" in
+      ""|*[![:alnum:]._-]*|*[[:upper:]]*)
+        die "${label} must be a comma-separated list of add-on IDs: ${value}"
+        ;;
+    esac
+    case "${remainder}" in
+      *,*) remainder="${remainder#*,}" ;;
+      *) remainder="" ;;
+    esac
+  done
+}
+
 # A Kodi resolution label such as "3840x2160p". Kodi reports these with a
 # trailing space; the configuration value never carries one.
 coreelec_config_validate_resolution_label() {
@@ -249,6 +276,7 @@ coreelec_config_defaults() {
   LOCALE_COUNTRY="USA (12h)"
   KEYBOARD_LAYOUT="English QWERTY"
   ADDON_UPDATE_MODE="notify"
+  ADDON_UNMANAGED_ALLOWED=""
 
   AUDIO_DEVICE=""
   AUDIO_PASSTHROUGH_DEVICE=""
@@ -351,6 +379,10 @@ coreelec_config_assign() {
     ADDON_UPDATE_MODE)
       coreelec_config_validate_enum "ADDON_UPDATE_MODE" "${value}" "notify" "auto"
       ADDON_UPDATE_MODE="${value}"
+      ;;
+    ADDON_UNMANAGED_ALLOWED)
+      coreelec_config_validate_addon_id_list "ADDON_UNMANAGED_ALLOWED" "${value}"
+      ADDON_UNMANAGED_ALLOWED="${value}"
       ;;
     AUDIO_DEVICE)
       coreelec_config_validate_enum "AUDIO_DEVICE" "${value}" \

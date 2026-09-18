@@ -1072,6 +1072,65 @@ test_room_audio_channels_is_validated() {
   assert_failure "${rc}" "a shared key must not be accepted by the room parser" || return 1
 }
 
+test_unmanaged_addon_allowlist_accepts_add_on_ids() {
+  local dir file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+  printf 'ADDON_UNMANAGED_ALLOWED=metadata.generic.albums,script.module.autocompletion\n' \
+    > "${file}"
+  coreelec_config_defaults
+  coreelec_config_load "${file}"
+  assert_eq "metadata.generic.albums,script.module.autocompletion" \
+    "${ADDON_UNMANAGED_ALLOWED}" "ADDON_UNMANAGED_ALLOWED" || return 1
+}
+
+test_unmanaged_addon_allowlist_defaults_to_acknowledging_nothing() {
+  coreelec_config_defaults
+  assert_eq "" "${ADDON_UNMANAGED_ALLOWED}" \
+    "an unconfigured profile acknowledges nothing" || return 1
+}
+
+# A typo in the allowlist must not silently acknowledge nothing: an add-on
+# left un-acknowledged is noise in every future report, and noise is what the
+# allowlist exists to remove.
+test_unmanaged_addon_allowlist_rejects_malformed_values() {
+  local dir file rc output entry
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  file="${dir}/provision.conf"
+  for entry in \
+    'ADDON_UNMANAGED_ALLOWED=Metadata.Generic.Albums' \
+    'ADDON_UNMANAGED_ALLOWED=metadata.generic.albums,' \
+    'ADDON_UNMANAGED_ALLOWED=metadata generic albums' \
+    'ADDON_UNMANAGED_ALLOWED=repository.kodinerds;rm -rf /'; do
+    printf '%s\n' "${entry}" > "${file}"
+    coreelec_config_defaults
+    set +e
+    output="$(coreelec_config_load "${file}" 2>&1)"
+    rc=$?
+    set -e
+    assert_failure "${rc}" "malformed entry must be rejected: ${entry}" || return 1
+    assert_contains "${output}" "ADDON_UNMANAGED_ALLOWED" || return 1
+  done
+}
+
+# The seven metadata scrapers Kodi installs on first boot are present on every
+# device of this profile, so a profile that does not acknowledge them reports
+# permanent drift and teaches operators to ignore the count.
+test_production_config_acknowledges_the_kodi_installed_scrapers() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  local addon_id
+  for addon_id in metadata.album.universal metadata.artists.universal \
+    metadata.common.fanart.tv metadata.generic.albums \
+    metadata.generic.artists metadata.themoviedb.org.python \
+    metadata.tvshows.themoviedb.org.python; do
+    assert_contains "${ADDON_UNMANAGED_ALLOWED}" "${addon_id}" \
+      "${addon_id} is acknowledged" || return 1
+  done
+}
+
 run_all_tests \
   test_defaults_are_pacific_english_us \
   test_comments_blank_lines_and_values_are_parsed \
@@ -1130,4 +1189,8 @@ run_all_tests \
   test_room_name_rejects_path_traversal \
   test_audio_device_intents_are_validated \
   test_room_audio_channels_is_validated \
-  test_shipped_theater_room_config_is_complete
+  test_shipped_theater_room_config_is_complete \
+  test_unmanaged_addon_allowlist_accepts_add_on_ids \
+  test_unmanaged_addon_allowlist_defaults_to_acknowledging_nothing \
+  test_unmanaged_addon_allowlist_rejects_malformed_values \
+  test_production_config_acknowledges_the_kodi_installed_scrapers

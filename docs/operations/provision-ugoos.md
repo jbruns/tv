@@ -136,6 +136,34 @@ shows `pending-verification` or `incomplete-rollback`, run its exact
 staging directory. Rollback restores and verifies only the paths captured for
 the effective scope, while the dated backup remains on the device.
 
+### Add-ons nobody locked
+
+Any run whose effective scope includes `addons` inventories the add-ons
+installed on the device that no `ADDON_ARTIFACT` record names, by reading the
+device's user add-on directory rather than by asking Kodi about the IDs it was
+already given. Asking only about locked IDs can never surface an add-on nobody
+locked, which is how a stray repository sat on a device unnoticed.
+
+```text
+addon_inventory.metadata.generic.albums=unmanaged_allowed
+addon_inventory.repository.kodinerds=unmanaged
+addons_unmanaged=1
+addons_unmanaged_ids=repository.kodinerds
+addons_unmanaged_allowed=1
+```
+
+Kodi installs its own metadata scrapers on first boot, so an unmanaged add-on
+is a normal state rather than a fault. `ADDON_UNMANAGED_ALLOWED` in the shared
+profile acknowledges the add-ons expected on every device of that profile:
+they are still inventoried, but they do not raise `addons_unmanaged`. The
+count is meant to stay at zero, so that a non-zero value means something
+arrived that nobody decided on.
+
+The inventory observes and does not judge. An unmanaged add-on never raises
+`verification_failures` and never rolls back a deployment; deciding what to do
+about one is an operator's call. Add-ons bundled with the CoreELEC image are
+out of scope, because they belong to the image rather than to the deployment.
+
 ## Order of operations
 
 1. Read the
@@ -282,7 +310,10 @@ the effective scope, while the dated backup remains on the device.
 
 ## Current rollout limits
 
-Component scoping does not fix weather data or remux buffering. Emby sign-in
+Component scoping does not fix weather data or remux buffering. Provisioning
+installs and replaces the add-ons the lock names, and reports the ones it does
+not, but it never removes an add-on: clearing an unmanaged add-on is a
+deliberate manual act. Emby sign-in
 and the documented Trakt tag/library synchronization remain manual. The Sony
 and Denon configuration boundary is unchanged: `room` configures the CoreELEC
 playback host only. The onboarding order, restart checkpoints, and

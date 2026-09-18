@@ -2561,6 +2561,27 @@ def addon_state(entry):
             1 if details.get("enabled") else 0)
 
 
+def unmanaged_addons(storage_root, addon_ids):
+    """Installed add-on IDs the lock does not name, sorted. `packages` and
+    `temp` are Kodi's own caches inside the add-on directory, not add-ons. A
+    directory without an addon.xml is debris rather than an installation and
+    is not reported as drift."""
+    root = os.path.join(storage_root, ".kodi", "addons")
+    managed = set(addon_ids)
+    found = []
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return found
+    for name in names:
+        if name in ("packages", "temp") or name in managed:
+            continue
+        if not os.path.isfile(os.path.join(root, name, "addon.xml")):
+            continue
+        found.append(name)
+    return sorted(found)
+
+
 def disabled_installed_addons(entries, addon_ids):
     """The installed add-ons Kodi still reports disabled, in request order. An
     add-on Kodi does not have is not enabled here -- a missing add-on is a
@@ -3008,6 +3029,14 @@ def main(argv):
         # exactly. An add-on ID is not a secret, and naming it tells the
         # operator what to inspect.
         observe("addon_enable_unresolved", " ".join(enable_unresolved))
+
+        # What is installed rather than what was asked for. Querying Kodi
+        # only about the locked IDs can never surface an add-on nobody
+        # locked, so the user add-on directory is read directly. Bundled
+        # add-ons under the OS tree are deliberately out of scope: they are
+        # part of the image, not of this deployment.
+        observe("addon_unmanaged", " ".join(unmanaged_addons(storage_root,
+                                                             addon_ids)))
 
     def addon_data(addon_id, name):
         return os.path.join(storage_root, ".kodi", "userdata", "addon_data",
@@ -4698,6 +4727,8 @@ verify_remote_baseline() {
   if [[ -n "${value}" ]]; then
     printf 'addon_enable_unresolved=%s\n' "${value}"
   fi
+
+  coreelec_report_addon_inventory "${observations}"
   fi
 
   # Files this run configured are checked on the device, which returns a
@@ -4921,6 +4952,52 @@ verify_remote_baseline() {
   return 1
 }
 
+# The add-ons installed on the device that the lock does not name. Kodi
+# installs its own metadata scrapers on first boot, so "unmanaged" is a normal
+# state rather than a fault: ADDON_UNMANAGED_ALLOWED acknowledges the ones
+# expected on every device of this profile, and only the rest are counted.
+# Nothing here touches the failure tally -- the inventory observes, it does
+# not judge, and an unmanaged add-on must never roll back a good deployment.
+coreelec_report_addon_inventory() {
+  local observations="$1" installed addon_id joined=""
+  local unmanaged=() allowed_ids=() acknowledged=0
+  installed="$(coreelec_observation_value addon_unmanaged "${observations}" || true)"
+
+  # The suites and the provisioner both run with a restricted IFS, so the
+  # separators are named explicitly rather than left to word splitting.
+  local previous_ifs="${IFS}"
+  IFS=$', \t\n'
+  # shellcheck disable=SC2206
+  allowed_ids=(${ADDON_UNMANAGED_ALLOWED})
+  local installed_ids=(${installed})
+  IFS="${previous_ifs}"
+
+  for addon_id in ${installed_ids[@]+"${installed_ids[@]}"}; do
+    if coreelec_list_contains "${addon_id}" ${allowed_ids[@]+"${allowed_ids[@]}"}; then
+      printf 'addon_inventory.%s=unmanaged_allowed\n' "${addon_id}"
+      acknowledged=$((acknowledged + 1))
+    else
+      printf 'addon_inventory.%s=unmanaged\n' "${addon_id}"
+      unmanaged+=("${addon_id}")
+      [[ -z "${joined}" ]] && joined="${addon_id}" || joined="${joined} ${addon_id}"
+    fi
+  done
+
+  printf 'addons_unmanaged=%s\n' "${#unmanaged[@]}"
+  printf 'addons_unmanaged_ids=%s\n' "${joined}"
+  printf 'addons_unmanaged_allowed=%s\n' "${acknowledged}"
+}
+
+# Whether a value appears in the remaining arguments.
+coreelec_list_contains() {
+  local needle="$1" candidate
+  shift
+  for candidate in "$@"; do
+    [[ "${candidate}" != "${needle}" ]] || return 0
+  done
+  return 1
+}
+
 # Compares one boolean observation against the expected value of 1.
 coreelec_verify_boolean_observation() {
   local observations="$1" observation_key="$2" report_prefix="$3"
@@ -4989,6 +5066,7 @@ coreelec_config_fingerprint() {
     printf 'LOCALE_COUNTRY=%s\n' "${LOCALE_COUNTRY}"
     printf 'KEYBOARD_LAYOUT=%s\n' "${KEYBOARD_LAYOUT}"
     printf 'ADDON_UPDATE_MODE=%s\n' "${ADDON_UPDATE_MODE}"
+    printf 'ADDON_UNMANAGED_ALLOWED=%s\n' "${ADDON_UNMANAGED_ALLOWED}"
     printf 'HOME_ASSISTANT_WEATHER_ENTITY=%s\n' "${HOME_ASSISTANT_WEATHER_ENTITY}"
     printf 'HOME_ASSISTANT_SUN_ENTITY=%s\n' "${HOME_ASSISTANT_SUN_ENTITY}"
     printf 'NEXTPVR_PORT=%s\n' "${NEXTPVR_PORT}"
