@@ -3,7 +3,8 @@
 # Minimal, dependency-free test harness for the CoreELEC provisioning shell
 # libraries. Test files source this helper, then source the library under
 # test, define test_* functions, and finish by calling run_all_tests with the
-# list of test function names.
+# list of test function names. Every test_* function defined in a suite must
+# appear in that list; run_all_tests refuses to run a suite that omits one.
 
 TESTS_TOTAL=0
 TESTS_PASSED=0
@@ -150,10 +151,58 @@ run_test() {
       printf '%s\n' "${output}" | sed 's/^/    # /'
     fi
   fi
+  sweep_scratch_dirs
+}
+
+# `make_scratch_dir` relies on each test's `trap ... RETURN` to clean up, but
+# that trap never fires when `set -e` aborts the test subshell mid-way. Failing
+# tests therefore leaked their scratch directories into the working tree. Sweep
+# after every test instead, matched on this runner's own PID so a concurrently
+# running suite never has its directories removed underneath it.
+sweep_scratch_dirs() {
+  local dir
+  for dir in "${PWD}"/.coreelec-test."$$".*; do
+    [[ -d "${dir}" ]] && rm -rf -- "${dir}"
+  done
+  return 0
+}
+
+# Registration is manual: a suite ends by passing its test names to
+# `run_all_tests`. A test that is defined but never passed in used to be
+# skipped silently, and the suite still reported all green -- five such tests
+# hid a credential-leak regression until #14. Fail the suite instead.
+assert_every_test_is_registered() {
+  local suite="$1" registered="" defined name missing=()
+
+  [[ -r "${suite}" ]] || return 0
+  shift
+  # Built by hand rather than with "${*}": the suites set IFS=$'\n\t', which
+  # would join the names with a newline and break a space-delimited match.
+  for name in "$@"; do
+    registered="${registered} ${name} "
+  done
+
+  defined="$(sed -n 's/^\(test_[A-Za-z0-9_]*\)().*/\1/p' "${suite}")"
+  for name in ${defined}; do
+    case "${registered}" in
+      *" ${name} "*) ;;
+      *) missing+=("${name}") ;;
+    esac
+  done
+
+  (( ${#missing[@]} > 0 )) || return 0
+  printf '\n%d test(s) defined in %s but never registered with run_all_tests:\n' \
+    "${#missing[@]}" "${suite}" >&2
+  printf '  %s\n' "${missing[@]}" >&2
+  printf 'Add them to the run_all_tests list, or delete them.\n' >&2
+  return 1
 }
 
 run_all_tests() {
   local test_name
+  if ! assert_every_test_is_registered "${BASH_SOURCE[1]}" "$@"; then
+    return 1
+  fi
   for test_name in "$@"; do
     if [[ -n "${TEST_FILTER:-}" && ! "${test_name}" =~ ${TEST_FILTER} ]]; then
       continue
