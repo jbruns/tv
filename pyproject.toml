@@ -1,0 +1,43 @@
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13"]
+build-backend = "uv_build"
+
+[project]
+name = "coreelec-reconciler"
+version = "0.0.0"
+description = "Evidence-only Python toolchain proof for the CoreELEC Reconciler"
+requires-python = ">=3.14"
+dependencies = [
+  "paramiko>=5.0.0,<6",
+  "pydantic>=2.13.5,<3",
+  "PyYAML>=6.0.3,<7",
+]
+
+[project.scripts]
+coreelec-reconciler = "coreelec_reconciler.cli:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=2.3.1,<3",
+  "pytest>=9.1.1,<10",
+  "ruff>=0.16.8,<0.17",
+  "types-paramiko>=5.0.0.20260724,<5.1",
+  "types-PyYAML>=6.0.12.20260906,<6.1",
+]
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"
+testpaths = ["tests/proof"]
+markers = ["device: opt-in disposable Device proof"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src", "tests/proof"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
