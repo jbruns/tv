@@ -1510,6 +1510,26 @@ skinvariables_node_path() {
     "$1" "$2"
 }
 
+# The view types source is a sibling of the `nodes` directory, not a node.
+skinvariables_viewtypes_path() {
+  local root="$1"
+  printf '%s/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json' \
+    "${root}"
+}
+
+# Reads one library-scope view id out of the source JSON.
+viewtypes_library_value() {
+  local path="$1" content="$2"
+  python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+sys.stdout.write(str(document["library"].get(sys.argv[2], "")))
+' "${path}" "${content}"
+}
+
 video_playlist_path() {
   printf '%s/.kodi/userdata/playlists/video/%s' "$1" "$2"
 }
@@ -2801,6 +2821,126 @@ XML
     "the case variant is removed"
 }
 
+test_managed_view_types_are_written_into_the_library_scope() {
+  local root payload path
+  root="$(make_scratch_dir)"
+  trap 'rm -rf -- "${root}"' RETURN
+  payload="${root}/payload.env"
+  write_full_payload "${payload}"
+
+  run_transform "${root}" "${payload}" >/dev/null
+
+  path="$(skinvariables_viewtypes_path "${root}")"
+  assert_eq "509" "$(viewtypes_library_value "${path}" seasons)" \
+    "seasons must land on List Flixart" || return 1
+  assert_eq "549" "$(viewtypes_library_value "${path}" episodes)" \
+    "episodes must land on List Flixart 2" || return 1
+}
+
+test_unmanaged_library_view_types_are_preserved() {
+  local root payload path
+  root="$(make_scratch_dir)"
+  trap 'rm -rf -- "${root}"' RETURN
+  payload="${root}/payload.env"
+  write_full_payload "${payload}"
+  path="$(skinvariables_viewtypes_path "${root}")"
+  mkdir -p "$(dirname "${path}")"
+  cat > "${path}" <<'JSON'
+{"library": {"movies": "502", "seasons": "521", "episodes": "501", "tvshows": "577"},
+ "plugins": {"movies": "500", "seasons": "521", "episodes": "501"}}
+JSON
+
+  run_transform "${root}" "${payload}" >/dev/null
+
+  assert_eq "502" "$(viewtypes_library_value "${path}" movies)" \
+    "an unmanaged library content type must be left alone" || return 1
+  assert_eq "577" "$(viewtypes_library_value "${path}" tvshows)" \
+    "a second unmanaged library content type must be left alone" || return 1
+}
+
+test_the_plugins_scope_is_never_touched() {
+  local root payload path observed
+  root="$(make_scratch_dir)"
+  trap 'rm -rf -- "${root}"' RETURN
+  payload="${root}/payload.env"
+  write_full_payload "${payload}"
+  path="$(skinvariables_viewtypes_path "${root}")"
+  mkdir -p "$(dirname "${path}")"
+  cat > "${path}" <<'JSON'
+{"library": {"seasons": "521", "episodes": "501"},
+ "plugins": {"seasons": "521", "episodes": "501"}}
+JSON
+
+  run_transform "${root}" "${payload}" >/dev/null
+
+  observed="$(python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+sys.stdout.write(json.dumps(document["plugins"], sort_keys=True))
+' "${path}")"
+  assert_eq '{"episodes": "501", "seasons": "521"}' "${observed}" \
+    "the plugins scope must survive the transform unchanged" || return 1
+}
+
+test_an_absent_view_types_source_is_created_with_only_the_managed_keys() {
+  local root payload path observed
+  root="$(make_scratch_dir)"
+  trap 'rm -rf -- "${root}"' RETURN
+  payload="${root}/payload.env"
+  write_full_payload "${payload}"
+
+  run_transform "${root}" "${payload}" >/dev/null
+
+  path="$(skinvariables_viewtypes_path "${root}")"
+  observed="$(python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+sys.stdout.write(json.dumps(document, sort_keys=True))
+' "${path}")"
+  assert_eq '{"library": {"episodes": "549", "seasons": "509"}}' "${observed}" \
+    "an absent source becomes a minimal document the add-on fills in" || return 1
+}
+
+test_a_malformed_view_types_source_is_replaced_rather_than_fatal() {
+  local root payload path
+  root="$(make_scratch_dir)"
+  trap 'rm -rf -- "${root}"' RETURN
+  payload="${root}/payload.env"
+  write_full_payload "${payload}"
+  path="$(skinvariables_viewtypes_path "${root}")"
+  mkdir -p "$(dirname "${path}")"
+  printf 'NOT JSON AT ALL' > "${path}"
+
+  run_transform "${root}" "${payload}" >/dev/null \
+    || { fail "a malformed source must not abort the transform"; return 1; }
+
+  assert_eq "509" "$(viewtypes_library_value "${path}" seasons)" \
+    "the managed value is established over the wreckage" || return 1
+}
+
+test_a_second_transform_leaves_the_view_types_source_identical() {
+  local root payload path before after
+  root="$(make_scratch_dir)"
+  trap 'rm -rf -- "${root}"' RETURN
+  payload="${root}/payload.env"
+  write_full_payload "${payload}"
+  run_transform "${root}" "${payload}" >/dev/null
+  path="$(skinvariables_viewtypes_path "${root}")"
+  before="$(sha256sum "${path}")"
+
+  run_transform "${root}" "${payload}" >/dev/null
+
+  after="$(sha256sum "${path}")"
+  assert_eq "${before}" "${after}" \
+    "the transform must be idempotent over its own output" || return 1
+}
+
 run_all_tests \
   test_library_hubs_open_their_library_roots \
   test_library_hub_shortcuts_replace_a_stale_destination \
@@ -2862,6 +3002,12 @@ run_all_tests \
   test_arctic_fuse_convergence_preserves_unmanaged_skinvariables_nodes \
   test_arctic_fuse_second_run_is_byte_identical \
   test_arctic_fuse_managed_settings_carry_type_string \
+  test_managed_view_types_are_written_into_the_library_scope \
+  test_unmanaged_library_view_types_are_preserved \
+  test_the_plugins_scope_is_never_touched \
+  test_an_absent_view_types_source_is_created_with_only_the_managed_keys \
+  test_a_malformed_view_types_source_is_replaced_rather_than_fatal \
+  test_a_second_transform_leaves_the_view_types_source_identical \
   test_each_scoped_backup_covers_transformer_applied_paths \
   test_arctic_fuse_replaces_obsolete_recently_released_playlists \
   test_arctic_fuse_failed_write_cleans_temporary_files \

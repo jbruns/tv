@@ -3414,6 +3414,43 @@ test_room_scope_backs_up_guisettings() {
   assert_contains "${output}" '.kodi/userdata/guisettings.xml'
 }
 
+test_the_deploy_script_backs_up_both_view_type_surfaces() {
+  local dir root emitted
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  emitted="$(bash "${PROVISIONER}" --emit-remote-script deploy "${root}")"
+  assert_contains "${emitted}" \
+    ".kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json" \
+    "the view types source must be a scoped settings path" || return 1
+  assert_contains "${emitted}" \
+    ".kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml" \
+    "the compiled view include must be a scoped settings path" || return 1
+}
+
+test_the_view_type_surfaces_are_scoped_to_the_skin_component() {
+  local dir root emitted skin_block
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  root="${dir}/storage"
+  emitted="$(bash "${PROVISIONER}" --emit-remote-script deploy "${root}")"
+  skin_block="$(printf '%s\n' "${emitted}" \
+    | awk '/<<.SKIN_SETTINGS_PATHS/{ inside = 1; next } /^SKIN_SETTINGS_PATHS$/{ inside = 0 } inside')"
+  if [[ -z "${skin_block}" ]]; then
+    printf 'the extracted SKIN_SETTINGS_PATHS block must be non-empty\n' >&2
+    return 1
+  fi
+  assert_contains "${skin_block}" \
+    "skinvariables-shortcut-powermenu.json" \
+    "the extracted block must contain a pre-existing skin settings path" || return 1
+  assert_contains "${skin_block}" \
+    "skin.arctic.fuse.3-viewtypes.json" \
+    "the source belongs inside the skin block" || return 1
+  assert_contains "${skin_block}" \
+    "script-skinviewtypes-includes.xml" \
+    "the compiled include belongs inside the skin block" || return 1
+}
+
 test_backup_scope_rejects_an_unknown_component() {
   local output rc
   set +e
@@ -3422,6 +3459,36 @@ test_backup_scope_rejects_an_unknown_component() {
   set -e
   assert_failure "${rc}" "an unknown backup scope component must be rejected"
   assert_contains "${output}" "Unsupported component in remote backup scope: kitchen"
+}
+
+test_the_buildviews_stage_is_emittable() {
+  local script
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  assert_contains "${script}" "action=buildviews" \
+    "the stage must ask the add-on to rebuild its views" || return 1
+  assert_contains "${script}" "no_reload=True" \
+    "the rebuild must not reload the skin under verification" || return 1
+  assert_contains "${script}" "force=True" \
+    "the rebuild is unconditional" || return 1
+}
+
+test_the_buildviews_stage_contains_no_single_quote() {
+  local script
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  case "${script}" in
+    *"'"*) fail "the buildviews stage must contain no single quote"; return 1 ;;
+  esac
+}
+
+test_an_unknown_remote_stage_is_still_rejected_by_name() {
+  local output
+  set +e
+  output="$(bash "${PROVISIONER}" --emit-remote-script buildview 2>&1)"
+  set -e
+  assert_contains "${output}" "buildviews" \
+    "the rejection lists the stage it almost matched" || return 1
+  assert_contains "${output}" "not: buildview" \
+    "the rejection names what was asked for" || return 1
 }
 
 run_all_tests \
@@ -3511,4 +3578,9 @@ run_all_tests \
   test_deployment_plan_rejects_a_missing_room_component \
   test_deployment_plan_rejects_room_without_core \
   test_room_scope_backs_up_guisettings \
-  test_backup_scope_rejects_an_unknown_component
+  test_the_deploy_script_backs_up_both_view_type_surfaces \
+  test_the_view_type_surfaces_are_scoped_to_the_skin_component \
+  test_backup_scope_rejects_an_unknown_component \
+  test_the_buildviews_stage_is_emittable \
+  test_the_buildviews_stage_contains_no_single_quote \
+  test_an_unknown_remote_stage_is_still_rejected_by_name

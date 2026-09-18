@@ -337,6 +337,8 @@ arctic_fuse.home_widgets_configured=1
 arctic_fuse.tv_widgets_configured=1
 arctic_fuse.movie_widgets_configured=1
 arctic_fuse.power_menu_configured=1
+arctic_fuse.viewtypes_source_configured=1
+arctic_fuse.viewtypes_compiled_configured=1
 arctic_fuse.playlist.InProgressMovies90Days.configured=1
 arctic_fuse.playlist.InProgressShows90Days.configured=1
 arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=1
@@ -556,8 +558,9 @@ run_report_components() {
     --report-fixture "${directory}" "${observations}" "${manifest}" "${reachable}"
 }
 
-# Runs the real verify -> finalize/rollback decision with the three remote
-# calls replaced by recording stubs whose exit status the test chooses.
+# Runs the real verify -> buildviews -> finalize/rollback decision with the
+# four remote calls replaced by recording stubs whose exit status the test
+# chooses.
 run_conclude() {
   local config="$1" observations="$2" manifest="$3"
   local finalize_status="$4" rollback_status="$5" log="$6"
@@ -1711,8 +1714,103 @@ test_verification_success_finalizes_and_commits() {
   assert_contains "${output}" "verification_result=pass" "verification passed" || return 1
   assert_contains "$(cat "${log}")" "finalize" "finalize was invoked" || return 1
   assert_not_contains "$(cat "${log}")" "rollback" "rollback was not invoked" || return 1
-  # Verification must precede the commit, or a bad deployment is unrecoverable.
-  assert_eq "verify" "$(head -n 1 "${log}")" "verification ran before finalize" || return 1
+  assert_eq "$(printf 'buildviews\nverify')" "$(head -n 2 "${log}")" \
+    "the rebuild runs before verification, and verification before finalize" || return 1
+}
+
+# The rebuild has to happen after the transaction has restarted Kodi and
+# before verification reads the compiled include, or verification would
+# observe the state the rebuild was supposed to establish.
+test_the_view_rebuild_runs_between_deployment_and_verification() {
+  local dir config manifest observations log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  run_conclude "${config}" "${observations}" "${manifest}" 0 0 "${log}" >/dev/null
+
+  assert_eq "$(printf 'buildviews\nverify\nfinalize')" "$(cat "${log}")" \
+    "the rebuild precedes verification, which precedes the commit" || return 1
+}
+
+# A run that did not ask for the skin has no business touching skin state.
+test_a_core_only_run_never_rebuilds_the_view_include() {
+  local dir config manifest observations log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  run_conclude_component core "${config}" "${observations}" "${manifest}" \
+    0 0 "${log}" >/dev/null || true
+
+  assert_not_contains "$(cat "${log}")" "buildviews" \
+    "a core-only run leaves the skin alone" || return 1
+}
+
+# The skin add-on is a locked artifact of the `addons` component, and `addons`
+# does not imply `skin`. Such a run still replaces the skin directory
+# wholesale and so still destroys the compiled include -- which is the most
+# likely way anyone triggers the defect, since an add-on version bump does not
+# mention the skin. The rebuild has to fire there too. Nothing has touched the
+# source JSON in that scope, so the rebuild regenerates the include from the
+# values already on the device: it converges rather than mutates.
+test_an_addons_run_still_rebuilds_the_view_include() {
+  local dir config manifest observations log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  run_conclude_component addons "${config}" "${observations}" "${manifest}" \
+    0 0 "${log}" >/dev/null || true
+
+  assert_contains "$(cat "${log}")" "buildviews" \
+    "an addons run replaces the skin, so it must rebuild the include" || return 1
+}
+
+# kodi-send cannot report success, so the stage cannot either. A failed
+# rebuild must not abort a transaction that is already open: verification
+# reads the real state and rolls back if the views are wrong.
+test_a_failed_view_rebuild_still_reaches_verification() {
+  local dir config manifest observations log output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  # An assignment prefixed to a *function* call is not reliably exported to
+  # the processes that function starts, so the variable is exported outright
+  # and removed again.
+  export COREELEC_BUILDVIEWS_FIXTURE_STATUS=1
+  output="$(run_conclude "${config}" "${observations}" "${manifest}" 0 0 "${log}")"
+  unset COREELEC_BUILDVIEWS_FIXTURE_STATUS
+
+  assert_contains "$(cat "${log}")" "verify" \
+    "verification still runs" || return 1
+  assert_contains "${output}" "verification_result=pass" \
+    "and remains the authority on the outcome" || return 1
 }
 
 test_transient_verification_mismatch_is_retried_before_commit() {
@@ -1737,8 +1835,8 @@ test_transient_verification_mismatch_is_retried_before_commit() {
   assert_success "${rc}" "a transient startup mismatch converges before the deadline" || return 1
   assert_contains "${output}" "deployment_state=committed" \
     "the converged transaction is committed" || return 1
-  assert_eq $'verify\nverify\nfinalize' "$(cat "${log}")" \
-    "verification retries once before committing" || return 1
+  assert_eq $'buildviews\nverify\nverify\nfinalize' "$(cat "${log}")" \
+    "the rebuild runs once, then verification retries before committing" || return 1
 }
 
 test_verification_mismatch_is_fatal() {
@@ -3014,6 +3112,11 @@ JSON
   cat > "${nodes_dir}/skinvariables-shortcut-powermenu.json" <<'JSON'
 [{"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}, {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""}, {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""}, {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""}, {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""}]
 JSON
+  cat > "${userdata}/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json" <<'JSON'
+{"library": {"movies": "502", "seasons": "509", "episodes": "549"},
+ "plugins": {"seasons": "521", "episodes": "501"}}
+JSON
+  write_compiled_viewtypes "${root}" 509 549
 
   # Valid smart playlists
   write_fixture_xsp "${playlists_dir}/InProgressMovies90Days.xsp" movies \
@@ -3110,6 +3213,33 @@ ENTRIES
   write_jsonrpc_response "${dir}/stub/response-default.json" true
   install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
   run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1
+}
+
+# Writes a compiled view include holding one expression per named content
+# type, in the exact grammar script.skinvariables emits. `plugins_view`, when
+# given, adds the plugins-scope twin so the tests can prove the library
+# clause is what discriminates.
+write_compiled_viewtypes() {
+  local root="$1" seasons_view="$2" episodes_view="$3"
+  local dir="${root}/.kodi/addons/skin.arctic.fuse.3/1080i"
+  mkdir -p "${dir}"
+  cat > "${dir}/script-skinviewtypes-includes.xml" <<XML
+<includes>
+    <expression name="Exp_View_${seasons_view}">[[!String.IsEqual(Container.Property(param.info),episode_group_seasons) + Container.Content(seasons) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_${episodes_view}">[[Container.Content(episodes) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_521">[[String.IsEqual(Container.Property(param.info),episode_group_seasons) + Container.Content(seasons) + [[String.IsEmpty(Container.PluginName)] | [!String.IsEmpty(Container.PluginName)]]]]</expression>
+    <expression name="Exp_View_500">[[Container.Content(seasons) + [!String.IsEmpty(Container.PluginName)]]]</expression>
+</includes>
+XML
+}
+
+compiled_viewtypes_path() {
+  printf '%s/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml' "$1"
+}
+
+# The source path, spelled once so the tests below stay readable.
+viewtypes_source_path() {
+  printf '%s/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json' "$1"
 }
 
 # --- Arctic Fuse probe fixture tests ----------------------------------------
@@ -3752,6 +3882,167 @@ test_probe_malformed_json_emits_zero_for_power_menu() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.power_menu_configured=0" \
     "malformed JSON → power menu 0" || return 1
+}
+
+test_the_view_types_source_is_observed_as_configured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=1" \
+    "the seeded fixture carries the managed view types" || return 1
+}
+
+test_a_drifted_season_view_fails_the_view_types_source() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  cat > "$(viewtypes_source_path "${root}")" <<'JSON'
+{"library": {"seasons": "521", "episodes": "549"}}
+JSON
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=0" \
+    "a season view someone changed in the UI is drift" || return 1
+}
+
+test_an_absent_view_types_source_is_observed_as_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  rm -f "$(viewtypes_source_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=0" \
+    "an absent source observes 0 rather than raising" || return 1
+}
+
+test_a_malformed_view_types_source_is_observed_as_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  printf 'NOT JSON' > "$(viewtypes_source_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=0" \
+    "a malformed source observes 0 rather than raising" || return 1
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=1" \
+    "and the probe still finishes its other observations" || return 1
+}
+
+test_the_compiled_view_include_is_observed_as_configured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=1" \
+    "the seeded include claims both content types in the library scope" || return 1
+}
+
+test_a_compiled_include_naming_another_episode_view_is_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  write_compiled_viewtypes "${root}" 509 501
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "an episodes clause owned by another view is drift" || return 1
+}
+
+test_a_missing_compiled_view_include_is_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  rm -f "$(compiled_viewtypes_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "the silent-revert case observes 0" || return 1
+}
+
+# The rebuild is not atomic: a mid-write read returns an empty file. That is
+# a retryable observation, never an exception that kills the probe.
+test_an_empty_compiled_view_include_is_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  : > "$(compiled_viewtypes_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "a half-written include observes 0 rather than raising" || return 1
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=1" \
+    "and the probe still finishes its other observations" || return 1
+}
+
+# Two expressions claiming one content type in one scope is not a state the
+# skin can resolve, so it must never read as configured.
+test_two_owners_of_one_content_type_are_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  cat > "$(compiled_viewtypes_path "${root}")" <<'XML'
+<includes>
+    <expression name="Exp_View_509">[[Container.Content(seasons) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_577">[[Container.Content(seasons) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_549">[[Container.Content(episodes) + [String.IsEmpty(Container.PluginName)]]]</expression>
+</includes>
+XML
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "an ambiguous include must not read as configured" || return 1
+}
+
+# The plugins scope shares the content token and must neither be mistaken for
+# the library scope nor satisfy the library check on its own.
+test_a_plugins_scope_clause_does_not_satisfy_the_library_check() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  cat > "$(compiled_viewtypes_path "${root}")" <<'XML'
+<includes>
+    <expression name="Exp_View_509">[[Container.Content(seasons) + [!String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_549">[[Container.Content(episodes) + [String.IsEmpty(Container.PluginName)]]]</expression>
+</includes>
+XML
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "a plugins-scope clause leaves the library scope unclaimed" || return 1
 }
 
 test_probe_missing_home_widgets_file_emits_zero() {
@@ -4501,6 +4792,29 @@ test_report_names_every_arctic_fuse_surface() {
     "the report includes From Ashes in the generic deployed-add-on inventory" || return 1
 }
 
+test_a_drifted_view_types_source_fails_the_arctic_fuse_status() {
+  local dir config manifest observations report contents
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  sed -i.bak 's/^arctic_fuse.viewtypes_source_configured=1$/arctic_fuse.viewtypes_source_configured=0/' \
+    "${observations}"
+
+  report="$(run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
+  [[ -f "${report}" ]] || { printf 'no report\n' >&2; return 1; }
+  contents="$(cat "${report}")"
+
+  assert_contains "${contents}" "arctic_fuse.viewtypes_source.status=mismatch" \
+    "the drifted source is reported as a mismatch" || return 1
+  assert_contains "${contents}" "arctic_fuse.status=mismatch" \
+    "and it fails the component as a whole" || return 1
+}
+
 test_report_never_contains_ratings_key_values_or_managed_file_contents() {
   local dir config manifest observations output rc
   dir="$(make_scratch_dir)"
@@ -5123,6 +5437,306 @@ test_audio_probe_requests_the_audio_category() {
     "audiooutput is not a valid category" || return 1
 }
 
+write_buildviews_stubs() {
+  local dir="$1"
+  local default_es='{"id":1,"jsonrpc":"2.0","result":{"value":true}}'
+  local es_document="${2:-$default_es}" ping_failures="${3:-0}" md5_mode="${4:-stable}"
+  local bin_dir="${dir}/bin" tool
+  mkdir -p "${bin_dir}"
+  printf '%s\n' "${es_document}" > "${dir}/es-response.json"
+  printf '%s\n' "${ping_failures}" > "${dir}/ping-failures.count"
+  printf '%s\n' "${md5_mode}" > "${dir}/md5-mode"
+  cat > "${bin_dir}/curl" <<STUB
+#!/bin/sh
+for arg in "\$@"; do
+  case "\${arg}" in
+    *es.json)
+      cat "${dir}/es-response.json"
+      exit 0
+      ;;
+    *ping.json)
+      count=0
+      if [ -r "${dir}/ping-attempts.count" ]; then
+        count="\$(cat "${dir}/ping-attempts.count")"
+      fi
+      count=\$((count + 1))
+      printf '%s\n' "\${count}" > "${dir}/ping-attempts.count"
+      failures="\$(cat "${dir}/ping-failures.count")"
+      if [ "\${count}" -le "\${failures}" ]; then
+        printf 'stub curl refused ping attempt %s\n' "\${count}" >&2
+        exit 22
+      fi
+      printf '{"id":1,"jsonrpc":"2.0","result":"pong"}'
+      exit 0
+      ;;
+  esac
+done
+printf 'stub curl saw unexpected arguments: %s\n' "\$*" >&2
+exit 64
+STUB
+  cat > "${bin_dir}/kodi-send" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >> "${dir}/kodi-send.log"
+exit 0
+STUB
+  cat > "${bin_dir}/md5sum" <<STUB
+#!/bin/sh
+mode="\$(cat "${dir}/md5-mode")"
+count=0
+if [ -r "${dir}/md5sum-count" ]; then
+  count="\$(cat "${dir}/md5sum-count")"
+fi
+count=\$((count + 1))
+printf '%s\n' "\${count}" > "${dir}/md5sum-count"
+cat >/dev/null
+case "\${mode}" in
+  stable) printf 'digest-stable  -\n' ;;
+  changing) printf 'digest-%s  -\n' "\${count}" ;;
+  *)
+    printf 'stub md5sum does not know mode %s\n' "\${mode}" >&2
+    exit 64
+    ;;
+esac
+STUB
+  cat > "${bin_dir}/sleep" <<STUB
+#!/bin/sh
+printf '%s\n' "\$1" >> "${dir}/sleep.log"
+exit 0
+STUB
+  cat > "${bin_dir}/sh" <<STUB
+#!/bin/sh
+exec /bin/sh "\$@"
+STUB
+  for tool in diff cmp stat; do
+    cat > "${bin_dir}/${tool}" <<STUB
+#!/bin/sh
+printf 'stub ${tool} must not run in buildviews tests\n' >&2
+exit 99
+STUB
+  done
+  chmod +x "${bin_dir}/curl" "${bin_dir}/kodi-send" "${bin_dir}/md5sum" \
+    "${bin_dir}/sleep" "${bin_dir}/sh" "${bin_dir}/diff" "${bin_dir}/cmp" \
+    "${bin_dir}/stat"
+}
+
+run_buildviews() {
+  local dir="$1" extra_lines="${2:-}" compiled_state="${3:-present}" script
+  local compiled="${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml"
+  mkdir -p "${dir}/tmp" "${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i"
+  if [[ "${compiled_state}" == "missing" ]]; then
+    rm -f "${compiled}"
+  elif [[ "${compiled_state}" == "stub" ]]; then
+    cat > "${compiled}" <<'STUB_INCLUDE'
+<?xml version="1.0" encoding="UTF-8"?>
+<includes>
+    <include name="Action_BuildViews">
+        <onload>RunScript(script.skinvariables,action=buildviews)</onload>
+    </include>
+</includes>
+STUB_INCLUDE
+  else
+    printf '<includes/>\n' > "${compiled}"
+  fi
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  {
+    printf 'KODI_WEB_USER=kodi\nKODI_WEB_PASSWORD=hunter2\nKODI_PORT=8080\n'
+    printf 'STORAGE_ROOT=%s/storage\n' "${dir}"
+    printf 'ATTEMPTS=2\nRETRY_DELAY=0\nSETTLE_ATTEMPTS=3\n'
+    if [[ -n "${extra_lines}" ]]; then
+      printf '%s' "${extra_lines}"
+    fi
+  } | PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" sh -c "${script}"
+}
+
+test_the_buildviews_stage_accepts_a_realistic_event_server_reply() {
+  local dir rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  set +e
+  run_buildviews "${dir}" >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "a real Settings.GetSettingValue reply must let the stage proceed" || return 1
+}
+
+test_the_buildviews_stage_asks_the_addon_to_rebuild() {
+  local dir rc sent
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  set +e
+  run_buildviews "${dir}" >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" "the stage must succeed when the device answers" || return 1
+  sent="$(cat "${dir}/kodi-send.log")"
+  assert_contains "${sent}" "action=buildviews" \
+    "the datagram carries the rebuild action" || return 1
+  assert_contains "${sent}" "no_reload=True" \
+    "and suppresses the skin reload" || return 1
+}
+
+test_the_buildviews_stage_warns_when_the_event_server_state_cannot_be_confirmed() {
+  local dir output rc sent
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" '{"id":1,"jsonrpc":"2.0","result":{}}'
+  set +e
+  output="$(run_buildviews "${dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "an ambiguous EventServer reply must not fail the stage" || return 1
+  assert_contains "${output}" "could not confirm services.esenabled" \
+    "the stage warns when the setting cannot be confirmed" || return 1
+  sent="$(cat "${dir}/kodi-send.log")"
+  assert_contains "${sent}" "action=buildviews" \
+    "the rebuild still runs when the setting is ambiguous" || return 1
+}
+
+test_the_buildviews_stage_warns_when_the_event_server_reply_is_not_an_object() {
+  local dir output rc sent
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" '[]'
+  set +e
+  output="$(run_buildviews "${dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a non-object EventServer reply must not fail the stage" || return 1
+  assert_contains "${output}" "could not confirm services.esenabled" \
+    "the stage warns when the reply has no readable result value" || return 1
+  sent="$(cat "${dir}/kodi-send.log")"
+  assert_contains "${sent}" "action=buildviews" \
+    "the rebuild still runs when the reply shape is unusable" || return 1
+}
+
+test_the_buildviews_stage_fails_when_the_event_server_is_off() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" '{"id":1,"jsonrpc":"2.0","result":{"value":false}}'
+  set +e
+  output="$(run_buildviews "${dir}" 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "a disabled EventServer must fail the stage" || return 1
+  assert_contains "${output}" "services.esenabled" \
+    "the failure names the setting an operator has to change" || return 1
+  assert_not_contains "$(cat "${dir}/kodi-send.log" 2>/dev/null || printf '')" \
+    "buildviews" "and nothing is sent" || return 1
+}
+
+test_the_buildviews_stage_rejects_an_unknown_parameter() {
+  local dir output script
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  output="$(printf 'KODI_WEB_USER=kodi\nNONSENSE=1\n' \
+    | PATH="${dir}/bin:${PATH}" sh -c "${script}" 2>&1)" \
+    && { fail "an unknown parameter must fail the stage"; return 1; }
+  assert_contains "${output}" "unknown parameter" \
+    "the rejection says what went wrong" || return 1
+}
+
+test_the_buildviews_stage_requires_kodi_send() {
+  local dir output script
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  rm -f "${dir}/bin/kodi-send"
+  script="$(bash "${PROVISIONER}" --emit-remote-script buildviews)"
+  output="$(printf 'KODI_WEB_USER=kodi\n' \
+    | PATH="${dir}/bin" sh -c "${script}" 2>&1)" \
+    && { fail "a device without kodi-send must fail the stage"; return 1; }
+  assert_contains "${output}" "kodi-send" \
+    "the failure names the missing program" || return 1
+}
+
+test_the_buildviews_stage_honors_ping_retry_overrides() {
+  local dir output rc sleeps
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" "" "2"
+  set +e
+  output="$(run_buildviews "${dir}" $'ATTEMPTS=3\nRETRY_DELAY=7\nSETTLE_ATTEMPTS=2\n' 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "the stage must retry until the last allowed ping attempt" || return 1
+  assert_eq "3" "$(cat "${dir}/ping-attempts.count")" \
+    "the ping loop stops on the configured final attempt" || return 1
+  sleeps="$(cat "${dir}/sleep.log")"
+  assert_eq $'7\n7\n1\n1' "${sleeps}" \
+    "the retry delay override is used before the settle samples" || return 1
+  assert_not_contains "${output}" "could not reach Kodi" \
+    "the final allowed ping attempt succeeds" || return 1
+}
+
+test_the_buildviews_stage_warns_when_the_compiled_file_never_appears() {
+  local dir output rc sleeps
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}"
+  set +e
+  output="$(run_buildviews "${dir}" $'SETTLE_ATTEMPTS=2\n' "missing" 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" "a missing compiled include must warn rather than fail" || return 1
+  assert_contains "${output}" "did not settle; verification will decide" \
+    "the missing file becomes a warning" || return 1
+  sleeps="$(cat "${dir}/sleep.log")"
+  assert_eq $'1\n1' "${sleeps}" \
+    "the settle loop stops after the configured number of samples" || return 1
+  if [[ -e "${dir}/md5sum-count" ]]; then
+    fail "md5sum must not run before the compiled file exists"
+    return 1
+  fi
+}
+
+# A fresh skin deploy leaves the skin's own stub behind: a tiny include whose
+# Action_BuildViews onload is what makes the skin regenerate the real file when
+# it next loads. Its digest is perfectly stable, so a naive settle loop would
+# read two identical samples and declare the rebuild finished while the views
+# are still the skin defaults. Observed on the device: a run settled on the
+# 190-byte stub seconds before the skin replaced it with the real 8KB include.
+test_the_buildviews_stage_does_not_settle_on_the_skin_stub() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" "" "0" "stable"
+  set +e
+  output="$(run_buildviews "${dir}" $'SETTLE_ATTEMPTS=3\n' stub 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "a stub compiled include must warn rather than fail" || return 1
+  assert_contains "${output}" "did not settle; verification will decide" \
+    "the stub must never read as a settled rebuild" || return 1
+}
+
+test_the_buildviews_stage_warns_when_the_compiled_file_keeps_changing() {
+  local dir output rc sleeps
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" "" "0" "changing"
+  set +e
+  output="$(run_buildviews "${dir}" $'SETTLE_ATTEMPTS=3\n' 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "a constantly changing compiled include must warn rather than fail" || return 1
+  assert_contains "${output}" "did not settle; verification will decide" \
+    "the stage warns when the file never stabilizes" || return 1
+  assert_eq "3" "$(cat "${dir}/md5sum-count")" \
+    "the changing file is sampled only up to the configured limit" || return 1
+  sleeps="$(cat "${dir}/sleep.log")"
+  assert_eq $'1\n1\n1' "${sleeps}" \
+    "the settle loop is bounded by the override" || return 1
+}
+
 # Seeds the three resolved.* lines the fixture seam reads, so tests can reach
 # the ok and mismatch branches rather than only unobservable. Uses
 # set_observation (replace-in-place-or-append) rather than a raw append,
@@ -5612,6 +6226,10 @@ run_all_tests \
   test_host_jsonrpc_unreachability_is_environmental_only \
   test_report_fingerprint_tool_is_required_even_without_kodi \
   test_verification_success_finalizes_and_commits \
+  test_the_view_rebuild_runs_between_deployment_and_verification \
+  test_a_core_only_run_never_rebuilds_the_view_include \
+  test_an_addons_run_still_rebuilds_the_view_include \
+  test_a_failed_view_rebuild_still_reaches_verification \
   test_transient_verification_mismatch_is_retried_before_commit \
   test_verification_mismatch_is_fatal \
   test_skin_mismatch_rolls_back_when_manifest_omits_arctic_fuse \
@@ -5667,6 +6285,16 @@ run_all_tests \
   test_probe_rejects_weather_tile_when_unconfigured \
   test_probe_malformed_json_emits_zero_for_home_widgets \
   test_probe_malformed_json_emits_zero_for_power_menu \
+  test_the_view_types_source_is_observed_as_configured \
+  test_a_drifted_season_view_fails_the_view_types_source \
+  test_an_absent_view_types_source_is_observed_as_unconfigured \
+  test_a_malformed_view_types_source_is_observed_as_unconfigured \
+  test_the_compiled_view_include_is_observed_as_configured \
+  test_a_compiled_include_naming_another_episode_view_is_unconfigured \
+  test_a_missing_compiled_view_include_is_unconfigured \
+  test_an_empty_compiled_view_include_is_unconfigured \
+  test_two_owners_of_one_content_type_are_unconfigured \
+  test_a_plugins_scope_clause_does_not_satisfy_the_library_check \
   test_probe_missing_home_widgets_file_emits_zero \
   test_probe_reordered_home_widgets_emits_zero \
   test_probe_reordered_power_menu_emits_zero \
@@ -5702,6 +6330,7 @@ run_all_tests \
   test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification \
   test_each_ratings_key_presence_is_verified_separately \
   test_report_names_every_arctic_fuse_surface \
+  test_a_drifted_view_types_source_fails_the_arctic_fuse_status \
   test_report_never_contains_ratings_key_values_or_managed_file_contents \
   test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment \
   test_room_report_normalizes_the_whitelist_separator \
@@ -5727,6 +6356,17 @@ run_all_tests \
   test_audio_probe_reports_an_unreachable_kodi \
   test_audio_probe_contains_no_single_quote \
   test_audio_probe_requests_the_audio_category \
+  test_the_buildviews_stage_accepts_a_realistic_event_server_reply \
+  test_the_buildviews_stage_asks_the_addon_to_rebuild \
+  test_the_buildviews_stage_warns_when_the_event_server_state_cannot_be_confirmed \
+  test_the_buildviews_stage_warns_when_the_event_server_reply_is_not_an_object \
+  test_the_buildviews_stage_fails_when_the_event_server_is_off \
+  test_the_buildviews_stage_rejects_an_unknown_parameter \
+  test_the_buildviews_stage_requires_kodi_send \
+  test_the_buildviews_stage_honors_ping_retry_overrides \
+  test_the_buildviews_stage_warns_when_the_compiled_file_never_appears \
+  test_the_buildviews_stage_does_not_settle_on_the_skin_stub \
+  test_the_buildviews_stage_warns_when_the_compiled_file_keeps_changing \
   test_audio_verification_passes_when_the_device_matches \
   test_audio_verification_reports_a_changed_device \
   test_audio_verification_reports_a_changed_passthrough_device \

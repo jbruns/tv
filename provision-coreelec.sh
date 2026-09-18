@@ -123,8 +123,9 @@ Internal:
   --emit-remote-script NAME [ROOT]
                           Print the remote 'backup', 'payload', 'stage',
                            'deploy', 'rollback', 'finalize', 'verify',
-                           'verify-probe', 'display-probe', or 'audio-probe'
-                           program for ROOT (default /storage),
+                           'verify-probe', 'display-probe', 'audio-probe',
+                           or 'buildviews' program for ROOT
+                           (default /storage),
                            then exit. Used by the test suites; it never
                            contacts a device.
   --render-remote-deploy-script [ROOT]
@@ -996,6 +997,30 @@ def main(argv):
                                    "skinvariables-shortcut-powermenu.json"),
                       power_menu)
 
+    # --- Arctic Fuse view types ---------------------------------------------
+    # `script.skinvariables` owns this file and rewrites it on every rebuild,
+    # merging the skin's own defaults back in. Owning the whole document would
+    # therefore drift the moment Arctic Fuse adds a content type, so only the
+    # two managed keys are set and everything else is left exactly as found.
+    MANAGED_VIEW_TYPES = {"seasons": "509", "episodes": "549"}
+    viewtypes_path = os.path.join(addon_data, "script.skinvariables",
+                                  SKIN_ID + "-viewtypes.json")
+    try:
+        with open(viewtypes_path, "r", encoding="utf-8") as handle:
+            viewtypes = json.load(handle)
+    except Exception:
+        viewtypes = None
+    if not isinstance(viewtypes, dict):
+        # Absent, empty, or unparseable. The add-on's make_defaultjson fills
+        # in the rest on the next rebuild, and our values win that merge.
+        viewtypes = {}
+    library_views = viewtypes.get("library")
+    if not isinstance(library_views, dict):
+        library_views = {}
+        viewtypes["library"] = library_views
+    library_views.update(MANAGED_VIEW_TYPES)
+    write_json_atomic(viewtypes_path, viewtypes)
+
     # --- Arctic Fuse smart playlists ----------------------------------------
     playlists_dir = os.path.join(userdata, "playlists", "video")
     register_managed_directory(os.path.join(userdata, "playlists"))
@@ -1158,6 +1183,8 @@ SERVICE_SETTINGS_PATHS
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json
 .kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json
+.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
+.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
 .kodi/userdata/playlists/video/InProgressMovies90Days.xsp
 .kodi/userdata/playlists/video/InProgressShows90Days.xsp
 .kodi/userdata/playlists/video/RecentlyAiredEpisodes30Days.xsp
@@ -3407,6 +3434,65 @@ def main(argv):
     observe("arctic_fuse.power_menu_configured",
             1 if actual_power_menu == expected_power_menu else 0)
 
+    # --- Arctic Fuse view types --------------------------------------------
+    MANAGED_VIEW_TYPES = {"seasons": "509", "episodes": "549"}
+
+    viewtypes_source = read_json(os.path.join(
+        userdata, "addon_data", "script.skinvariables",
+        SKIN_ID + "-viewtypes.json"))
+    source_library = None
+    if isinstance(viewtypes_source, dict):
+        source_library = viewtypes_source.get("library")
+    if isinstance(source_library, dict):
+        viewtypes_source_ok = all(
+            str(source_library.get(content, "")) == view
+            for content, view in MANAGED_VIEW_TYPES.items())
+    else:
+        viewtypes_source_ok = False
+    observe("arctic_fuse.viewtypes_source_configured",
+            1 if viewtypes_source_ok else 0)
+
+    def compiled_view_owner(includes_root, content):
+        """The one `Exp_View_*` expression that claims `content` in the
+        library scope, or None when zero or several do.
+
+        `[String.IsEmpty(Container.PluginName)]` on its own is the library
+        scope. The plugins scope negates it, and a view serving both scopes
+        compiles to the disjunction of the two, so neither contains this
+        clause. Matching the clause whole also keeps `Container.Content(seasons)`
+        from colliding with `episode-groups-seasons`, which shares the token
+        but is discriminated by its `episode_group_seasons` guard."""
+        clause = ("Container.Content(%s) + [String.IsEmpty(Container.PluginName)]"
+                  % content)
+        owners = []
+        for node in includes_root.iter("expression"):
+            name = node.get("name") or ""
+            if not name.startswith("Exp_View_"):
+                continue
+            if clause in (node.text or ""):
+                owners.append(name)
+        if len(owners) != 1:
+            return None
+        return owners[0]
+
+    # A missing or half-written include parses as nothing and observes 0.
+    # Verification retries, so a mid-rebuild read costs an attempt rather
+    # than the run.
+    try:
+        compiled_root = ET.parse(os.path.join(
+            storage_root, ".kodi", "addons", SKIN_ID, "1080i",
+            "script-skinviewtypes-includes.xml")).getroot()
+    except Exception:
+        compiled_root = None
+    if compiled_root is None or compiled_root.tag != "includes":
+        viewtypes_compiled_ok = False
+    else:
+        viewtypes_compiled_ok = all(
+            compiled_view_owner(compiled_root, content) == "Exp_View_" + view
+            for content, view in MANAGED_VIEW_TYPES.items())
+    observe("arctic_fuse.viewtypes_compiled_configured",
+            1 if viewtypes_compiled_ok else 0)
+
     # Smart playlists
     EXPECTED_PLAYLISTS = {
         "InProgressMovies90Days": {
@@ -3859,6 +3945,143 @@ PROBE_PARSE
 REMOTE_AUDIO_PROBE_BODY
 }
 
+# --- Remote view rebuild -----------------------------------------------------
+#
+# `script.skinvariables` compiles its view types JSON into an XML include that
+# lives inside the skin add-on directory, which provisioning replaces wholesale.
+# Nothing else rebuilds it -- a Kodi restart provably does not -- so this stage
+# runs on every skin-effective run, between the deployment transaction and
+# verification.
+#
+# The one deterministic trigger is a script invocation, and the only way to
+# reach it is kodi-send: JSON-RPC Addons.ExecuteAddon runs the add-on as a
+# plugin, ignores the action, and returns OK regardless.
+coreelec_remote_buildviews_script() {
+  cat <<'REMOTE_BUILDVIEWS_BODY'
+set -eu
+umask 077
+bv_user=""
+bv_password=""
+bv_port="8080"
+bv_root="/storage"
+bv_skin="skin.arctic.fuse.3"
+bv_attempts="24"
+bv_delay="5"
+bv_settle="12"
+while IFS= read -r bv_line; do
+  case "${bv_line}" in
+    KODI_WEB_USER=*) bv_user="${bv_line#KODI_WEB_USER=}" ;;
+    KODI_WEB_PASSWORD=*) bv_password="${bv_line#KODI_WEB_PASSWORD=}" ;;
+    KODI_PORT=*) bv_port="${bv_line#KODI_PORT=}" ;;
+    STORAGE_ROOT=*) bv_root="${bv_line#STORAGE_ROOT=}" ;;
+    SKIN_ID=*) bv_skin="${bv_line#SKIN_ID=}" ;;
+    ATTEMPTS=*) bv_attempts="${bv_line#ATTEMPTS=}" ;;
+    RETRY_DELAY=*) bv_delay="${bv_line#RETRY_DELAY=}" ;;
+    SETTLE_ATTEMPTS=*) bv_settle="${bv_line#SETTLE_ATTEMPTS=}" ;;
+    "") ;;
+    *) printf "the view rebuild rejected an unknown parameter\n" >&2; exit 1 ;;
+  esac
+done
+
+[ -n "${bv_user}" ] || { printf "the view rebuild requires a Kodi user\n" >&2; exit 1; }
+command -v kodi-send >/dev/null 2>&1 \
+  || { printf "the view rebuild requires kodi-send on the device\n" >&2; exit 1; }
+
+bv_dir="$(mktemp -d)"
+trap "rm -rf -- ${bv_dir}" EXIT INT TERM
+
+# The password reaches curl only through a mode-600 configuration file in a
+# directory the trap removes: it never appears in argv or in the process list.
+printf "user = \"%s:%s\"\n" "${bv_user}" "${bv_password}" > "${bv_dir}/curlrc"
+cat > "${bv_dir}/ping.json" <<BUILDVIEWS_PING
+{"jsonrpc":"2.0","id":1,"method":"JSONRPC.Ping"}
+BUILDVIEWS_PING
+cat > "${bv_dir}/es.json" <<BUILDVIEWS_ES
+{"jsonrpc":"2.0","id":1,"method":"Settings.GetSettingValue","params":{"setting":"services.esenabled"}}
+BUILDVIEWS_ES
+
+bv_ask() {
+  curl --silent --show-error --fail --max-time 20 \
+    --config "${bv_dir}/curlrc" \
+    --header "Content-Type: application/json" \
+    --data "@${bv_dir}/$1" \
+    "http://127.0.0.1:${bv_port}/jsonrpc"
+}
+
+# The deployment transaction restarts Kodi immediately before this stage, so
+# readiness is polled rather than assumed.
+bv_attempt=1
+while :; do
+  if bv_ask ping.json > "${bv_dir}/pong.out" 2>/dev/null; then
+    break
+  fi
+  if [ "${bv_attempt}" -ge "${bv_attempts}" ]; then
+    printf "the view rebuild could not reach Kodi on port %s\n" "${bv_port}" >&2
+    exit 1
+  fi
+  sleep "${bv_delay}"
+  bv_attempt=$((bv_attempt + 1))
+done
+
+# kodi-send speaks to the EventServer over UDP and is fire-and-forget: its
+# exit status reports that a datagram left the box, never that Kodi acted on
+# it. A disabled EventServer would make this whole stage a silent no-op, so
+# the one thing that can be established beforehand is established.
+bv_ask es.json > "${bv_dir}/es.out" \
+  || { printf "the view rebuild could not read services.esenabled\n" >&2; exit 1; }
+python3 - "${bv_dir}/es.out" <<BUILDVIEWS_ES_CHECK
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    try:
+        document = json.load(handle)
+    except ValueError:
+        raise SystemExit("the view rebuild could not parse the Kodi answer")
+result = document.get("result") if isinstance(document, dict) else None
+value = result.get("value") if isinstance(result, dict) else None
+if value is False:
+    raise SystemExit(
+        "the view rebuild needs the Kodi EventServer, and services.esenabled is off")
+if value is not True:
+    sys.stderr.write(
+        "the view rebuild could not confirm services.esenabled; verification will decide\n")
+BUILDVIEWS_ES_CHECK
+
+bv_compiled="${bv_root}/.kodi/addons/${bv_skin}/1080i/script-skinviewtypes-includes.xml"
+kodi-send --action="RunScript(script.skinvariables,action=buildviews,force=True,no_reload=True)" \
+  >/dev/null 2>&1 \
+  || { printf "the view rebuild could not deliver kodi-send\n" >&2; exit 1; }
+
+# The rebuild is not atomic: reading the file mid-write returns an empty one.
+# Two identical non-empty digests in a row is the settling signal. The skin
+# also ships a small stub carrying Action_BuildViews, which is what a fresh
+# deploy leaves behind and what the skin itself replaces on load, so a stub
+# reads as not-yet-rebuilt rather than as a settled result. The stage does not
+# adjudicate the outcome -- verification reads the actual state and decides --
+# so an unsettled file warns and returns success.
+bv_previous=""
+bv_attempt=1
+bv_settled=0
+while [ "${bv_attempt}" -le "${bv_settle}" ]; do
+  sleep 1
+  if [ -s "${bv_compiled}" ] && ! grep -q Action_BuildViews "${bv_compiled}"; then
+    bv_sample="$(md5sum < "${bv_compiled}")"
+    if [ -n "${bv_previous}" ] && [ "${bv_sample}" = "${bv_previous}" ]; then
+      bv_settled=1
+      break
+    fi
+    bv_previous="${bv_sample}"
+  fi
+  bv_attempt=$((bv_attempt + 1))
+done
+if [ "${bv_settled}" != "1" ]; then
+  printf "the rebuilt view include did not settle; verification will decide\n" >&2
+fi
+exit 0
+REMOTE_BUILDVIEWS_BODY
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
@@ -3873,9 +4096,10 @@ coreelec_emit_remote_script() {
     verify-probe) coreelec_remote_verify_probe_source ;;
     display-probe) coreelec_remote_display_probe_script ;;
     audio-probe) coreelec_remote_audio_probe_script ;;
+    buildviews) coreelec_remote_buildviews_script ;;
     authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, audio-probe, or authorized-key, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, audio-probe, buildviews, or authorized-key, not: ${name}"
       ;;
   esac
 }
@@ -4865,6 +5089,12 @@ verify_remote_baseline() {
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.viewtypes_source_configured" "arctic_fuse.viewtypes_source" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.viewtypes_compiled_configured" "arctic_fuse.viewtypes_compiled" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
     RecentlyAiredEpisodes30Days TraktPopularTVShows TraktWeekendBoxOffice \
@@ -5340,6 +5570,7 @@ coreelec_conclude_deployment() {
   local retry_delay="${COREELEC_VERIFICATION_RETRY_DELAY:-5}"
 
   DEPLOYMENT_STATE="pending-verification"
+  coreelec_rebuild_skin_viewtypes
   info "Verifying the deployed baseline on the device over localhost JSON-RPC" >&2
   while (( attempt <= max_attempts )); do
     status=0
@@ -5393,6 +5624,48 @@ coreelec_conclude_deployment() {
   DEPLOYMENT_STATE="incomplete-rollback"
   RECOVERY_INSTRUCTIONS="$(coreelec_recovery_instructions rollback)"
   return 1
+}
+
+# The SSH call alone, kept separate from the gate below so the conclude
+# fixture can replace the device round trip without disabling the gate.
+coreelec_run_remote_buildviews() {
+  local script
+  script="$(coreelec_remote_buildviews_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote view rebuild must not contain a single quote"
+  {
+    printf 'KODI_WEB_USER=%s\n' "${KODI_USER}"
+    printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
+    printf 'KODI_PORT=%s\n' "${KODI_PORT}"
+    printf 'STORAGE_ROOT=%s\n' "/storage"
+    printf 'SKIN_ID=%s\n' "skin.arctic.fuse.3"
+    printf 'ATTEMPTS=%s\n' "${COREELEC_BUILDVIEWS_ATTEMPTS:-24}"
+    printf 'RETRY_DELAY=%s\n' "${COREELEC_BUILDVIEWS_RETRY_DELAY:-5}"
+    printf 'SETTLE_ATTEMPTS=%s\n' "${COREELEC_BUILDVIEWS_SETTLE_ATTEMPTS:-12}"
+  } | ssh_keyed "sh -c '${script}'" >/dev/null
+}
+
+# Rebuilds the compiled Arctic Fuse view include, between the deployment
+# transaction and verification.
+#
+# This never fails the run. The transaction is already open by the time it is
+# called, and kodi-send cannot report whether Kodi acted, so the stage makes
+# the attempt and verification adjudicates: a rebuild that silently did
+# nothing leaves the include missing or stale, both of which fail the semantic
+# checks and roll the transaction back.
+coreelec_rebuild_skin_viewtypes() {
+  # The gate follows the skin add-on, not the `skin` component. `addons` is a
+  # legal scope on its own and still replaces the skin directory wholesale,
+  # destroying the compiled include; gating on `skin` alone would leave the
+  # defect reachable through an ordinary add-on version bump.
+  coreelec_component_effective skin \
+    || coreelec_component_effective addons \
+    || return 0
+
+  info "Rebuilding the Arctic Fuse view include on the device" >&2
+  coreelec_run_remote_buildviews \
+    || warn "The view rebuild did not complete; verification will decide the outcome"
+  return 0
 }
 
 # The exact commands and retained paths an operator needs when the device
@@ -5465,6 +5738,7 @@ if (( ${#REPORT_FIXTURE[@]} > 0 )); then
   coreelec_collect_remote_observations() { cp "${REPORT_FIXTURE[1]}" "$1"; }
   finalize_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
   rollback_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
+  coreelec_run_remote_buildviews() { return "${COREELEC_BUILDVIEWS_FIXTURE_STATUS:-0}"; }
   # As with the verify fixture seam, the pre-transaction audio probe never
   # runs against a fixture, so the resolved values it would have supplied are
   # read from the same resolved.* lines instead.
@@ -5532,6 +5806,10 @@ if (( ${#CONCLUDE_FIXTURE[@]} > 0 )); then
   rollback_remote_deployment() {
     printf 'rollback\n' >> "${CONCLUDE_FIXTURE[4]}"
     return "${CONCLUDE_FIXTURE[3]}"
+  }
+  coreelec_run_remote_buildviews() {
+    printf 'buildviews\n' >> "${CONCLUDE_FIXTURE[4]}"
+    return "${COREELEC_BUILDVIEWS_FIXTURE_STATUS:-0}"
   }
   set +e
   coreelec_conclude_deployment "${CONCLUDE_FIXTURE[1]}"
