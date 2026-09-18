@@ -338,6 +338,7 @@ arctic_fuse.tv_widgets_configured=1
 arctic_fuse.movie_widgets_configured=1
 arctic_fuse.power_menu_configured=1
 arctic_fuse.viewtypes_source_configured=1
+arctic_fuse.viewtypes_compiled_configured=1
 arctic_fuse.playlist.InProgressMovies90Days.configured=1
 arctic_fuse.playlist.InProgressShows90Days.configured=1
 arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=1
@@ -3019,6 +3020,7 @@ JSON
 {"library": {"movies": "502", "seasons": "509", "episodes": "549"},
  "plugins": {"seasons": "521", "episodes": "501"}}
 JSON
+  write_compiled_viewtypes "${root}" 509 549
 
   # Valid smart playlists
   write_fixture_xsp "${playlists_dir}/InProgressMovies90Days.xsp" movies \
@@ -3115,6 +3117,28 @@ ENTRIES
   write_jsonrpc_response "${dir}/stub/response-default.json" true
   install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
   run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1
+}
+
+# Writes a compiled view include holding one expression per named content
+# type, in the exact grammar script.skinvariables emits. `plugins_view`, when
+# given, adds the plugins-scope twin so the tests can prove the library
+# clause is what discriminates.
+write_compiled_viewtypes() {
+  local root="$1" seasons_view="$2" episodes_view="$3"
+  local dir="${root}/.kodi/addons/skin.arctic.fuse.3/1080i"
+  mkdir -p "${dir}"
+  cat > "${dir}/script-skinviewtypes-includes.xml" <<XML
+<includes>
+    <expression name="Exp_View_${seasons_view}">[[!String.IsEqual(Container.Property(param.info),episode_group_seasons) + Container.Content(seasons) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_${episodes_view}">[[Container.Content(episodes) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_521">[[String.IsEqual(Container.Property(param.info),episode_group_seasons) + Container.Content(seasons) + [[String.IsEmpty(Container.PluginName)] | [!String.IsEmpty(Container.PluginName)]]]]</expression>
+    <expression name="Exp_View_500">[[Container.Content(seasons) + [!String.IsEmpty(Container.PluginName)]]]</expression>
+</includes>
+XML
+}
+
+compiled_viewtypes_path() {
+  printf '%s/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml' "$1"
 }
 
 # The source path, spelled once so the tests below stay readable.
@@ -3821,6 +3845,108 @@ test_a_malformed_view_types_source_is_observed_as_unconfigured() {
     "a malformed source observes 0 rather than raising" || return 1
   assert_contains "${output}" "arctic_fuse.power_menu_configured=1" \
     "and the probe still finishes its other observations" || return 1
+}
+
+test_the_compiled_view_include_is_observed_as_configured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=1" \
+    "the seeded include claims both content types in the library scope" || return 1
+}
+
+test_a_compiled_include_naming_another_episode_view_is_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  write_compiled_viewtypes "${root}" 509 501
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "an episodes clause owned by another view is drift" || return 1
+}
+
+test_a_missing_compiled_view_include_is_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  rm -f "$(compiled_viewtypes_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "the silent-revert case observes 0" || return 1
+}
+
+# The rebuild is not atomic: a mid-write read returns an empty file. That is
+# a retryable observation, never an exception that kills the probe.
+test_an_empty_compiled_view_include_is_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  : > "$(compiled_viewtypes_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "a half-written include observes 0 rather than raising" || return 1
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=1" \
+    "and the probe still finishes its other observations" || return 1
+}
+
+# Two expressions claiming one content type in one scope is not a state the
+# skin can resolve, so it must never read as configured.
+test_two_owners_of_one_content_type_are_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  cat > "$(compiled_viewtypes_path "${root}")" <<'XML'
+<includes>
+    <expression name="Exp_View_509">[[Container.Content(seasons) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_577">[[Container.Content(seasons) + [String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_549">[[Container.Content(episodes) + [String.IsEmpty(Container.PluginName)]]]</expression>
+</includes>
+XML
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "an ambiguous include must not read as configured" || return 1
+}
+
+# The plugins scope shares the content token and must neither be mistaken for
+# the library scope nor satisfy the library check on its own.
+test_a_plugins_scope_clause_does_not_satisfy_the_library_check() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  cat > "$(compiled_viewtypes_path "${root}")" <<'XML'
+<includes>
+    <expression name="Exp_View_509">[[Container.Content(seasons) + [!String.IsEmpty(Container.PluginName)]]]</expression>
+    <expression name="Exp_View_549">[[Container.Content(episodes) + [String.IsEmpty(Container.PluginName)]]]</expression>
+</includes>
+XML
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_compiled_configured=0" \
+    "a plugins-scope clause leaves the library scope unclaimed" || return 1
 }
 
 test_probe_missing_home_widgets_file_emits_zero() {
@@ -5763,6 +5889,12 @@ run_all_tests \
   test_a_drifted_season_view_fails_the_view_types_source \
   test_an_absent_view_types_source_is_observed_as_unconfigured \
   test_a_malformed_view_types_source_is_observed_as_unconfigured \
+  test_the_compiled_view_include_is_observed_as_configured \
+  test_a_compiled_include_naming_another_episode_view_is_unconfigured \
+  test_a_missing_compiled_view_include_is_unconfigured \
+  test_an_empty_compiled_view_include_is_unconfigured \
+  test_two_owners_of_one_content_type_are_unconfigured \
+  test_a_plugins_scope_clause_does_not_satisfy_the_library_check \
   test_probe_missing_home_widgets_file_emits_zero \
   test_probe_reordered_home_widgets_emits_zero \
   test_probe_reordered_power_menu_emits_zero \

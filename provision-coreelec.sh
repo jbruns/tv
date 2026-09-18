@@ -3451,6 +3451,47 @@ def main(argv):
     observe("arctic_fuse.viewtypes_source_configured",
             1 if viewtypes_source_ok else 0)
 
+    def compiled_view_owner(includes_root, content):
+        """The one `Exp_View_*` expression that claims `content` in the
+        library scope, or None when zero or several do.
+
+        `[String.IsEmpty(Container.PluginName)]` on its own is the library
+        scope. The plugins scope negates it, and a view serving both scopes
+        compiles to the disjunction of the two, so neither contains this
+        clause. Matching the clause whole also keeps `Container.Content(seasons)`
+        from colliding with `episode-groups-seasons`, which shares the token
+        but is discriminated by its `episode_group_seasons` guard."""
+        clause = ("Container.Content(%s) + [String.IsEmpty(Container.PluginName)]"
+                  % content)
+        owners = []
+        for node in includes_root.iter("expression"):
+            name = node.get("name") or ""
+            if not name.startswith("Exp_View_"):
+                continue
+            if clause in (node.text or ""):
+                owners.append(name)
+        if len(owners) != 1:
+            return None
+        return owners[0]
+
+    # A missing or half-written include parses as nothing and observes 0.
+    # Verification retries, so a mid-rebuild read costs an attempt rather
+    # than the run.
+    try:
+        compiled_root = ET.parse(os.path.join(
+            storage_root, ".kodi", "addons", SKIN_ID, "1080i",
+            "script-skinviewtypes-includes.xml")).getroot()
+    except Exception:
+        compiled_root = None
+    if compiled_root is None or compiled_root.tag != "includes":
+        viewtypes_compiled_ok = False
+    else:
+        viewtypes_compiled_ok = all(
+            compiled_view_owner(compiled_root, content) == "Exp_View_" + view
+            for content, view in MANAGED_VIEW_TYPES.items())
+    observe("arctic_fuse.viewtypes_compiled_configured",
+            1 if viewtypes_compiled_ok else 0)
+
     # Smart playlists
     EXPECTED_PLAYLISTS = {
         "InProgressMovies90Days": {
@@ -4911,6 +4952,9 @@ verify_remote_baseline() {
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.viewtypes_source_configured" "arctic_fuse.viewtypes_source" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.viewtypes_compiled_configured" "arctic_fuse.viewtypes_compiled" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
