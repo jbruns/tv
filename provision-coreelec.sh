@@ -5635,6 +5635,7 @@ coreelec_run_remote_buildviews() {
     printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
     printf 'KODI_PORT=%s\n' "${KODI_PORT}"
     printf 'STORAGE_ROOT=%s\n' "/storage"
+    printf 'SKIN_ID=%s\n' "skin.arctic.fuse.3"
     printf 'ATTEMPTS=%s\n' "${COREELEC_BUILDVIEWS_ATTEMPTS:-24}"
     printf 'RETRY_DELAY=%s\n' "${COREELEC_BUILDVIEWS_RETRY_DELAY:-5}"
     printf 'SETTLE_ATTEMPTS=%s\n' "${COREELEC_BUILDVIEWS_SETTLE_ATTEMPTS:-12}"
@@ -5650,7 +5651,13 @@ coreelec_run_remote_buildviews() {
 # nothing leaves the include missing or stale, both of which fail the semantic
 # checks and roll the transaction back.
 coreelec_rebuild_skin_viewtypes() {
-  coreelec_component_effective skin || return 0
+  # The gate follows the skin add-on, not the `skin` component. `addons` is a
+  # legal scope on its own and still replaces the skin directory wholesale,
+  # destroying the compiled include; gating on `skin` alone would leave the
+  # defect reachable through an ordinary add-on version bump.
+  coreelec_component_effective skin \
+    || coreelec_component_effective addons \
+    || return 0
 
   info "Rebuilding the Arctic Fuse view include on the device" >&2
   coreelec_run_remote_buildviews \

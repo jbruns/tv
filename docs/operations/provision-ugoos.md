@@ -228,13 +228,23 @@ replaces wholesale. Nothing else rebuilds that include — a Kodi restart does
 not — so before this change any skin redeploy or version bump silently
 reverted Seasons and Episodes to the skin defaults.
 
-Provisioning now asks the device to rebuild the include on every run whose
-effective scope includes `skin`, between deploy and verification. That
-rebuild is best-effort: the trigger is `kodi-send` over Kodi's EventServer,
-so the run can establish only that it made the request, not that Kodi acted
-on it. Verification is the authority. It reads the actual source and compiled state, checks the managed
-views semantically rather than by byte comparison, and rolls the scoped
-transaction back if either one is missing or wrong.
+Provisioning now asks the device to rebuild the include between deploy and
+verification, on every run whose effective scope includes `addons` — which
+covers `skin`, `services`, and a bare `addons` run alike. The wider gate is
+deliberate: Arctic Fuse is a locked `addons` artifact, so an ordinary add-on
+version bump replaces the skin directory and destroys the include without
+ever naming the `skin` component. In an `addons`-only run nothing has touched
+the source JSON, so the rebuild regenerates the include from the values
+already on the device; it converges rather than changes anything.
+
+That rebuild is best-effort: the trigger is `kodi-send` over Kodi's
+EventServer, so the run can establish only that it made the request, not that
+Kodi acted on it. Verification is the authority. It reads the actual source
+and compiled state, checks the managed views semantically rather than by byte
+comparison, and rolls the scoped transaction back if either one is missing or
+wrong. Those two checks belong to the `skin` component, so an `addons`-only
+run rebuilds the include but does not assert it — run `--component skin` when
+you want the views proven rather than merely restored.
 
 The views apply at the next skin load, not instantly. The rebuild uses
 `no_reload=True`, so a run that already restarted Kodi is correct on its next

@@ -1759,6 +1759,32 @@ test_a_core_only_run_never_rebuilds_the_view_include() {
     "a core-only run leaves the skin alone" || return 1
 }
 
+# The skin add-on is a locked artifact of the `addons` component, and `addons`
+# does not imply `skin`. Such a run still replaces the skin directory
+# wholesale and so still destroys the compiled include -- which is the most
+# likely way anyone triggers the defect, since an add-on version bump does not
+# mention the skin. The rebuild has to fire there too. Nothing has touched the
+# source JSON in that scope, so the rebuild regenerates the include from the
+# values already on the device: it converges rather than mutates.
+test_an_addons_run_still_rebuilds_the_view_include() {
+  local dir config manifest observations log
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  log="${dir}/conclude.log"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+
+  run_conclude_component addons "${config}" "${observations}" "${manifest}" \
+    0 0 "${log}" >/dev/null || true
+
+  assert_contains "$(cat "${log}")" "buildviews" \
+    "an addons run replaces the skin, so it must rebuild the include" || return 1
+}
+
 # kodi-send cannot report success, so the stage cannot either. A failed
 # rebuild must not abort a transaction that is already open: verification
 # reads the real state and rolls back if the views are wrong.
@@ -6172,6 +6198,7 @@ run_all_tests \
   test_verification_success_finalizes_and_commits \
   test_the_view_rebuild_runs_between_deployment_and_verification \
   test_a_core_only_run_never_rebuilds_the_view_include \
+  test_an_addons_run_still_rebuilds_the_view_include \
   test_a_failed_view_rebuild_still_reaches_verification \
   test_transient_verification_mismatch_is_retried_before_commit \
   test_verification_mismatch_is_fatal \

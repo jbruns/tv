@@ -284,7 +284,9 @@ provision YouTube.
 - The effective Arctic Fuse view state is the compiled include
   `addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml`, which
   lives inside the skin add-on directory provisioning replaces wholesale.
-  Provisioning therefore rebuilds it on every skin-effective run and verifies
+  Provisioning therefore rebuilds it on every run that deploys add-ons — the
+  `skin` and `addons` scopes alike, since the skin is a locked `addons`
+  artifact — and verifies
   it semantically: exactly one `Exp_View_*` expression must claim each managed
   library content type, `seasons` and `episodes`, with the expected view id.
 - Managed skin and Kodi settings are normalized to one canonical root node per
