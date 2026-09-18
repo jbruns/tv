@@ -4054,15 +4054,18 @@ kodi-send --action="RunScript(script.skinvariables,action=buildviews,force=True,
   || { printf "the view rebuild could not deliver kodi-send\n" >&2; exit 1; }
 
 # The rebuild is not atomic: reading the file mid-write returns an empty one.
-# Two identical non-empty digests in a row is the settling signal. The stage
-# does not adjudicate the result -- verification reads the actual state and
-# decides -- so an unsettled file warns and returns success.
+# Two identical non-empty digests in a row is the settling signal. The skin
+# also ships a small stub carrying Action_BuildViews, which is what a fresh
+# deploy leaves behind and what the skin itself replaces on load, so a stub
+# reads as not-yet-rebuilt rather than as a settled result. The stage does not
+# adjudicate the outcome -- verification reads the actual state and decides --
+# so an unsettled file warns and returns success.
 bv_previous=""
 bv_attempt=1
 bv_settled=0
 while [ "${bv_attempt}" -le "${bv_settle}" ]; do
   sleep 1
-  if [ -s "${bv_compiled}" ]; then
+  if [ -s "${bv_compiled}" ] && ! grep -q Action_BuildViews "${bv_compiled}"; then
     bv_sample="$(md5sum < "${bv_compiled}")"
     if [ -n "${bv_previous}" ] && [ "${bv_sample}" = "${bv_previous}" ]; then
       bv_settled=1

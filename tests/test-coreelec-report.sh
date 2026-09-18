@@ -5525,6 +5525,15 @@ run_buildviews() {
   mkdir -p "${dir}/tmp" "${dir}/storage/.kodi/addons/skin.arctic.fuse.3/1080i"
   if [[ "${compiled_state}" == "missing" ]]; then
     rm -f "${compiled}"
+  elif [[ "${compiled_state}" == "stub" ]]; then
+    cat > "${compiled}" <<'STUB_INCLUDE'
+<?xml version="1.0" encoding="UTF-8"?>
+<includes>
+    <include name="Action_BuildViews">
+        <onload>RunScript(script.skinvariables,action=buildviews)</onload>
+    </include>
+</includes>
+STUB_INCLUDE
   else
     printf '<includes/>\n' > "${compiled}"
   fi
@@ -5685,6 +5694,27 @@ test_the_buildviews_stage_warns_when_the_compiled_file_never_appears() {
     fail "md5sum must not run before the compiled file exists"
     return 1
   fi
+}
+
+# A fresh skin deploy leaves the skin's own stub behind: a tiny include whose
+# Action_BuildViews onload is what makes the skin regenerate the real file when
+# it next loads. Its digest is perfectly stable, so a naive settle loop would
+# read two identical samples and declare the rebuild finished while the views
+# are still the skin defaults. Observed on the device: a run settled on the
+# 190-byte stub seconds before the skin replaced it with the real 8KB include.
+test_the_buildviews_stage_does_not_settle_on_the_skin_stub() {
+  local dir output rc
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  write_buildviews_stubs "${dir}" "" "0" "stable"
+  set +e
+  output="$(run_buildviews "${dir}" $'SETTLE_ATTEMPTS=3\n' stub 2>&1)"
+  rc=$?
+  set -e
+  assert_success "${rc}" \
+    "a stub compiled include must warn rather than fail" || return 1
+  assert_contains "${output}" "did not settle; verification will decide" \
+    "the stub must never read as a settled rebuild" || return 1
 }
 
 test_the_buildviews_stage_warns_when_the_compiled_file_keeps_changing() {
@@ -6335,6 +6365,7 @@ run_all_tests \
   test_the_buildviews_stage_requires_kodi_send \
   test_the_buildviews_stage_honors_ping_retry_overrides \
   test_the_buildviews_stage_warns_when_the_compiled_file_never_appears \
+  test_the_buildviews_stage_does_not_settle_on_the_skin_stub \
   test_the_buildviews_stage_warns_when_the_compiled_file_keeps_changing \
   test_audio_verification_passes_when_the_device_matches \
   test_audio_verification_reports_a_changed_device \
