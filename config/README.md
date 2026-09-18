@@ -272,6 +272,21 @@ provision YouTube.
 - Movies uses `skinvariables-shortcut-1102widgets.json` with widgets in
   order: In-Progress Movies, Recently Released Movies, Trakt Weekend Box
   Office, and New Movies.
+- Season and episode library views are set in
+  `addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json`, with
+  `library.seasons=509` and `library.episodes=549`. Provisioning sets only
+  those two keys. `script.skinvariables` owns the file and rewrites it on
+  every rebuild, merging the skin defaults back in. When the file parses
+  cleanly, the other library content types and the entire `plugins` scope are
+  left exactly as found; when it is absent, empty, or unparseable,
+  provisioning recreates only the two managed keys and the add-on fills the
+  rest from its defaults on the next rebuild.
+- The effective Arctic Fuse view state is the compiled include
+  `addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml`, which
+  lives inside the skin add-on directory provisioning replaces wholesale.
+  Provisioning therefore rebuilds it on every skin-effective run and verifies
+  it semantically: exactly one `Exp_View_*` expression must claim each managed
+  library content type, `seasons` and `episodes`, with the expected view id.
 - Managed skin and Kodi settings are normalized to one canonical root node per
   setting ID, with nested copies and other case variants removed before
   verification.

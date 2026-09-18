@@ -202,6 +202,45 @@ empty target it executes the path as a bare Kodi builtin, so a library path
 with no target silently does nothing. Drift in either the path or the target
 fails `arctic_fuse.tv_hub_configured` or `arctic_fuse.movies_hub_configured`.
 
+### Which view the season and episode lists use
+
+The `skin` component also owns two Arctic Fuse library view types, and no
+others:
+
+| List | View |
+| --- | --- |
+| Seasons | List Flixart (`509`) |
+| Episodes | List Flixart 2 (`549`) |
+
+Those values are written into
+`addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json`, not into
+Kodi's `ViewModes6.db`. Provisioning sets only `library.seasons` and
+`library.episodes`; every other library content type, and the entire
+`plugins` scope that Arctic Fuse also stores in that file, stays at whatever
+the skin or the operator last chose when the file already parses. If the file
+is absent, empty, or corrupt, provisioning recreates only the two managed
+keys and the add-on fills the rest from its defaults on the next rebuild.
+
+The skin does not read that JSON directly. `script.skinvariables` compiles it
+into `addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml`,
+which lives inside the locked skin add-on directory that every skin deploy
+replaces wholesale. Nothing else rebuilds that include — a Kodi restart does
+not — so before this change any skin redeploy or version bump silently
+reverted Seasons and Episodes to the skin defaults.
+
+Provisioning now asks the device to rebuild the include on every run whose
+effective scope includes `skin`, between deploy and verification. That
+rebuild is best-effort: the trigger is `kodi-send` over Kodi's EventServer,
+so the run can establish only that it made the request, not that Kodi acted
+on it. Verification is the authority. It reads the actual source and compiled state, checks the managed
+views semantically rather than by byte comparison, and rolls the scoped
+transaction back if either one is missing or wrong.
+
+The views apply at the next skin load, not instantly. The rebuild uses
+`no_reload=True`, so a run that already restarted Kodi is correct on its next
+start, but re-running provisioning after a manual view change does not make
+the list in front of you redraw until the skin loads again.
+
 ### What "off" means for a skin setting
 
 Arctic Fuse settings that the baseline disables are verified as absent *or*
