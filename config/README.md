@@ -242,6 +242,13 @@ provision YouTube.
 
 - `HomeSwitcher.1101.*` is the TV Shows hub, `HomeSwitcher.1102.*` is the
   Movies hub, and `HomeSwitcher.1103.*` opens `script.plexmod`.
+- Selecting the TV Shows hub opens `videodb://tvshows/titles/` and selecting
+  the Movies hub opens `videodb://movies/titles/`, both with
+  `Shortcut.Target` set to `videos`. Arctic Fuse only builds
+  `ActivateWindow(target, path, return)` when the target is set; with an empty
+  target it runs the path as a bare Kodi builtin, which is why
+  `HomeSwitcher.1103.Shortcut.Path` holds `RunAddon(script.plexmod)` and has no
+  target.
 - The managed top-level order after Home is TV Shows, Movies, Plex,
   conditional PVR, Add-ons.
 - Home retains its six managed widgets in order: In-Progress Movies,

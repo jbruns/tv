@@ -2965,6 +2965,8 @@ XML
     <setting id="HomeSwitcher.1101.Spotlight.Label">Random TV Shows</setting>
     <setting id="HomeSwitcher.1101.Spotlight.Path">special://skin/extras/playlists/RandomTvShows.xsp</setting>
     <setting id="HomeSwitcher.1101.Spotlight.Target">videos</setting>
+    <setting id="HomeSwitcher.1101.Shortcut.Path">videodb://tvshows/titles/</setting>
+    <setting id="HomeSwitcher.1101.Shortcut.Target">videos</setting>
     <setting id="HomeSwitcher.1102.Name">Movies</setting>
     <setting id="HomeSwitcher.1102.Toggle">true</setting>
     <setting id="HomeSwitcher.1102.Icon">special://skin/extras/icons/film.png</setting>
@@ -2972,6 +2974,8 @@ XML
     <setting id="HomeSwitcher.1102.Spotlight.Label">Random Movies</setting>
     <setting id="HomeSwitcher.1102.Spotlight.Path">special://skin/extras/playlists/RandomMovies.xsp</setting>
     <setting id="HomeSwitcher.1102.Spotlight.Target">videos</setting>
+    <setting id="HomeSwitcher.1102.Shortcut.Path">videodb://movies/titles/</setting>
+    <setting id="HomeSwitcher.1102.Shortcut.Target">videos</setting>
     <setting id="HomeSwitcher.1103.Name">Plex</setting>
     <setting id="HomeSwitcher.1103.Toggle">true</setting>
     <setting id="HomeSwitcher.1103.Icon">special://home/addons/script.plexmod/icon2.png</setting>
@@ -3138,6 +3142,39 @@ test_probe_arctic_fuse_valid_baseline_emits_all_ones() {
     arctic_fuse.playlist.RecentlyReleasedMovies90Days.absent=1; do
     assert_contains "${output}" "${expected}" "managed Arctic Fuse state: ${expected}" || return 1
   done
+}
+
+test_probe_hub_shortcut_drift_fails_the_hub_aggregate() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  set_xml_setting_text "${skin_file}" "HomeSwitcher.1101.Shortcut.Path" \
+    "videodb://tvshows/"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.tv_hub_configured=0" \
+    "a drifted TV hub destination fails the TV hub check" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "a drifted TV hub destination fails the hub aggregate" || return 1
+}
+
+test_probe_hub_shortcut_target_must_activate_the_video_window() {
+  local dir root bin_dir output skin_file
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  skin_file="${root}/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+  set_xml_setting_text "${skin_file}" "HomeSwitcher.1102.Shortcut.Target" ""
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+  assert_contains "${output}" "arctic_fuse.movies_hub_configured=0" \
+    "an empty Movies hub target fails the Movies hub check" || return 1
+  assert_contains "${output}" "arctic_fuse.hubs_configured=0" \
+    "an empty Movies hub target fails the hub aggregate" || return 1
 }
 
 test_probe_missing_skin_settings_emits_zero() {
@@ -5512,6 +5549,8 @@ run_all_tests \
   test_remote_verify_probe_reports_a_missing_addon \
   test_remote_verify_probe_uses_a_private_curl_config_and_removes_it \
   test_probe_arctic_fuse_valid_baseline_emits_all_ones \
+  test_probe_hub_shortcut_drift_fails_the_hub_aggregate \
+  test_probe_hub_shortcut_target_must_activate_the_video_window \
   test_probe_missing_skin_settings_emits_zero \
   test_probe_malformed_skin_xml_emits_zero \
   test_probe_wrong_skin_xml_root_invalidates_absence_checks \
