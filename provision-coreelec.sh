@@ -3433,6 +3433,24 @@ def main(argv):
     observe("arctic_fuse.power_menu_configured",
             1 if actual_power_menu == expected_power_menu else 0)
 
+    # --- Arctic Fuse view types --------------------------------------------
+    MANAGED_VIEW_TYPES = {"seasons": "509", "episodes": "549"}
+
+    viewtypes_source = read_json(os.path.join(
+        userdata, "addon_data", "script.skinvariables",
+        SKIN_ID + "-viewtypes.json"))
+    source_library = None
+    if isinstance(viewtypes_source, dict):
+        source_library = viewtypes_source.get("library")
+    if isinstance(source_library, dict):
+        viewtypes_source_ok = all(
+            str(source_library.get(content, "")) == view
+            for content, view in MANAGED_VIEW_TYPES.items())
+    else:
+        viewtypes_source_ok = False
+    observe("arctic_fuse.viewtypes_source_configured",
+            1 if viewtypes_source_ok else 0)
+
     # Smart playlists
     EXPECTED_PLAYLISTS = {
         "InProgressMovies90Days": {
@@ -4890,6 +4908,9 @@ verify_remote_baseline() {
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
   coreelec_verify_boolean_observation "${observations}" \
     "arctic_fuse.power_menu_configured" "arctic_fuse.power" \
+    || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
+  coreelec_verify_boolean_observation "${observations}" \
+    "arctic_fuse.viewtypes_source_configured" "arctic_fuse.viewtypes_source" \
     || { failures=$((failures + 1)); arctic_fuse_failures=$((arctic_fuse_failures + 1)); }
 
   for playlist_name in InProgressMovies90Days InProgressShows90Days \

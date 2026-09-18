@@ -337,6 +337,7 @@ arctic_fuse.home_widgets_configured=1
 arctic_fuse.tv_widgets_configured=1
 arctic_fuse.movie_widgets_configured=1
 arctic_fuse.power_menu_configured=1
+arctic_fuse.viewtypes_source_configured=1
 arctic_fuse.playlist.InProgressMovies90Days.configured=1
 arctic_fuse.playlist.InProgressShows90Days.configured=1
 arctic_fuse.playlist.RecentlyAiredEpisodes30Days.configured=1
@@ -3014,6 +3015,10 @@ JSON
   cat > "${nodes_dir}/skinvariables-shortcut-powermenu.json" <<'JSON'
 [{"guid": "coreelec-power-poweroff", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13016]", "path": "Powerdown()", "target": ""}, {"guid": "coreelec-power-timer", "icon": "special://skin/extras/icons/timer.png", "label": "$LOCALIZE[20150]", "path": "AlarmClock(shutdowntimer,Shutdown())", "target": ""}, {"guid": "coreelec-power-suspend", "icon": "special://skin/extras/icons/power.png", "label": "$LOCALIZE[13011]", "path": "Suspend()", "target": ""}, {"guid": "coreelec-power-reboot", "icon": "special://skin/extras/icons/refresh.png", "label": "$LOCALIZE[13013]", "path": "Reset()", "target": ""}, {"guid": "coreelec-power-restart-kodi", "icon": "special://skin/extras/icons/refresh.png", "label": "Restart Kodi", "path": "RestartApp()", "target": ""}]
 JSON
+  cat > "${userdata}/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json" <<'JSON'
+{"library": {"movies": "502", "seasons": "509", "episodes": "549"},
+ "plugins": {"seasons": "521", "episodes": "501"}}
+JSON
 
   # Valid smart playlists
   write_fixture_xsp "${playlists_dir}/InProgressMovies90Days.xsp" movies \
@@ -3110,6 +3115,11 @@ ENTRIES
   write_jsonrpc_response "${dir}/stub/response-default.json" true
   install_date_stub "${bin_dir}" "$(zone_marks America/Los_Angeles)"
   run_remote_probe "${dir}" "${bin_dir}" "${root}" "${request}" 2>&1
+}
+
+# The source path, spelled once so the tests below stay readable.
+viewtypes_source_path() {
+  printf '%s/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json' "$1"
 }
 
 # --- Arctic Fuse probe fixture tests ----------------------------------------
@@ -3752,6 +3762,65 @@ test_probe_malformed_json_emits_zero_for_power_menu() {
   output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
   assert_contains "${output}" "arctic_fuse.power_menu_configured=0" \
     "malformed JSON → power menu 0" || return 1
+}
+
+test_the_view_types_source_is_observed_as_configured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=1" \
+    "the seeded fixture carries the managed view types" || return 1
+}
+
+test_a_drifted_season_view_fails_the_view_types_source() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  cat > "$(viewtypes_source_path "${root}")" <<'JSON'
+{"library": {"seasons": "521", "episodes": "549"}}
+JSON
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=0" \
+    "a season view someone changed in the UI is drift" || return 1
+}
+
+test_an_absent_view_types_source_is_observed_as_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  rm -f "$(viewtypes_source_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=0" \
+    "an absent source observes 0 rather than raising" || return 1
+}
+
+test_a_malformed_view_types_source_is_observed_as_unconfigured() {
+  local dir root bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf "${dir}"' RETURN
+  root="$(make_arctic_fuse_fixture_root "${dir}")"
+  bin_dir="$(install_jsonrpc_curl_stub "${dir}")"
+  printf 'NOT JSON' > "$(viewtypes_source_path "${root}")"
+
+  output="$(run_arctic_fuse_probe "${dir}" "${bin_dir}" "${root}")"
+
+  assert_contains "${output}" "arctic_fuse.viewtypes_source_configured=0" \
+    "a malformed source observes 0 rather than raising" || return 1
+  assert_contains "${output}" "arctic_fuse.power_menu_configured=1" \
+    "and the probe still finishes its other observations" || return 1
 }
 
 test_probe_missing_home_widgets_file_emits_zero() {
@@ -4499,6 +4568,29 @@ test_report_names_every_arctic_fuse_surface() {
     "the report inventories every locked deployed artifact" || return 1
   assert_contains "${contents}" "deployed_addon.resource.uisounds.fromashes=3.0.01" \
     "the report includes From Ashes in the generic deployed-add-on inventory" || return 1
+}
+
+test_a_drifted_view_types_source_fails_the_arctic_fuse_status() {
+  local dir config manifest observations report contents
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  config="${dir}/provision.conf"
+  manifest="${dir}/deploy.tsv"
+  observations="${dir}/observations.conf"
+  write_configured_config "${config}"
+  write_manifest "${manifest}"
+  write_pass_observations "${observations}"
+  sed -i.bak 's/^arctic_fuse.viewtypes_source_configured=1$/arctic_fuse.viewtypes_source_configured=0/' \
+    "${observations}"
+
+  report="$(run_report "${config}" "${dir}/out" "${observations}" "${manifest}")"
+  [[ -f "${report}" ]] || { printf 'no report\n' >&2; return 1; }
+  contents="$(cat "${report}")"
+
+  assert_contains "${contents}" "arctic_fuse.viewtypes_source.status=mismatch" \
+    "the drifted source is reported as a mismatch" || return 1
+  assert_contains "${contents}" "arctic_fuse.status=mismatch" \
+    "and it fails the component as a whole" || return 1
 }
 
 test_report_never_contains_ratings_key_values_or_managed_file_contents() {
@@ -5667,6 +5759,10 @@ run_all_tests \
   test_probe_rejects_weather_tile_when_unconfigured \
   test_probe_malformed_json_emits_zero_for_home_widgets \
   test_probe_malformed_json_emits_zero_for_power_menu \
+  test_the_view_types_source_is_observed_as_configured \
+  test_a_drifted_season_view_fails_the_view_types_source \
+  test_an_absent_view_types_source_is_observed_as_unconfigured \
+  test_a_malformed_view_types_source_is_observed_as_unconfigured \
   test_probe_missing_home_widgets_file_emits_zero \
   test_probe_reordered_home_widgets_emits_zero \
   test_probe_reordered_power_menu_emits_zero \
@@ -5702,6 +5798,7 @@ run_all_tests \
   test_arctic_fuse_optional_addon_version_or_enabled_mismatch_fails_verification \
   test_each_ratings_key_presence_is_verified_separately \
   test_report_names_every_arctic_fuse_surface \
+  test_a_drifted_view_types_source_fails_the_arctic_fuse_status \
   test_report_never_contains_ratings_key_values_or_managed_file_contents \
   test_tmdb_helper_is_always_classified_configured_for_a_real_skin_deployment \
   test_room_report_normalizes_the_whitelist_separator \
