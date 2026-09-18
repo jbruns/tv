@@ -3971,6 +3971,14 @@ coreelec_components_csv() {
   printf '%s\n' "${result}"
 }
 
+coreelec_yes_no() {
+  if [[ "$1" == "1" ]]; then
+    printf 'yes\n'
+  else
+    printf 'no\n'
+  fi
+}
+
 coreelec_print_component_plan() {
   printf 'components.requested=%s\n' \
     "$(coreelec_components_csv "${REQUESTED_COMPONENTS[@]}")"
@@ -6160,8 +6168,17 @@ if [[ "${ASSUME_YES}" != "1" ]]; then
   printf 'Target:             %s\n' "${TARGET}"
   printf 'Expected release:   %s / Amlogic-ng\n' "${EXPECTED_RELEASE}"
   printf 'Administrator key:  %s\n' "${IDENTITY_FILE}"
-  printf 'Harden SSH:         %s\n' "${HARDEN_SSH}"
-  printf 'Apply Kodi baseline:%s\n' "${APPLY_KODI}"
+  printf 'Components:         %s\n' \
+    "$(coreelec_components_csv "${EFFECTIVE_COMPONENTS[@]}")"
+  if (( ${#COMPONENT_DEPENDENCIES_ADDED[@]} > 0 )); then
+    printf '  added as deps:    %s\n' \
+      "$(coreelec_components_csv "${COMPONENT_DEPENDENCIES_ADDED[@]}")"
+  fi
+  if coreelec_component_effective room; then
+    printf 'Room:               %s\n' "${ROOM_NAME}"
+  fi
+  printf 'Harden SSH:         %s\n' "$(coreelec_yes_no "${HARDEN_SSH}")"
+  printf 'Apply Kodi baseline:%s\n' "$(coreelec_yes_no "${APPLY_KODI}")"
   printf 'Locked add-ons:     %s\n' "${#ADDON_ARTIFACTS[@]}"
   printf 'Selected add-ons:   %s\n' "$( (( ${#ADDONS[@]} > 0 )) && printf '%s' "${#ADDONS[@]}" || printf 'all')"
   printf 'Continue? [y/N] '

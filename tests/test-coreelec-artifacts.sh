@@ -2934,6 +2934,80 @@ test_a_default_run_survives_the_empty_addon_array_under_bash_3_2() {
   assert_eq "" "$(cat "${dir}/network-calls.log")" "a cancelled run never contacts the device"
 }
 
+# The confirmation prompt is the operator's last chance to cancel before the
+# run writes anything, so it must name the components that will actually run.
+# A default run requests `baseline`, which expands to five components the
+# operator never typed — the prompt names the expansion, not the shorthand.
+test_the_confirmation_prompt_names_the_effective_components() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 2>&1 || true)"
+
+  assert_contains "${output}" "Components:         core,cec,addons,services,skin" \
+    "the prompt names the expanded effective components, not the baseline shorthand"
+  assert_not_contains "${output}" "Room:" \
+    "a run without the room component omits the room line"
+}
+
+# `--component room` silently pulls in core, and the room component writes the
+# display mode, Dolby Vision policy and audio layout of whichever room is
+# named. Both facts have to survive to the prompt, because neither is
+# recoverable from what the operator typed.
+test_the_confirmation_prompt_names_added_dependencies_and_the_room() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 \
+    --component room --room theater 2>&1 || true)"
+
+  assert_contains "${output}" "Components:         core,room" \
+    "the prompt names every effective component"
+  assert_contains "${output}" "added as deps:    core" \
+    "the prompt names the component the operator never typed"
+  assert_contains "${output}" "Room:               theater" \
+    "the prompt names the resolved room"
+
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 \
+    --component core 2>&1 || true)"
+
+  assert_not_contains "${output}" "added as deps" \
+    "a run that pulled in no dependency omits the dependency line"
+  assert_not_contains "${output}" "Room:" \
+    "a run without the room component omits the room line"
+}
+
+# The prompt predates the component model and rendered these as raw 0/1, which
+# reads as a flag value rather than an answer.
+test_the_confirmation_prompt_renders_booleans_as_words() {
+  local dir bin_dir output
+  dir="$(make_scratch_dir)"
+  trap 'rm -rf -- "${dir}"' RETURN
+  bin_dir="$(install_network_stubs "${dir}")"
+
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 2>&1 || true)"
+
+  assert_contains "${output}" "Harden SSH:         yes" \
+    "an enabled toggle reads as yes"
+  assert_contains "${output}" "Apply Kodi baseline:yes" \
+    "the Kodi baseline toggle reads as yes"
+
+  output="$(OMDB_API_KEY=fixture-omdb MDBLIST_API_KEY=fixture-mdblist \
+    run_provisioner_offline "${dir}" "${bin_dir}" --target 192.0.2.1 \
+    --no-harden 2>&1 || true)"
+
+  assert_contains "${output}" "Harden SSH:         no" \
+    "a disabled toggle reads as no"
+}
+
 # The read-only platform check is the first remote call of a run, and an
 # unreachable or unauthenticated device is its most common outcome. Ending on
 # ssh's own exit status leaves the operator with a bare transport message right
@@ -3422,6 +3496,9 @@ run_all_tests \
   test_a_failed_deployment_discards_the_remote_secret_payload \
   test_an_unlocked_addon_is_refused_before_any_remote_call \
   test_a_default_run_survives_the_empty_addon_array_under_bash_3_2 \
+  test_the_confirmation_prompt_names_the_effective_components \
+  test_the_confirmation_prompt_names_added_dependencies_and_the_room \
+  test_the_confirmation_prompt_renders_booleans_as_words \
   test_non_darwin_host_reaches_remote_validation \
   test_admin_key_setup_uses_portable_ssh_add_arguments \
   test_an_unreachable_target_fails_with_an_actionable_error \
