@@ -9,19 +9,20 @@ evidence and design rationale behind this contract are recorded in the
 
 ## What `room` manages, and what it deliberately does not
 
-`room` owns exactly ten Kodi settings: the desktop resolution, the display
-mode whitelist, both Dolby Vision settings, and the five audio passthrough
-flags. It writes only `guisettings.xml`, and only the room-scoped identifiers
-below.
+`room` owns exactly eleven Kodi settings: the desktop resolution, the display
+mode whitelist, both Dolby Vision settings, the six audio passthrough flags,
+and the decoded-audio channel layout. It writes only `guisettings.xml`, and
+only the room-scoped identifiers below.
 
 It does not manage:
 
 - **`advancedsettings.xml`.** The 4K remux buffering work tracked as #9 owns
   that file exclusively; `room` never touches it.
 - **The ALSA audio device strings** (`audiooutput.audiodevice` and
-  `audiooutput.passthroughdevice`). These are AM6B+ hardware facts, identical
-  in every room, not room state. They remain hand-set and unmanaged, tracked
-  as a follow-up in #17.
+  `audiooutput.passthroughdevice`). These are treated as a per-model
+  baseline shared across every AM6B+ unit, not room state. They are managed
+  by the `core` component instead; see [managed audio output](audio-output.md)
+  for how they are resolved.
 - Anything about the Sony or the Denon. `room` configures the CoreELEC
   playback host only.
 - Hostname, DHCP reservation, DNS, or CEC policy. Those belong to the network
@@ -73,12 +74,14 @@ exists to eliminate.
 | `ROOM_AUDIO_DTS` | `audiooutput.dtspassthrough` | `0` or `1` | DTS passthrough. |
 | `ROOM_AUDIO_TRUEHD` | `audiooutput.truehdpassthrough` | `0` or `1` | Dolby TrueHD passthrough. |
 | `ROOM_AUDIO_DTSHD` | `audiooutput.dtshdpassthrough` | `0` or `1` | DTS-HD passthrough. |
+| `ROOM_AUDIO_CHANNELS` | `audiooutput.channels` | a layout label, e.g. `7.1` | The decoded (non-bitstreamed) audio channel layout, stated as a label rather than Kodi's internal enum ordinal. See [managed audio output](audio-output.md) for how the label is resolved and why it does not affect passthrough. |
 
-**There is no Atmos setting.** Kodi exposes five audio passthrough flags, and
-none of them is Atmos. Atmos rides inside TrueHD (Blu-ray) and E-AC-3
-(streaming), so it is enabled by `ROOM_AUDIO_TRUEHD` and `ROOM_AUDIO_EAC3`. An
-operator looking for a `ROOM_AUDIO_ATMOS` key will not find one; there is
-nothing to add.
+**There is no Atmos setting.** Of the six audio passthrough flags, one
+(`ROOM_AUDIO_PASSTHROUGH`) is the master switch and the other five are
+codec-specific, and none of those five codec flags is Atmos. Atmos rides
+inside TrueHD (Blu-ray) and E-AC-3 (streaming), so it is enabled by
+`ROOM_AUDIO_TRUEHD` and `ROOM_AUDIO_EAC3`. An operator looking for a
+`ROOM_AUDIO_ATMOS` key will not find one; there is nothing to add.
 
 ### `ROOM_DOLBY_VISION` is inverted on write
 
@@ -154,10 +157,11 @@ naming the modes the display is not currently reporting.
 ## The four report statuses
 
 Verification emits `room.display.whitelist.status`, `room.display.resolution.status`,
-`room.dolbyvision.status`, and one status per audio codec
-(`room.audio.{passthrough,ac3,eac3,dts,truehd,dtshd}.status`). Each takes one
-of four values, and **only `ok` passes** — every other value counts as a
-verification failure and blocks the transaction from being committed.
+`room.dolbyvision.status`, one status per audio codec
+(`room.audio.{passthrough,ac3,eac3,dts,truehd,dtshd}.status`), and
+`room.audio.channels.status`. Each takes one of four values, and **only `ok`
+passes** — every other value counts as a verification failure and blocks the
+transaction from being committed.
 
 | Status | Meaning | Operator action |
 | --- | --- | --- |

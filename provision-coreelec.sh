@@ -30,6 +30,12 @@ ROOM_CONFIG_FILE=""
 # here so that a probe that returned nothing reaches its own die message rather
 # than an unbound-variable abort under set -u.
 ROOM_DISPLAY_RESOLUTION_INDEX=""
+# Resolved by coreelec_resolve_audio_devices before the transaction opens.
+# Declared here so a probe that returns nothing reaches its own die rather
+# than an unbound-variable abort under set -u.
+AUDIO_DEVICE_VALUE=""
+AUDIO_PASSTHROUGH_DEVICE_VALUE=""
+ROOM_AUDIO_CHANNELS_INDEX=""
 CHECK_CONFIG="0"
 CHECK_ARTIFACTS="0"
 PRINT_ADDON_SELECTION=""
@@ -117,8 +123,8 @@ Internal:
   --emit-remote-script NAME [ROOT]
                           Print the remote 'backup', 'payload', 'stage',
                            'deploy', 'rollback', 'finalize', 'verify',
-                           'verify-probe', or 'display-probe' program for ROOT
-                           (default /storage),
+                           'verify-probe', 'display-probe', or 'audio-probe'
+                           program for ROOT (default /storage),
                            then exit. Used by the test suites; it never
                            contacts a device.
   --render-remote-deploy-script [ROOT]
@@ -693,6 +699,12 @@ def main(argv):
                 "services.webserverssl": "false",
                 "services.webserverusername": config("KODI_WEB_USER"),
             })
+        audio_device = config("AUDIO_DEVICE_VALUE")
+        if audio_device:
+            kodi_values["audiooutput.audiodevice"] = audio_device
+        audio_passthrough = config("AUDIO_PASSTHROUGH_DEVICE_VALUE")
+        if audio_passthrough:
+            kodi_values["audiooutput.passthroughdevice"] = audio_passthrough
     if apply_services and weather_configured:
         kodi_values["weather.addon"] = WEATHER_ADDON_ID
     if apply_skin:
@@ -728,6 +740,12 @@ def main(argv):
         resolution_index = config("ROOM_DISPLAY_RESOLUTION_INDEX")
         if resolution_index:
             kodi_values["videoscreen.resolution"] = resolution_index
+        # Kodi's channel setting is an opaque enum ordinal resolved by the
+        # audio probe. With nothing resolved the layout is left exactly as it
+        # was rather than pinned to a number that may mean another layout.
+        channels_index = config("ROOM_AUDIO_CHANNELS_INDEX")
+        if channels_index:
+            kodi_values["audiooutput.channels"] = channels_index
 
     if apply_core or apply_skin or apply_room \
             or (apply_services and weather_configured):
@@ -2348,6 +2366,8 @@ CORE_SETTING_IDS = [
     "locale.keyboardlayouts",
     "locale.timezonecountry",
     "locale.timezone",
+    "audiooutput.audiodevice",
+    "audiooutput.passthroughdevice",
 ]
 SKIN_SETTING_IDS = ["lookandfeel.skin"]
 SERVICE_SETTING_IDS = ["weather.addon"]
@@ -2362,6 +2382,7 @@ ROOM_SETTING_IDS = [
     "audiooutput.dtspassthrough",
     "audiooutput.truehdpassthrough",
     "audiooutput.dtshdpassthrough",
+    "audiooutput.channels",
 ]
 SETTING_IDS = (CORE_SETTING_IDS + SKIN_SETTING_IDS + SERVICE_SETTING_IDS
                + ROOM_SETTING_IDS)
@@ -3619,6 +3640,166 @@ PROBE_PARSE
 REMOTE_DISPLAY_PROBE_BODY
 }
 
+# Resolves audio output intent against the enumeration the running Kodi
+# offers. The concrete ALSA strings embed the kernel card name, and the
+# channel setting is an opaque enum ordinal; neither is a stable fact worth
+# hard-coding into configuration that ships to every room. An intent Kodi does
+# not offer fails the probe rather than silently selecting something else --
+# "the output I asked for is gone" is exactly the drift this manages.
+coreelec_remote_audio_probe_script() {
+  cat <<'REMOTE_AUDIO_PROBE_BODY'
+set -eu
+umask 077
+probe_user=""
+probe_password=""
+probe_port="8080"
+probe_device=""
+probe_passthrough=""
+probe_channels=""
+while IFS= read -r probe_line; do
+  case "${probe_line}" in
+    KODI_WEB_USER=*) probe_user="${probe_line#KODI_WEB_USER=}" ;;
+    KODI_WEB_PASSWORD=*) probe_password="${probe_line#KODI_WEB_PASSWORD=}" ;;
+    KODI_PORT=*) probe_port="${probe_line#KODI_PORT=}" ;;
+    AUDIO_DEVICE=*) probe_device="${probe_line#AUDIO_DEVICE=}" ;;
+    AUDIO_PASSTHROUGH_DEVICE=*) probe_passthrough="${probe_line#AUDIO_PASSTHROUGH_DEVICE=}" ;;
+    ROOM_AUDIO_CHANNELS=*) probe_channels="${probe_line#ROOM_AUDIO_CHANNELS=}" ;;
+    "") ;;
+    *) printf "audio probe rejected an unknown parameter\n" >&2; exit 1 ;;
+  esac
+done
+
+[ -n "${probe_user}" ] || { printf "audio probe requires a Kodi user\n" >&2; exit 1; }
+if [ -z "${probe_device}" ] && [ -z "${probe_passthrough}" ] && [ -z "${probe_channels}" ]; then
+  printf "audio probe requires at least one intent\n" >&2
+  exit 1
+fi
+
+probe_dir="$(mktemp -d)"
+trap "rm -rf -- ${probe_dir}" EXIT INT TERM
+
+# The password reaches curl only through a mode-600 configuration file in a
+# directory the trap removes: it never appears in argv or in the process list.
+printf "user = \"%s:%s\"\n" "${probe_user}" "${probe_password}" \
+  > "${probe_dir}/curlrc"
+# The category is audio. audiooutput is not a valid category and Kodi 21
+# answers it with Invalid params (-32602).
+cat > "${probe_dir}/request.json" <<PROBE_REQUEST
+{"jsonrpc":"2.0","id":1,"method":"Settings.GetSettings","params":{"level":"expert","filter":{"section":"system","category":"audio"}}}
+PROBE_REQUEST
+
+if ! curl --silent --show-error --fail --max-time 20 \
+  --config "${probe_dir}/curlrc" \
+  --header "Content-Type: application/json" \
+  --data "@${probe_dir}/request.json" \
+  "http://127.0.0.1:${probe_port}/jsonrpc" > "${probe_dir}/response.json"; then
+  printf "audio probe could not reach Kodi on port %s\n" "${probe_port}" >&2
+  exit 1
+fi
+
+printf "%s\n%s\n%s\n" "${probe_device}" "${probe_passthrough}" "${probe_channels}" \
+  > "${probe_dir}/wanted"
+
+python3 - "${probe_dir}/response.json" "${probe_dir}/wanted" <<PROBE_PARSE
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    try:
+        document = json.load(handle)
+    except ValueError:
+        raise SystemExit("audio probe could not parse Kodi response")
+
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    wanted_device = handle.readline().strip()
+    wanted_passthrough = handle.readline().strip()
+    wanted_channels = handle.readline().strip()
+
+settings = document.get("result", {}).get("settings")
+if not isinstance(settings, list):
+    raise SystemExit("audio probe did not receive a settings list")
+
+by_id = {}
+for setting in settings:
+    if isinstance(setting, dict) and "id" in setting:
+        by_id[setting["id"]] = setting
+
+TOKENS = {
+    "analog": "@",
+    "sysdefault": "sysdefault",
+    "hdmi-multichannel": "surround71",
+    "spdif": "iec958",
+    "hdmi": "hdmi",
+}
+
+
+def option_pairs(setting_id):
+    setting = by_id.get(setting_id)
+    if setting is None:
+        raise SystemExit("audio probe: Kodi did not report %s" % setting_id)
+    raw = setting.get("options")
+    if not isinstance(raw, list):
+        definition = setting.get("definition")
+        if isinstance(definition, dict):
+            raw = definition.get("options")
+    if not isinstance(raw, list):
+        return []
+    pairs = []
+    for option in raw:
+        if isinstance(option, dict) and "label" in option and "value" in option:
+            pairs.append((str(option["label"]).strip(), option["value"]))
+    return pairs
+
+
+def resolve_device(setting_id, intent):
+    token = TOKENS.get(intent)
+    if token is None:
+        raise SystemExit("audio probe: unknown audio intent: %s" % intent)
+    offered = []
+    matches = []
+    for _label, value in option_pairs(setting_id):
+        text = str(value)
+        if not text.startswith("ALSA:"):
+            continue
+        selector = text[5:].split("|")[0]
+        offered.append(selector.split(":")[0])
+        if selector.split(":")[0] == token:
+            matches.append(text)
+    if len(matches) != 1:
+        raise SystemExit(
+            "audio probe: %s offers no single %s output for intent %s; "
+            "Kodi offers: %s"
+            % (setting_id, token, intent, ", ".join(offered) or "nothing"))
+    return matches[0]
+
+
+def resolve_channels(layout):
+    offered = []
+    matches = []
+    for label, value in option_pairs("audiooutput.channels"):
+        offered.append(label)
+        if label == layout:
+            matches.append(value)
+    if len(matches) != 1:
+        raise SystemExit(
+            "audio probe: audiooutput.channels does not offer layout %s; "
+            "Kodi offers: %s" % (layout, ", ".join(offered) or "nothing"))
+    return matches[0]
+
+
+if wanted_device:
+    sys.stdout.write("audio_device=%s\n"
+                     % resolve_device("audiooutput.audiodevice", wanted_device))
+if wanted_passthrough:
+    sys.stdout.write(
+        "audio_passthrough_device=%s\n"
+        % resolve_device("audiooutput.passthroughdevice", wanted_passthrough))
+if wanted_channels:
+    sys.stdout.write("audio_channels=%s\n" % resolve_channels(wanted_channels))
+PROBE_PARSE
+REMOTE_AUDIO_PROBE_BODY
+}
+
 # Internal test entry point: prints one remote script instead of running it.
 coreelec_emit_remote_script() {
   local name="$1" root="${2:-/storage}" key_file="${3:-}"
@@ -3632,9 +3813,10 @@ coreelec_emit_remote_script() {
     verify) coreelec_remote_verify_script "${root}" ;;
     verify-probe) coreelec_remote_verify_probe_source ;;
     display-probe) coreelec_remote_display_probe_script ;;
+    audio-probe) coreelec_remote_audio_probe_script ;;
     authorized-key) coreelec_remote_authorized_key_script "${root}" "${key_file}" ;;
     *)
-      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, or authorized-key, not: ${name}"
+      die "--emit-remote-script expects backup, payload, stage, deploy, rollback, finalize, verify, verify-probe, display-probe, audio-probe, or authorized-key, not: ${name}"
       ;;
   esac
 }
@@ -4342,6 +4524,35 @@ verify_remote_baseline() {
   coreelec_report_comparison "regional.timezone_cache" "${TIMEZONE}" \
     "$(coreelec_observation_value timezone_cache "${observations}" || true)" \
     || failures=$((failures + 1))
+
+    # Each output is its own independent pass/fail: one output left pointing
+    # at the wrong ALSA device must never be hidden behind the other being
+    # correct. Without a resolved value there is nothing correct to compare
+    # the observation to, so it is reported unobservable rather than guessed.
+    if [[ -n "${AUDIO_DEVICE_VALUE}" ]]; then
+      coreelec_room_compare_setting "audio.device" \
+        "${AUDIO_DEVICE_VALUE}" "setting.audiooutput.audiodevice" \
+        "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'audio.device.expected=%s\n' "${AUDIO_DEVICE}"
+      printf 'audio.device.observed=%s\n' \
+        "$(coreelec_observation_value setting.audiooutput.audiodevice "${observations}" || true)"
+      printf 'audio.device.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
+    if [[ -n "${AUDIO_PASSTHROUGH_DEVICE_VALUE}" ]]; then
+      coreelec_room_compare_setting "audio.passthroughdevice" \
+        "${AUDIO_PASSTHROUGH_DEVICE_VALUE}" \
+        "setting.audiooutput.passthroughdevice" "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'audio.passthroughdevice.expected=%s\n' "${AUDIO_PASSTHROUGH_DEVICE}"
+      printf 'audio.passthroughdevice.observed=%s\n' \
+        "$(coreelec_observation_value setting.audiooutput.passthroughdevice "${observations}" || true)"
+      printf 'audio.passthroughdevice.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
   fi
 
   # 36028 is Kodi's fixed localization ID for the CEC "Ignore" action; it is
@@ -4679,6 +4890,18 @@ verify_remote_baseline() {
       "$([[ "${ROOM_AUDIO_DTSHD}" == "1" ]] && printf true || printf false)" \
       "setting.audiooutput.dtshdpassthrough" "${observations}" \
       || failures=$((failures + 1))
+    if [[ -n "${ROOM_AUDIO_CHANNELS_INDEX}" ]]; then
+      coreelec_room_compare_setting "room.audio.channels" \
+        "${ROOM_AUDIO_CHANNELS_INDEX}" "setting.audiooutput.channels" \
+        "${observations}" \
+        || failures=$((failures + 1))
+    else
+      printf 'room.audio.channels.expected=%s\n' "${ROOM_AUDIO_CHANNELS}"
+      printf 'room.audio.channels.observed=%s\n' \
+        "$(coreelec_observation_value setting.audiooutput.channels "${observations}" || true)"
+      printf 'room.audio.channels.status=unobservable\n'
+      failures=$((failures + 1))
+    fi
   fi
 
   printf 'verification_failures=%s\n' "${failures}"
@@ -5061,6 +5284,18 @@ if (( ${#VERIFY_FIXTURE[@]} > 0 )); then
     coreelec_observation_value resolved.room.display.resolution \
       "${VERIFY_FIXTURE[0]}" || printf ''
   )"
+  AUDIO_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.device \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
+  AUDIO_PASSTHROUGH_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.passthroughdevice \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
+  ROOM_AUDIO_CHANNELS_INDEX="$(
+    coreelec_observation_value resolved.audio.channels \
+      "${VERIFY_FIXTURE[0]}" || printf ''
+  )"
   verify_remote_baseline "${VERIFY_FIXTURE[0]}" "${VERIFY_FIXTURE[1]}"
   exit $?
 fi
@@ -5077,6 +5312,21 @@ if (( ${#REPORT_FIXTURE[@]} > 0 )); then
   coreelec_collect_remote_observations() { cp "${REPORT_FIXTURE[1]}" "$1"; }
   finalize_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
   rollback_remote_deployment() { printf '%s\n' "${REMOTE_TRANSACTION}"; }
+  # As with the verify fixture seam, the pre-transaction audio probe never
+  # runs against a fixture, so the resolved values it would have supplied are
+  # read from the same resolved.* lines instead.
+  AUDIO_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.device \
+      "${REPORT_FIXTURE[1]}" || printf ''
+  )"
+  AUDIO_PASSTHROUGH_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.passthroughdevice \
+      "${REPORT_FIXTURE[1]}" || printf ''
+  )"
+  ROOM_AUDIO_CHANNELS_INDEX="$(
+    coreelec_observation_value resolved.audio.channels \
+      "${REPORT_FIXTURE[1]}" || printf ''
+  )"
   coreelec_conclude_deployment "${REPORT_FIXTURE[2]}" >/dev/null 2>&1 || true
   coreelec_write_report_file \
     "$(coreelec_report_path "${REPORT_FIXTURE[0]}")" "${REPORT_FIXTURE[2]}" "0"
@@ -5093,9 +5343,26 @@ if (( ${#CONCLUDE_FIXTURE[@]} > 0 )); then
     COREELEC_VERIFICATION_ATTEMPTS="$(
       find "${CONCLUDE_FIXTURE[0]}" -maxdepth 1 -type f -name '*.conf' | wc -l | tr -d ' '
     )"
+    conclude_fixture_first="${CONCLUDE_FIXTURE[0]}/1.conf"
   else
     COREELEC_VERIFICATION_ATTEMPTS=1
+    conclude_fixture_first="${CONCLUDE_FIXTURE[0]}"
   fi
+  # As with the verify and report fixture seams, the pre-transaction audio
+  # probe never runs against a fixture; its resolved values are read from the
+  # first attempt's observations instead.
+  AUDIO_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.device \
+      "${conclude_fixture_first}" || printf ''
+  )"
+  AUDIO_PASSTHROUGH_DEVICE_VALUE="$(
+    coreelec_observation_value resolved.audio.passthroughdevice \
+      "${conclude_fixture_first}" || printf ''
+  )"
+  ROOM_AUDIO_CHANNELS_INDEX="$(
+    coreelec_observation_value resolved.audio.channels \
+      "${conclude_fixture_first}" || printf ''
+  )"
   coreelec_collect_remote_observations() {
     printf 'verify\n' >> "${CONCLUDE_FIXTURE[4]}"
     if [[ -d "${CONCLUDE_FIXTURE[0]}" ]]; then
@@ -5346,6 +5613,74 @@ coreelec_resolve_room_display() {
   info "Resolved ${ROOM_DISPLAY_RESOLUTION} to Kodi resolution index ${ROOM_DISPLAY_RESOLUTION_INDEX}" >&2
 }
 
+# Runs in the same pre-transaction window as the display probe: after the
+# administrator key is installed and before create_remote_backup, so a failure
+# aborts with nothing to undo. Device intents belong to core, the channel
+# layout to room, so a run resolves only what its component scope asks for.
+coreelec_resolve_audio_devices() {
+  local script output line want_core=0 want_room=0
+
+  coreelec_component_effective core && want_core=1
+  coreelec_component_effective room && want_room=1
+  (( want_core == 1 || want_room == 1 )) || return 0
+
+  if (( want_core == 1 )); then
+    [[ -n "${AUDIO_DEVICE}" ]] \
+      || die "The core component requires AUDIO_DEVICE in the shared configuration"
+    [[ -n "${AUDIO_PASSTHROUGH_DEVICE}" ]] \
+      || die "The core component requires AUDIO_PASSTHROUGH_DEVICE in the shared configuration"
+  fi
+  if (( want_room == 1 )); then
+    [[ -n "${ROOM_AUDIO_CHANNELS}" ]] \
+      || die "The room component requires ROOM_AUDIO_CHANNELS in the room configuration"
+  fi
+
+  script="$(coreelec_remote_audio_probe_script)"
+  [[ "${script}" != *"'"* ]] \
+    || die "Internal error: the remote audio probe script must not contain a single quote"
+
+  info "Resolving audio output against the running Kodi" >&2
+  output="$(
+    {
+      printf 'KODI_WEB_USER=%s\n' "${KODI_USER}"
+      printf 'KODI_WEB_PASSWORD=%s\n' "${KODI_WEB_PASSWORD}"
+      printf 'KODI_PORT=%s\n' "${KODI_PORT}"
+      if (( want_core == 1 )); then
+        printf 'AUDIO_DEVICE=%s\n' "${AUDIO_DEVICE}"
+        printf 'AUDIO_PASSTHROUGH_DEVICE=%s\n' "${AUDIO_PASSTHROUGH_DEVICE}"
+      fi
+      if (( want_room == 1 )); then
+        printf 'ROOM_AUDIO_CHANNELS=%s\n' "${ROOM_AUDIO_CHANNELS}"
+      fi
+    } | ssh_keyed "sh -c '${script}'"
+  )" || die "The audio probe failed. Nothing on the device has been changed apart from the administrator key."
+
+  while IFS= read -r line; do
+    case "${line}" in
+      audio_device=*) AUDIO_DEVICE_VALUE="${line#audio_device=}" ;;
+      audio_passthrough_device=*) AUDIO_PASSTHROUGH_DEVICE_VALUE="${line#audio_passthrough_device=}" ;;
+      audio_channels=*) ROOM_AUDIO_CHANNELS_INDEX="${line#audio_channels=}" ;;
+    esac
+  done <<< "${output}"
+
+  if (( want_core == 1 )); then
+    [[ -n "${AUDIO_DEVICE_VALUE}" ]] \
+      || die "The audio probe did not resolve an output device for ${AUDIO_DEVICE}"
+    [[ -n "${AUDIO_PASSTHROUGH_DEVICE_VALUE}" ]] \
+      || die "The audio probe did not resolve a passthrough device for ${AUDIO_PASSTHROUGH_DEVICE}"
+    info "Resolved ${AUDIO_DEVICE} to ${AUDIO_DEVICE_VALUE}" >&2
+    info "Resolved ${AUDIO_PASSTHROUGH_DEVICE} to ${AUDIO_PASSTHROUGH_DEVICE_VALUE}" >&2
+  fi
+  if (( want_room == 1 )); then
+    case "${ROOM_AUDIO_CHANNELS_INDEX}" in
+      ""|*[!0-9]*)
+        die "The audio probe did not return a usable channel index for ${ROOM_AUDIO_CHANNELS}"
+        ;;
+    esac
+    info "Resolved ${ROOM_AUDIO_CHANNELS} to Kodi channel index ${ROOM_AUDIO_CHANNELS_INDEX}" >&2
+  fi
+}
+
 create_remote_backup() {
   local component_scope
   info "Creating a selective pre-provisioning backup on the CoreELEC STORAGE partition" >&2
@@ -5447,6 +5782,13 @@ coreelec_settings_payload() {
   # A run without room in scope must carry no room data at all: emitting these
   # only when room is effective keeps an out-of-scope run from leaking a
   # previous room's desired state onto the wire.
+  # The two device strings are AM6B+ hardware facts and belong to core; only
+  # the channel layout is room state.
+  if coreelec_component_effective core; then
+    coreelec_settings_payload_entry AUDIO_DEVICE_VALUE "${AUDIO_DEVICE_VALUE}"
+    coreelec_settings_payload_entry AUDIO_PASSTHROUGH_DEVICE_VALUE \
+      "${AUDIO_PASSTHROUGH_DEVICE_VALUE}"
+  fi
   if coreelec_component_effective room; then
     coreelec_settings_payload_entry ROOM_NAME "${ROOM_NAME}"
     coreelec_settings_payload_entry ROOM_DISPLAY_RESOLUTION_INDEX \
@@ -5460,6 +5802,8 @@ coreelec_settings_payload() {
     coreelec_settings_payload_entry ROOM_AUDIO_DTS "${ROOM_AUDIO_DTS}"
     coreelec_settings_payload_entry ROOM_AUDIO_TRUEHD "${ROOM_AUDIO_TRUEHD}"
     coreelec_settings_payload_entry ROOM_AUDIO_DTSHD "${ROOM_AUDIO_DTSHD}"
+    coreelec_settings_payload_entry ROOM_AUDIO_CHANNELS_INDEX \
+      "${ROOM_AUDIO_CHANNELS_INDEX}"
   fi
 }
 
@@ -5857,6 +6201,7 @@ fi
 install_public_key_if_needed
 
 coreelec_resolve_room_display
+coreelec_resolve_audio_devices
 
 REMOTE_BACKUP_PATH="$(create_remote_backup)"
 info "Remote backup created: ${REMOTE_BACKUP_PATH}"
