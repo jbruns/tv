@@ -1131,6 +1131,64 @@ test_production_config_acknowledges_the_kodi_installed_scrapers() {
   done
 }
 
+# A host with no port or protocol is a backend address nobody supplied. The
+# provisioner used to fill the gap with NextPVR's stock 8866/http, which is
+# right for a stock install and wrong for any other -- and the post-deploy
+# check that would have caught a wrong guess skipped itself precisely because
+# these values were missing. Guessing an address is now a configuration error.
+test_nextpvr_host_requires_an_explicit_port_and_protocol() {
+  local rc output
+  coreelec_config_defaults
+  NEXTPVR_HOST="nextpvr.example.lan"
+  NEXTPVR_PIN="nextpvr-pin-secret"
+  NEXTPVR_PORT=""
+  NEXTPVR_PROTOCOL=""
+  set +e
+  output="$(coreelec_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unset port must not be guessed" || return 1
+  assert_contains "${output}" "NEXTPVR_PORT" || return 1
+
+  NEXTPVR_PORT="443"
+  set +e
+  output="$(coreelec_config_validate 2>&1)"
+  rc=$?
+  set -e
+  assert_failure "${rc}" "an unset protocol must not be guessed" || return 1
+  assert_contains "${output}" "NEXTPVR_PROTOCOL" || return 1
+
+  NEXTPVR_PROTOCOL="https"
+  set +e
+  coreelec_config_validate >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" "a complete backend address is accepted" || return 1
+}
+
+# No host means no NextPVR at all, which is a valid configuration and must not
+# be turned into an error by the rule above.
+test_no_nextpvr_host_needs_no_port_or_protocol() {
+  local rc
+  coreelec_config_defaults
+  NEXTPVR_HOST=""
+  NEXTPVR_PIN=""
+  NEXTPVR_PORT=""
+  NEXTPVR_PROTOCOL=""
+  set +e
+  coreelec_config_validate >/dev/null 2>&1
+  rc=$?
+  set -e
+  assert_success "${rc}" "a deployment without NextPVR is valid" || return 1
+}
+
+test_production_config_pins_the_nextpvr_backend_address() {
+  coreelec_config_defaults
+  coreelec_config_load "${PRODUCTION_CONFIG}"
+  assert_eq "443" "${NEXTPVR_PORT}" "NEXTPVR_PORT" || return 1
+  assert_eq "https" "${NEXTPVR_PROTOCOL}" "NEXTPVR_PROTOCOL" || return 1
+}
+
 run_all_tests \
   test_defaults_are_pacific_english_us \
   test_comments_blank_lines_and_values_are_parsed \
@@ -1193,4 +1251,7 @@ run_all_tests \
   test_unmanaged_addon_allowlist_accepts_add_on_ids \
   test_unmanaged_addon_allowlist_defaults_to_acknowledging_nothing \
   test_unmanaged_addon_allowlist_rejects_malformed_values \
-  test_production_config_acknowledges_the_kodi_installed_scrapers
+  test_production_config_acknowledges_the_kodi_installed_scrapers \
+  test_nextpvr_host_requires_an_explicit_port_and_protocol \
+  test_no_nextpvr_host_needs_no_port_or_protocol \
+  test_production_config_pins_the_nextpvr_backend_address

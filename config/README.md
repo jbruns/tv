@@ -147,10 +147,24 @@ probe are documented in the
 | `AUDIO_PASSTHROUGH_DEVICE` | `hdmi` | `analog`, `sysdefault`, `hdmi-multichannel`, `spdif`, or `hdmi` |
 | `HOME_ASSISTANT_WEATHER_ENTITY` | unset | identifier charset |
 | `HOME_ASSISTANT_SUN_ENTITY` | unset | identifier charset |
-| `NEXTPVR_PORT` | unset | `1`-`65535` |
-| `NEXTPVR_PROTOCOL` | unset | `http` or `https` |
+| `NEXTPVR_PORT` | unset, required with a host | `1`-`65535` |
+| `NEXTPVR_PROTOCOL` | unset, required with a host | `http` or `https` |
 | `NEXTPVR_INSTANCE_NAME` | unset | free-text display charset |
+| `ADDON_UNMANAGED_ALLOWED` | unset | comma-separated add-on IDs |
 | `ADDON_ARTIFACT` | (41 records shipped) | repeatable, see below |
+
+`NEXTPVR_PORT` and `NEXTPVR_PROTOCOL` are both required whenever
+`NEXTPVR_HOST` is set, and provisioning fails naming the missing key rather
+than assuming NextPVR's stock `8866`/`http`. A guessed backend address is
+plausible enough to be written and wrong enough to be unreachable, and the
+post-deploy connectivity check skips itself when these keys are unset — so the
+guess was never tested. The host and PIN are secrets and belong in `.env`; the
+address the client dials is a deployment fact and belongs in the profile.
+
+`ADDON_UNMANAGED_ALLOWED` acknowledges add-ons that are expected on a device
+but deliberately absent from the artifact lock, such as the metadata scrapers
+Kodi installs on first boot. They are still inventoried in the report, but do
+not count as drift.
 
 `AUDIO_DEVICE` and `AUDIO_PASSTHROUGH_DEVICE` state intent, not the concrete
 ALSA device string; a pre-transaction probe resolves the intent against

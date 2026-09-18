@@ -666,7 +666,9 @@ def main(argv):
     weather_configured = bool(config("HOME_ASSISTANT_URL")
                               and config("HOME_ASSISTANT_WEATHER_ENTITY")
                               and have("HOME_ASSISTANT_TOKEN"))
-    nextpvr_configured = bool(config("NEXTPVR_HOST") and have("NEXTPVR_PIN"))
+    nextpvr_configured = bool(config("NEXTPVR_HOST") and have("NEXTPVR_PIN")
+                              and config("NEXTPVR_PORT")
+                              and config("NEXTPVR_PROTOCOL"))
     if apply_services and weather_configured:
         register_managed_directory(userdata)
 
@@ -790,13 +792,13 @@ def main(argv):
         if nextpvr_configured:
             set_addon_setting(instance, "host", config("NEXTPVR_HOST"))
             set_addon_setting(instance, "hostprotocol",
-                              config("NEXTPVR_PROTOCOL") or "http")
+                              config("NEXTPVR_PROTOCOL"))
             set_addon_setting(instance, "kodi_addon_instance_enabled", "true")
             set_addon_setting(instance, "kodi_addon_instance_name",
                               config("NEXTPVR_INSTANCE_NAME") or "NextPVR")
             set_addon_setting(instance, "pin", secret("NEXTPVR_PIN"))
             set_addon_setting(
-                instance, "port", config("NEXTPVR_PORT") or "8866"
+                instance, "port", config("NEXTPVR_PORT")
             )
         elif not os.path.exists(instance):
             # Without a backend, Kodi's generated localhost instance fails
@@ -4436,8 +4438,13 @@ coreelec_weather_configured() {
      && -n "${HOME_ASSISTANT_TOKEN:-}" ]]
 }
 
+# A backend address is complete or it is not configured at all. The port and
+# protocol are required alongside the host so that no run writes an address
+# nobody supplied, and so that the post-deploy connectivity check -- which
+# needs all four -- runs whenever an instance was written.
 coreelec_nextpvr_configured() {
-  [[ -n "${NEXTPVR_HOST}" && -n "${NEXTPVR_PIN:-}" ]]
+  [[ -n "${NEXTPVR_HOST}" && -n "${NEXTPVR_PIN:-}" \
+     && -n "${NEXTPVR_PORT:-}" && -n "${NEXTPVR_PROTOCOL:-}" ]]
 }
 
 coreelec_tmdb_helper_configured() {

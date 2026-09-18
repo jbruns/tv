@@ -476,6 +476,19 @@ coreelec_config_validate() {
   if [[ -n "${NEXTPVR_PIN:-}" && -z "${NEXTPVR_HOST:-}" ]]; then
     die "NEXTPVR_PIN requires NEXTPVR_HOST to be configured"
   fi
+  # A host with no port or protocol is a backend address nobody supplied.
+  # Filling the gap with NextPVR's stock 8866/http writes a plausible address
+  # that points at nothing on any deployment that moved, and the post-deploy
+  # connectivity check skips itself when these are unset -- so the guess was
+  # never tested. Refuse to guess instead.
+  if [[ -n "${NEXTPVR_HOST:-}" ]]; then
+    if [[ -z "${NEXTPVR_PORT:-}" ]]; then
+      die "NEXTPVR_HOST requires NEXTPVR_PORT to be set; the backend port is not guessed"
+    fi
+    if [[ -z "${NEXTPVR_PROTOCOL:-}" ]]; then
+      die "NEXTPVR_HOST requires NEXTPVR_PROTOCOL to be set; the backend protocol is not guessed"
+    fi
+  fi
 
   return 0
 }
