@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   python-offline:
     name: Python offline (${{ matrix.os }})
@@ -39,7 +42,8 @@ jobs:
         run: |
           mkdir -p .ci-evidence
           {
-            echo "source_sha=${GITHUB_SHA}"
+            echo "source_sha=${SOURCE_SHA}"
+            echo "workflow_sha=${GITHUB_SHA}"
             echo "runner_os=${RUNNER_OS}"
             echo "runner_arch=${RUNNER_ARCH}"
             uv --version
@@ -145,11 +149,12 @@ jobs:
           name: offline-ci-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           path: .ci-evidence/
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 30
 
   shell-transition:
     name: Shell transition suite
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - name: Check out source

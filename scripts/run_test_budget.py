@@ -85,10 +85,11 @@ def main() -> int:
         "platform": platform.platform(),
         "prior_elapsed_seconds": included_elapsed,
         "python": platform.python_version(),
-        "source_sha": os.environ.get("GITHUB_SHA") or os.environ.get("SOURCE_SHA"),
+        "source_sha": os.environ.get("SOURCE_SHA") or os.environ.get("GITHUB_SHA"),
         "timed_out": timed_out,
         "timeout_seconds": arguments.timeout_seconds,
         "total_elapsed_seconds": total_elapsed,
+        "workflow_sha": os.environ.get("GITHUB_SHA"),
     }
     arguments.result.parent.mkdir(parents=True, exist_ok=True)
     arguments.result.write_text(

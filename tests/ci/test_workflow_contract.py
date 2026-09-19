@@ -17,6 +17,9 @@ def test_workflow_is_least_privilege_and_runs_supported_platforms() -> None:
     }
     assert python_job["runs-on"] == "${{ matrix.os }}"
     assert python_job["timeout-minutes"] == 15
+    assert workflow["env"]["SOURCE_SHA"] == (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    )
 
 
 def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
@@ -65,7 +68,7 @@ def test_shell_transition_suite_remains_a_separate_job() -> None:
     shell_job = workflow["jobs"]["shell-transition"]
 
     assert shell_job["name"] == "Shell transition suite"
-    assert shell_job["runs-on"] == "ubuntu-24.04"
+    assert shell_job["runs-on"] == "macos-15"
     assert shell_job["timeout-minutes"] == 15
     run_commands = [step["run"] for step in shell_job["steps"] if "run" in step]
     assert any(
