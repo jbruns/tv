@@ -1115,6 +1115,24 @@ decisions make those details concrete.
 
 This record creates no build issues and changes no issue state or map.
 
+### Issue #46 refinement
+
+Issue #46 defines the build handoff in
+`docs/research/2026-09-18-build-issue-decomposition-handoff.md`.
+
+- M0 is split into preservation, decision integration, and G0
+  documentation-removal/sealing issues.
+- M1 is split into production scaffold, CI/budgets, ledger/validators, and an
+  exit-evidence issue.
+- The shell write-set and Effect audit is a parallel pre-M4 gate and does not
+  block M2.
+- Milestone exits are committed under
+  `docs/implementation/milestones/m<N>-exit.md`.
+- Build branches start from merged `main`, use one issue and merge-commit PR
+  each, and are never stacked on unmerged siblings.
+- Only the M0-M2 initial backlog is created at plan handoff. The #47
+  implementation lane follows M1; M3 and later remain just in time.
+
 ## 9. Cutover invariants
 
 - The pilot is disposable acceptance infrastructure, but reimage is a
