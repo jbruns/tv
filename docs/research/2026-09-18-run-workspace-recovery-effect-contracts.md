@@ -4,7 +4,7 @@ Date: 2026-09-18
 
 Ticket: [Define Run workspace, recovery, and Effect contracts](https://github.com/jbruns/tv/issues/43)
 
-Status: **Draft autonomous implementation contract; pending independent review**
+Status: **Final autonomous implementation contract; acceptance pending issue closure**
 
 ## 1. Decision
 
@@ -26,16 +26,29 @@ hostname, heartbeat, or local-only observation permits takeover.
 Before any managed-state mutation, the Reconciler durably stores:
 
 - the execution Run workspace and initial revision;
+- a cryptographically random full ownership token in a local `0600` secret
+  attachment, and only its digest in the initial workspace revision;
 - remote ownership bound to Device, Run, workspace, Plan, Device binding, and
   boot identity;
 - a complete controller-side, content-addressed before-state attachment;
 - a verified complete preparation manifest; and
 - a mutation-intent revision for the exact state-changing primitive.
 
-After the primitive, it append-revises the ordered mutation trace and any
-ambiguity. Intent without a durable outcome is ambiguous. A lost append
-acknowledgement is resolved by reloading and compare-and-append; it never
-creates a second history.
+Remote ownership is not durable merely because an SFTP request returned.
+Acquisition and every marker replacement use a typed repository-owned remote
+durability operation that atomically creates/replaces the object, syncs the
+marker and every relevant parent directory, then rereads and verifies the
+canonical marker digest. If the Device cannot provide that proof, mutation is
+unsupported and blocked; this contract makes no SFTP-only `fsync` promise.
+
+Immediately before every state-changing primitive, execution rereads the
+remote marker and verifies identity, token digest, generation, phase, and
+marker digest against the durable mutation intent. Afterwards it
+append-revises the ordered mutation trace and any ambiguity. Intent without a
+durable outcome is ambiguous. A lost local append acknowledgement receives
+one bounded reconciliation: reload once and, only if head is unchanged, repeat
+the same idempotent CAS append once; any other successor is a conflict. This
+is not a Device operation retry.
 
 Recovery never resumes forward mutation. `resume_verification` may only
 observe, assess, resolve ambiguity, finish pending Verification or post-Effect
@@ -55,7 +68,8 @@ tests without scaffolding unused production handlers.
 
 ## 2. Relationship to accepted decisions
 
-This contract refines, but does not replace:
+This research record refines the implementation architecture; it does not
+override accepted ADRs. It refines, but does not replace:
 
 - the accepted CoreELEC Reconciler architecture (tracked integration pending
   on this planning branch);
@@ -67,11 +81,12 @@ This contract refines, but does not replace:
 - the [core module and Resource Type contracts](2026-09-18-core-module-resource-type-contracts.md);
 - the [first managed-file test contract](2026-09-18-first-managed-file-test-contract.md).
 
-The architecture documents are authoritative for product semantics. This
-record supplies the previously deferred operational implementation contract.
-If older wording suggests automatic transient retries, remote backup
-authority, forward recovery, cleanup-driven status, or age-based pruning,
-this narrower and later decision controls.
+The architecture documents and ADRs remain authoritative for product
+semantics. This record supplies the previously deferred operational
+implementation contract. Integration into the main architecture document is
+a follow-up because that document is unavailable on this planning branch.
+Earlier research sketches receive the dated refinements linked here rather
+than a precedence claim.
 
 The legacy lifecycle transaction demonstrates useful safety evidence:
 complete-before-mutate manifests, verified pre-images, explicit phases,
@@ -93,32 +108,47 @@ are not carried forward.
 
 The Device lease and Run revision lease are deliberately not one token. A
 read-only planning Run may own its workspace while another invocation inspects
-an interrupted Run. Neither may mutate while a Device lease, nonterminal Run,
-or remote marker blocks new execution.
+an interrupted Run. Planning Runs do not block. Mutation is blocked by another
+active authority entry, Device lease, remote marker, quarantine, or unknown
+ownership state.
 
-### 3.2 Device-scoped nonterminal index
+### 3.2 Device-scoped mutation-active index
 
-`RunStore` maintains an index from logical Device ID to all nonterminal Runs.
-The index is updated transactionally with the revision that changes terminal
-membership. Its entries contain only stable IDs, revision/digest, status, and
-workspace ID—not filesystem paths.
+`RunStore` maintains a derived, fail-closed cache from logical Device ID to
+mutating or recovery Runs that are seeking or hold Device authority. A
+local-only planning Run in `planning`, `awaiting_approval`, or `ready` is not
+indexed and does not block another Plan or apply. An execution/recovery Run is
+indexed durably immediately before remote acquisition and remains indexed
+while remote ownership exists, a durable mutation intent exists, terminal
+cleanup/release is incomplete, or remote state is unknown.
 
-Before a new Plan is considered executable, planning reads:
+POSIX cannot atomically update a workspace head and a separate Device index.
+The index therefore is not canonical truth and must over-report rather than
+under-report:
+
+- add the entry durably before remote authority or any mutation;
+- never remove it until a terminal revision is durable and ownership is
+  durably released or converted to quarantine;
+- on uncertainty or corruption, retain/block;
+- verify entries against complete workspace scans;
+- repair only through `RunStore.rebuild_active_device_index`, which scans and
+  validates every workspace before atomically publishing a verified index.
+
+Entries contain only stable IDs, revision/digest, typed status and authority
+phase, and workspace ID—not filesystem paths. `find_active_by_device` merges a
+verified scan with the cache and fails closed on corruption or disagreement.
+
+Before a new mutation is considered executable, execution reads:
 
 - the local Device lease;
-- the nonterminal index; and
+- the mutation-active index through verified lookup; and
 - the remote Device marker, with present/absent/unknown distinguished.
 
-Any existing nonterminal Run or remote marker makes the Plan blocked for
-mutation. Planning may still return a complete read-only Plan with the
-blocker. `validate`, `inventory`, and `report` are unaffected. `observe`,
-`verify`, and `recover inspect` may read active state but must not alter the
-active Run, marker, helper lock, staged objects, or managed state.
-
-Applying the exact saved Plan may recognize its own originating planning Run;
-that expected entry does not by itself block creation of the execution Run.
-Any other nonterminal Run does. A newly computed Plan receives no such
-exception.
+Any other active authority entry, cache corruption/over-report that has not
+been verified away by rebuild, remote marker, or remote quarantine makes
+mutation blocked. Planning still completes normally and planning Runs retain
+their accepted lifecycle. `validate`, `inventory`, `report`, and read-only
+`inspect` remain available.
 
 ### 3.3 Acquisition order
 
@@ -126,20 +156,27 @@ New execution uses this order:
 
 1. validate local inputs and saved Plan binding;
 2. acquire the controller-local Device lease atomically;
-3. re-read the Device nonterminal index;
-4. create the execution workspace, append its first revision, and add it to
-   the Device nonterminal index;
-5. connect and revalidate Device identity and boot identity;
-6. inspect the remote infrastructure root without following symlinks;
-7. atomically and exclusively create remote Device ownership;
-8. publish the remote marker metadata by generation-checked replacement;
-9. begin observation/preparation.
+3. find active mutation authority by verified index/scan;
+4. create the execution workspace and generate the full random ownership
+   token through `RuntimeValues`;
+5. durably persist the token in a local `0600` secret attachment and its
+   digest in initial revision 1;
+6. durably add the execution Run's acquisition-pending index entry;
+7. connect and revalidate Device identity and boot identity;
+8. inspect the remote infrastructure root without following symlinks;
+9. pass the full token credential to typed remote exclusive acquisition;
+10. atomically create, sync, reread, and digest-verify remote ownership;
+11. append ownership-acquired truth and begin observation/preparation.
 
-The local workspace therefore exists before remote acquisition. If remote
-exclusive creation succeeds but its acknowledgement is lost, the local Run
-remains nonterminal and inspection treats ownership as present or unknown,
-never absent. An independently created foreign marker still cannot be
-imported or stolen in v1.
+The local token therefore exists before remote acquisition. A crash before
+remote marker creation permits local-only terminalization/cleanup. After
+marker creation the same full token is recoverable from the local workspace;
+`RemoteOwnership` never invents or returns it. If acquisition fails and the
+verified marker is absent before any mutation, execution automatically appends
+known-unchanged terminal `failed_partial`, records blocker/failure evidence,
+releases the local lease, and removes the index entry after durable
+terminalization. No operator finalize is required. Unknown acquisition
+outcome remains blocking.
 
 Recovery acquires the existing Run revision lease, then the Device lease, then
 validates that the remote marker still binds to the same Run/workspace/token
@@ -181,8 +218,10 @@ appears in a local filename. Public outcomes expose only `workspace_id`.
 
 `identity.json` binds schema version, Run ID, workspace ID, logical Device ID,
 Run kind, originating planning Run, Plan ID/full digest, and creation time.
-The full remote ownership token is local-only, stored mode `0600`, and never
-enters canonical Plan/Run documents, progress, logs, or remote files.
+The full remote ownership token is generated in full by `RuntimeValues`,
+stored before acquisition in a dedicated local-only mode-`0600` secret object,
+and never enters canonical Plan/Run documents, progress, logs, or remote
+files. Its SHA-256 digest is part of initial revision 1.
 
 ### 4.2 Safe local I/O
 
@@ -198,6 +237,13 @@ Every local operation:
 - fsyncs the parent directory;
 - treats inability to provide required durability as a blocker before Device
   mutation.
+
+`RunStore` receives a private `LocalDurability` seam. The production OS
+adapter owns secure open/write, file full-sync, atomic rename, directory sync,
+and acknowledgement. A scripted fault adapter injects failures or lost
+acknowledgements at those semantic points. It is internal to `RunStore`, is
+justified by those two adapters, and keeps tests on public behavior rather
+than private paths or syscall order.
 
 Attachments are immutable and content-addressed. Writing an existing digest
 must byte-verify it; mismatch is corruption. Revision files are immutable
@@ -222,13 +268,14 @@ Append protocol:
 1. encode and validate the proposed canonical revision;
 2. durably publish its immutable revision file;
 3. durably replace `head.json`;
-4. transactionally update terminal membership in the Device index;
+4. reconcile the derived Device index according to explicit typed index intent;
 5. return acknowledgement.
 
-If acknowledgement is lost, the caller reloads head. Matching revision bytes
-mean success; an unchanged head permits the same append; a different valid
-successor is a compare conflict. The caller never forks, renumbers, or writes
-an alternate branch.
+If acknowledgement is lost, the caller reloads exactly once. Matching revision
+bytes mean success; an unchanged head permits exactly one repetition of the
+same idempotent CAS append; a different valid successor is a compare conflict.
+The caller never forks, renumbers, writes an alternate branch, or retries a
+Device mutation/Effect.
 
 Canonical terminal truth and operational cleanup are separate. Cleanup
 receipts may advance after a terminal revision without changing canonical
@@ -259,6 +306,8 @@ Conceptual layout:
     <opaque-device-key>/
       ownership/                exclusive directory
         marker.json
+      quarantine/               abandonment/incident ownership
+        receipt.json
   runs/
     <opaque-run-key>/
       stage/
@@ -272,9 +321,15 @@ operator-supplied remote paths are forbidden.
 
 ### 5.2 Exclusive acquisition and marker
 
-The `ownership/` directory is acquired with a single atomic exclusive
-directory/create operation. A preflight absence result does not grant
-authority. Successful exclusive creation does.
+The `ownership/` directory is acquired with a repository-owned typed remote
+infrastructure operation, not generic Desired State and not an SFTP-only
+durability claim. It performs one atomic exclusive create, writes the marker
+privately, syncs/full-syncs marker bytes as supported by the fixed helper,
+syncs every relevant parent through
+`/storage/.coreelec-reconciler/devices/<opaque-device-key>/ownership/`,
+rereads the marker, and verifies its canonical digest. A preflight absence or
+successful create without verified persistence does not grant authority.
+Unsupported or unverifiable sync semantics block mutation.
 
 The marker contains no full token. It includes:
 
@@ -301,15 +356,26 @@ accepted Device binding, including pinned host key and platform identity.
 Timestamps are diagnostic only.
 
 Marker update is compare-and-swap over token digest, current generation,
-current marker digest, and expected phase. The replacement is written
-privately, durably where the Device filesystem supports it, then atomically
-renamed. The generation increments by one. A mismatch or unverifiable result
-blocks.
+current marker digest, and expected closed phase. The same typed durability
+operation writes privately, full-syncs, atomically renames, syncs relevant
+parents, rereads, and verifies the new digest before returning. The generation
+increments by one. A mismatch or unverifiable result blocks.
+
+Every state-changing primitive—including managed Resource mutation, Effect,
+rollback, cleanup, marker release, and quarantine conversion—must immediately
+first reread the marker and match its complete identity, token digest,
+generation, phase, and digest to the durable intent revision. A previously
+returned `RemoteOwnership` handle is not sufficient evidence.
 
 Existing ownership always blocks a new mutating Run. A foreign marker may be
 inspected but never deleted or modified. V1 cannot import another controller's
 workspace and cannot recover a foreign marker; it requires the original
 workspace/controller or a separately designed future import procedure.
+
+A quarantine receipt also blocks all new mutating Runs. It may be read and
+reported without authority. V1 defines no automatic clearance, reset, marker
+takeover, or quarantine removal; a future explicit clearance procedure must
+start with a fresh complete Device observation and its own safety contract.
 
 ### 5.3 Remote operation helper lock
 
@@ -347,7 +413,12 @@ versioned codecs:
 The adapter byte-verifies the attachment after durable publication. The
 preparation manifest then references every attachment, desired post-image,
 allowed intermediate state, staged object, and cleanup object by digest and
-exact binding.
+exact binding. For each Resource mutation it enumerates the complete normalized
+state after every possible primitive boundary, including presence/absence,
+entry kind, content digest, and managed mode. For example, replacement before
+`chmod` records “new content + old mode” as a distinct allowed intermediate.
+Omitting any reachable intermediate makes rollback unavailable and forces
+recovery-required handling if that boundary is crossed.
 
 Preparation becomes rollback-capable only after:
 
@@ -367,20 +438,22 @@ before-state required by this contract.
 
 Every state-changing primitive—stage write when it affects retained remote
 infrastructure, chmod, atomic replace, remove, restore, Effect execute, or
-manifest-owned cleanup—has a stable operation ID.
+manifest-owned cleanup—has a stable operation ID and an operation-specific
+closed intent variant.
 
-Before issuing it, execution append-revises a `MutationIntent` containing:
+Resource mutation and restore intents carry normalized state digests whose
+canonical value covers presence/absence, entry kind, exact content digest (or
+absence), and managed mode. Optional raw content/attachment digests remain
+separate fields. Effect intents carry Effect descriptor, approval, readiness,
+and evidence references. Cleanup intents carry exact manifest object and
+terminal/seal evidence references. No Effect or cleanup intent invents a fake
+content digest.
 
-- operation ID and kind;
-- Run/Resource/Change binding;
-- exact logical address and safe managed Device path where schema-approved;
-- pre-image, expected post-image, and allowed-intermediate digests;
-- preparation-manifest digest;
-- expected remote marker generation/digest;
-- attempt number, which is always 1 in v1.
-
-Only after that revision is durable may the primitive begin. Afterwards,
-execution records its typed receipt and ordered `MutationTrace`, then
+Every intent also binds operation, Run, Resource/Change where applicable,
+preparation manifest, full remote marker identity/generation/phase/digest, and
+attempt `1`. Only after the intent is durable does execution immediately
+reread and verify that marker tuple; only then may it issue the primitive.
+Afterwards it records the typed receipt and ordered `MutationTrace`, then
 append-revises. `applied`, `definitely_not_applied`, and `ambiguous` retain
 their issue-42 meanings.
 
@@ -436,19 +509,22 @@ awaiting_approval
 
 ready
   -> ownership_acquired
+  -> terminal
   -> interrupted
 
 ownership_acquired
   -> preparing
+  -> terminal
   -> interrupted
 
 preparing
   -> prepared
-  -> failed_known_unchanged
+  -> terminal
   -> interrupted
 
 prepared
   -> mutating
+  -> terminal
   -> interrupted
 
 mutating
@@ -477,8 +553,15 @@ rollback_verifying
 interrupted
   -> inspecting
   -> verifying
+  -> post_effect_observing
+  -> rolling_back
+  -> rollback_verifying
+  -> terminal
+
+post_effect_observing
   -> rolling_back
   -> terminal
+  -> interrupted
 
 terminal
   -> cleanup_pending
@@ -503,6 +586,23 @@ canonical Run statuses. No transition leaves terminal canonical truth.
 - A marker may be released only after terminal or abandonment truth is
   durable and required cleanup receipts are durable.
 - Cleanup failure cannot change canonical convergence/failure status.
+
+Internal-to-canonical status mapping is complete:
+
+| Internal workspace state | Canonical Run status |
+|---|---|
+| `planning` | `planning` |
+| `blocked` | `blocked` |
+| `noop` | `noop` |
+| `awaiting_approval` | `awaiting_approval` |
+| `ready` | `ready` |
+| `ownership_acquired`, `preparing`, `prepared`, `mutating`, `verifying`, `effect_barrier`, `post_effect_observing`, `rolling_back`, `rollback_verifying`, `inspecting` | `executing` |
+| `interrupted` | `interrupted` |
+| terminal fully verified Desired State | `converged` |
+| terminal original failure with verified restoration | `failed_rolled_back` |
+| terminal fully observed known non-converged state, including zero mutation/known unchanged | `failed_partial` |
+| terminal unknown/unsafe state, abandonment, or quarantine | `failed_recovery_required` |
+| `cleanup_pending`, `cleanup_complete` | retain the preceding terminal canonical status |
 
 ## 10. Inspection and recovery action computation
 
@@ -536,8 +636,8 @@ paths.
 | `inspect` | enough identity exists to avoid probing an arbitrary Device/path | read-only stable snapshot |
 | `resume_verification` | valid chain/binding, no live helper, no unperformed forward work required | observe/assess, resolve ambiguity, finish Verification/post-Effect observation, optionally route to approved rollback |
 | `rollback` | all section 8 conditions hold | conditional reverse restoration and fresh rollback Verification |
-| normal `finalize` | no mutation remains possible and final state is fully known, or terminal truth is already durable | preserve truth; clean exact manifest-owned objects with receipts |
-| recovery abandon/finalize | explicit recovery approval and safe binding sufficient to release ownership | append abandonment receipt and terminal `failed_recovery_required`, quarantine useful evidence, then release marker |
+| `finalize(normal)` | no mutation remains possible and final state is fully known, or terminal truth is already durable | preserve truth; seal/release ownership and clean exact manifest-owned objects with receipts |
+| `finalize(abandon)` | separate explicit abandonment approval and reason, plus sufficient binding to convert this Run's ownership safely | append abandonment receipt and terminal `failed_recovery_required`; atomically convert ownership marker into a durable remote quarantine/incident receipt |
 
 Plan expiry does not block observation, ambiguity resolution, or a rollback
 already approved by the original exact Plan. It blocks new forward execution.
@@ -550,13 +650,15 @@ Normal `finalize` never claims Convergence or erases unknown state. It cannot
 delete the only rollback evidence while managed state is unknown.
 
 A corrupt workspace, revision, manifest, codec, or attachment permits
-`inspect` and an explicitly approved finalize-as-recovery-required/abandon
-only. It never permits resume or rollback.
+`inspect` and separately approved `finalize(abandon)` only. It never permits
+resume or rollback.
 
 Before any action beyond inspect, Device binding is rechecked. Mismatch blocks
-resume and rollback. Only the narrow safe abandonment/finalization path may
-proceed, and only when it can identify and release this Run's ownership
-without touching managed state or foreign infrastructure.
+resume and rollback. Only the narrow safe abandonment path may proceed, and only when it can
+identify this Run's ownership without touching managed state or foreign
+infrastructure. It does not free the Device for mutation: the durable remote
+quarantine continues to block until a future explicit clearance/reset
+procedure based on fresh full observation. V1 defines no auto-clear.
 
 ## 11. Effects
 
@@ -594,8 +696,12 @@ proved, the Run requires recovery.
 The normal failure rollback path may execute the same underlying disruptive
 mechanism once more only as a distinct, preplanned `restore_effect`, after
 reverse rollback, when required to activate restored state. This is not a
-retry. It requires original approval, durable intent, and complete
-post-Effect re-observation. Failure becomes `failed_recovery_required`.
+retry. It is forbidden while the originating Effect outcome is ambiguous. It
+requires positive resolution of that Effect's definite prior outcome,
+readiness and post-Effect evidence, completed and verified rollback, an
+approved preplanned restore transition, durable intent, and complete
+post-restore-Effect re-observation. Failure becomes
+`failed_recovery_required`.
 
 The playlist first slice declares no Effect and implements no Effect handler.
 Its domain/state/test fixtures reserve the transition vocabulary so a later
@@ -645,8 +751,15 @@ An explicit abandonment:
 2. appends a durable abandonment receipt;
 3. appends terminal `failed_recovery_required`;
 4. quarantines useful local backup/evidence rather than deleting it;
-5. records remote cleanup/release intent and receipt; and
-6. releases this Run's marker only after the durable local receipt.
+5. records a remote quarantine-conversion intent;
+6. atomically replaces active ownership with a durable, digest-verified remote
+   quarantine/incident receipt and syncs its relevant parents; and
+7. removes the active index entry only after the terminal revision and
+   quarantine receipt are durable.
+
+Quarantine is still Device-scoped mutation exclusion. Read-only inspect and
+report remain allowed. No v1 path silently turns abandonment into authority
+for a later Run.
 
 Age alone never authorizes abandonment, marker removal, or evidence deletion.
 
@@ -654,15 +767,15 @@ Age alone never authorizes abandonment, marker removal, or evidence deletion.
 
 | Point | Controller crash / SSH disconnect | Device reboot | Concurrent controller | Required recovery truth |
 |---|---|---|---|---|
-| before remote marker | no Device authority acquired | none | exclusive acquire decides winner | local incomplete Run may finalize known-unchanged |
-| after local workspace/index, before marker | local nonterminal blocks this controller | none | remote exclusive acquisition still decides winner | finalize known-unchanged or continue exact Run |
+| before remote marker | no Device authority acquired | none | exclusive acquire decides winner | verified acquisition failure automatically terminalizes `failed_partial` known-unchanged |
+| after local workspace/index, before marker | local active entry blocks this controller | none | remote exclusive acquisition still decides winner | verified acquisition failure automatically terminalizes `failed_partial`; unknown outcome remains blocked |
 | after marker, before preparation | marker and local Run remain blocking | marker persists or becomes unknown | blocked | inspect, then finalize known-unchanged or abandon |
 | during incomplete preparation | no rollback promise | stage may remain | blocked | inspect; clean exact stage only after known-unchanged proof |
 | after complete prep, before intent | rollback data valid; no managed mutation | rebind before action | blocked | finalize known-unchanged or approved rollback no-op |
 | after durable intent, before request | outcome ambiguous by contract | reobserve | blocked | resume Verification/observation; never issue forward primitive |
 | after request, before outcome | ambiguous | reobserve boot/state | blocked | resolve by fresh complete observation |
 | after outcome, before revision | last durable intent makes it ambiguous | reobserve | blocked | reload, inspect, append observed truth |
-| revision append acknowledgement lost | reload/CAS; never branch | unchanged | blocked | accept matching durable successor or retry same append |
+| revision append acknowledgement lost | reload once/CAS; never branch | unchanged | blocked | accept matching successor or repeat the same idempotent append once only when unchanged |
 | before Verification | mutation known/ambiguous, convergence unknown | reobserve | blocked | `resume_verification` |
 | during Verification | read unknown, not absent | reobserve | blocked | repeat observation only |
 | Effect intent/execution disconnect | never rerun Effect | readiness/boot observation | blocked | observe readiness and affected Resources |
@@ -717,13 +830,35 @@ class RevisionLease:
     token: str
 
 
+class RunStatus(StrEnum):
+    PLANNING = "planning"
+    BLOCKED = "blocked"
+    NOOP = "noop"
+    AWAITING_APPROVAL = "awaiting_approval"
+    READY = "ready"
+    EXECUTING = "executing"
+    INTERRUPTED = "interrupted"
+    CONVERGED = "converged"
+    FAILED_ROLLED_BACK = "failed_rolled_back"
+    FAILED_PARTIAL = "failed_partial"
+    FAILED_RECOVERY_REQUIRED = "failed_recovery_required"
+
+
+class AuthorityPhase(StrEnum):
+    ACQUISITION_PENDING = "acquisition_pending"
+    REMOTE_OWNED = "remote_owned"
+    MUTATION_INTENT_DURABLE = "mutation_intent_durable"
+    RELEASE_PENDING = "release_pending"
+
+
 @dataclass(frozen=True, slots=True)
-class NonterminalRun:
+class ActiveDeviceRun:
     run_id: RunId
     workspace_id: WorkspaceId
     revision: int
     revision_digest: str
-    status: str
+    status: RunStatus
+    authority_phase: AuthorityPhase
 
 
 @dataclass(frozen=True, slots=True)
@@ -740,23 +875,67 @@ class AttachmentRef:
     codec: str
 
 
+@dataclass(frozen=True, slots=True)
+class LoadedAttachment:
+    reference: AttachmentRef
+    payload: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedRunChain:
+    revisions: tuple[StoredRevision, ...]
+    head: StoredRevision
+    terminal: bool
+
+
+class DeviceIndexIntent(StrEnum):
+    ADD_OR_RETAIN_ACTIVE = "add_or_retain_active"
+    REMOVE_AFTER_RELEASE_OR_QUARANTINE = "remove_after_release_or_quarantine"
+    NO_CHANGE = "no_change"
+
+
+@dataclass(frozen=True, slots=True)
+class AppendIntent:
+    next_status: RunStatus
+    terminal: bool
+    device_index: DeviceIndexIntent
+
+
+@dataclass(frozen=True, slots=True)
+class SealIntent:
+    terminal_revision: int
+    ownership_released_or_quarantined: bool
+
+
+class RuntimeValues(Protocol):
+    def new_ownership_token(self) -> bytes: ...
+
+
 class RunStore(Protocol):
     def acquire_device(self, device_id: DeviceId) -> DeviceLease: ...
-    def list_nonterminal(self, device_id: DeviceId) -> tuple[NonterminalRun, ...]: ...
+    def find_active_by_device(
+        self,
+        device_id: DeviceId,
+    ) -> tuple[ActiveDeviceRun, ...]: ...
+    def rebuild_active_device_index(self) -> tuple[ActiveDeviceRun, ...]: ...
     def create_run(
         self,
         device_lease: DeviceLease,
         run_id: RunId,
         device_id: DeviceId,
+        ownership_token: bytes,
+        ownership_token_digest: str,
+        initial_payload: bytes,
     ) -> tuple[RevisionLease, WorkspaceId]: ...
     def acquire_run(self, run_id: RunId) -> RevisionLease: ...
-    def load(self, run_id: RunId) -> StoredRevision: ...
+    def load_chain(self, run_id: RunId) -> VerifiedRunChain: ...
     def compare_and_append(
         self,
         lease: RevisionLease,
         expected_revision: int,
         expected_digest: str,
         payload: bytes,
+        intent: AppendIntent,
     ) -> StoredRevision: ...
     def attach(
         self,
@@ -765,14 +944,52 @@ class RunStore(Protocol):
         codec: str,
         payload: bytes,
     ) -> AttachmentRef: ...
+    def read_attachment(
+        self,
+        lease: RevisionLease,
+        reference: AttachmentRef,
+    ) -> LoadedAttachment: ...
+    def load_ownership_token(self, lease: RevisionLease) -> bytes: ...
+    def finalize_and_seal(
+        self,
+        lease: RevisionLease,
+        intent: SealIntent,
+    ) -> StoredRevision: ...
     def release_run(self, lease: RevisionLease) -> None: ...
     def release_device(self, lease: DeviceLease) -> None: ...
 ```
 
 `AttachmentRef` remains the closed digest-bearing value accepted in issue 41.
-The Device lease is required to create an execution Run, but planning may
-create a local-only workspace through a separate internal path that cannot
-obtain remote mutation authority.
+`RunStore` owns canonical revision bytes opaquely; it never decodes them to
+infer terminality or index behavior. The caller supplies typed `AppendIntent`
+and `SealIntent`, while `RunStore` validates chain/index invariants. Attachment
+reads always recompute and verify digest, kind, and codec. `load_chain` returns
+the complete verified chain, never merely a head that could hide a gap.
+
+The Device lease is required to create an execution Run, but planning uses a
+separate local-only path that cannot enter the mutation-active index or obtain
+remote authority. The active index is a derived cache rebuilt by verified
+cross-workspace scan; corrupt or over-reporting state blocks until rebuild.
+`finalize_and_seal` remains explicit and cannot remove the active index entry
+until terminal truth and remote release/quarantine are both durable.
+
+```python
+from typing import Protocol
+
+
+class LocalDurability(Protocol):
+    def write_private(self, object_id: str, payload: bytes) -> None: ...
+    def full_sync_file(self, object_id: str) -> None: ...
+    def atomic_replace(self, source_id: str, destination_id: str) -> None: ...
+    def sync_directory(self, directory_id: str) -> None: ...
+    def acknowledge(self, operation_id: str) -> None: ...
+```
+
+`PosixLocalDurability` is the production OS adapter.
+`ScriptedLocalDurability` injects faults/lost acknowledgements at these
+semantic operations. Both remain private to `RunStore`; tests assert public
+RunStore outcomes, verified chains/indexes, and canonical reports rather than
+private paths or syscall sequences.
 
 ```python
 from __future__ import annotations
@@ -800,6 +1017,18 @@ class Presence(StrEnum):
     UNKNOWN = "unknown"
 
 
+class RemoteMarkerPhase(StrEnum):
+    ACQUIRED = "acquired"
+    PREPARING = "preparing"
+    PREPARED = "prepared"
+    MUTATING = "mutating"
+    VERIFYING = "verifying"
+    EFFECT = "effect"
+    ROLLING_BACK = "rolling_back"
+    TERMINAL_RELEASE_PENDING = "terminal_release_pending"
+    QUARANTINE_PENDING = "quarantine_pending"
+
+
 @dataclass(frozen=True, slots=True)
 class RemoteOwnershipIdentity:
     device_id: DeviceId
@@ -818,16 +1047,40 @@ class RemoteOwnershipSnapshot:
     marker_digest: str | None
     token_digest: str | None
     identity: RemoteOwnershipIdentity | None
-    phase: str | None
+    phase: RemoteMarkerPhase | None
     manifest_digest: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class RemoteOwnership:
     identity: RemoteOwnershipIdentity
-    token: str
+    token_digest: str
     generation: int
+    phase: RemoteMarkerPhase
     marker_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteQuarantine:
+    identity: RemoteOwnershipIdentity
+    incident_receipt_digest: str
+    marker_digest: str
+
+
+class RemoteInfrastructureDurability(Protocol):
+    def atomic_create_sync_verify(
+        self,
+        object_key: str,
+        payload: bytes,
+        expected_digest: str,
+    ) -> None: ...
+    def atomic_replace_sync_verify(
+        self,
+        object_key: str,
+        expected_digest: str,
+        payload: bytes,
+        next_digest: str,
+    ) -> None: ...
 
 
 class RemoteRunOwnership(Protocol):
@@ -835,25 +1088,50 @@ class RemoteRunOwnership(Protocol):
     def acquire_exclusive(
         self,
         identity: RemoteOwnershipIdentity,
-        token_digest: str,
+        ownership_token: bytes,
     ) -> RemoteOwnership: ...
     def compare_and_update(
         self,
         ownership: RemoteOwnership,
-        expected_phase: str,
-        next_phase: str,
+        ownership_token: bytes,
+        expected_phase: RemoteMarkerPhase,
+        next_phase: RemoteMarkerPhase,
         manifest_digest: str | None,
     ) -> RemoteOwnership: ...
+    def verify_checkpoint(
+        self,
+        ownership: RemoteOwnership,
+        expected_phase: RemoteMarkerPhase,
+    ) -> RemoteOwnershipSnapshot: ...
     def release(
         self,
         ownership: RemoteOwnership,
-        abandonment_receipt_digest: str | None,
+        ownership_token: bytes,
+        terminal_receipt_digest: str,
     ) -> MutationReceipt: ...
+    def quarantine(
+        self,
+        ownership: RemoteOwnership,
+        ownership_token: bytes,
+        incident_receipt_digest: str,
+    ) -> RemoteQuarantine: ...
 ```
 
-The full token appears only in `RemoteOwnership` held in local sensitive
-storage. `release` is permitted only after the application proves the
-appropriate durable terminal/abandonment receipt.
+The full token is generated and persisted locally before acquisition, passed
+as a credential to every ownership mutation, and never returned or invented
+by `RemoteRunOwnership`. The remote marker and `RemoteOwnership` handle carry
+only its digest. Every method uses the typed remote durability capability and
+returns only after sync/reread/digest verification. `release` is permitted
+only after durable terminal truth; abandonment uses `quarantine`, not release.
+The production capability may invoke a fixed repository-owned SSH helper or
+fixed SSH operation; it accepts no Desired State or operator-selected path.
+
+The phase mapping is closed: acquisition produces `ACQUIRED`; preparation
+uses `PREPARING` then `PREPARED`; forward primitives use `MUTATING`;
+Verification uses `VERIFYING`; Effect work uses `EFFECT`; rollback uses
+`ROLLING_BACK`; normal terminal cleanup uses `TERMINAL_RELEASE_PENDING`; and
+abandonment uses `QUARANTINE_PENDING` before conversion to a quarantine
+receipt.
 
 ```python
 from __future__ import annotations
@@ -879,18 +1157,60 @@ class PrimitiveKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class MutationIntent:
+class MarkerCheckpoint:
+    identity: RemoteOwnershipIdentity
+    token_digest: str
+    generation: int
+    phase: RemoteMarkerPhase
+    marker_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedResourceState:
+    presence: Presence
+    entry_kind: str | None
+    content_digest: str | None
+    managed_mode: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceMutationIntent:
     operation_id: str
     primitive: PrimitiveKind
-    resource_id: str | None
-    change_id: str | None
+    resource_id: str
+    change_id: str
     preparation_manifest_digest: str
-    expected_before_digest: str
-    expected_after_digest: str
-    allowed_intermediate_digests: tuple[str, ...]
-    marker_generation: int
-    marker_digest: str
+    expected_before: NormalizedResourceState
+    expected_after: NormalizedResourceState
+    allowed_intermediates: tuple[NormalizedResourceState, ...]
+    content_attachment_digest: str | None
+    marker: MarkerCheckpoint
     attempt: int
+
+
+@dataclass(frozen=True, slots=True)
+class EffectMutationIntent:
+    operation_id: str
+    primitive: PrimitiveKind
+    effect_code: str
+    descriptor_digest: str
+    approval_evidence_ref: str
+    readiness_evidence_ref: str
+    marker: MarkerCheckpoint
+    attempt: int
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupMutationIntent:
+    operation_id: str
+    primitive: PrimitiveKind
+    manifest_object_ref: str
+    terminal_or_seal_evidence_ref: str
+    marker: MarkerCheckpoint
+    attempt: int
+
+
+MutationIntent = ResourceMutationIntent | EffectMutationIntent | CleanupMutationIntent
 
 
 @dataclass(frozen=True, slots=True)
@@ -900,8 +1220,11 @@ class MutationOutcomeRecord:
     observed_state_digest: str | None
 ```
 
-`attempt` is fixed to `1` in v1. An intent without a matching durable outcome
-is interpreted as ambiguous.
+`attempt` is fixed to `1` in v1. `NormalizedResourceState` is canonically
+digested and represents absence/presence, kind, content, and mode together.
+Effects and cleanup use evidence/manifest references rather than fake content
+digests. An intent without a matching durable outcome is interpreted as
+ambiguous.
 
 ```python
 from __future__ import annotations
@@ -923,6 +1246,26 @@ class RecoveryActionCode(StrEnum):
     FINALIZE = "finalize"
 
 
+class FinalizeMode(StrEnum):
+    NORMAL = "normal"
+    ABANDON = "abandon"
+
+
+class EffectDisposition(StrEnum):
+    NOT_STARTED = "not_started"
+    DEFINITELY_SUCCEEDED = "definitely_succeeded"
+    DEFINITELY_FAILED = "definitely_failed"
+    AMBIGUOUS = "ambiguous"
+
+
+class StateRelation(StrEnum):
+    BEFORE = "before"
+    POST = "post"
+    ALLOWED_INTERMEDIATE = "allowed_intermediate"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class RecoveryFact:
     code: str
@@ -935,23 +1278,47 @@ class RecoveryEvidence:
     run_id: RunId
     workspace_id: WorkspaceId
     stable_snapshot: bool
+    remote_ownership_presence: Presence
+    remote_generation: int | None
+    remote_phase: RemoteMarkerPhase | None
+    remote_marker_digest: str | None
+    remote_integrity_valid: bool | None
+    remote_quarantine_presence: Presence
     binding_matches: bool | None
     chain_valid: bool
+    chain_complete: bool
     attachments_valid: bool
+    codecs_valid: bool
     preparation_complete: bool
+    rollback_declared: bool
+    rollback_approved: bool
     live_helper: bool | None
     forward_work_unperformed: bool
-    current_state_digest: str | None
-    before_state_digest: str | None
-    known_run_state_digests: tuple[str, ...]
+    current_relation: StateRelation
+    before_state: NormalizedResourceState | None
+    post_state: NormalizedResourceState | None
+    allowed_intermediate_states: tuple[NormalizedResourceState, ...]
+    effect_disposition: EffectDisposition
+    effect_readiness_positive: bool | None
+    post_effect_evidence_complete: bool
+    rollback_complete_and_verified: bool
+    restore_effect_preplanned: bool
+    restore_effect_approved: bool
+    canonical_status: RunStatus
+    terminal_revision_durable: bool
+    cleanup_complete: bool
+    ownership_release_or_quarantine_durable: bool
     facts: tuple[RecoveryFact, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class AllowedRecoveryAction:
     code: RecoveryActionCode
+    finalize_mode: FinalizeMode | None
     allowed: bool
     reason_code: str
+    requires_approval: bool
+    requires_reason: bool
 
 
 def compute_recovery_actions(
@@ -961,7 +1328,9 @@ def compute_recovery_actions(
 ```
 
 `compute_recovery_actions` is pure and total over validated evidence. It
-performs no I/O and does not accept wall-clock age.
+performs no I/O and does not accept wall-clock age. It returns separate
+`FINALIZE/NORMAL` and `FINALIZE/ABANDON` variants. Abandon requires its own
+approval and reason; normal finalization cannot be reused as abandonment.
 
 ```python
 from __future__ import annotations
@@ -1014,17 +1383,22 @@ model but does not construct a production Effect registry or handler.
 
 Implement in the first managed-file slice:
 
-- filesystem `RunStore` with Device index, Device lease, Run revision lease,
-  opaque workspace, attachments, linear compare-and-append, safe durability,
-  and terminal/cleanup separation;
-- remote infrastructure validation, exclusive Device ownership, marker CAS,
-  and exact manifest-owned cleanup;
+- filesystem `RunStore` with derived fail-closed Device-active index,
+  scan/rebuild, Device lease, Run revision lease, opaque workspace, complete
+  chain and verified attachment reads, linear compare-and-append, explicit
+  finalize/seal, private production/scripted `LocalDurability`, and
+  terminal/cleanup separation;
+- secure runtime ownership-token generation and local persistence before
+  acquisition;
+- typed remote durability validation, exclusive Device ownership, closed-phase
+  marker CAS, marker reread before every primitive, quarantine conversion, and
+  exact manifest-owned cleanup;
 - one-Resource complete preparation and controller-side rollback attachment;
 - durable intent and outcome/ambiguity revisions for each mutation primitive;
 - stable inspection and pure allowed-action computation;
 - no-forward-work `resume_verification`;
 - strict conditional rollback and rollback Verification;
-- normal finalize and explicitly approved abandonment/finalize;
+- typed `finalize(normal)` and separately approved `finalize(abandon)`;
 - interruption tests across every durable boundary.
 
 Defer:
@@ -1044,34 +1418,69 @@ The issue-42 matrices remain mandatory and gain these exact cases:
 
 1. Device lease excludes a second mutating Run on the same controller while a
    separate Run revision lease remains independently testable.
-2. Any local nonterminal index entry blocks a new executable Plan.
-3. An existing remote marker, including foreign/malformed/symlink/nonregular,
-   blocks; absent-then-exclusive-create races have one winner.
-4. Marker CAS rejects wrong token digest, generation, marker digest, phase,
-   Device, Run, workspace, Plan, binding, or boot identity.
-5. Every mutation has durable intent first; intent without outcome recovers as
-   ambiguous.
-6. Append acknowledgement loss reloads one linear successor and never forks.
-7. Incomplete preparation cannot advertise or perform rollback.
-8. Attachment byte/kind/mode/codec/binding corruption blocks rollback.
-9. Recovery never completes a pending forward primitive or starts a pending
-   Change.
-10. Conditional rollback handles exact post-image, each allowed intermediate,
+2. Local-only planning/awaiting-approval/ready Runs do not enter the active
+   Device index and do not block another Plan/apply. Authority-seeking,
+   owned, intent-bearing, release-pending, corrupt, or uncertain entries do.
+3. Index addition is durable before acquisition; removal follows durable
+   terminal truth and verified release/quarantine. Crash cases prove
+   over-reporting but never under-reporting; corruption blocks until verified
+   scan/rebuild.
+4. The full random ownership token is persisted locally `0600` and its digest
+   is in initial revision 1 before remote acquire. Crash before marker is
+   local-only cleanup; after marker, recovery loads the same token.
+5. Existing remote marker/quarantine, including
+   foreign/malformed/symlink/nonregular, blocks; absent-then-exclusive-create
+   races have one winner.
+6. Remote durability unsupported or any marker/parent sync, reread, or digest
+   verification failure blocks before managed mutation. Tests do not pretend
+   generic SFTP offers `fsync`.
+7. Marker CAS rejects wrong token digest, generation, marker digest, phase,
+   Device, Run, workspace, Plan, binding, or boot identity. Every primitive
+   performs an immediate marker reread matching its durable intent.
+8. Every mutation has operation-specific durable intent first; Resource state
+   digests cover presence/kind/content/mode while Effect/cleanup intents use
+   evidence/manifest refs. Intent without outcome recovers as ambiguous.
+9. Append acknowledgement reconciliation reloads once and repeats only the
+   unchanged idempotent CAS append once; it never retries Device work or forks.
+10. Incomplete preparation or a missing reachable primitive-boundary state
+    cannot advertise or perform rollback.
+11. Attachment byte/kind/mode/codec/binding corruption blocks rollback.
+12. Recovery never completes a pending forward primitive or starts a pending
+    Change.
+13. Conditional rollback handles exact post-image, every fully normalized
+    allowed intermediate (including new content + old mode),
     already-before-state, third-party drift, unreadable state, and binding
     mismatch.
-11. Stable inspection distinguishes absent from unknown and rejects a marker
+14. Stable inspection distinguishes absent from unknown and rejects a marker
     generation change during inspection.
-12. Corrupt workspaces expose inspect plus approved abandon/finalize only.
-13. Plan expiry permits observation and preapproved rollback but no new
+15. `RecoveryEvidence` exercises every ownership, chain, attachment/codec,
+    preparation, rollback, current-state relation, helper, Effect,
+    terminality, and cleanup field. `AllowedRecoveryAction` distinguishes
+    normal finalize from separately approved/reasoned abandon.
+16. Corrupt workspaces expose inspect plus approved `finalize(abandon)` only.
+17. Plan expiry permits observation and preapproved rollback but no new
     forward mutation.
-14. Terminal truth precedes cleanup; cleanup failure/ambiguity leaves
+18. Terminal truth precedes cleanup; cleanup failure/ambiguity leaves
     canonical status byte-identical and reports leftovers.
-15. No automatic retry, sleep, Delay port, heartbeat authority, or automatic
+19. Acquisition failure with verified absent marker before mutation
+    automatically terminalizes known-unchanged `failed_partial`; no operator
+    finalize is offered.
+20. Abandonment converts ownership into durable remote quarantine, keeps new
+    mutations blocked, and permits read-only inspect/report; v1 has no clear.
+21. No automatic retry, sleep, Delay port, heartbeat authority, or automatic
     prune is observed.
-16. Effect state fixtures prove durable intent, expected-disconnect
+22. Effect state fixtures prove durable intent, expected-disconnect
     non-success, no recovery rerun, readiness, post-Effect observation, and
-    distinct approved `restore_effect`.
-17. Crash cases cover marker, preparation, intent, request/outcome,
+    that `restore_effect` is forbidden while the originating Effect is
+    ambiguous and requires definite outcome, readiness/post-Effect evidence,
+    verified rollback, and preapproval.
+23. Every canonical report fixture passes the independent invariant checker,
+    including the refined zero-mutation known-unchanged `failed_partial`.
+24. Production and scripted `LocalDurability` adapter tests inject every
+    write/full-sync/rename/directory-sync/ack point through public RunStore
+    behavior without private-path or syscall-order assertions.
+25. Crash cases cover token persistence, index update/rebuild, marker
+    durability, preparation, intent, marker recheck, request/outcome,
     Verification, append acknowledgement, Effect, rollback, and cleanup
     boundaries for controller crash, SSH disconnect, Device reboot, and a
     concurrent controller.
@@ -1167,20 +1576,26 @@ automation contracts. Public recovery identity is opaque.
 
 This decision is implementation-ready when independent review confirms:
 
-- [ ] the three ownership scopes and acquisition order cannot be conflated;
-- [ ] remote absence never grants ownership without exclusive acquisition;
-- [ ] local and remote path/permission/durability rules fail closed;
-- [ ] the Device nonterminal index and marker block new mutation;
-- [ ] preparation and intent are durably ordered before mutation;
-- [ ] append acknowledgement loss cannot fork history;
-- [ ] rollback authority is controller-side, complete, bound, and conditional;
-- [ ] recovery performs no forward mutation and never reruns an Effect;
-- [ ] allowed actions are pure consequences of stable evidence;
-- [ ] corrupt/foreign/unknown cases reduce authority rather than expanding it;
-- [ ] terminal truth precedes cleanup and survives cleanup failure;
-- [ ] no retry, delay, heartbeat takeover, import, Effect handler, or prune
+- [x] the three ownership scopes and acquisition order cannot be conflated;
+- [x] remote absence never grants ownership without exclusive acquisition;
+- [x] local and remote path/permission/durability rules fail closed;
+- [x] full token durability precedes remote acquisition and remote files store
+      only its digest;
+- [x] the derived Device-active index and marker/quarantine block new mutation
+      without making planning Runs blockers;
+- [x] preparation, complete intermediate enumeration, intent, and immediate
+      marker recheck are durably ordered before mutation;
+- [x] append acknowledgement loss cannot fork history or retry Device work;
+- [x] rollback authority is controller-side, complete, bound, and conditional;
+- [x] recovery performs no forward mutation and never reruns an Effect;
+- [x] ambiguous Effect outcome forbids `restore_effect`;
+- [x] allowed actions are pure consequences of complete stable evidence;
+- [x] corrupt/foreign/unknown cases reduce authority rather than expanding it;
+- [x] terminal truth precedes cleanup and survives cleanup failure;
+- [x] abandonment creates blocking quarantine rather than new authority;
+- [x] no retry, delay, heartbeat takeover, import, Effect handler, or prune
       implementation enters the first slice;
-- [ ] issue-42 tests and issue-44 pilot responsibilities are explicit;
-- [ ] Python and JSON sketches validate and contain no `Any` or pickle;
-- [ ] canonical automation fields expose no local workspace or remote
+- [x] issue-42 tests and issue-44 pilot responsibilities are explicit;
+- [x] Python and JSON sketches validate and contain no `Any` or pickle;
+- [x] canonical automation fields expose no local workspace or remote
       infrastructure paths.

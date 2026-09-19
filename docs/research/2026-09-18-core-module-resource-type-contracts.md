@@ -60,10 +60,22 @@ changing the accepted module boundaries, lifecycle, or ownership.
 
 [Issue 43](2026-09-18-run-workspace-recovery-effect-contracts.md) distinguishes
 the controller-local Device lease from the per-workspace revision lease and
-adds a Device-scoped nonterminal Run index plus persistent remote Device
+adds a derived fail-closed Device-active Run index plus persistent remote Device
 ownership. `RunStore.acquire` in section 8.10 is therefore superseded by
-separate Device-lease, Run-creation/lease, nonterminal lookup, attachment, and
-compare-and-append operations in the issue-43 sketches.
+separate Device-lease, Run-creation/lease, verified chain/attachment reads,
+active lookup/rebuild, typed compare-and-append index intent, and explicit
+finalize/seal operations in the issue-43 sketches. Planning-only Runs do not
+enter the active index. Its cache may over-report but must never under-report;
+corruption blocks until a verified workspace scan rebuilds it.
+
+`RuntimeValues` securely generates the full remote ownership token. `RunStore`
+persists it locally mode `0600` and records its digest in initial revision 1
+before `RemoteRunOwnership.acquire_exclusive` receives the full credential.
+The remote marker and ownership handle retain only the digest. Remote marker
+creation/update uses a typed repository-owned durability capability that
+atomically writes, syncs the marker and relevant parents, rereads, and verifies
+the digest. Unsupported durability blocks; generic SFTP is not claimed to
+provide `fsync`.
 
 Recovery also no longer means continuing the generic lifecycle at the next
 step. `resume_verification` may fresh-observe, assess, resolve ambiguity,
@@ -79,6 +91,11 @@ and an ordered trace/ambiguity revision afterwards; intent without outcome is
 ambiguous. These refinements preserve the single `Reconciler.execute`
 interface, deep execution module, strict codecs, and fresh-observe
 Verification rules.
+
+`RunStore` additionally owns a private `LocalDurability` seam with production
+OS and scripted fault adapters for write/full-sync/rename/directory-sync/ack
+points. This seam is not application API and tests assert public RunStore
+behavior rather than private paths.
 
 ## 1. Question
 
@@ -699,6 +716,7 @@ to leave reachable first-slice commands unsupported.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 
@@ -1428,13 +1446,42 @@ class WorkspaceId:
 
 
 @dataclass(frozen=True, slots=True)
-class Lease:
+class DeviceLease:
     token: str
+
+
+@dataclass(frozen=True, slots=True)
+class RevisionLease:
+    run_id: str
+    workspace_id: WorkspaceId
+    token: str
+
+
+class RunStatus(StrEnum):
+    PLANNING = "planning"
+    BLOCKED = "blocked"
+    NOOP = "noop"
+    AWAITING_APPROVAL = "awaiting_approval"
+    READY = "ready"
+    EXECUTING = "executing"
+    INTERRUPTED = "interrupted"
+    CONVERGED = "converged"
+    FAILED_ROLLED_BACK = "failed_rolled_back"
+    FAILED_PARTIAL = "failed_partial"
+    FAILED_RECOVERY_REQUIRED = "failed_recovery_required"
+
+
+class DeviceIndexIntent(StrEnum):
+    ADD_OR_RETAIN_ACTIVE = "add_or_retain_active"
+    REMOVE_AFTER_RELEASE_OR_QUARANTINE = "remove_after_release_or_quarantine"
+    NO_CHANGE = "no_change"
 
 
 @dataclass(frozen=True, slots=True)
 class AttachmentRef:
     digest: str
+    kind: str
+    codec: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1444,33 +1491,145 @@ class StoredRevision:
     payload: bytes
 
 
-class Workspace(Protocol):
-    @property
-    def workspace_id(self) -> WorkspaceId: ...
-    def attach(self, kind: str, payload: bytes) -> AttachmentRef: ...
+@dataclass(frozen=True, slots=True)
+class VerifiedRunChain:
+    revisions: tuple[StoredRevision, ...]
+    head: StoredRevision
+    terminal: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AppendIntent:
+    next_status: RunStatus
+    terminal: bool
+    device_index: DeviceIndexIntent
 
 
 class RunStore(Protocol):
-    def acquire(self, run_id: str) -> tuple[Lease, Workspace]: ...
-    def load(self, run_id: str) -> StoredRevision: ...
+    def acquire_device(self, device_id: str) -> DeviceLease: ...
+    def find_active_by_device(self, device_id: str) -> tuple[str, ...]: ...
+    def rebuild_active_device_index(self) -> tuple[str, ...]: ...
+    def create_execution_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: str,
+        device_id: str,
+        ownership_token: bytes,
+        ownership_token_digest: str,
+        initial_payload: bytes,
+    ) -> RevisionLease: ...
+    def acquire_run(self, run_id: str) -> RevisionLease: ...
+    def load_chain(self, run_id: str) -> VerifiedRunChain: ...
     def compare_and_append(
         self,
-        lease: Lease,
+        lease: RevisionLease,
         expected_revision: int,
+        expected_digest: str,
         payload: bytes,
+        intent: AppendIntent,
     ) -> StoredRevision: ...
-    def finalize(self, lease: Lease, expected_revision: int) -> StoredRevision: ...
+    def attach(
+        self,
+        lease: RevisionLease,
+        kind: str,
+        codec: str,
+        payload: bytes,
+    ) -> AttachmentRef: ...
+    def read_attachment(
+        self,
+        lease: RevisionLease,
+        reference: AttachmentRef,
+    ) -> bytes: ...
+    def finalize_and_seal(
+        self,
+        lease: RevisionLease,
+        terminal_revision: int,
+        ownership_released_or_quarantined: bool,
+    ) -> StoredRevision: ...
+```
+
+```python
+# standalone sketch
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol
+
+
+class RemoteMarkerPhase(StrEnum):
+    ACQUIRED = "acquired"
+    PREPARING = "preparing"
+    PREPARED = "prepared"
+    MUTATING = "mutating"
+    VERIFYING = "verifying"
+    EFFECT = "effect"
+    ROLLING_BACK = "rolling_back"
+    TERMINAL_RELEASE_PENDING = "terminal_release_pending"
+    QUARANTINE_PENDING = "quarantine_pending"
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteOwnership:
+    token_digest: str
+    generation: int
+    phase: RemoteMarkerPhase
+    marker_digest: str
+
+
+class RemoteRunOwnership(Protocol):
+    def acquire_exclusive(
+        self,
+        identity_digest: str,
+        ownership_token: bytes,
+    ) -> RemoteOwnership: ...
+    def inspect(self, device_id: str) -> RemoteOwnership | None: ...
+    def compare_and_update(
+        self,
+        ownership: RemoteOwnership,
+        ownership_token: bytes,
+        next_phase: RemoteMarkerPhase,
+    ) -> RemoteOwnership: ...
+    def verify_checkpoint(
+        self,
+        ownership: RemoteOwnership,
+        expected_phase: RemoteMarkerPhase,
+    ) -> RemoteOwnership: ...
+    def release(
+        self,
+        ownership: RemoteOwnership,
+        ownership_token: bytes,
+        terminal_receipt_digest: str,
+    ) -> None: ...
+    def quarantine(
+        self,
+        ownership: RemoteOwnership,
+        ownership_token: bytes,
+        incident_receipt_digest: str,
+    ) -> None: ...
+
+
+class LocalDurability(Protocol):
+    def write_private(self, object_id: str, payload: bytes) -> None: ...
+    def full_sync_file(self, object_id: str) -> None: ...
+    def atomic_replace(self, source_id: str, destination_id: str) -> None: ...
+    def sync_directory(self, directory_id: str) -> None: ...
+    def acknowledge(self, operation_id: str) -> None: ...
 ```
 
 Controller-local workspace paths never cross this seam. Exact lock files,
-directory layout, fsync, retention, remote markers, and recovery algorithms
-are deferred to issue 43. Canonical Resource evidence may publish the logical
-State Address and safe normalized managed Device path, but never credentials
-or temporary staging/backup/helper names. Recovery carries an opaque workspace
-ID; authorized human `inspect` presentation may resolve details without adding
-them to Plan/Run automation fields. The interface already requires a lease,
-opaque workspace, attachments, compare-and-append revisions, load, and
-finalize.
+directory layout, retention, remote markers, and recovery algorithms are
+specified by issue 43. Canonical payload bytes remain opaque to `RunStore`;
+typed status/terminal/index intent is explicit instead of decoded from those
+bytes. `load_chain` verifies the complete chain, attachment reads verify
+digest/kind/codec, active lookup can rebuild from all workspaces, and
+finalize/seal remains explicit. Canonical Resource evidence may publish the
+logical State Address and safe normalized managed Device path, but never
+credentials or temporary staging/backup/helper names.
+
+The filesystem implementation privately depends on `LocalDurability`, with a
+production OS adapter and a scripted fault adapter for secure write, file
+full-sync, atomic rename, directory sync, and acknowledgement injection.
 
 ### 8.11 Runtime values and progress
 
@@ -1488,6 +1647,7 @@ from uuid import UUID
 class RuntimeValues(Protocol):
     def now(self) -> datetime: ...
     def new_uuid7(self) -> UUID: ...
+    def new_ownership_token(self) -> bytes: ...
 
 
 class ProgressKind(StrEnum):

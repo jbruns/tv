@@ -8,6 +8,19 @@ Interactive evidence: [Throwaway Plan/Run state-model prototype](../../prototype
 
 Status: **Accepted contract-level decision**
 
+## 0. Issue 43 recovery refinement (2026-09-18)
+
+[Issue 43](2026-09-18-run-workspace-recovery-effect-contracts.md) keeps the
+closed canonical status set and refines `failed_partial`: it means any fully
+observed, known, non-converged final state, including zero mutation with known
+unchanged state after an execution blocker. It is not limited to a mixed
+state. Unknown or unsafe state remains `failed_recovery_required`.
+
+Recovery action codes remain `inspect`, `resume_verification`, `rollback`, and
+`finalize`. `finalize` now has a required closed mode, `normal` or `abandon`.
+Abandonment requires a separate explicit approval and reason and results in
+`failed_recovery_required`; it cannot reuse ordinary finalization authority.
+
 ## 1. Decision
 
 The Reconciler has two separate canonical JSON document kinds:
@@ -899,8 +912,8 @@ for review but cannot execute.
 | `interrupted` | No | Durable recovery point; invocation incomplete |
 | `converged` | Yes | Every convergence condition is freshly proven |
 | `failed_rolled_back` | Yes | Failed path restored, Desired State not achieved |
-| `failed_partial` | Yes | Mixed final state is fully observed and known |
-| `failed_recovery_required` | Yes | Final state or cleanup is unknown or unsafe |
+| `failed_partial` | Yes | Final state is fully observed, known, and non-converged; includes mixed state and zero-mutation known unchanged |
+| `failed_recovery_required` | Yes | Managed final state or ownership safety is unknown/unsafe, or Run was abandoned |
 
 `converged` requires every selected applicable Resource, including
 observe-only Resources, to have fresh final Verification after all relevant
@@ -996,10 +1009,13 @@ Action codes are:
 - `rollback`;
 - `finalize`.
 
-A later revision resumes or finalizes the same Run. `finalize` never asserts
-convergence; unresolved or unknown state becomes the appropriate failure
-status. Paths, lock layout, retention, and action mechanics are deferred to
-issue #43.
+`finalize` carries mode `normal` or `abandon`. `abandon` additionally requires
+a distinct approval and reason bound to the Run/workspace/Device. A later
+revision resumes or finalizes the same Run. `finalize` never asserts
+convergence; fully known non-converged state becomes `failed_partial`, while
+unresolved, unsafe, abandoned, or unknown state becomes
+`failed_recovery_required`. Paths, lock layout, retention, and action
+mechanics are specified by issue #43.
 
 ## 10. Full converged terminal Report
 
@@ -1398,7 +1414,12 @@ With the same inherent failure and Plan policy `fail_fast`,
       {
         "allowed": true,
         "code": "finalize",
-        "reason_code": "recovery.explicit-failure-finalization-available"
+        "mode": "normal",
+        "reason_code": "recovery.explicit-failure-finalization-available",
+        "requirements": {
+          "approval": false,
+          "reason": false
+        }
       }
     ],
     "workspace_id": "workspace:019950f8-4c00-7000-8000-000000000501"
