@@ -179,6 +179,19 @@ EOF
   (( selected_any == 1 )) || die "No supported pinned add-ons were selected for post-deployment configuration"
 }
 
+enforce_shell_permissions() {
+  local operation="observe" output status
+  [[ "${INTERACTIVE}" != "1" ]] || operation="interactive"
+  set +e
+  output="$(python3 "${SCRIPT_DIR}/scripts/check_shell_permissions.py" \
+    --entry-point configure-coreelec-addons.sh \
+    --operation "${operation}" 2>&1)"
+  status=$?
+  set -e
+  (( status == 0 )) \
+    || die "Shell write-set permission denied before Device contact: ${output}"
+}
+
 selected_addons_csv() {
   local addon_id output=""
   while IFS= read -r addon_id; do
@@ -269,6 +282,7 @@ main() {
     coreelec_prepare_kodi_web_password
     kodi_capabilities >/dev/null
     capability_state="validated"
+    enforce_shell_permissions
   fi
 
   report_file="$(report_path)"

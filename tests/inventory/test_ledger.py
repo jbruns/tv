@@ -238,6 +238,8 @@ def close_core_007(
         "closing_issue": 200,
         "closing_pr": 201,
     }
+    row["shell_write_set"]["status"] = "frozen"
+    row["permitted_effects"]["status"] = "frozen"
     row["transfers"] = [unmanaged_fact_transfer(source)]
 
 
@@ -267,6 +269,22 @@ def test_unmanaged_fact_accepts_transfer_from_recorded_shell_executor(
     exit_path.write_text("# M5 exit\n", encoding="utf-8")
 
     assert validate_ledger(path).valid
+
+
+def test_python_owner_requires_a_frozen_former_shell_permission(
+    tmp_path: Path,
+) -> None:
+    def leave_permission_audited(document: dict[str, Any]) -> None:
+        close_core_007(document, source="shell")
+        row = next(row for row in document["rows"] if row["id"] == "CORE-007")
+        row["shell_write_set"]["status"] = "audited"
+
+    path = write_changed_ledger(tmp_path, leave_permission_audited)
+    exit_path = tmp_path / "docs" / "implementation" / "milestones" / "m5-exit.md"
+    exit_path.parent.mkdir(parents=True)
+    exit_path.write_text("# M5 exit\n", encoding="utf-8")
+
+    assert "ledger.invalid-shell-permission" in diagnostic_codes(path)
 
 
 def close_guide_007(document: dict[str, Any], *, owner: str) -> None:

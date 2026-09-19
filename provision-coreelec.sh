@@ -24,6 +24,7 @@ EFFECTIVE_COMPONENTS=()
 CLI_COMPONENTS=()
 COMPONENTS_EXPLICIT="0"
 PRINT_COMPONENT_PLAN="0"
+PRINT_SHELL_WRITE_SET="0"
 ROOM_NAME=""
 ROOM_CONFIG_FILE=""
 # Resolved by coreelec_resolve_room_display before the transaction opens. Declared
@@ -115,6 +116,9 @@ Internal:
   --print-component-plan    Print the normalized requested and effective
                              component plan, then exit without contacting a
                              device.
+  --print-shell-write-set   Print the audited write set and Effects for the
+                             normalized operation, then exit without contacting
+                             a device.
   --transform-fixture ROOT PAYLOAD
                             Apply the Kodi/add-on settings transformer to ROOT
                              using a base64 KEY=value payload file, then exit.
@@ -4406,6 +4410,10 @@ while (( $# > 0 )); do
       PRINT_COMPONENT_PLAN="1"
       shift
       ;;
+    --print-shell-write-set)
+      PRINT_SHELL_WRITE_SET="1"
+      shift
+      ;;
     --print-addon-selection)
       (( $# >= 2 )) || die "--print-addon-selection requires a manifest path"
       PRINT_ADDON_SELECTION="$2"
@@ -4585,6 +4593,38 @@ coreelec_validate_addon_selection() {
         ;;
     esac
   done
+}
+
+coreelec_shell_permission_check() {
+  local operation="$1" output status scope addon
+  local arguments=(
+    "${SCRIPT_DIR}/scripts/check_shell_permissions.py"
+    --entry-point provision-coreelec.sh
+    --operation "${operation}"
+  )
+  if [[ "${APPLY_KODI}" != "1" ]]; then
+    arguments+=(--skip-kodi)
+  else
+    for scope in ${EFFECTIVE_COMPONENTS[@]+"${EFFECTIVE_COMPONENTS[@]}"}; do
+      arguments+=(--scope "${scope}")
+    done
+    for addon in ${ADDONS[@]+"${ADDONS[@]}"}; do
+      arguments+=(--addon "${addon}")
+    done
+  fi
+  if [[ "${HARDEN_SSH}" == "1" ]]; then
+    arguments+=(--harden-ssh)
+  else
+    arguments+=(--no-harden-ssh)
+  fi
+  set +e
+  output="$(python3 "${arguments[@]}" 2>&1)"
+  status=$?
+  set -e
+  if [[ "${PRINT_SHELL_WRITE_SET}" == "1" ]]; then
+    printf '%s\n' "${output}"
+  fi
+  (( status == 0 )) || die "Shell write-set permission denied before Device contact: ${output}"
 }
 
 # --- Verification, classification, and the redacted report ------------------
@@ -5874,6 +5914,18 @@ require_command tr
 # Every run ends by writing the audit report, whose configuration fingerprint
 # is a sha256sum call -- including the --no-kodi run that deploys no add-ons.
 require_command sha256sum
+require_command python3
+
+if [[ "${DEPLOY_ACTION}" == "rollback" ]]; then
+  coreelec_shell_permission_check rollback
+elif [[ "${DEPLOY_ACTION}" == "finalize" ]]; then
+  coreelec_shell_permission_check finalize
+else
+  coreelec_shell_permission_check deploy
+fi
+if [[ "${PRINT_SHELL_WRITE_SET}" == "1" ]]; then
+  exit 0
+fi
 
 SSH_COMMON=(
   -p "${SSH_PORT}"

@@ -14,10 +14,12 @@ Run the scaffold quality checks and build the source distribution and wheel:
 uv run ruff check .
 uv run ruff format --check \
   src scripts/run_test_budget.py scripts/check_inventory_milestones.py \
+  scripts/check_shell_permissions.py \
   tests/scaffold tests/inventory tests/ci \
   tests/conftest.py tests/support
 uv run mypy
 uv run python scripts/check_inventory_milestones.py
+python3 scripts/check_shell_permissions.py --audit
 uv run python scripts/run_test_budget.py \
   --label pure-unit-architecture \
   --budget-seconds 10 \

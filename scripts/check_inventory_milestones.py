@@ -4,6 +4,7 @@
 from pathlib import Path
 
 from coreelec_reconciler.inventory.ledger import validate_ledger
+from coreelec_reconciler.inventory.shell_permissions import audit_shell_map
 
 
 def main() -> int:
@@ -28,6 +29,21 @@ def main() -> int:
         f"{name}={count}" for name, count in result.disposition_totals.items()
     )
     print(f"validated rows={result.row_count} {dispositions} sha256={result.sha256}")
+    shell_audit = audit_shell_map(
+        Path("inventory/shell-write-sets.json"),
+        path,
+    )
+    if not shell_audit.valid:
+        for shell_diagnostic in shell_audit.diagnostics:
+            print(shell_diagnostic)
+        return 1
+    print(
+        "shell-audit "
+        f"rows={shell_audit.shell_inventory_rows} "
+        f"covered={shell_audit.covered_shell_inventory_rows} "
+        f"unknowns={shell_audit.unknown_targets} "
+        f"sha256={shell_audit.sha256}"
+    )
     return 0
 
 

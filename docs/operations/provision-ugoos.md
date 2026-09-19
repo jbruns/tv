@@ -10,6 +10,16 @@ For unique settings, use the selected room's Ugoos guide, such as the current
 
 ## Full baseline and scoped maintenance
 
+Before any Device contact, the legacy entry points enforce the
+[audited shell write-set permissions](shell-write-set-permissions.md). The
+effective permission decision is based on accepted inventory IDs and Effects,
+not component names. After the `NewShows.xsp` handoff, `skin` and `baseline`
+runs are rejected because their audited writes include `SKIN-025`. Do not
+bypass that freeze. Interactive add-on workflows and provisioning rollback
+currently have untraceable dynamic targets and therefore fail closed; see the
+audit document for the retained pilot blockers and safe finalize/inspection
+operations.
+
 An invocation without `--component` applies the full shared baseline. This
 remains true for the legacy `--addon ID` form: it filters the locked artifact
 selection but does not narrow shared settings. Explicit components narrow
