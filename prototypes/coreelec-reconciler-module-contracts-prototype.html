@@ -1,0 +1,1178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Throwaway CoreELEC Reconciler Module Contracts Prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17212b;
+      --muted: #5b6875;
+      --line: #d7dfe6;
+      --paper: #fff;
+      --wash: #f3f6f8;
+      --accent: #176b87;
+      --accent-soft: #e6f3f7;
+      --good: #176b3a;
+      --warn: #875b08;
+      --bad: #9b2c2c;
+      --code: #101820;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--wash);
+      color: var(--ink);
+      font: 15px/1.48 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1560px, calc(100% - 28px)); margin: 22px auto 60px; }
+    h1, h2, h3 { line-height: 1.2; margin: 0 0 10px; }
+    h1 { font-size: clamp(25px, 3vw, 38px); }
+    h2 { font-size: 20px; }
+    h3 { font-size: 16px; }
+    p { margin: 6px 0 12px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .banner, .panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 17px;
+      margin-bottom: 15px;
+    }
+    .banner { border-top: 5px solid var(--accent); }
+    .throwaway {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #fff0d6;
+      color: #714800;
+      font-weight: 850;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    .question { font-size: 18px; font-weight: 760; max-width: 1250px; }
+    .muted { color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 15px; }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-7 { grid-column: span 7; }
+    .span-6 { grid-column: span 6; }
+    .span-5 { grid-column: span 5; }
+    .span-4 { grid-column: span 4; }
+    @media (max-width: 1000px) {
+      .span-8, .span-7, .span-6, .span-5, .span-4 { grid-column: span 12; }
+    }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+    label { display: grid; gap: 4px; font-weight: 680; }
+    select, button {
+      font: inherit;
+      border: 1px solid #aeb9c3;
+      border-radius: 7px;
+      background: white;
+      color: var(--ink);
+      padding: 8px 10px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); background: var(--accent-soft); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    button.danger { border-color: #cf8d8d; color: var(--bad); }
+    button.done { background: #e9f6ed; border-color: #9fc5aa; }
+    .tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; }
+    .tab { white-space: nowrap; }
+    .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .walkthrough { background: var(--accent-soft); border: 1px solid #b9dce5; border-radius: 8px; padding: 14px; }
+    .steps { display: flex; flex-wrap: wrap; gap: 8px; }
+    .step::before { content: attr(data-step) ". "; font-weight: 850; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 9px; }
+    .stat { border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fbfcfd; }
+    .stat b { display: block; color: var(--muted); font-size: 12px; }
+    .stat span { font-weight: 760; overflow-wrap: anywhere; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #edf1f4;
+      font-size: 12px;
+      font-weight: 760;
+      margin: 1px 3px 1px 0;
+    }
+    .pill.good { background: #e5f4ea; color: var(--good); }
+    .pill.warn { background: #fff2d7; color: var(--warn); }
+    .pill.bad { background: #fde7e7; color: var(--bad); }
+    .pill.recommended { background: var(--accent); color: white; }
+    .transition { border-left: 5px solid var(--accent); }
+    .transition.rejected { border-left-color: var(--bad); background: #fff8f8; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 7px 6px; overflow-wrap: anywhere; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .025em; }
+    tr.selected { background: var(--accent-soft); }
+    .scroll { overflow: auto; }
+    pre {
+      margin: 0;
+      max-height: 580px;
+      overflow: auto;
+      background: var(--code);
+      color: #e8eef3;
+      padding: 13px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      tab-size: 2;
+      white-space: pre;
+    }
+    details summary { cursor: pointer; font-weight: 760; }
+    .callout { padding: 10px 12px; border-radius: 7px; background: #f7f9fa; border: 1px solid var(--line); }
+    .good-text { color: var(--good); }
+    .bad-text { color: var(--bad); }
+    .warn-text { color: var(--warn); }
+    ul.compact { margin: 6px 0; padding-left: 20px; }
+    .trace { margin: 0; padding-left: 21px; }
+    .trace li { margin: 5px 0; }
+    .candidate-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
+  </style>
+</head>
+<body>
+<main>
+  <section class="banner">
+    <span class="throwaway">Throwaway logic prototype — accepted decision evidence, not production implementation</span>
+    <h1>CoreELEC Reconciler module and interface contract</h1>
+    <p class="question">How does the confirmed single typed application interface keep workflow orchestration, Resource Type semantics, Device I/O, execution, reporting, and recovery local while enforcing inward dependency direction?</p>
+    <p class="muted">The final selection is the typed <code>Reconciler.execute(command)</code> interface with command-specific overloads, a private typed Resource Type runtime, and only real external seams. Rejected candidates remain available for comparison.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Guided walkthroughs</h2>
+    <div id="tabs" class="tabs"></div>
+    <div id="walkthrough" class="walkthrough"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Free play</h2>
+    <div class="controls">
+      <label>Candidate design
+        <select id="design-select"></select>
+      </label>
+      <button class="primary" data-action="START_PLAN">Start plan</button>
+      <button data-action="START_APPLY">Start apply</button>
+      <button data-action="START_VERIFY">Start verify</button>
+      <button data-action="START_RECOVERY">Start recovery</button>
+      <button class="primary" data-action="ADVANCE">Advance lifecycle</button>
+      <button data-action="INJECT" data-kind="converged">Inject converged</button>
+      <button data-action="INJECT" data-kind="drift">Inject drift</button>
+      <button data-action="INJECT" data-kind="symlink">Inject symlink</button>
+      <button data-action="INJECT" data-kind="stale">Inject stale precondition</button>
+      <button data-action="INJECT" data-kind="mutation_failure">Fail mutation</button>
+      <button data-action="INJECT" data-kind="verification_mismatch">Mismatch Verification</button>
+      <button data-action="INJECT" data-kind="rollback_failure">Fail rollback</button>
+      <button data-action="INJECT" data-kind="interruption">Interrupt next durable phase</button>
+      <button data-action="TOGGLE_EFFECT">Toggle hypothetical Effect</button>
+      <button data-action="ATTEMPT_IMPORT" data-from="domain" data-to="paramiko">Domain imports Paramiko</button>
+      <button data-action="ATTEMPT_IMPORT" data-from="planning" data-to="adapters">Planner imports adapter</button>
+      <button data-action="ATTEMPT_IMPORT" data-from="cli" data-to="sftp">CLI calls SFTP</button>
+      <button data-action="TRANSPORT_DECIDE">Transport decides Convergence</button>
+      <button class="danger" data-action="RESET">Reset</button>
+    </div>
+  </section>
+
+  <section id="last-transition" class="panel transition"></section>
+
+  <section class="grid">
+    <section class="panel span-12">
+      <h2>Full lifecycle state after every action</h2>
+      <div id="state-summary" class="stat-grid"></div>
+    </section>
+
+    <section class="panel span-12">
+      <h2>Final selection and four rejected candidates: depth, locality, seams, and tradeoffs</h2>
+      <div id="tradeoffs" class="scroll"></div>
+    </section>
+
+    <section class="panel span-6">
+      <h2>Selected exact package/module tree</h2>
+      <pre id="package-tree"></pre>
+    </section>
+    <section class="panel span-6">
+      <h2>Selected external interface</h2>
+      <div id="external-notes"></div>
+      <pre id="external-interface"></pre>
+    </section>
+
+    <section class="panel span-6">
+      <h2>Internal Resource Type interface and private erasure</h2>
+      <pre id="resource-interface"></pre>
+    </section>
+    <section class="panel span-6">
+      <h2>Ports and concrete/fake adapters</h2>
+      <div id="ports"></div>
+    </section>
+
+    <section class="panel span-7">
+      <h2>Dependency arrows and illegal import detection</h2>
+      <pre id="dependencies"></pre>
+      <div id="import-result" class="callout"></div>
+    </section>
+    <section class="panel span-5">
+      <h2>Behavior ownership and seam facts</h2>
+      <div id="ownership" class="scroll"></div>
+    </section>
+
+    <section class="panel span-12">
+      <h2><code>skin.playlist.new-shows</code> lifecycle</h2>
+      <div id="resource-state" class="stat-grid"></div>
+    </section>
+
+    <section class="panel span-7">
+      <h2>Call trace</h2>
+      <ol id="trace" class="trace"></ol>
+    </section>
+    <section class="panel span-5">
+      <h2>Rejected transition / invariant</h2>
+      <div id="rejection" class="callout"></div>
+      <h3 style="margin-top:14px">Plan / Run domain result</h3>
+      <div id="report-result"></div>
+    </section>
+
+    <section class="panel span-12">
+      <details>
+        <summary>Portable pure JavaScript state (complete)</summary>
+        <pre id="raw-state"></pre>
+      </details>
+    </section>
+  </section>
+</main>
+
+<script>
+const ReconcilerPrototype = (() => {
+  "use strict";
+
+  const PACKAGE_TREES = {
+    A: `src/coreelec_reconciler/
+├── interface.py                 # Controller.execute(Command) -> Outcome
+├── controller.py                # complete workflow dispatcher
+├── config/                      # authored boundary + composition
+├── domain/                      # immutable vocabulary/results
+├── planning/                    # pure Plan construction
+├── resource_types/
+│   ├── contracts.py             # internal typed lifecycle
+│   ├── registry.py              # explicit repository-owned registration
+│   └── kodi_smart_playlist/
+├── execution/                   # apply, Verification, rollback, recovery
+├── ports/                       # Device + Run-store interfaces
+├── adapters/                    # Paramiko/Kodi/local concrete adapters
+├── reporting/                   # canonical + human renderers
+└── cli/                         # parsing + composition root`,
+    B: `src/coreelec_reconciler/
+├── application.py               # Reconciler.plan/apply/verify/recover
+├── requests.py                  # narrow workflow request dataclasses
+├── config/                      # authored boundary + fixed composition
+├── domain/                      # Plan/Run/evidence/failure models
+├── planning/                    # pure graph, Change, Effect scheduling
+├── resource_types/
+│   ├── contracts.py
+│   ├── registry.py
+│   └── kodi_smart_playlist/
+├── execution/                   # lifecycle ordering + recovery
+├── ports/                       # capability-specific Device + Run store
+├── adapters/                    # production and fake adapters
+├── reporting/                   # Plan/Run renderers only
+└── cli/                         # argparse + composition root`,
+    C: `src/coreelec_reconciler/
+├── resource_api.py              # resolve/observe/assess/apply/rollback exposed
+├── sessions.py                  # caller assembles lifecycle phases
+├── config/
+├── domain/
+├── planning/
+├── resource_types/
+│   ├── generic.py               # broad heterogeneous protocol
+│   ├── registry.py
+│   └── kodi_smart_playlist/
+├── transports/
+├── execution_helpers/
+├── reporting/
+└── cli/                         # must understand phase ordering`,
+    D: `src/coreelec_reconciler/
+├── reconciler.py                # handle(Command) -> Outcome
+├── config/
+├── resource_types/
+├── planning/
+├── execution/
+├── ports/
+│   ├── remote_file_reader.py
+│   ├── remote_file_writer.py
+│   ├── remote_metadata.py
+│   ├── kodi_rpc.py
+│   ├── clock.py
+│   ├── ids.py
+│   ├── lease.py
+│   ├── revisions.py
+│   └── workspace.py
+├── adapters/
+├── reporting/
+└── cli/                         # composition root`,
+    H: `src/coreelec_reconciler/
+├── application/
+│   ├── commands.py              # closed command/outcome unions
+│   └── reconciler.py            # overloaded execute(command)
+├── config/
+│   ├── boundary.py              # PyYAML/Pydantic only here
+│   ├── composition.py
+│   └── resolution.py
+├── domain/
+│   ├── resources.py
+│   ├── evidence.py
+│   ├── plans.py
+│   ├── runs.py
+│   ├── effects.py
+│   └── failures.py
+├── resource_types/
+│   ├── contracts.py             # typed ResourceType[I,R,O,C,P,U]
+│   ├── descriptor.py            # immutable descriptor + codecs
+│   ├── registry.py              # closed, private type erasure
+│   ├── builtins.py              # explicit closed registrations
+│   └── kodi_smart_playlist/
+│       ├── models.py
+│       ├── xml.py
+│       └── resource_type.py
+├── capabilities/
+│   └── managed_file.py          # safe path/lstat/stage/stale/atomic/restore
+├── planning/
+│   ├── planner.py               # pure complete Plan
+│   └── effects.py               # declaration coalescing/barriers
+├── execution/
+│   ├── execute.py               # deep prepare/apply/verify/rollback operation
+│   └── recovery.py
+├── ports/
+│   ├── device_session.py        # factory + least-authority sessions
+│   ├── ssh.py
+│   ├── sftp.py
+│   ├── runtime_values.py        # clock + UUID
+│   ├── progress.py              # typed non-controlling events
+│   └── run_store.py             # opaque workspace/lease/revisions
+├── adapters/
+│   ├── paramiko_device_session.py
+│   ├── system_runtime_values.py
+│   ├── filesystem_run_store.py
+│   └── console_progress.py
+├── reporting/
+│   ├── canonical_json.py
+│   └── human.py
+├── bootstrap.py                 # one explicit composition root
+└── cli/
+    ├── parser.py                # args -> typed command
+    └── main.py                  # execute -> render only`
+  };
+
+  const RESOURCE_PROTOCOLS = {
+    A: `class ResourceAdapter(Protocol):
+    def resolve(spec, capabilities) -> ResolvedResource: ...
+    def observe(resource, context) -> Observation: ...
+    def act(action, context) -> MutationReceipt: ...
+
+# Controller owns comparison, Verification, and recovery ordering.`,
+    B: `class ResourceType[I, R, O, C, U](Protocol):
+    def resolve(authored: I, context) -> R: ...
+    def observe(resource: R, context) -> O: ...
+    def assess(resource: R, observation: O) -> Assessment[C]: ...
+    def apply(resource: R, change: C, before: O, context) -> Applied[U]: ...
+    def rollback(resource: R, undo: U, context) -> RollbackResult: ...
+
+# Verification = fresh observe() + the same pure assess().`,
+    C: `class GenericResourceLifecycle(Protocol):
+    def resolve(envelope, capabilities) -> envelope: ...
+    def observe(envelope, device) -> envelope: ...
+    def assess(envelope, observation) -> envelope: ...
+    def apply(envelope, change, device) -> envelope: ...
+    def verify(envelope, device) -> envelope: ...
+    def rollback(envelope, record, device) -> envelope: ...
+
+# Broadly exposed; callers learn payload tags and ordering.`,
+    D: `class ResourceType(Protocol):
+    def resolve(intent, capabilities) -> Resolved: ...
+    def observe(resolved, reader, metadata) -> Observation: ...
+    def assess(resolved, observation) -> Assessment: ...
+    def apply(change, writer, metadata, revisions) -> Receipt: ...
+    def rollback(record, writer, metadata, revisions) -> Receipt: ...`,
+    H: `class ResourceType[I, R, O, C, P, U](Protocol):
+    type_code: ResourceTypeCode
+    def resolve(self, intent: I, capabilities: CapabilitySnapshot) -> Result[R, Failure]: ...
+    def observe(self, resource: R, context: ObservationContext) -> Result[O, Failure]: ...
+    def assess(self, resource: R, observation: O) -> Assessment[C]: ...
+    def prepare(self, resource: R, change: C, before: O, context: PrepareContext) -> Result[P, Failure]: ...
+    def apply(self, prepared: P, context: ApplyContext) -> Result[MutationReceipt, Failure]: ...
+    def rollback(self, rollback: U, context: ApplyContext) -> Result[MutationReceipt, Failure]: ...
+
+class ResourceRuntime(Protocol):
+    """Private erased engine-facing form; validated cast stays in descriptor."""
+    def resolve(self, envelope, context) -> ResolvedEnvelope: ...
+    def observe(self, envelope, context) -> ObservationEnvelope: ...
+    def assess(self, envelope, observation) -> AssessmentEnvelope: ...
+    def prepare(self, envelope, change, before, context) -> PreparedEnvelope: ...
+    def apply(self, prepared, context) -> MutationReceipt: ...
+    def rollback(self, envelope, undo, context) -> RollbackReceipt: ...
+
+# Verification and rollback Verification always use fresh observe() + assess().
+# Mutation receipts cannot claim Convergence.`
+  };
+
+  const EXTERNAL = {
+    A: {
+      sketch: `class Controller:
+    def execute(self, command: Command) -> Outcome: ...`,
+      notes: "One closed dispatcher is numerically smallest and deepest. Callers must still learn a command union and broad Outcome, so discoverability and narrow return typing are weaker."
+    },
+    B: {
+      sketch: `class Reconciler:
+    def plan(self, request: PlanRequest) -> PlanResult: ...
+    def apply(self, request: ApplyRequest) -> RunResult: ...
+    def verify(self, request: VerifyRequest) -> RunResult: ...
+    def recover(self, request: RecoverRequest) -> RunResult: ...`,
+      notes: "Four ordinary workflows are slightly larger but clear to CLI callers and application tests. Lifecycle internals remain hidden."
+    },
+    C: {
+      sketch: `runtime.resolve(...)
+runtime.observe(...)
+runtime.assess(...)
+runtime.apply(...)
+runtime.verify(...)
+runtime.rollback(...)`,
+      notes: "Maximum flexibility is exposed as interface burden. The caller must reconstruct ordering, stale checks, Verification, rollback, and recovery: shallow and leaky."
+    },
+    D: {
+      sketch: `class Reconciler:
+    def handle(self, command: Command) -> Outcome: ...
+
+# Many capability-specific ports are injected separately.`,
+      notes: "Disciplined real seams point inward, but splitting every mechanism into a port can create indirection and a large construction interface."
+    },
+    H: {
+      sketch: `class Reconciler:
+    @overload
+    def execute(self, command: ValidateCommand) -> ValidateOutcome: ...
+    @overload
+    def execute(self, command: InventoryCommand) -> InventoryOutcome: ...
+    @overload
+    def execute(self, command: ObserveCommand) -> ObserveOutcome: ...
+    @overload
+    def execute(self, command: PlanCommand) -> PlanOutcome: ...
+    @overload
+    def execute(self, command: ApplyCommand) -> ApplyOutcome: ...
+    @overload
+    def execute(self, command: ReconcileCommand) -> ReconcileOutcome: ...
+    @overload
+    def execute(self, command: VerifyCommand) -> VerifyOutcome: ...
+    @overload
+    def execute(self, command: RecoverCommand) -> RecoverOutcome: ...
+    @overload
+    def execute(self, command: ReportCommand) -> ReportOutcome: ...
+    @overload
+    def execute(self, command: ActionCommand) -> ActionOutcome: ...
+    def execute(self, command: Command) -> Outcome: ...
+
+# Provision is CLI sugar for ReconcileCommand.
+# Unsupported v1 commands return typed not-implemented/capability outcomes.
+# CLI only parses -> constructs command -> executes -> renders.`,
+      notes: "Final selection: one typed external application interface. Overloads preserve command-specific returns without exposing workflow methods or internal lifecycle phases. The explicit bootstrap composition root wires real adapters and stateful fakes exercise the same seam."
+    }
+  };
+
+  const DESIGNS = [
+    { id: "A", name: "A · Untyped/broad Controller.execute", depth: "High", locality: "Very high", surface: "1 method + broad outcome", seams: "Few, broad", leverage: "High", risk: "Rejected: command-specific return typing is lost" },
+    { id: "B", name: "B · Four public workflow methods", depth: "High", locality: "Very high", surface: "4 typed methods", seams: "Focused", leverage: "High", risk: "Rejected: incomplete workflow set and needless public toolkit" },
+    { id: "C", name: "C · Broad generic lifecycle", depth: "Low", locality: "Low", surface: "5–6 lifecycle phases", seams: "Lifecycle leaks outward", leverage: "Low", risk: "Flexible but shallow; callers orchestrate" },
+    { id: "D", name: "D · Ports-first orchestration", depth: "Medium–high", locality: "High", surface: "Small external, many injected ports", seams: "Many capability seams", leverage: "High if seams are real", risk: "Tiny ports create indirection; aggregate Device may overgrant" },
+    { id: "H", name: "Final · typed Reconciler.execute + private erasure + real seams", depth: "Very high", locality: "Very high", surface: "1 overloaded method + closed unions", seams: "Only genuine variation", leverage: "Very high", risk: "Private registry erasure needs localized validation", recommended: true }
+  ];
+
+  const PORTS = {
+    A: [
+      ["RemoteFiles", "ParamikoRemoteFiles", "MemoryRemoteFiles", "Real: Device I/O varies"],
+      ["RunWorkspace", "FilesystemWorkspace", "MemoryWorkspace", "Real: production/test persistence"],
+      ["Clock / IDs", "SystemClock / UUIDv7", "FrozenClock / SequenceIds", "Real deterministic tests"]
+    ],
+    B: [
+      ["RemoteFiles", "ParamikoRemoteFiles", "MemoryRemoteFiles", "Semantic SSH/SFTP seam"],
+      ["KodiJsonRpc", "KodiJsonRpcClient", "RecordingKodi", "Only when consumed"],
+      ["RunStore", "FilesystemRunStore", "MemoryRunStore", "Revision/lease/workspace ownership"],
+      ["Runtime", "SystemRuntime", "DeterministicRuntime", "Clock + UUID"]
+    ],
+    C: [
+      ["Device", "ParamikoDevice", "FakeDevice", "Aggregate access overgrants Resource Types"],
+      ["Lifecycle session", "ProductionSession", "FakeSession", "Caller-facing hypothetical seam"]
+    ],
+    D: [
+      ["RemoteFileReader", "ParamikoReader", "MemoryReader", "Narrow"],
+      ["RemoteFileWriter", "ParamikoWriter", "MemoryWriter", "Narrow"],
+      ["RemoteMetadata", "ParamikoMetadata", "MemoryMetadata", "Narrow"],
+      ["Lease / Revisions / Workspace", "Filesystem adapters", "Memory adapters", "Potentially too fragmented"],
+      ["KodiJsonRpc / Clock / IDs", "Production adapters", "Fakes", "Capability-specific"]
+    ],
+    H: [
+      ["DeviceSessionFactory", "ParamikoDeviceSessionFactory", "FakeDeviceSessionFactory", "Real seam; derives least-authority capability modules"],
+      ["SshPort / SftpPort", "Paramiko session adapters", "Stateful fake session", "First-slice transport seams; no credentials/universal Device reach Resource Types"],
+      ["RuntimeValues", "SystemRuntimeValues", "DeterministicRuntimeValues", "Clock/UUID vary in tests"],
+      ["RunStore", "FilesystemRunStore", "MemoryRunStore", "Hides paths; owns compare-and-append revisions, lease, workspace"],
+      ["ProgressSink", "ConsoleProgressSink", "RecordingProgressSink", "Closed non-controlling events; canonical report remains authoritative"],
+      ["Not ports", "config/planning/canonical JSON/XML/registry/effect coalescing", "ordinary/private modules", "One implementation: no hypothetical seam"],
+      ["Deferred", "Secret/Artifact/Kodi JSON-RPC/Effect handlers", "—", "Add only when first consumed"]
+    ]
+  };
+
+  const OWNERSHIP = [
+    ["Authored load + fixed composition", "config", "Authored documents → frozen, secret-free resolved Profile"],
+    ["Resource-specific address/XML", "KodiSmartPlaylist Resource Type", "Typed Intent → resolved Desired State + State Address"],
+    ["Observation semantics + safety", "managed_file + KodiSmartPlaylist", "Safe file facts + parsed XML → typed Observation/blocker"],
+    ["SSH/SFTP mechanics", "Device session adapters", "Least-authority SSH/SFTP calls; no Desired State or credentials"],
+    ["Safe file mutation mechanics", "managed_file capability", "Path/lstat/read limits/mode/staging/stale/atomic replace/remove/exact restore"],
+    ["Pure comparison + Change", "Resource Type assess", "Desired State + Observation → Assessment/Change/Effect declaration"],
+    ["Complete Plan + Effect coalescing", "planning", "Assessments + graph/bindings → immutable Plan"],
+    ["Prepare/stale/lifecycle ordering", "execution + Resource Type", "Persisted rollback material + opaque prepared change → attempts/results"],
+    ["Verification", "execution + Resource Type", "Fresh observe → same assess; never mutation receipt"],
+    ["Rollback + rollback Verification", "execution + Resource Type", "Durable undo → receipt → fresh observe/assess"],
+    ["Lease/revisions/workspace", "RunStore adapter", "Opaque IDs/digests/actions; filesystem paths never cross"],
+    ["Canonical/human output", "reporting", "Plan/Run domain results → bytes/text; Resource Type emits no JSON"],
+    ["Argument mapping/composition", "cli + bootstrap", "Arguments → typed command → execute → render; one explicit composition root"]
+  ];
+
+  const ALLOWED = {
+    cli: ["application", "reporting", "adapters"],
+    reporting: ["domain"],
+    application: ["config", "planning", "execution", "domain", "ports"],
+    config: ["domain", "resource_types"],
+    planning: ["domain", "resource_types"],
+    execution: ["domain", "planning", "resource_types", "ports"],
+    resource_types: ["domain", "ports"],
+    adapters: ["domain", "ports"],
+    ports: ["domain"],
+    domain: []
+  };
+
+  const BASE_RESOURCE = () => ({
+    id: "skin.playlist.new-shows",
+    type: "KodiSmartPlaylist",
+    stateAddress: "special://profile/playlists/video/NewShows.xsp",
+    desired: {
+      presence: "present",
+      mediaType: "tvshows",
+      displayName: "New Shows",
+      match: "all",
+      limit: 50,
+      rule: "playcount is 0",
+      order: "dateadded descending",
+      mode: "0644"
+    },
+    observation: { kind: "regular_file", safe: true, readable: true, limit: 25, mode: "0644", digest: "sha256:before-25" },
+    relation: "unknown",
+    change: null,
+    effectDeclaration: [],
+    mutation: "not_attempted",
+    verification: "not_attempted",
+    rollback: "not_attempted",
+    finalConvergence: "unknown"
+  });
+
+  function createState(design = "H") {
+    return {
+      selectedDesign: design,
+      workflow: "idle",
+      phase: "idle",
+      pendingPhases: [],
+      resource: BASE_RESOURCE(),
+      run: {
+        id: "run:prototype-01",
+        revision: 0,
+        previousRevisionDigest: null,
+        status: "idle",
+        reportKind: "CoreElecReconcilerRunReport",
+        planDisposition: "none",
+        ioCount: 0,
+        mutationCount: 0,
+        evidenceRevision: 0,
+        workspaceId: "workspace:opaque-prototype-01",
+        lease: "not_acquired"
+      },
+      injections: {
+        stale: false,
+        mutation_failure: false,
+        verification_mismatch: false,
+        rollback_failure: false,
+        interruption: false
+      },
+      hypotheticalEffect: false,
+      effect: { declared: false, coalesced: false, executed: false, barrier: "none" },
+      lastTransition: "Prototype initialized; no Device I/O.",
+      rejected: "None.",
+      importAttempt: { from: "none", to: "none", accepted: null, reason: "No import attempted." },
+      trace: ["CLI/test has not called the selected external interface."],
+      history: []
+    };
+  }
+
+  function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function record(state, message, rejected = false) {
+    state.lastTransition = message;
+    state.history.push({ action: message, workflow: state.workflow, phase: state.phase, rejected });
+    if (state.history.length > 30) state.history.shift();
+  }
+
+  function revise(state, status) {
+    state.run.previousRevisionDigest = state.run.revision ? `sha256:revision-${state.run.revision}` : null;
+    state.run.revision += 1;
+    state.run.status = status;
+  }
+
+  function reject(state, reason) {
+    state.rejected = reason;
+    record(state, reason, true);
+    state.trace.push(`REJECTED: ${reason}`);
+    return state;
+  }
+
+  function start(state, workflow) {
+    state.workflow = workflow;
+    state.rejected = "None.";
+    state.importAttempt = { from: "none", to: "none", accepted: null, reason: "No import attempted." };
+    state.run.lease = workflow === "plan" || workflow === "verify" ? "not_required" : "acquired_via_run_store";
+    state.trace = [`CLI/test → Reconciler.execute(${workflow} command) → typed ${workflow} outcome`];
+    const queues = {
+      plan: ["load", "compose", "resolve", "observe", "assess", "plan_result"],
+      apply: ["approve", "precondition_reobserve", "apply_change", "verification_observe", "verification_assess", "effect_barrier", "complete"],
+      verify: ["verification_observe", "verification_assess", "complete"],
+      recovery: ["load_revision", "acquire_lease", "recovery_observe", "recovery_decide", "complete"]
+    };
+    state.pendingPhases = queues[workflow].slice();
+    state.phase = "ready_to_advance";
+    revise(state, workflow === "plan" ? "planning" : workflow === "recovery" ? "interrupted" : "executing");
+    record(state, `${workflow} workflow started through one external interface call.`);
+    return state;
+  }
+
+  function advance(state) {
+    if (!state.pendingPhases.length) return reject(state, "Rejected transition: no pending lifecycle phase. Start a workflow first.");
+    const phase = state.pendingPhases.shift();
+    state.phase = phase;
+    const r = state.resource;
+
+    if (phase === "load") {
+      state.trace.push("application → config.boundary: validate authored documents before transport construction");
+      record(state, "Loaded typed authored configuration; no Device I/O.");
+    } else if (phase === "compose") {
+      state.trace.push("config.composition: platform → room → Device; retain field provenance");
+      record(state, "Composed the Profile purely; no Device I/O.");
+    } else if (phase === "resolve") {
+      state.trace.push("registry → typed KodiSmartPlaylist.resolve: derive State Address and deterministic XML");
+      record(state, "Resolved typed Intent to Desired State and State Address; still no Device I/O.");
+    } else if (phase === "observe" || phase === "precondition_reobserve" || phase === "verification_observe" || phase === "recovery_observe") {
+      state.run.ioCount += 1;
+      state.run.evidenceRevision += 1;
+      state.trace.push(`Resource Type.observe → managed_file.observe → SFTP facts → typed Observation (evidence r${state.run.evidenceRevision})`);
+      if (r.observation.kind === "symlink") {
+        r.relation = "unverifiable";
+        r.change = null;
+        state.run.planDisposition = "blocked";
+        state.pendingPhases = [];
+        revise(state, "blocked");
+        return reject(state, "Resource Type observation rejected an unsafe symlink before any Change was executable.");
+      }
+      if (phase === "precondition_reobserve" && state.injections.stale) {
+        r.observation.digest = "sha256:externally-changed";
+        state.pendingPhases = [];
+        r.mutation = "stale_no_mutation";
+        r.finalConvergence = "failed_known";
+        revise(state, "failed_partial");
+        return reject(state, "Precondition digest changed after planning; apply stopped with zero mutation.");
+      }
+      record(state, `Fresh ${phase.replaceAll("_", " ")} produced typed evidence through the managed-file capability.`);
+    } else if (phase === "assess") {
+      state.trace.push("KodiSmartPlaylist.assess (pure): Desired State + Observation → Assessment");
+      if (r.observation.limit === r.desired.limit && r.observation.mode === r.desired.mode) {
+        r.relation = "satisfied";
+        r.change = null;
+      } else {
+        r.relation = "divergent";
+        r.change = { operation: "smart_playlist.update", expectedDigest: r.observation.digest, desiredLimit: 50, impact: "content_mutation" };
+      }
+      r.effectDeclaration = state.hypotheticalEffect ? ["KodiRestart"] : [];
+      state.effect.declared = state.hypotheticalEffect;
+      record(state, "Pure assessment produced relation, optional Change, and optional Effect declaration; no I/O.");
+    } else if (phase === "plan_result") {
+      state.trace.push("planning: construct complete immutable Plan; reporting renders domain result");
+      state.run.planDisposition = r.change ? "actionable" : "noop";
+      revise(state, r.change ? "awaiting_approval" : "noop");
+      record(state, `Plan domain result is ${state.run.planDisposition}; reporting may now render it.`);
+    } else if (phase === "approve") {
+      state.trace.push("execution: validate exact Plan binding, expiry, graph, approvals");
+      record(state, "Execution validated the exact Plan and approval; CLI did not orchestrate internals.");
+    } else if (phase === "apply_change") {
+      if (!r.change) {
+        state.pendingPhases = [];
+        return reject(state, "No executable Change exists. Apply cannot manufacture work; run plan after injecting drift.");
+      }
+      if (state.injections.mutation_failure) {
+        r.mutation = "failed_known";
+        state.pendingPhases = [];
+        revise(state, "failed_partial");
+        return reject(state, "Managed-file mutation failed; the result reports mechanics, not a Convergence decision.");
+      }
+      state.run.ioCount += 1;
+      state.run.mutationCount += 1;
+      r.mutation = "completed";
+      r.observation.limit = 50;
+      r.observation.digest = "sha256:after-50";
+      state.trace.push("Resource Type.prepare persisted rollback + stale proof → managed_file.atomic_replace; receipt claims mutation only");
+      revise(state, "executing");
+      if (state.injections.interruption) {
+        state.pendingPhases = [];
+        revise(state, "interrupted");
+        record(state, "Mutation completed, append-only revision persisted, then interruption occurred before Verification.");
+        return state;
+      }
+      record(state, "Atomic managed-file Change completed; mutation receipt does not claim Convergence.");
+    } else if (phase === "verification_assess") {
+      state.trace.push("execution Verification → same KodiSmartPlaylist.assess using fresh Observation");
+      if (state.injections.verification_mismatch) {
+        r.observation.limit = 49;
+        r.relation = "divergent";
+        r.verification = "mismatch";
+        state.pendingPhases = ["rollback", "rollback_verification_observe", "rollback_verification_assess"];
+        record(state, "Fresh Verification mismatched; execution scheduled declared rollback.");
+      } else {
+        r.relation = "satisfied";
+        r.verification = "fresh_match";
+        r.finalConvergence = "converged";
+        record(state, "Fresh observe plus the same assess established Convergence.");
+      }
+    } else if (phase === "rollback") {
+      state.trace.push("execution → Resource Type.rollback → managed_file exact atomic restore");
+      if (state.injections.rollback_failure) {
+        r.rollback = "failed";
+        r.finalConvergence = "unknown";
+        state.pendingPhases = [];
+        revise(state, "failed_recovery_required");
+        return reject(state, "Rollback failed; Run truth is recovery required, not success.");
+      }
+      state.run.ioCount += 1;
+      state.run.mutationCount += 1;
+      r.rollback = "restored_pending_verification";
+      r.observation.limit = 25;
+      r.observation.digest = "sha256:restored-25";
+      record(state, "Rollback restored the exact pre-image; restoration still requires fresh rollback Verification.");
+    } else if (phase === "rollback_verification_observe") {
+      state.run.ioCount += 1;
+      state.run.evidenceRevision += 1;
+      state.trace.push("rollback Verification → fresh Resource Type.observe");
+      record(state, "Fresh rollback Observation recorded as new evidence.");
+    } else if (phase === "rollback_verification_assess") {
+      state.trace.push("rollback Verification → assess restored state against durable before evidence");
+      r.rollback = "restored_and_verified";
+      r.finalConvergence = "rolled_back_verified";
+      revise(state, "failed_rolled_back");
+      record(state, "Rollback Verification proved restoration; original Verification failure remains visible.");
+    } else if (phase === "effect_barrier") {
+      if (!state.effect.declared) {
+        record(state, "No Effect declared for KodiSmartPlaylist; executor crossed no Effect barrier.");
+      } else {
+        state.effect.coalesced = true;
+        state.effect.executed = true;
+        state.effect.barrier = "barrier.kodi-restart.01";
+        state.run.ioCount += 1;
+        state.trace.push("planning coalesced Effect → execution Effect barrier → KodiJsonRpc/SSH adapter");
+        record(state, "Hypothetical Effect declaration crossed to planner coalescing and executor barrier; Resource Type did not execute it.");
+      }
+    } else if (phase === "load_revision") {
+      state.trace.push("execution.recovery → RunStore.load_latest(workspace ID, revision digest)");
+      record(state, "RunStore loaded an opaque workspace and latest append-only revision; no path leaked.");
+    } else if (phase === "acquire_lease") {
+      state.run.lease = "compare_and_acquire";
+      state.trace.push("execution.recovery → RunStore.compare_and_acquire_lease");
+      record(state, "RunStore compared the expected revision and acquired the recovery lease.");
+    } else if (phase === "recovery_decide") {
+      state.trace.push("execution.recovery: durable phase + fresh evidence → resume Verification");
+      state.pendingPhases = ["verification_assess", "complete"];
+      record(state, "Recovery chose resume Verification from durable evidence; it did not infer command success.");
+    } else if (phase === "complete") {
+      if (r.verification === "not_attempted" && state.workflow === "apply") {
+        return reject(state, "Apply cannot complete before Verification.");
+      }
+      if (r.finalConvergence === "unknown" && state.workflow === "verify") {
+        r.finalConvergence = r.relation === "satisfied" ? "converged" : "failed_known";
+      }
+      revise(state, r.finalConvergence === "converged" ? "converged" : state.run.status);
+      state.trace.push("application returns PlanResult/RunResult → reporting renders canonical JSON or human text");
+      record(state, "Workflow returned a domain result; reporting owns serialization and presentation.");
+    }
+    return state;
+  }
+
+  function inject(state, kind) {
+    if (kind === "converged") {
+      state.resource.observation = { kind: "regular_file", safe: true, readable: true, limit: 50, mode: "0644", digest: "sha256:converged-50" };
+      state.resource.relation = "unknown";
+      state.resource.change = null;
+      record(state, "Device seed set to already converged.");
+    } else if (kind === "drift") {
+      state.resource.observation = { kind: "regular_file", safe: true, readable: true, limit: 25, mode: "0644", digest: "sha256:before-25" };
+      state.resource.relation = "unknown";
+      state.resource.change = null;
+      record(state, "Device seed set to safe semantic drift (limit 25 instead of 50).");
+    } else if (kind === "symlink") {
+      state.resource.observation = { kind: "symlink", safe: false, readable: false, limit: null, mode: null, digest: "sha256:unsafe-symlink" };
+      record(state, "Device seed set to unsafe symlink; Resource Type observation must block.");
+    } else {
+      state.injections[kind] = true;
+      record(state, `${kind.replaceAll("_", " ")} armed for the relevant lifecycle phase.`);
+    }
+    return state;
+  }
+
+  function attemptImport(state, from, to) {
+    const normalizedTo = to === "paramiko" || to === "sftp" ? "adapters" : to;
+    const accepted = (ALLOWED[from] || []).includes(normalizedTo);
+    state.importAttempt = {
+      from,
+      to,
+      accepted,
+      reason: accepted
+        ? `Allowed inward dependency: ${from} may depend on ${to}.`
+        : `Rejected outward dependency: ${from} may not depend on ${to}. Adapters point inward; CLI cannot bypass the application module.`
+    };
+    if (!accepted) state.rejected = state.importAttempt.reason;
+    state.trace.push(`${accepted ? "ALLOWED" : "REJECTED"} import: ${from} → ${to}`);
+    record(state, state.importAttempt.reason, !accepted);
+    return state;
+  }
+
+  function reduce(input, action) {
+    let state = clone(input);
+    if (action.type === "RESET") return createState(state.selectedDesign);
+    if (action.type === "SELECT_DESIGN") {
+      state.selectedDesign = action.design;
+      record(state, `Selected candidate ${action.design}; lifecycle state preserved for side-by-side comparison.`);
+      return state;
+    }
+    if (action.type.startsWith("START_")) return start(state, action.type.slice(6).toLowerCase());
+    if (action.type === "ADVANCE") return advance(state);
+    if (action.type === "INJECT") return inject(state, action.kind);
+    if (action.type === "TOGGLE_EFFECT") {
+      state.hypotheticalEffect = !state.hypotheticalEffect;
+      state.effect.declared = state.hypotheticalEffect;
+      state.resource.effectDeclaration = state.hypotheticalEffect ? ["KodiRestart"] : [];
+      record(state, `Hypothetical KodiRestart Effect ${state.hypotheticalEffect ? "enabled" : "disabled"}; real playlist default remains none.`);
+      return state;
+    }
+    if (action.type === "ATTEMPT_IMPORT") return attemptImport(state, action.from, action.to);
+    if (action.type === "TRANSPORT_DECIDE") {
+      state.importAttempt = { from: "transport", to: "convergence", accepted: false, reason: "Rejected: transport reports file/RPC facts and receipts; Resource Type assess decides relation, execution establishes Verification." };
+      state.rejected = state.importAttempt.reason;
+      state.trace.push("REJECTED: managed-file mutation attempted to label the Resource converged");
+      record(state, state.importAttempt.reason, true);
+      return state;
+    }
+    return reject(state, `Unknown action ${action.type}.`);
+  }
+
+  const SCENARIOS = [
+    {
+      title: "1 · Compare five",
+      description: "Switch through every candidate. The final typed execute design is highlighted; the earlier four-method hybrid remains visible as rejected evidence.",
+      steps: [
+        ["A: one dispatcher", { type: "SELECT_DESIGN", design: "A" }],
+        ["B: four methods (rejected)", { type: "SELECT_DESIGN", design: "B" }],
+        ["C: broad lifecycle", { type: "SELECT_DESIGN", design: "C" }],
+        ["D: ports-first", { type: "SELECT_DESIGN", design: "D" }],
+        ["Final typed execute", { type: "SELECT_DESIGN", design: "H" }]
+      ]
+    },
+    {
+      title: "2 · Normal plan → apply",
+      description: "Drive NewShows.xsp from semantic drift through pure planning, approval, stale-safe atomic mutation, and fresh Verification.",
+      steps: [
+        ["Reset", { type: "RESET" }], ["Inject drift", { type: "INJECT", kind: "drift" }],
+        ["Start plan", { type: "START_PLAN" }], ["Load", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }],
+        ["Resolve", { type: "ADVANCE" }], ["Observe", { type: "ADVANCE" }], ["Assess", { type: "ADVANCE" }], ["Plan result", { type: "ADVANCE" }],
+        ["Start apply", { type: "START_APPLY" }], ["Approve", { type: "ADVANCE" }], ["Reobserve", { type: "ADVANCE" }],
+        ["Apply", { type: "ADVANCE" }], ["Fresh observe", { type: "ADVANCE" }], ["Same assess", { type: "ADVANCE" }],
+        ["No Effect", { type: "ADVANCE" }], ["Complete", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "3 · Second Run no-op",
+      description: "Seed the Device as converged. Planning still observes and assesses, but emits a complete no-op Plan and performs no mutation.",
+      steps: [
+        ["Reset", { type: "RESET" }], ["Converged seed", { type: "INJECT", kind: "converged" }],
+        ["Start plan", { type: "START_PLAN" }], ["Load", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }],
+        ["Resolve", { type: "ADVANCE" }], ["Observe", { type: "ADVANCE" }], ["Assess", { type: "ADVANCE" }], ["No-op result", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "4 · Unsafe symlink",
+      description: "A symlink is a Resource Type observation blocker. No Change or transport mutation becomes executable.",
+      steps: [
+        ["Reset", { type: "RESET" }], ["Inject symlink", { type: "INJECT", kind: "symlink" }],
+        ["Start plan", { type: "START_PLAN" }], ["Load", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }],
+        ["Resolve", { type: "ADVANCE" }], ["Observe and block", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "5 · Stale precondition",
+      description: "Plan drift, then make the immediate precondition Observation stale. Apply must stop with zero mutation.",
+      steps: [
+        ["Reset", { type: "RESET" }], ["Drift", { type: "INJECT", kind: "drift" }],
+        ["Plan", { type: "START_PLAN" }], ["Load", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }], ["Resolve", { type: "ADVANCE" }],
+        ["Observe", { type: "ADVANCE" }], ["Assess", { type: "ADVANCE" }], ["Result", { type: "ADVANCE" }],
+        ["Arm stale", { type: "INJECT", kind: "stale" }], ["Apply", { type: "START_APPLY" }], ["Approve", { type: "ADVANCE" }], ["Reobserve and reject", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "6 · Mismatch + rollback",
+      description: "After mutation, fresh Verification mismatches. Execution invokes declared rollback and performs a separate fresh rollback Verification.",
+      steps: [
+        ["Reset", { type: "RESET" }], ["Drift", { type: "INJECT", kind: "drift" }],
+        ["Plan", { type: "START_PLAN" }], ["Load", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }], ["Resolve", { type: "ADVANCE" }],
+        ["Observe", { type: "ADVANCE" }], ["Assess", { type: "ADVANCE" }], ["Result", { type: "ADVANCE" }],
+        ["Arm mismatch", { type: "INJECT", kind: "verification_mismatch" }], ["Apply", { type: "START_APPLY" }], ["Approve", { type: "ADVANCE" }],
+        ["Reobserve", { type: "ADVANCE" }], ["Mutate", { type: "ADVANCE" }], ["Verify observe", { type: "ADVANCE" }],
+        ["Mismatch", { type: "ADVANCE" }], ["Rollback", { type: "ADVANCE" }], ["Rollback observe", { type: "ADVANCE" }], ["Rollback assess", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "7 · Interruption + recovery",
+      description: "Interrupt after mutation and a persisted revision. Recovery uses the Run-store seam, retains the Run ID, and resumes fresh Verification.",
+      steps: [
+        ["Reset", { type: "RESET" }], ["Drift", { type: "INJECT", kind: "drift" }],
+        ["Plan", { type: "START_PLAN" }], ["Load", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }], ["Resolve", { type: "ADVANCE" }],
+        ["Observe", { type: "ADVANCE" }], ["Assess", { type: "ADVANCE" }], ["Result", { type: "ADVANCE" }],
+        ["Arm interruption", { type: "INJECT", kind: "interruption" }], ["Apply", { type: "START_APPLY" }], ["Approve", { type: "ADVANCE" }],
+        ["Reobserve", { type: "ADVANCE" }], ["Mutate + interrupt", { type: "ADVANCE" }],
+        ["Start recovery", { type: "START_RECOVERY" }], ["Load revision", { type: "ADVANCE" }], ["Lease", { type: "ADVANCE" }],
+        ["Fresh observe", { type: "ADVANCE" }], ["Choose resume", { type: "ADVANCE" }], ["Assess", { type: "ADVANCE" }], ["Complete", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "8 · Hypothetical Effect",
+      description: "Toggle a hypothetical KodiRestart. The Resource Type only declares it; planning coalesces it and execution owns the barrier.",
+      steps: [
+        ["Reset", { type: "RESET" }], ["Drift", { type: "INJECT", kind: "drift" }], ["Toggle Effect", { type: "TOGGLE_EFFECT" }],
+        ["Plan", { type: "START_PLAN" }], ["Load", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }], ["Resolve", { type: "ADVANCE" }],
+        ["Observe", { type: "ADVANCE" }], ["Assess declares", { type: "ADVANCE" }], ["Result", { type: "ADVANCE" }],
+        ["Apply", { type: "START_APPLY" }], ["Approve", { type: "ADVANCE" }], ["Reobserve", { type: "ADVANCE" }],
+        ["Mutate", { type: "ADVANCE" }], ["Verify observe", { type: "ADVANCE" }], ["Verify assess", { type: "ADVANCE" }],
+        ["Executor barrier", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "9 · Illegal dependencies",
+      description: "Architecture checks reject outward dependencies and transport-owned Convergence decisions.",
+      steps: [
+        ["Reset", { type: "RESET" }],
+        ["Domain → Paramiko", { type: "ATTEMPT_IMPORT", from: "domain", to: "paramiko" }],
+        ["Planner → adapter", { type: "ATTEMPT_IMPORT", from: "planning", to: "adapters" }],
+        ["CLI → SFTP", { type: "ATTEMPT_IMPORT", from: "cli", to: "sftp" }],
+        ["Transport decides", { type: "TRANSPORT_DECIDE" }]
+      ]
+    },
+    {
+      title: "10 · Test replacement",
+      description: "Select the final design and observe the same Reconciler.execute interface with stateful fake real-seam adapters. Adapter contract tests remain separate.",
+      steps: [
+        ["Hybrid", { type: "SELECT_DESIGN", design: "H" }], ["Reset state", { type: "RESET" }],
+        ["Drift fake", { type: "INJECT", kind: "drift" }], ["Start verify", { type: "START_VERIFY" }],
+        ["Fake managed-file observe", { type: "ADVANCE" }], ["Same assess", { type: "ADVANCE" }], ["Return typed outcome", { type: "ADVANCE" }]
+      ]
+    },
+    {
+      title: "11 · Heterogeneous registry",
+      description: "The final design keeps each Resource Type strongly typed, erases only inside a closed immutable repository-owned registry, and does not support plugins or dynamic registration.",
+      steps: [
+        ["Select final design", { type: "SELECT_DESIGN", design: "H" }],
+        ["Reset", { type: "RESET" }], ["Start plan", { type: "START_PLAN" }],
+        ["Load closed type code", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }],
+        ["Registry erases typed definition", { type: "ADVANCE" }]
+      ]
+    }
+  ];
+
+  return { DESIGNS, PACKAGE_TREES, RESOURCE_PROTOCOLS, EXTERNAL, PORTS, OWNERSHIP, SCENARIOS, createState, reduce };
+})();
+</script>
+
+<script>
+(() => {
+  "use strict";
+  const P = ReconcilerPrototype;
+  let state = P.createState();
+  let activeScenario = 0;
+  let completedSteps = new Set();
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (value) => String(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+  const pill = (value, tone = "") => `<span class="pill ${tone}">${esc(value)}</span>`;
+
+  function dispatch(action, scenarioStep = null) {
+    state = P.reduce(state, action);
+    if (scenarioStep !== null) completedSteps.add(scenarioStep);
+    render();
+  }
+
+  function renderTabs() {
+    $("tabs").innerHTML = P.SCENARIOS.map((scenario, index) =>
+      `<button class="tab ${index === activeScenario ? "active" : ""}" data-tab="${index}">${esc(scenario.title)}</button>`
+    ).join("");
+    const scenario = P.SCENARIOS[activeScenario];
+    $("walkthrough").innerHTML = `
+      <h3>${esc(scenario.title)}</h3>
+      <p>${esc(scenario.description)}</p>
+      <div class="steps">${scenario.steps.map(([label], index) =>
+        `<button class="step ${completedSteps.has(index) ? "done" : ""}" data-step="${index + 1}" data-scenario-step="${index}">${esc(label)}</button>`
+      ).join("")}</div>`;
+  }
+
+  function renderDesigns() {
+    $("design-select").innerHTML = P.DESIGNS.map(d =>
+      `<option value="${d.id}" ${d.id === state.selectedDesign ? "selected" : ""}>${esc(d.name)}</option>`
+    ).join("");
+    $("tradeoffs").innerHTML = `<table>
+      <thead><tr><th>Candidate</th><th>Depth</th><th>Locality</th><th>Interface surface</th><th>Seams</th><th>Caller/test leverage</th><th>Explicit tradeoff</th></tr></thead>
+      <tbody>${P.DESIGNS.map(d => `<tr class="${d.id === state.selectedDesign ? "selected" : ""}">
+        <td><button data-design="${d.id}">${esc(d.name)}</button>${d.recommended ? pill("final selection", "recommended") : ""}</td>
+        <td>${esc(d.depth)}</td><td>${esc(d.locality)}</td><td>${esc(d.surface)}</td><td>${esc(d.seams)}</td>
+        <td>${esc(d.leverage)}</td><td>${esc(d.risk)}</td>
+      </tr>`).join("")}</tbody>
+    </table>
+    <p class="muted"><b>Deletion test:</b> the final application module earns depth because deleting it spreads validation, lifecycle ordering, freshness, Effects, rollback, recovery, and reporting knowledge into CLI callers and tests. B adds public methods without adding leverage; C mostly deletes a pass-through and leaves complexity where it already leaked.</p>`;
+  }
+
+  function renderSelectedDesign() {
+    const id = state.selectedDesign;
+    $("package-tree").textContent = P.PACKAGE_TREES[id];
+    $("external-interface").textContent = P.EXTERNAL[id].sketch;
+    $("external-notes").innerHTML = `<p>${esc(P.EXTERNAL[id].notes)}</p>`;
+    $("resource-interface").textContent = P.RESOURCE_PROTOCOLS[id];
+    $("ports").innerHTML = `<table><thead><tr><th>Interface</th><th>Concrete adapter</th><th>Fake adapter</th><th>Seam judgment</th></tr></thead><tbody>
+      ${P.PORTS[id].map(row => `<tr>${row.map(cell => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>`;
+  }
+
+  function renderArchitecture() {
+    $("dependencies").textContent = `Allowed inward arrows (final selection; AST enforced)
+
+cli ───────────────→ application, reporting
+application ───────→ config, planning, execution, domain, ports
+config ────────────→ domain, resource_types registry interface
+planning ──────────→ domain, resource_types erased runtime
+execution ─────────→ domain, planning, resource_types, ports
+resource_types ────→ domain, capability-specific ports
+reporting ─────────→ domain
+adapters ──────────→ ports + domain
+ports ─────────────→ domain
+domain ────────────→ standard library only
+
+Forbidden: domain/planning → Paramiko; planner → adapter;
+CLI → SFTP; Resource Type → reporting/canonical JSON or adapters;
+transport → Convergence; adapters → CLI/application orchestration.`;
+    const attempt = state.importAttempt;
+    $("import-result").className = `callout ${attempt.accepted === false ? "bad-text" : attempt.accepted === true ? "good-text" : ""}`;
+    $("import-result").innerHTML = `<b>${attempt.accepted === false ? "Rejected" : attempt.accepted === true ? "Allowed" : "No attempt"}</b><br>${esc(attempt.reason)}`;
+    $("ownership").innerHTML = `<table><thead><tr><th>Behavior</th><th>Owning module</th><th>Facts crossing seam</th></tr></thead><tbody>
+      ${P.OWNERSHIP.map(row => `<tr>${row.map(cell => `<td>${esc(cell)}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>`;
+  }
+
+  function renderState() {
+    const r = state.resource;
+    const summary = [
+      ["Candidate", P.DESIGNS.find(d => d.id === state.selectedDesign).name],
+      ["Workflow", state.workflow],
+      ["Current phase", state.phase],
+      ["Next phase", state.pendingPhases[0] || "none"],
+      ["Run status", state.run.status],
+      ["Plan disposition", state.run.planDisposition],
+      ["Run revision", state.run.revision],
+      ["Evidence revision", state.run.evidenceRevision],
+      ["Device I/O calls", state.run.ioCount],
+      ["Mutations", state.run.mutationCount],
+      ["Lease", state.run.lease],
+      ["Hypothetical Effect", state.hypotheticalEffect ? "enabled" : "disabled"]
+    ];
+    $("state-summary").innerHTML = summary.map(([label, value]) => `<div class="stat"><b>${esc(label)}</b><span>${esc(value)}</span></div>`).join("");
+    const resource = [
+      ["Resource", r.id],
+      ["Resource Type", r.type],
+      ["State Address", r.stateAddress],
+      ["Lifecycle phase", state.phase],
+      ["Inputs", `Desired limit ${r.desired.limit}; observed ${r.observation.limit ?? r.observation.kind}`],
+      ["Pure outputs", `${r.relation}; ${r.change ? r.change.operation : "no Change"}; Effects ${r.effectDeclaration.length}`],
+      ["I/O performed", `${state.run.ioCount} semantic port call(s)`],
+      ["Observation safety", `${r.observation.kind}; safe=${r.observation.safe}`],
+      ["Mutation", r.mutation],
+      ["Verification", r.verification],
+      ["Rollback", r.rollback],
+      ["Final Convergence", r.finalConvergence],
+      ["Evidence / report revision", `${state.run.evidenceRevision} / ${state.run.revision}`]
+    ];
+    $("resource-state").innerHTML = resource.map(([label, value]) => `<div class="stat"><b>${esc(label)}</b><span>${esc(value)}</span></div>`).join("");
+    $("trace").innerHTML = state.trace.map(item => `<li>${esc(item)}</li>`).join("");
+    $("rejection").className = `callout ${state.rejected === "None." ? "" : "bad-text"}`;
+    $("rejection").innerHTML = `<b>${state.rejected === "None." ? "No rejected transition" : "Rejected"}</b><br>${esc(state.rejected)}`;
+    $("report-result").innerHTML = `
+      <p>${pill(state.run.reportKind)} ${pill(state.run.status, state.run.status === "converged" || state.run.status === "noop" ? "good" : state.run.status.includes("failed") || state.run.status === "blocked" ? "bad" : "warn")}</p>
+      <ul class="compact">
+        <li>Plan and Run reports are domain results.</li>
+        <li>Only reporting renders canonical JSON/human text.</li>
+        <li>Run store owns revision compare-and-append.</li>
+      </ul>`;
+    const rejected = state.history.at(-1)?.rejected;
+    $("last-transition").className = `panel transition ${rejected ? "rejected" : ""}`;
+    $("last-transition").innerHTML = `<h2>Last action</h2><p>${esc(state.lastTransition)}</p>`;
+    $("raw-state").textContent = JSON.stringify(state, null, 2);
+  }
+
+  function render() {
+    renderTabs();
+    renderDesigns();
+    renderSelectedDesign();
+    renderArchitecture();
+    renderState();
+  }
+
+  document.addEventListener("click", event => {
+    const tab = event.target.closest("[data-tab]");
+    if (tab) {
+      activeScenario = Number(tab.dataset.tab);
+      completedSteps = new Set();
+      state = P.createState(state.selectedDesign);
+      render();
+      return;
+    }
+    const scenarioButton = event.target.closest("[data-scenario-step]");
+    if (scenarioButton) {
+      const index = Number(scenarioButton.dataset.scenarioStep);
+      dispatch(P.SCENARIOS[activeScenario].steps[index][1], index);
+      return;
+    }
+    const designButton = event.target.closest("[data-design]");
+    if (designButton) {
+      dispatch({ type: "SELECT_DESIGN", design: designButton.dataset.design });
+      return;
+    }
+    const actionButton = event.target.closest("[data-action]");
+    if (actionButton) {
+      dispatch({
+        type: actionButton.dataset.action,
+        kind: actionButton.dataset.kind,
+        from: actionButton.dataset.from,
+        to: actionButton.dataset.to
+      });
+    }
+  });
+
+  $("design-select").addEventListener("change", event => dispatch({ type: "SELECT_DESIGN", design: event.target.value }));
+  render();
+})();
+</script>
+</body>
+</html>

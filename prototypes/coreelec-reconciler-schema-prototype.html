@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Throwaway CoreELEC Reconciler schema prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17211f;
+      --muted: #63706c;
+      --line: #d8dfdc;
+      --paper: #fbfcfb;
+      --panel: #ffffff;
+      --accent: #176b5b;
+      --accent-soft: #e6f2ef;
+      --danger: #a3382f;
+      --danger-soft: #f9ebe9;
+      --warn: #8a6014;
+      --warn-soft: #fbf2df;
+      --code: #f3f6f5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header, main { max-width: 1500px; margin: 0 auto; padding: 24px; }
+    header { padding-bottom: 10px; }
+    h1, h2, h3 { line-height: 1.2; margin: 0 0 10px; }
+    h1 { font-size: clamp(25px, 4vw, 40px); letter-spacing: -0.03em; }
+    h2 { font-size: 19px; }
+    h3 { font-size: 15px; }
+    p { margin: 7px 0; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { background: var(--code); padding: 1px 4px; border-radius: 4px; }
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .question {
+      max-width: 1050px;
+      padding: 14px 18px;
+      margin-top: 18px;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      font-size: 17px;
+    }
+    .notice {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 5px 9px;
+      border: 1px solid var(--warn);
+      border-radius: 999px;
+      color: var(--warn);
+      background: var(--warn-soft);
+      font-weight: 750;
+      font-size: 12px;
+    }
+    .section { margin: 20px 0; }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      padding: 16px;
+      min-width: 0;
+    }
+    .grid { display: grid; gap: 14px; }
+    .status-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .label { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .value { margin-top: 4px; font-weight: 750; overflow-wrap: anywhere; }
+    .ok { color: var(--accent); }
+    .bad { color: var(--danger); }
+    .muted { color: var(--muted); }
+    .verdict {
+      border-left: 5px solid var(--accent);
+      background: var(--accent-soft);
+    }
+    .verdict.invalid { border-color: var(--danger); background: var(--danger-soft); }
+    .errors { margin: 10px 0 0; padding-left: 20px; }
+    .errors li { margin: 5px 0; }
+    button {
+      appearance: none;
+      border: 1px solid #aab6b2;
+      border-radius: 7px;
+      background: white;
+      color: var(--ink);
+      padding: 8px 11px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: .45; cursor: default; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .faults { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .fault {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      padding: 9px;
+      cursor: pointer;
+    }
+    .fault input { margin-top: 4px; accent-color: var(--danger); }
+    .fault strong { display: block; font-size: 13px; }
+    .fault span { display: block; color: var(--muted); font-size: 12px; }
+    .tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 7px; }
+    .tab { white-space: nowrap; }
+    .walkthrough { border-top: 1px solid var(--line); padding-top: 14px; }
+    .step { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+    .step-number {
+      flex: 0 0 25px;
+      width: 25px;
+      height: 25px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--code);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .step.done .step-number { background: var(--accent); color: white; }
+    .step button { flex: 1; text-align: left; }
+    pre {
+      margin: 0;
+      padding: 13px;
+      border-radius: 7px;
+      background: var(--code);
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre;
+    }
+    details { border-top: 1px solid var(--line); padding: 9px 0; }
+    details:first-of-type { border-top: 0; }
+    summary { cursor: pointer; font-weight: 750; }
+    .resource {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      margin: 9px 0;
+    }
+    .resource-head { display: flex; gap: 10px; justify-content: space-between; align-items: start; }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0; }
+    .chip { border-radius: 999px; background: var(--code); padding: 2px 7px; font-size: 11px; font-weight: 750; }
+    .origin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .origin-table th, .origin-table td { padding: 5px 7px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .origin-table th { color: var(--muted); }
+    .callout { padding: 10px; border-radius: 7px; background: var(--code); }
+    .empty { color: var(--muted); font-style: italic; }
+    footer { max-width: 1500px; margin: 0 auto; padding: 0 24px 32px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 1000px) {
+      .status-grid, .three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .faults { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      header, main { padding: 17px; }
+      .status-grid, .two, .three, .faults { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">Throwaway logic prototype · candidate, not a decision</div>
+    <h1>Profile, inventory, and Artifact schema explorer</h1>
+    <p>Drive a proposed authored configuration model through composition and fail-closed validation without contacting a Device.</p>
+    <div class="question"><strong>Question:</strong> Does this authored configuration model make fixed-layer composition, exclusive ownership, dependency closure, absence, secrets, and Artifact provenance understandable and fail closed before a Device connection?</div>
+    <div class="notice">Not production code. No schema choice is final until a human walkthrough accepts or changes it.</div>
+  </header>
+
+  <main>
+    <section class="section panel">
+      <h2>Guided walkthroughs</h2>
+      <p class="muted">Choose a tab, then press its real step buttons in order. Starting a tab resets the model.</p>
+      <div id="tabs" class="tabs"></div>
+      <div id="walkthrough" class="walkthrough"></div>
+    </section>
+
+    <section class="section panel">
+      <h2>Free play</h2>
+      <p class="muted">Compose candidate layers, change selection, and inject authoring faults. Every action rebuilds and renders the full state.</p>
+      <div class="button-row" style="margin-bottom:12px">
+        <button class="primary" data-action="reset">Reset candidate</button>
+        <button data-action="overridePlaylist">Toggle Device playlist limit override</button>
+        <button data-action="omitWeather">Toggle Weather omission</button>
+        <button data-action="absentLegacy">Toggle explicit absent playlist</button>
+        <button data-action="selectSkin">Select skin</button>
+        <button data-action="selectBaseline">Select baseline</button>
+        <button data-action="selectAll">Select full Profile</button>
+      </div>
+      <div id="faults" class="faults"></div>
+    </section>
+
+    <section class="section">
+      <div id="verdict"></div>
+    </section>
+
+    <section class="section grid status-grid" id="summary"></section>
+
+    <section class="section grid two">
+      <div class="panel">
+        <h2>Repository source files</h2>
+        <p class="muted">Readable YAML-like panes; semantics are modeled as plain JavaScript data. No YAML parser is used.</p>
+        <div id="sources"></div>
+      </div>
+      <div class="panel">
+        <h2>Resolved Profile</h2>
+        <p class="muted">Resources merge by stable ID through the fixed platform → room → Device pipeline.</p>
+        <div id="resources"></div>
+      </div>
+    </section>
+
+    <section class="section grid three">
+      <div class="panel">
+        <h2>Selector and dependency closure</h2>
+        <div id="closure"></div>
+      </div>
+      <div class="panel">
+        <h2>Dependency order</h2>
+        <div id="order"></div>
+      </div>
+      <div class="panel">
+        <h2>Artifact resolution</h2>
+        <div id="artifacts"></div>
+      </div>
+    </section>
+
+    <section class="section panel">
+      <h2>Successful Plan-input summary</h2>
+      <p class="muted">This is only configuration validation and resolution. Observation, comparison, Plan construction, apply, Effects, and Verification are deliberately outside this prototype.</p>
+      <pre id="plan"></pre>
+    </section>
+  </main>
+
+  <footer>
+    Candidate principles exercised: strict single-document inputs, top-level schema IDs and versions, stable identities, no Desired State in code, typed secret references, exact State Address ownership, validated DAGs, stable-first Artifacts, and transport construction only after complete validation.
+  </footer>
+
+  <script>
+    // Pure logic module: no DOM access and no browser state.
+    const SchemaPrototype = (() => {
+      const clone = value => JSON.parse(JSON.stringify(value));
+      const isObject = value => value && typeof value === "object" && !Array.isArray(value);
+      const allowedMappingMerge = new Set(["intent", "settings", "guard", "provenance", "prerelease_exception"]);
+      const supported = {
+        "coreelec.device-inventory": 1,
+        "coreelec.profile": 1,
+        "coreelec.artifact-catalog": 1,
+        "coreelec.secret-providers": 1
+      };
+      const knownResourceKeys = new Set([
+        "id", "type", "desired", "management", "state_addresses", "depends_on",
+        "selectors", "intent", "settings", "artifact", "guard", "impact", "effect"
+      ]);
+
+      const baseDocuments = () => ({
+        inventory: {
+          file: "config/devices/theater-ugoos-am6b-plus.yaml",
+          schema: "coreelec.device-inventory",
+          schema_version: 1,
+          devices: [{
+            id: "device.theater.ugoos-am6b-plus",
+            profile: {
+              platform: "profile.platform.coreelec-21.3-ugoos-am6b-plus",
+              room: "profile.room.theater",
+              override: "profile.device.theater-ugoos-am6b-plus"
+            },
+            connection: {
+              host: "theater-coreelec.example.invalid",
+              port: 22,
+              user: "root",
+              known_hosts: "secrets/known-hosts",
+              identity: "secret.controller.coreelec-admin-key"
+            }
+          }]
+        },
+        platform: {
+          file: "config/profiles/platform/coreelec-21.3-ugoos-am6b-plus.yaml",
+          schema: "coreelec.profile",
+          schema_version: 1,
+          profile_id: "profile.platform.coreelec-21.3-ugoos-am6b-plus",
+          layer: "platform",
+          guards: [{
+            id: "guard.platform.coreelec-21.3-ugoos-am6b-plus",
+            require: { os: "CoreELEC", release: "21.3", model: "Ugoos AM6B Plus" }
+          }],
+          resources: [
+            {
+              id: "addon.skin.arctic-fuse-3",
+              type: "KodiAddon",
+              desired: "present",
+              management: "enforce",
+              state_addresses: [
+                "kodi://addon/skin.arctic.fuse.3/directory",
+                "kodi://addon/skin.arctic.fuse.3/version",
+                "kodi://addon/skin.arctic.fuse.3/enabled",
+                "kodi://addon/skin.arctic.fuse.3/final-digest"
+              ],
+              depends_on: [],
+              selectors: ["skin", "baseline"],
+              artifact: "artifact.kodi.skin.arctic-fuse-3.3.2.0",
+              impact: "service_disruptive"
+            },
+            {
+              id: "kodi.gui.shared",
+              type: "KodiGuiSettings",
+              desired: "present",
+              management: "enforce",
+              state_addresses: [
+                "kodi://guisettings/lookandfeel.skin",
+                "kodi://guisettings/weather.addon",
+                "kodi://guisettings/services.webserver"
+              ],
+              depends_on: ["addon.skin.arctic-fuse-3"],
+              selectors: ["core", "services", "skin", "baseline"],
+              settings: {
+                "lookandfeel.skin": { type: "string", value: "skin.arctic.fuse.3" },
+                "weather.addon": { type: "string", value: "weather.ha" },
+                "services.webserver": { type: "boolean", value: true }
+              },
+              impact: "service_disruptive",
+              effect: "kodi.restart"
+            },
+            {
+              id: "skin.playlist.new-shows",
+              type: "KodiSmartPlaylist",
+              desired: "present",
+              management: "enforce",
+              state_addresses: ["special://profile/playlists/video/NewShows.xsp"],
+              depends_on: ["addon.skin.arctic-fuse-3"],
+              selectors: ["skin", "baseline"],
+              intent: {
+                media: "tvshows",
+                name: "New Shows",
+                match: "all",
+                limit: 50,
+                rules: [{ field: "playcount", operator: "is", value: 0 }],
+                order: { field: "dateadded", direction: "descending" },
+                mode: "0644"
+              },
+              impact: "non_disruptive",
+              effect: null
+            },
+            {
+              id: "weather.ha.settings",
+              type: "KodiAddonSettings",
+              desired: "present",
+              management: "enforce",
+              state_addresses: [
+                "special://profile/addon_data/weather.ha/settings.xml#host",
+                "special://profile/addon_data/weather.ha/settings.xml#token"
+              ],
+              depends_on: ["addon.weather.ha", "kodi.gui.shared"],
+              selectors: ["services", "baseline"],
+              settings: {
+                host: { type: "url", value: "https://home-assistant.example.invalid" },
+                token: { type: "secret_ref", value: "secret.weather.home-assistant-token" }
+              },
+              guard: { when: { integration: "home-assistant-weather", enabled: true } },
+              impact: "non_disruptive"
+            },
+            {
+              id: "addon.weather.ha",
+              type: "KodiAddon",
+              desired: "present",
+              management: "enforce",
+              state_addresses: [
+                "kodi://addon/weather.ha/directory",
+                "kodi://addon/weather.ha/version",
+                "kodi://addon/weather.ha/enabled",
+                "kodi://addon/weather.ha/final-digest"
+              ],
+              depends_on: [],
+              selectors: ["services", "baseline"],
+              artifact: "artifact.kodi.weather-ha.0.7.1",
+              impact: "service_disruptive"
+            },
+            {
+              id: "audit.addons.unmanaged",
+              type: "KodiAddonInventory",
+              desired: "present",
+              management: "observe_only",
+              state_addresses: ["kodi://addons/inventory"],
+              depends_on: [],
+              selectors: ["inventory"],
+              impact: "non_disruptive"
+            },
+            {
+              id: "skin.playlist.old-releases",
+              type: "KodiSmartPlaylist",
+              desired: "absent",
+              management: "enforce",
+              state_addresses: ["special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp"],
+              depends_on: [],
+              selectors: ["skin", "baseline"],
+              impact: "destructive",
+              effect: null
+            }
+          ]
+        },
+        room: {
+          file: "config/profiles/rooms/theater.yaml",
+          schema: "coreelec.profile",
+          schema_version: 1,
+          profile_id: "profile.room.theater",
+          layer: "room",
+          resources: [{
+            id: "kodi.gui.shared",
+            type: "KodiGuiSettings",
+            settings: {
+              "audiooutput.device": { type: "audio_device_intent", value: "HDMI AVR" },
+              "audiooutput.passthrough": { type: "boolean", value: true }
+            },
+            state_addresses: [
+              "kodi://guisettings/lookandfeel.skin",
+              "kodi://guisettings/weather.addon",
+              "kodi://guisettings/services.webserver",
+              "kodi://guisettings/audiooutput.device",
+              "kodi://guisettings/audiooutput.passthrough"
+            ],
+            selectors: ["core", "services", "skin", "room", "baseline"]
+          }]
+        },
+        deviceOverride: {
+          file: "config/profiles/devices/theater-ugoos-am6b-plus.yaml",
+          schema: "coreelec.profile",
+          schema_version: 1,
+          profile_id: "profile.device.theater-ugoos-am6b-plus",
+          layer: "device",
+          resources: []
+        },
+        artifacts: {
+          file: "config/artifacts/kodi-addons.yaml",
+          schema: "coreelec.artifact-catalog",
+          schema_version: 1,
+          artifacts: [
+            {
+              id: "artifact.kodi.skin.arctic-fuse-3.3.2.0",
+              identity: "skin.arctic.fuse.3",
+              version: "3.2.0",
+              channel: "stable",
+              source_url: "https://github.com/jurialmunkey/skin.arctic.fuse.3/releases/download/v3.2.0/skin.arctic.fuse.3-3.2.0.zip",
+              final_digest: "sha256:skin-final-320",
+              dependencies: []
+            },
+            {
+              id: "artifact.kodi.weather-ha.0.7.1",
+              identity: "weather.ha",
+              version: "0.7.1",
+              channel: "stable",
+              source_url: "https://github.com/example/weather.ha/releases/download/0.7.1/weather.ha-0.7.1.zip",
+              provenance: {
+                upstream_digest: "sha256:weather-upstream-071",
+                patch_set_digest: "sha256:weather-patches-coreelec-071",
+                final_digest: "sha256:weather-final-071"
+              },
+              final_digest: "sha256:weather-final-071",
+              dependencies: []
+            },
+            {
+              id: "artifact.kodi.helper.preview.2.0.0-rc1",
+              identity: "script.helper.preview",
+              version: "2.0.0-rc1",
+              channel: "prerelease",
+              source_url: "https://github.com/example/helper/releases/download/2.0.0-rc1/helper.zip",
+              final_digest: "sha256:helper-rc1",
+              prerelease_exception: {
+                rationale: "CoreELEC 21.3 compatibility acceptance candidate",
+                acceptance_evidence: "evidence/addons/helper-2.0.0-rc1.md",
+                review_on: "2026-10-15"
+              },
+              dependencies: []
+            }
+          ]
+        },
+        secrets: {
+          file: "config/secrets/providers.yaml",
+          schema: "coreelec.secret-providers",
+          schema_version: 1,
+          references: [
+            { id: "secret.controller.coreelec-admin-key", provider: "environment", key: "COREELEC_SSH_KEY_FILE" },
+            { id: "secret.weather.home-assistant-token", provider: "environment", key: "WEATHER_HA_TOKEN" }
+          ]
+        }
+      });
+
+      const initialState = () => ({
+        selection: { mode: "selector", value: "skin" },
+        options: { overridePlaylist: false, omitWeather: false, absentLegacy: true },
+        faults: {
+          duplicateResourceId: false,
+          duplicateAddress: false,
+          missingDependency: false,
+          cycle: false,
+          unknownKey: false,
+          duplicateYamlKey: false,
+          multipleDocuments: false,
+          inlineSecret: false,
+          missingSecretRef: false,
+          unsupportedVersion: false,
+          prereleaseNoException: false,
+          provenanceMismatch: false
+        },
+        lastAction: "Reset to the candidate platform, room, and Device documents."
+      });
+
+      function reducer(state, action) {
+        const next = clone(state);
+        if (action.type === "reset") return initialState();
+        if (action.type === "toggleOption") {
+          next.options[action.name] = !next.options[action.name];
+          next.lastAction = action.message;
+        }
+        if (action.type === "setOption") {
+          next.options[action.name] = action.value;
+          next.lastAction = action.message;
+        }
+        if (action.type === "toggleFault") {
+          next.faults[action.name] = !next.faults[action.name];
+          next.lastAction = `${next.faults[action.name] ? "Injected" : "Removed"} fault: ${action.label}.`;
+        }
+        if (action.type === "setFault") {
+          next.faults[action.name] = action.value;
+          next.lastAction = action.message;
+        }
+        if (action.type === "select") {
+          next.selection = clone(action.selection);
+          next.lastAction = action.message;
+        }
+        return next;
+      }
+
+      function mergeValue(base, overlay, path, origins, layer) {
+        if (overlay === undefined) return clone(base);
+        const field = path.split(".").pop();
+        if (isObject(base) && isObject(overlay) && allowedMappingMerge.has(field)) {
+          const result = clone(base);
+          Object.keys(overlay).forEach(key => {
+            result[key] = mergeValue(base[key], overlay[key], `${path}.${key}`, origins, layer);
+          });
+          return result;
+        }
+        origins[path] = layer;
+        return clone(overlay);
+      }
+
+      function mergeResources(layers) {
+        const byId = new Map();
+        const origins = {};
+        const duplicateIds = [];
+        layers.forEach(layer => {
+          const seen = new Set();
+          layer.resources.forEach(resource => {
+            if (seen.has(resource.id)) duplicateIds.push(`${resource.id} appears twice in ${layer.name}`);
+            seen.add(resource.id);
+            if (!byId.has(resource.id)) {
+              byId.set(resource.id, clone(resource));
+              Object.keys(resource).forEach(key => origins[`${resource.id}.${key}`] = layer.name);
+              ["intent", "settings"].forEach(mapping => {
+                if (resource[mapping]) Object.keys(resource[mapping]).forEach(key => {
+                  origins[`${resource.id}.${mapping}.${key}`] = layer.name;
+                });
+              });
+              return;
+            }
+            const current = byId.get(resource.id);
+            Object.keys(resource).forEach(key => {
+              if (key === "id") return;
+              current[key] = mergeValue(current[key], resource[key], `${resource.id}.${key}`, origins, layer.name);
+            });
+          });
+        });
+        return { resources: [...byId.values()], origins, duplicateIds };
+      }
+
+      function topologicalOrder(resources) {
+        const ids = new Set(resources.map(resource => resource.id));
+        const indegree = new Map(resources.map(resource => [resource.id, 0]));
+        const outgoing = new Map(resources.map(resource => [resource.id, []]));
+        const missing = [];
+        resources.forEach(resource => (resource.depends_on || []).forEach(dependency => {
+          if (!ids.has(dependency)) {
+            missing.push(`${resource.id} depends on missing Resource ${dependency}`);
+          } else {
+            indegree.set(resource.id, indegree.get(resource.id) + 1);
+            outgoing.get(dependency).push(resource.id);
+          }
+        }));
+        const queue = [...indegree.entries()].filter(([, degree]) => degree === 0).map(([id]) => id).sort();
+        const order = [];
+        while (queue.length) {
+          const id = queue.shift();
+          order.push(id);
+          outgoing.get(id).sort().forEach(dependent => {
+            indegree.set(dependent, indegree.get(dependent) - 1);
+            if (indegree.get(dependent) === 0) queue.push(dependent);
+          });
+          queue.sort();
+        }
+        const cycle = order.length === resources.length ? [] : resources.filter(resource => !order.includes(resource.id)).map(resource => resource.id);
+        return { order, missing, cycle };
+      }
+
+      function dependencyClosure(resources, selection) {
+        const byId = new Map(resources.map(resource => [resource.id, resource]));
+        const seeds = selection.mode === "all"
+          ? resources.map(resource => resource.id)
+          : selection.mode === "resource"
+            ? [selection.value]
+            : resources.filter(resource => (resource.selectors || []).includes(selection.value)).map(resource => resource.id);
+        const selected = new Set();
+        const visit = id => {
+          if (selected.has(id) || !byId.has(id)) return;
+          selected.add(id);
+          (byId.get(id).depends_on || []).forEach(visit);
+        };
+        seeds.forEach(visit);
+        return { seeds, selected: [...selected].sort() };
+      }
+
+      function materialize(state) {
+        const docs = baseDocuments();
+        if (state.options.overridePlaylist) {
+          docs.deviceOverride.resources.push({
+            id: "skin.playlist.new-shows",
+            type: "KodiSmartPlaylist",
+            intent: { limit: 25 }
+          });
+        }
+        if (state.options.omitWeather) {
+          docs.platform.resources = docs.platform.resources.filter(resource => !["weather.ha.settings", "addon.weather.ha"].includes(resource.id));
+          docs.platform.resources.find(resource => resource.id === "kodi.gui.shared").settings["weather.addon"] =
+            { type: "string", value: "weather.multi" };
+        }
+        if (!state.options.absentLegacy) {
+          docs.platform.resources = docs.platform.resources.filter(resource => resource.id !== "skin.playlist.old-releases");
+        }
+        const f = state.faults;
+        if (f.duplicateResourceId) docs.room.resources.push(clone(docs.room.resources[0]));
+        if (f.duplicateAddress) {
+          docs.room.resources.push({
+            id: "skin.playlist.address-collision",
+            type: "KodiSmartPlaylist",
+            desired: "present",
+            management: "enforce",
+            state_addresses: ["special://profile/playlists/video/NewShows.xsp"],
+            depends_on: [],
+            selectors: ["skin"],
+            intent: { media: "tvshows", name: "Collision", match: "all", limit: 1, rules: [], order: { field: "title", direction: "ascending" }, mode: "0644" }
+          });
+        }
+        if (f.missingDependency) docs.platform.resources.find(resource => resource.id === "skin.playlist.new-shows").depends_on.push("addon.missing");
+        if (f.cycle) docs.platform.resources.find(resource => resource.id === "addon.skin.arctic-fuse-3").depends_on.push("skin.playlist.new-shows");
+        if (f.unknownKey) docs.platform.resources.find(resource => resource.id === "skin.playlist.new-shows").surprise = "not in the schema";
+        if (f.inlineSecret) docs.platform.resources.find(resource => resource.id === "weather.ha.settings").settings.token = { type: "string", value: "actual-secret-value" };
+        if (f.missingSecretRef) docs.platform.resources.find(resource => resource.id === "weather.ha.settings").settings.token.value = "secret.weather.not-declared";
+        if (f.unsupportedVersion) docs.platform.schema_version = 99;
+        if (f.prereleaseNoException) delete docs.artifacts.artifacts.find(artifact => artifact.channel === "prerelease").prerelease_exception;
+        if (f.provenanceMismatch) docs.artifacts.artifacts.find(artifact => artifact.id === "artifact.kodi.weather-ha.0.7.1").final_digest = "sha256:not-the-provenance-final";
+        docs.platform.simulation = {
+          duplicate_yaml_key: f.duplicateYamlKey,
+          multiple_documents: f.multipleDocuments
+        };
+        return docs;
+      }
+
+      function validateDocuments(docs, resources, mergeResult) {
+        const errors = [];
+        const allDocs = [docs.inventory, docs.platform, docs.room, docs.deviceOverride, docs.artifacts, docs.secrets];
+        allDocs.forEach(doc => {
+          if (!supported[doc.schema]) errors.push(`Unknown top-level schema identifier ${doc.schema}.`);
+          else if (doc.schema_version !== supported[doc.schema]) errors.push(`${doc.file}: unsupported ${doc.schema} version ${doc.schema_version}; supported version is ${supported[doc.schema]}.`);
+        });
+        if (docs.platform.simulation.duplicate_yaml_key) errors.push(`${docs.platform.file}: duplicate YAML mapping key simulated; strict loader rejects the document.`);
+        if (docs.platform.simulation.multiple_documents) errors.push(`${docs.platform.file}: multiple YAML documents simulated; exactly one mapping document is required.`);
+        mergeResult.duplicateIds.forEach(error => errors.push(`Duplicate Resource ID: ${error}.`));
+        resources.forEach(resource => {
+          Object.keys(resource).filter(key => !knownResourceKeys.has(key)).forEach(key => errors.push(`${resource.id}: unknown key "${key}".`));
+        });
+        const owners = new Map();
+        resources.forEach(resource => (resource.state_addresses || []).forEach(address => {
+          if (owners.has(address) && owners.get(address) !== resource.id) {
+            errors.push(`State Address ${address} is owned by both ${owners.get(address)} and ${resource.id}; precedence cannot resolve ownership.`);
+          } else owners.set(address, resource.id);
+        }));
+        const graph = topologicalOrder(resources);
+        graph.missing.forEach(error => errors.push(error + "."));
+        if (graph.cycle.length) errors.push(`Dependency cycle includes: ${graph.cycle.join(" → ")}.`);
+        const secretIds = new Set(docs.secrets.references.map(reference => reference.id));
+        resources.forEach(resource => {
+          Object.entries(resource.settings || {}).forEach(([name, setting]) => {
+            if (name === "token" && setting.type !== "secret_ref") errors.push(`${resource.id}.${name}: secret-bearing setting must use type secret_ref; inline values are forbidden.`);
+            if (setting.type === "secret_ref" && !secretIds.has(setting.value)) errors.push(`${resource.id}.${name}: missing secret reference ${setting.value}.`);
+          });
+        });
+        docs.artifacts.artifacts.forEach(artifact => {
+          if (artifact.channel === "prerelease") {
+            const exception = artifact.prerelease_exception;
+            if (!exception || !exception.rationale || !exception.acceptance_evidence || !exception.review_on) {
+              errors.push(`${artifact.id}: prerelease requires rationale, additional acceptance evidence, and a review trigger.`);
+            }
+          }
+          if (artifact.provenance && artifact.provenance.final_digest !== artifact.final_digest) {
+            errors.push(`${artifact.id}: catalog final digest does not match patched provenance final digest.`);
+          }
+          if (artifact.provenance && (!artifact.provenance.upstream_digest || !artifact.provenance.patch_set_digest)) {
+            errors.push(`${artifact.id}: patched Artifact requires upstream, patch-set, and final provenance digests.`);
+          }
+        });
+        const artifactIds = new Set(docs.artifacts.artifacts.map(artifact => artifact.id));
+        resources.filter(resource => resource.artifact).forEach(resource => {
+          if (!artifactIds.has(resource.artifact)) errors.push(`${resource.id}: missing Artifact ${resource.artifact}.`);
+        });
+        return { errors, graph, owners };
+      }
+
+      function evaluate(state) {
+        const docs = materialize(state);
+        const layers = [
+          { name: "platform", resources: docs.platform.resources },
+          { name: "room", resources: docs.room.resources },
+          { name: "device", resources: docs.deviceOverride.resources }
+        ];
+        const merged = mergeResources(layers);
+        const validation = validateDocuments(docs, merged.resources, merged);
+        const closure = dependencyClosure(merged.resources, state.selection);
+        const selectedOrder = validation.graph.order.filter(id => closure.selected.includes(id));
+        const selectedResources = merged.resources.filter(resource => closure.selected.includes(resource.id));
+        const artifactIds = [...new Set(selectedResources.map(resource => resource.artifact).filter(Boolean))];
+        const artifacts = docs.artifacts.artifacts.filter(artifact => artifactIds.includes(artifact.id));
+        const valid = validation.errors.length === 0;
+        return {
+          state: clone(state),
+          documents: docs,
+          layers: layers.map(layer => ({ name: layer.name, resource_ids: layer.resources.map(resource => resource.id) })),
+          resources: merged.resources,
+          origins: merged.origins,
+          validation: { valid, errors: validation.errors },
+          dependencyOrder: validation.graph.order,
+          closure,
+          selectedOrder,
+          artifacts,
+          transportConstructionPermitted: valid,
+          planInput: valid ? {
+            device_id: docs.inventory.devices[0].id,
+            profile_pipeline: [docs.platform.profile_id, docs.room.profile_id, docs.deviceOverride.profile_id],
+            profile_schema_version: 1,
+            guard_ids: docs.platform.guards.map(guard => guard.id),
+            selection: clone(state.selection),
+            selected_resource_ids: selectedOrder,
+            explicit_absence_ids: selectedResources.filter(resource => resource.desired === "absent").map(resource => resource.id),
+            observe_only_ids: selectedResources.filter(resource => resource.management === "observe_only").map(resource => resource.id),
+            artifact_bindings: artifacts.map(artifact => ({ id: artifact.id, final_digest: artifact.final_digest })),
+            secret_reference_ids: [...new Set(selectedResources.flatMap(resource =>
+              Object.values(resource.settings || {}).filter(setting => setting.type === "secret_ref").map(setting => setting.value)
+            ))],
+            next_boundary: "construct typed transport only now; then observe Guards and selected Resources"
+          } : {
+            status: "blocked_before_transport",
+            error_count: validation.errors.length,
+            next_boundary: "correct authored configuration and validate again"
+          }
+        };
+      }
+
+      return { initialState, reducer, evaluate };
+    })();
+
+    const faultDefinitions = [
+      ["duplicateResourceId", "Duplicate Resource ID", "Same stable ID twice in one layer"],
+      ["duplicateAddress", "Duplicate State ownership", "Two Resources claim NewShows.xsp"],
+      ["missingDependency", "Missing dependency", "Playlist depends on an unknown Resource"],
+      ["cycle", "Dependency cycle", "Add-on and playlist depend on each other"],
+      ["unknownKey", "Unknown Resource key", "Strict schema rejects surprise"],
+      ["duplicateYamlKey", "Duplicate YAML key", "Strict-loader simulation"],
+      ["multipleDocuments", "Multiple YAML documents", "Single-document boundary simulation"],
+      ["inlineSecret", "Inline secret", "Token literal instead of typed reference"],
+      ["missingSecretRef", "Missing secret reference", "Reference absent from provider file"],
+      ["unsupportedVersion", "Unsupported schema version", "Platform Profile uses version 99"],
+      ["prereleaseNoException", "Prerelease without exception", "Missing rationale/evidence/review trigger"],
+      ["provenanceMismatch", "Artifact digest mismatch", "Patched final digest disagrees"]
+    ];
+
+    const scenarios = [
+      {
+        title: "1 · Happy path",
+        description: "Resolve platform + room + Device layers, select the whole Profile, and reach a Plan-input summary before transport exists.",
+        steps: [
+          ["Reset the three fixed layers", { type: "reset" }],
+          ["Select the full resolved Profile", { type: "select", selection: { mode: "all", value: "all" }, message: "Selected the full resolved Profile." }]
+        ]
+      },
+      {
+        title: "2 · Field origin",
+        description: "Override only the New Shows limit at the Device layer. The rest of its typed Intent remains platform-authored.",
+        steps: [
+          ["Reset the candidate", { type: "reset" }],
+          ["Set Device-specific playlist limit to 25", { type: "setOption", name: "overridePlaylist", value: true, message: "Device override replaced only skin.playlist.new-shows.intent.limit with 25." }]
+        ]
+      },
+      {
+        title: "3 · Omitted vs absent",
+        description: "Omission leaves Weather unmanaged. Explicit absent keeps the old playlist owned and schedules a visible removal.",
+        steps: [
+          ["Reset with explicit old-playlist absence", { type: "reset" }],
+          ["Omit Weather Resources (unmanaged, not deleted)", { type: "setOption", name: "omitWeather", value: true, message: "Weather Resources were omitted; their State Addresses are now unmanaged." }],
+          ["Omit the old playlist too (also unmanaged)", { type: "setOption", name: "absentLegacy", value: false, message: "Removed the explicit absent Resource; omission no longer requests deletion." }]
+        ]
+      },
+      {
+        title: "4 · Ownership failure",
+        description: "A second Resource claims NewShows.xsp. Validation fails; layer precedence cannot choose an owner.",
+        steps: [
+          ["Reset the candidate", { type: "reset" }],
+          ["Claim NewShows.xsp from another Resource", { type: "setFault", name: "duplicateAddress", value: true, message: "Injected duplicate State Address ownership." }]
+        ]
+      },
+      {
+        title: "5 · DAG failures",
+        description: "First reference a missing dependency, then replace it with a dependency cycle. Both block before connection.",
+        steps: [
+          ["Reset the candidate", { type: "reset" }],
+          ["Reference a missing add-on Resource", { type: "setFault", name: "missingDependency", value: true, message: "Injected a missing Resource dependency." }],
+          ["Remove missing reference", { type: "setFault", name: "missingDependency", value: false, message: "Removed the missing dependency fault." }],
+          ["Create an add-on ↔ playlist cycle", { type: "setFault", name: "cycle", value: true, message: "Injected a dependency cycle." }]
+        ]
+      },
+      {
+        title: "6 · Secrets",
+        description: "The typed Weather token reference is safe to resolve. An inline token or unknown reference fails closed.",
+        steps: [
+          ["Reset with typed secret reference", { type: "reset" }],
+          ["Replace reference with an inline token", { type: "setFault", name: "inlineSecret", value: true, message: "Injected a forbidden inline secret." }],
+          ["Restore the typed reference", { type: "setFault", name: "inlineSecret", value: false, message: "Restored the typed secret reference." }],
+          ["Point at an undeclared secret ID", { type: "setFault", name: "missingSecretRef", value: true, message: "Injected a missing secret-provider reference." }]
+        ]
+      },
+      {
+        title: "7 · Artifact policy",
+        description: "Stable is the default. Prerelease needs a scoped exception; patched content records upstream, patch-set, and final digests.",
+        steps: [
+          ["Show all valid stable, prerelease, and patched examples", { type: "select", selection: { mode: "all", value: "all" }, message: "Selected the full Profile so stable and patched Artifact bindings are visible; the catalog also validates the prerelease candidate." }],
+          ["Remove the prerelease exception", { type: "setFault", name: "prereleaseNoException", value: true, message: "Removed prerelease rationale, evidence, and review trigger." }],
+          ["Restore the exception", { type: "setFault", name: "prereleaseNoException", value: false, message: "Restored the explicit prerelease exception." }],
+          ["Make patched final digests disagree", { type: "setFault", name: "provenanceMismatch", value: true, message: "Injected patched Artifact provenance mismatch." }]
+        ]
+      },
+      {
+        title: "8 · Selector closure",
+        description: "Selecting skin includes complete shared-document Resources and every upstream dependency; it never slices guisettings.xml by selector.",
+        steps: [
+          ["Reset with skin selected", { type: "reset" }],
+          ["Select baseline instead", { type: "select", selection: { mode: "selector", value: "baseline" }, message: "Selected baseline; expanded all matching Resources and upstream dependencies." }],
+          ["Select skin again", { type: "select", selection: { mode: "selector", value: "skin" }, message: "Selected skin; included the complete kodi.gui.shared Resource and add-on dependency." }]
+        ]
+      }
+    ];
+
+    let state = SchemaPrototype.initialState();
+    let activeScenario = 0;
+    let completedStep = -1;
+
+    const escapeHtml = value => String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+
+    function yamlLike(value, depth = 0) {
+      const pad = "  ".repeat(depth);
+      if (Array.isArray(value)) {
+        if (!value.length) return "[]";
+        return value.map(item => {
+          if (isSimple(item)) return `${pad}- ${scalar(item)}`;
+          const rendered = yamlLike(item, depth + 1).split("\n");
+          return `${pad}- ${rendered[0].trimStart()}\n${rendered.slice(1).join("\n")}`;
+        }).join("\n");
+      }
+      if (value && typeof value === "object") {
+        return Object.entries(value)
+          .filter(([key]) => key !== "file" && key !== "simulation")
+          .map(([key, item]) => isSimple(item)
+            ? `${pad}${key}: ${scalar(item)}`
+            : `${pad}${key}:\n${yamlLike(item, depth + 1)}`)
+          .join("\n");
+      }
+      return `${pad}${scalar(value)}`;
+    }
+    function isSimple(value) { return value === null || typeof value !== "object" || (Array.isArray(value) && value.length === 0); }
+    function scalar(value) {
+      if (value === null) return "null";
+      if (typeof value === "string") return /[:#{}\[\],&*!|>'"%@`]|\s/.test(value) ? JSON.stringify(value) : value;
+      return JSON.stringify(value);
+    }
+
+    function dispatch(action) {
+      state = SchemaPrototype.reducer(state, action);
+      render();
+    }
+
+    function renderTabs() {
+      document.getElementById("tabs").innerHTML = scenarios.map((scenario, index) =>
+        `<button class="tab ${index === activeScenario ? "active" : ""}" data-tab="${index}">${escapeHtml(scenario.title)}</button>`
+      ).join("");
+      const scenario = scenarios[activeScenario];
+      document.getElementById("walkthrough").innerHTML = `
+        <h3>${escapeHtml(scenario.title)}</h3>
+        <p>${escapeHtml(scenario.description)}</p>
+        ${scenario.steps.map(([label], index) => `
+          <div class="step ${index <= completedStep ? "done" : ""}">
+            <span class="step-number">${index + 1}</span>
+            <button data-step="${index}" ${index > completedStep + 1 ? "disabled" : ""}>${escapeHtml(label)}</button>
+          </div>
+        `).join("")}
+      `;
+    }
+
+    function renderFaults() {
+      document.getElementById("faults").innerHTML = faultDefinitions.map(([name, label, help]) => `
+        <label class="fault">
+          <input type="checkbox" data-fault="${name}" ${state.faults[name] ? "checked" : ""}>
+          <span><strong>${escapeHtml(label)}</strong><span>${escapeHtml(help)}</span></span>
+        </label>
+      `).join("");
+    }
+
+    function originRows(resource, origins) {
+      const paths = [];
+      ["desired", "management", "state_addresses", "depends_on", "selectors", "artifact", "impact", "effect"].forEach(key => {
+        if (resource[key] !== undefined) paths.push([key, resource[key], origins[`${resource.id}.${key}`]]);
+      });
+      ["intent", "settings"].forEach(group => Object.entries(resource[group] || {}).forEach(([key, value]) => {
+        paths.push([`${group}.${key}`, value, origins[`${resource.id}.${group}.${key}`] || origins[`${resource.id}.${group}`]]);
+      }));
+      return paths.map(([path, value, origin]) => `
+        <tr><td><code>${escapeHtml(path)}</code></td><td>${escapeHtml(typeof value === "object" ? JSON.stringify(value) : value)}</td><td>${escapeHtml(origin || "platform")}</td></tr>
+      `).join("");
+    }
+
+    function render() {
+      const result = SchemaPrototype.evaluate(state);
+      renderTabs();
+      renderFaults();
+      const valid = result.validation.valid;
+      document.getElementById("verdict").innerHTML = `
+        <div class="panel verdict ${valid ? "" : "invalid"}">
+          <div class="eyebrow">${valid ? "Configuration accepted" : "Configuration rejected"}</div>
+          <h2>${valid ? "All authored inputs resolve before connection." : "Fail closed: transport construction is forbidden."}</h2>
+          <p><strong>Last action:</strong> ${escapeHtml(state.lastAction)}</p>
+          ${valid
+            ? `<p>No unknown keys, duplicate IDs or owners, missing references, cycles, secret leaks, schema incompatibilities, or Artifact policy violations were found.</p>`
+            : `<ol class="errors">${result.validation.errors.map(error => `<li>${escapeHtml(error)}</li>`).join("")}</ol>`}
+        </div>
+      `;
+      const explicitAbsent = result.resources.filter(resource => resource.desired === "absent").length;
+      document.getElementById("summary").innerHTML = [
+        ["Composition", "platform → room → Device"],
+        ["Resolved Resources", result.resources.length],
+        ["Explicit absent", explicitAbsent],
+        ["Selected closure", result.closure.selected.length],
+        ["Transport", result.transportConstructionPermitted ? "PERMITTED after validation" : "NOT CONSTRUCTED"]
+      ].map(([label, value], index) => `
+        <div class="panel"><div class="label">${escapeHtml(label)}</div><div class="value ${index === 4 ? (valid ? "ok" : "bad") : ""}">${escapeHtml(value)}</div></div>
+      `).join("");
+
+      const sourceDocs = [
+        result.documents.inventory, result.documents.platform, result.documents.room,
+        result.documents.deviceOverride, result.documents.artifacts, result.documents.secrets
+      ];
+      document.getElementById("sources").innerHTML = sourceDocs.map((doc, index) => `
+        <details ${index < 2 ? "open" : ""}>
+          <summary>${escapeHtml(doc.file)}</summary>
+          <pre>${escapeHtml(yamlLike(doc))}</pre>
+        </details>
+      `).join("");
+
+      document.getElementById("resources").innerHTML = result.resources.map(resource => `
+        <div class="resource">
+          <div class="resource-head">
+            <div><strong>${escapeHtml(resource.id)}</strong><div class="muted">${escapeHtml(resource.type)}</div></div>
+            <span class="chip">${escapeHtml(resource.desired || "present")}</span>
+          </div>
+          <div class="chips">
+            ${(resource.selectors || []).map(selector => `<span class="chip">${escapeHtml(selector)}</span>`).join("")}
+            <span class="chip">${escapeHtml(resource.management || "enforce")}</span>
+          </div>
+          <div class="muted">${(resource.state_addresses || []).map(escapeHtml).join("<br>") || "No owned State Address"}</div>
+          <details>
+            <summary>Resolved fields and origins</summary>
+            <table class="origin-table"><thead><tr><th>Field</th><th>Resolved value</th><th>Origin</th></tr></thead><tbody>${originRows(resource, result.origins)}</tbody></table>
+          </details>
+        </div>
+      `).join("");
+
+      document.getElementById("closure").innerHTML = `
+        <div class="callout"><strong>Selection:</strong> ${escapeHtml(state.selection.mode)} <code>${escapeHtml(state.selection.value)}</code></div>
+        <h3 style="margin-top:12px">Direct matches</h3>
+        ${result.closure.seeds.length ? `<ol>${result.closure.seeds.map(id => `<li>${escapeHtml(id)}</li>`).join("")}</ol>` : `<p class="empty">No direct matches.</p>`}
+        <h3>Expanded upstream closure</h3>
+        ${result.closure.selected.length ? `<ol>${result.closure.selected.map(id => `<li>${escapeHtml(id)}</li>`).join("")}</ol>` : `<p class="empty">No selected Resources.</p>`}
+        <p class="muted">A selector includes an entire Resource. Selecting <code>skin</code> therefore includes all addresses owned by <code>kodi.gui.shared</code>, not only its skin setting.</p>
+      `;
+      document.getElementById("order").innerHTML = result.selectedOrder.length
+        ? `<ol>${result.selectedOrder.map(id => `<li>${escapeHtml(id)}</li>`).join("")}</ol><p class="muted">Configuration order is ignored; the validated DAG controls execution order.</p>`
+        : `<p class="empty">${valid ? "No Resources selected." : "No executable order while validation is blocked."}</p>`;
+      document.getElementById("artifacts").innerHTML = result.artifacts.length
+        ? result.artifacts.map(artifact => `
+          <div class="resource">
+            <strong>${escapeHtml(artifact.id)}</strong>
+            <div class="chips"><span class="chip">${escapeHtml(artifact.channel)}</span><span class="chip">${escapeHtml(artifact.version)}</span></div>
+            <div class="muted">${escapeHtml(artifact.identity)}<br>${escapeHtml(artifact.final_digest)}</div>
+            ${artifact.provenance ? `<p><strong>Patched provenance</strong><br><span class="muted">upstream: ${escapeHtml(artifact.provenance.upstream_digest)}<br>patch set: ${escapeHtml(artifact.provenance.patch_set_digest)}<br>final: ${escapeHtml(artifact.provenance.final_digest)}</span></p>` : ""}
+          </div>
+        `).join("")
+        : `<p class="empty">No Artifact-backed Resource in this selection.</p>`;
+      document.getElementById("plan").textContent = JSON.stringify(result.planInput, null, 2);
+    }
+
+    document.addEventListener("click", event => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      if (button.dataset.tab !== undefined) {
+        activeScenario = Number(button.dataset.tab);
+        completedStep = -1;
+        state = SchemaPrototype.initialState();
+        render();
+        return;
+      }
+      if (button.dataset.step !== undefined) {
+        const index = Number(button.dataset.step);
+        if (index > completedStep + 1) return;
+        dispatch(scenarios[activeScenario].steps[index][1]);
+        completedStep = Math.max(completedStep, index);
+        render();
+        return;
+      }
+      const actions = {
+        reset: { type: "reset" },
+        overridePlaylist: { type: "toggleOption", name: "overridePlaylist", message: "Toggled the Device playlist limit override." },
+        omitWeather: { type: "toggleOption", name: "omitWeather", message: "Toggled Weather Resource omission; omission means unmanaged." },
+        absentLegacy: { type: "toggleOption", name: "absentLegacy", message: "Toggled explicit desired: absent for the old playlist." },
+        selectSkin: { type: "select", selection: { mode: "selector", value: "skin" }, message: "Selected skin and expanded its upstream dependency closure." },
+        selectBaseline: { type: "select", selection: { mode: "selector", value: "baseline" }, message: "Selected baseline and expanded its upstream dependency closure." },
+        selectAll: { type: "select", selection: { mode: "all", value: "all" }, message: "Selected the full resolved Profile." }
+      };
+      if (actions[button.dataset.action]) dispatch(actions[button.dataset.action]);
+    });
+    document.addEventListener("change", event => {
+      if (!event.target.dataset.fault) return;
+      const definition = faultDefinitions.find(([name]) => name === event.target.dataset.fault);
+      dispatch({ type: "toggleFault", name: definition[0], label: definition[1] });
+    });
+
+    render();
+  </script>
+</body>
+</html>
