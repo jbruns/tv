@@ -13,12 +13,10 @@ from urllib.parse import unquote, urlsplit
 
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
-INLINE_LINK_RE = re.compile(
-    r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+['\"][^)]*['\"])?\s*\)"
-)
 REFERENCE_LINK_RE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(?:<([^>]+)>|(\S+))")
-HTML_ANCHOR_RE = re.compile(
-    r"<a\b[^>]*\b(?:id|name)\s*=\s*(['\"])([^'\"]+)\1[^>]*>",
+HTML_ANCHOR_TAG_RE = re.compile(r"<a\b[^>]*>", re.IGNORECASE)
+HTML_ANCHOR_ATTRIBUTE_RE = re.compile(
+    r"\b(?:id|name)\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s\"'=<>`]+))",
     re.IGNORECASE,
 )
 ATTRIBUTE_ANCHOR_RE = re.compile(r"\{#([A-Za-z][A-Za-z0-9_.:-]*)\}")
@@ -82,7 +80,12 @@ def anchors(lines: list[tuple[int, str]]) -> tuple[set[str], list[tuple[int, str
             generated_counts[base] += 1
             available.add(base if count == 0 else f"{base}-{count}")
 
-        explicit = [match.group(2) for match in HTML_ANCHOR_RE.finditer(line)]
+        explicit = []
+        for tag in HTML_ANCHOR_TAG_RE.finditer(line):
+            explicit.extend(
+                next(value for value in match.groups() if value is not None)
+                for match in HTML_ANCHOR_ATTRIBUTE_RE.finditer(tag.group())
+            )
         explicit.extend(ATTRIBUTE_ANCHOR_RE.findall(line))
         for anchor in explicit:
             if anchor in explicit_locations:
@@ -97,9 +100,50 @@ def anchors(lines: list[tuple[int, str]]) -> tuple[set[str], list[tuple[int, str
 def link_targets(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
     targets: list[tuple[int, str]] = []
     for line_number, line in lines:
-        for pattern in (INLINE_LINK_RE, REFERENCE_LINK_RE):
-            for match in pattern.finditer(line):
-                targets.append((line_number, match.group(1) or match.group(2)))
+        cursor = 0
+        while True:
+            start = line.find("](", cursor)
+            if start < 0:
+                break
+            position = start + 2
+            while position < len(line) and line[position].isspace():
+                position += 1
+            if position < len(line) and line[position] == "<":
+                end = line.find(">", position + 1)
+                if end >= 0:
+                    targets.append((line_number, line[position + 1 : end]))
+                    cursor = end + 1
+                    continue
+            else:
+                depth = 0
+                escaped = False
+                target: list[str] = []
+                while position < len(line):
+                    character = line[position]
+                    if escaped:
+                        target.append(character)
+                        escaped = False
+                    elif character == "\\":
+                        escaped = True
+                    elif character == "(":
+                        depth += 1
+                        target.append(character)
+                    elif character == ")":
+                        if depth == 0:
+                            break
+                        depth -= 1
+                        target.append(character)
+                    elif character.isspace() and depth == 0:
+                        break
+                    else:
+                        target.append(character)
+                    position += 1
+                if target:
+                    targets.append((line_number, "".join(target)))
+            cursor = start + 2
+
+        for match in REFERENCE_LINK_RE.finditer(line):
+            targets.append((line_number, match.group(1) or match.group(2)))
     return targets
 
 

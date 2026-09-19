@@ -87,19 +87,75 @@ documents, and git history.
 - ignores fenced examples; and
 - skips external URLs without requesting or reading them.
 
-Focused fixture checks covered a valid local anchor, an ignored external URL,
-a duplicate explicit anchor, a missing repository path, a missing Markdown
-anchor, and a path escaping the repository.
+Focused fixture checks covered a valid local anchor, a balanced-parenthesis
+path, an ignored external URL, quoted and unquoted explicit anchors, a missing
+repository path, a missing Markdown anchor, and a path escaping the
+repository.
 
 Exact final results on macOS arm64 with Python 3.14.2:
 
 | Command | Result |
 | --- | --- |
-| `python3 scripts/check_markdown.py` | Passed: `Markdown validation passed for 47 file(s).` |
-| focused dependency-free validator fixture command | `focused validator tests: 5 behaviors passed` |
-| `git diff --check` | Passed with no output |
-| `git grep 'docs/superpowers/' -- ':!docs/implementation/milestones/m0-exit.md'` | Passed: no matches (expected exit 1) |
-| `for test_script in tests/test-*.sh; do ...; bash "$test_script"; done` (excluding `tests/test-helper.sh`) | Passed: 8 scripts in 395 seconds |
+| `python3 scripts/check_markdown.py` | Passed: `Markdown validation passed for 47 file(s).`; 0.10 seconds |
+| Focused fixture command below | `focused validator tests: 7 behaviors passed`; 0.07 seconds |
+| `git diff --check origin/main...HEAD && git diff --check` | Passed with no output; 0.02 seconds |
+| `if git grep 'docs/superpowers/' -- ':!docs/implementation/milestones/m0-exit.md'; then exit 1; else test $? -eq 1; fi` | Passed: no matches; 0.01 seconds |
+| `for test_script in tests/test-*.sh; do case "$test_script" in *test-helper.sh) continue;; esac; bash "$test_script" || exit; done` | Passed: 8 scripts in 395 seconds |
+
+The exact focused fixture command was:
+
+```bash
+rm -rf .validator-fixture
+mkdir -p .validator-fixture/docs
+python3 -B - <<'PY'
+from pathlib import Path
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "check_markdown", "scripts/check_markdown.py"
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader
+spec.loader.exec_module(module)
+root = Path(".validator-fixture").resolve()
+
+def write(name: str, text: str) -> None:
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+write(
+    "README.md",
+    "# Root\n\n[local](docs/guide.md#guide) "
+    "[nested](docs/a_(b).md) "
+    "[external](https://example.invalid/missing)\n",
+)
+write("docs/a_(b).md", "# Nested\n")
+write("docs/guide.md", '# Guide\n\n<a id="kept"></a>\n')
+assert module.check_repository(root) == []
+
+write(
+    "docs/guide.md",
+    "# Guide\n<a id=dup></a>\n<a name=dup></a>\n"
+    "[missing](absent.md)\n[anchor](../README.md#absent)\n"
+    "[escape](../../outside.md)\n",
+)
+errors = module.check_repository(root)
+expected = (
+    "duplicate explicit anchor",
+    "missing repository path",
+    "missing Markdown anchor",
+    "escapes root",
+)
+for message in expected:
+    assert any(message in error for error in errors), (message, errors)
+assert len(errors) == 4, errors
+print("focused validator tests: 7 behaviors passed")
+PY
+status=$?
+rm -rf .validator-fixture scripts/__pycache__
+exit $status
+```
 
 ## Scope and ownership
 
