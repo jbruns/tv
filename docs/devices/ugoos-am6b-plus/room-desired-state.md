@@ -4,8 +4,8 @@ This is the reference for the `room` provisioning component: the display and
 audio state that lives in `guisettings.xml` and depends on which room the
 device is physically installed in. It governs what `config/rooms/<room>/room.conf`
 means and what an operator should expect from a `--component room` run. The
-evidence and design rationale behind this contract are recorded in the
-[room-specific desired state design](../../superpowers/specs/2026-09-17-room-desired-state-design.md).
+historical facts retained from the implementation design are indexed in the
+[managed-state inventory](../../research/2026-09-18-current-managed-state-inventory.md#6-documentation-evidence-extraction-before-superseded-artifact-deletion).
 
 ## What `room` manages, and what it deliberately does not
 

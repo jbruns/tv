@@ -38,8 +38,17 @@ details.
 
 ## Historical Material
 
-The existing `docs/superpowers/` plans and design specs are implementation
-artifacts, not operator documentation. They will be removed.
+Superseded implementation plans and design specs are not operator
+documentation. Git history is their archive; they do not remain as a parallel
+documentation layer.
+
+The surviving record classes are:
+
+- accepted ADRs for durable architecture decisions and constraints;
+- accepted research records for contracts, evidence indexes, and provenance;
+- durable operational, Device, room, network, and Home Assistant documents
+  for current supported truth; and
+- git history for superseded implementation artifacts and chronology.
 
 Remaining documentation will not contain:
 

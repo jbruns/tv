@@ -168,8 +168,9 @@ cross-cutting implementation evidence in the factual inventory:
 - Preserve semantic test cases and durable Device facts, but retire
   fixture-only shell CLI hooks and raw report fields without a Guard, evidence,
   Verification, recovery, inventory/audit, health, or troubleshooting purpose.
-- Remove `docs/superpowers/` early after preserving the factual inventory and
-  durable facts identified in its section 6. Repair its three incoming links.
+- Remove the superseded plan/spec tree early after preserving the factual
+  inventory and durable facts identified in its section 6. Repair its three
+  incoming links.
   Historical implementation instructions do not become replacement contracts.
 - Home Assistant package/config copying and its runtime Kodi policy remain
   outside destination reconciliation. Only the Device-side lifecycle gateway

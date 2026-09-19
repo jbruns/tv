@@ -3,9 +3,10 @@
 This is the evidence-based contract for add-on onboarding order, Kodi restart
 checkpoints, and completion signals on Ugoos AM6B+ CoreELEC systems. It governs
 what `configure-coreelec-addons.sh` is allowed to claim in its configuration
-report. The full evidence capture and rationale are recorded in the
-[add-on onboarding and restart sequencing design](../../superpowers/specs/2026-09-16-addon-onboarding-restart-sequencing-design.md);
-this document restates the operator-facing parts of it.
+report. The historical facts retained from the implementation design are
+indexed in the
+[managed-state inventory](../../research/2026-09-18-current-managed-state-inventory.md#6-documentation-evidence-extraction-before-superseded-artifact-deletion);
+this document is the durable operator-facing contract.
 
 ## Onboarding order
 
@@ -68,6 +69,28 @@ add-on is finished; `config_status=configured` on its own never does.
 | `skin.arctic.fuse.3` | fully-unattended | `not-required` |
 | `script.plexmod` | guided | see PM4K ladder below |
 | `plugin.service.emby-next-gen` | manual | see Emby ladder below |
+
+### Migration from `coreelec-addon-configuration-report-1`
+
+Consumers of the former single `addon.<id>.status` field map it as follows.
+The mapping is not one-to-one because configuration and onboarding are now
+reported independently.
+
+| report-1 `status` | report-2 `config_status` | report-2 `onboarding_status` |
+| --- | --- | --- |
+| `configured` (weather.ha, pvr.nextpvr) | `configured` | `not-required` |
+| `configured` (script.plexmod, newly authorized) | `configured` | `complete` or `manual-required` per the server-binding check |
+| `already-configured` (script.plexmod) | `already-configured` | `complete` or `manual-required` per the server-binding check |
+| `authorization-required` | `configured` | `pending-authentication` |
+| `manual-required` | `configured` | `manual-required` |
+| `skipped` | `skipped` | `not-required` |
+| `failed` | `failed` | `failed` |
+| `dry-run` | `dry-run` | `dry-run` |
+
+In report 1, `already-configured` mixed an onboarding fact into the
+configuration axis. Report 2 retains `already-configured` only when
+configuration already matches Desired State and records the onboarding fact
+in `onboarding_status`.
 
 **Emby ladder** (`plugin.service.emby-next-gen`), evaluated in order. This is
 observed behavior of the wired-in code path

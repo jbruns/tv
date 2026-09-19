@@ -76,7 +76,7 @@ first live acceptance, but must be complete before M10.
 The initial scope is exactly the 41 `ADDON_ARTIFACT` records in
 [`provision.conf`](../../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf#L156-L210),
 cross-indexed as `ART-001–ART-041` in the
-[inventory](2026-09-18-current-managed-state-inventory.md#34-add-on-artifacts-installation-enabled-state-settings-and-onboarding).
+[inventory](2026-09-18-current-managed-state-inventory.md#34-add-on-artifacts-enablement-compatibility-patches-inventory-and-settings).
 It comprises 3 repository add-ons, 7 selected add-ons/resources, 6 optional
 skin dependencies, 2 CoreELEC binary dependencies, and 23 transitive
 dependencies:
