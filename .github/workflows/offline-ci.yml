@@ -66,6 +66,7 @@ jobs:
           src scripts/run_test_budget.py scripts/check_inventory_milestones.py
           scripts/check_shell_permissions.py
           tests/scaffold tests/inventory tests/ci
+          tests/unit
           tests/conftest.py tests/support
       - name: Strict mypy
         run: uv run mypy
@@ -84,6 +85,7 @@ jobs:
           .venv/bin/python -m pytest -q
           tests/scaffold/test_application.py
           tests/scaffold/test_architecture.py tests/inventory tests/ci
+          tests/unit
       - name: Complete offline budget
         run: >-
           uv run python scripts/run_test_budget.py

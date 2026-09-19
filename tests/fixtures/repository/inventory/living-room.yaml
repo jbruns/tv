@@ -1,0 +1,20 @@
+kind: DeviceInventory
+schema_version: 1
+devices:
+  - id: living-room.ugoos-am6b-plus
+    endpoint:
+      host: coreelec-living-room.example.test
+      port: 22
+    ssh:
+      username: root
+      host_key:
+        policy: pinned
+        reference: ssh-host-key.living-room.ugoos-am6b-plus
+      credential:
+        type: secret
+        provider: controller.environment
+        key: coreelec.admin-private-key
+    profiles:
+      platform: platform.coreelec-21.amlogic-ng
+      room: room.living-room
+      device: device.living-room.ugoos-am6b-plus

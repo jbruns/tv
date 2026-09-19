@@ -1,0 +1,29 @@
+kind: Profile
+schema_version: 1
+id: platform.coreelec-21.amlogic-ng
+layer: platform
+resources:
+  - id: skin.playlist.new-shows
+    type: KodiSmartPlaylist
+    management: enforce
+    desired: present
+    selectors:
+      - selector.baseline
+      - selector.skin
+    requires: []
+    intent:
+      playlist:
+        id: playlist.video.new-shows
+        media_type: tvshows
+        display_name: New Shows
+        match: all
+        limit: 50
+        rules:
+          - field: playcount
+            operator: is
+            value: 0
+        order:
+          by: dateadded
+          direction: descending
+      file:
+        mode: "0644"

@@ -60,3 +60,39 @@ def test_network_modules_are_limited_to_approved_boundaries() -> None:
     }
 
     assert violations == {}
+
+
+def test_yaml_and_pydantic_are_confined_to_config_boundary() -> None:
+    boundary_modules = {"pydantic", "yaml"}
+    violations = {
+        path.relative_to(PACKAGE_ROOT): modules & boundary_modules
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if (
+            modules := {
+                module.split(".", maxsplit=1)[0] for module in imported_modules(path)
+            }
+            & boundary_modules
+        )
+        and "config" not in path.parts
+    }
+
+    assert violations == {}
+
+
+def test_domain_imports_only_standard_library_and_domain_modules() -> None:
+    violations = {
+        path.relative_to(PACKAGE_ROOT): sorted(
+            module
+            for module in imported_modules(path)
+            if module.startswith("coreelec_reconciler.")
+            and not module.startswith("coreelec_reconciler.domain.")
+        )
+        for path in (PACKAGE_ROOT / "domain").glob("*.py")
+        if any(
+            module.startswith("coreelec_reconciler.")
+            and not module.startswith("coreelec_reconciler.domain.")
+            for module in imported_modules(path)
+        )
+    }
+
+    assert violations == {}
