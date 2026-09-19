@@ -135,10 +135,12 @@ uv run coreelec-reconciler \
 ```
 
 `plan` writes canonical `CoreElecReconcilerPlan` JSON plus exactly one framing
-newline. The canonical bytes used for its digest contain no newline. The same
-input document can be checked with `validate --device-id ... --observations
-...`; validation and planning read authored configuration and supplied
-observations only and never write files or create network connections.
+newline. Add `--document run` to write the corresponding canonical
+nonmutating planning Run Report instead. The canonical bytes used for either
+digest contain no newline. The same input document can be checked with
+`validate --device-id ... --observations ...`; validation and planning read
+authored configuration and supplied observations only and never write files
+or create network connections.
 
 The command surface is present so later vertical slices can implement behavior
 through the typed `Reconciler.execute` boundary. `validate` performs the

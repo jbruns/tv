@@ -47,7 +47,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 3
         import sys
 
-        sys.stdout.buffer.write(outcome.plan.canonical_bytes + b"\n")
+        document = (
+            outcome.run_report if parsed.output_document == "run" else outcome.plan
+        )
+        if document is None:
+            raise RuntimeError("planning outcome omitted a canonical document")
+        sys.stdout.buffer.write(document.canonical_bytes + b"\n")
         if outcome.disposition == "blocked":
             return 3
     return 0

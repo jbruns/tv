@@ -62,6 +62,28 @@ _RUN_FIELDS = {
     "started_at",
     "status",
 }
+_RELATIONS = {"satisfied", "divergent", "not_applicable", "unverifiable"}
+_MANAGEMENT_MODES = {"enforce", "observe_only"}
+_OPERATIONS = {
+    "smart_playlist.create",
+    "smart_playlist.remove",
+    "smart_playlist.update",
+}
+_REASONS = {
+    "managed-file.mode-drift",
+    "playlist.absent",
+    "playlist.desired-absent",
+    "playlist.malformed-current",
+    "playlist.semantic-drift",
+}
+_IMPACTS = {"content_mutation", "removal"}
+_BLOCKERS = {
+    "resource.observe-only-divergence",
+    "resource.unsafe-directory",
+    "resource.unsafe-other",
+    "resource.unsafe-symlink",
+    "resource.unreadable",
+}
 
 
 def _sha256(content: bytes) -> str:
@@ -462,6 +484,16 @@ def _array(value: object, label: str) -> list[object]:
     return value
 
 
+def _string(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    return value
+
+
+def _string_array(value: object, label: str) -> list[str]:
+    return [_string(item, label) for item in _array(value, label)]
+
+
 def _validate_plan_shape(value: dict[str, object]) -> None:
     _mapping(value["producer"], {"name", "version"}, "producer")
     device = _mapping(
@@ -487,6 +519,7 @@ def _validate_plan_shape(value: dict[str, object]) -> None:
         },
         "input digests",
     )
+    evidence_ids: set[str] = set()
     for evidence_value in _array(value["evidence"], "evidence"):
         evidence = _mapping(
             evidence_value,
@@ -507,6 +540,11 @@ def _validate_plan_shape(value: dict[str, object]) -> None:
         _mapping(evidence["subject"], {"id", "kind"}, "subject")
         if not isinstance(evidence["payload"], dict):
             raise ValueError("evidence payload must be an object")
+        evidence_id = _string(evidence["evidence_id"], "evidence ID")
+        if evidence_id in evidence_ids:
+            raise ValueError("duplicate evidence ID")
+        evidence_ids.add(evidence_id)
+    blocker_codes: list[str] = []
     for blocker_value in _array(value["blockers"], "blockers"):
         blocker = _mapping(
             blocker_value,
@@ -514,6 +552,15 @@ def _validate_plan_shape(value: dict[str, object]) -> None:
             "blocker",
         )
         _mapping(blocker["subject"], {"id", "kind"}, "blocker subject")
+        code = _string(blocker["code"], "blocker code")
+        if code not in _BLOCKERS:
+            raise ValueError("unknown blocker code")
+        blocker_codes.append(code)
+        if not set(_string_array(blocker["evidence_refs"], "evidence reference")) <= (
+            evidence_ids
+        ):
+            raise ValueError("unresolved blocker evidence reference")
+    change_ids: set[str] = set()
     for resource_value in _array(value["resources"], "resources"):
         resource = _mapping(
             resource_value,
@@ -529,6 +576,15 @@ def _validate_plan_shape(value: dict[str, object]) -> None:
             },
             "Plan Resource",
         )
+        if _string(resource["management"], "management") not in _MANAGEMENT_MODES:
+            raise ValueError("unknown management mode")
+        if _string(resource["desired_relation"], "desired relation") not in _RELATIONS:
+            raise ValueError("unknown desired relation")
+        if (
+            not set(_string_array(resource["evidence_refs"], "evidence reference"))
+            <= evidence_ids
+        ):
+            raise ValueError("unresolved Resource evidence reference")
         for change_value in _array(resource["changes"], "changes"):
             change = _mapping(
                 change_value,
@@ -549,35 +605,76 @@ def _validate_plan_shape(value: dict[str, object]) -> None:
                 },
                 "Change",
             )
-            _mapping(
+            change_id = _string(change["change_id"], "Change ID")
+            if change_id in change_ids:
+                raise ValueError("duplicate Change ID")
+            change_ids.add(change_id)
+            before = _mapping(
                 change["before"],
                 {"evidence_refs", "normalized_state_digest", "summary"},
                 "Change before",
             )
+            if (
+                not set(_string_array(before["evidence_refs"], "evidence reference"))
+                <= evidence_ids
+            ):
+                raise ValueError("unresolved Change evidence reference")
             _mapping(
                 change["desired"],
                 {"normalized_state_digest", "summary"},
                 "Change desired",
             )
-            _mapping(
+            rollback = _mapping(
                 change["rollback"],
                 {"capability", "required_before_evidence_ref"},
                 "rollback",
             )
+            if rollback["capability"] != "verified_supported":
+                raise ValueError("unknown rollback capability")
+            if rollback["required_before_evidence_ref"] not in evidence_ids:
+                raise ValueError("unresolved rollback evidence reference")
+            if _string(change["operation_code"], "operation code") not in _OPERATIONS:
+                raise ValueError("unknown operation code")
+            if (
+                not set(_string_array(change["reason_codes"], "reason code"))
+                <= _REASONS
+            ):
+                raise ValueError("unknown reason code")
+            if (
+                not set(_string_array(change["impact_codes"], "impact code"))
+                <= _IMPACTS
+            ):
+                raise ValueError("unknown impact code")
+            if _array(change["effects"], "Change effects"):
+                raise ValueError("KodiSmartPlaylist Change cannot declare Effects")
             for precondition_value in _array(
                 change["preconditions"],
                 "preconditions",
             ):
-                _mapping(
+                precondition = _mapping(
                     precondition_value,
                     {"evidence_ref", "expected_digest", "kind"},
                     "precondition",
                 )
+                if precondition["kind"] != "normalized_state_digest_matches":
+                    raise ValueError("unknown precondition kind")
+                if precondition["evidence_ref"] not in evidence_ids:
+                    raise ValueError("unresolved precondition evidence reference")
     for requirement in _array(
         value["approval_requirements"],
         "approval requirements",
     ):
-        _mapping(requirement, {"scope"}, "approval requirement")
+        requirement_value = _mapping(
+            requirement,
+            {"scope"},
+            "approval requirement",
+        )
+        if requirement_value["scope"] not in {"apply", "impact.removal"}:
+            raise ValueError("unknown approval scope")
+    if _array(value["effects"], "Plan effects"):
+        raise ValueError("KodiSmartPlaylist Plan cannot declare Effects")
+    if bool(blocker_codes) != (value["disposition"] == "blocked"):
+        raise ValueError("Plan blockers do not match disposition")
 
 
 def _validate_run_shape(value: dict[str, object]) -> None:
@@ -594,7 +691,7 @@ def _validate_run_shape(value: dict[str, object]) -> None:
             "Plan reference",
         )
     for result_value in _array(value["resource_results"], "resource results"):
-        _mapping(
+        result = _mapping(
             result_value,
             {
                 "desired_disposition",
@@ -608,3 +705,24 @@ def _validate_run_shape(value: dict[str, object]) -> None:
             },
             "Resource result",
         )
+        if result["desired_disposition"] not in {"present", "absent"}:
+            raise ValueError("unknown desired disposition")
+        if result["latest_observed_relation"] not in _RELATIONS:
+            raise ValueError("unknown observed relation")
+        if result["mutation_outcome"] not in {
+            "not_required",
+            "blocked",
+            "pending",
+        }:
+            raise ValueError("unknown mutation outcome")
+        if result["verification_outcome"] not in {
+            "fresh_match",
+            "not_started",
+        }:
+            raise ValueError("unknown verification outcome")
+        if result["rollback_outcome"] != "not_attempted":
+            raise ValueError("unknown rollback outcome")
+        if result["post_effect_verification"] != "not_applicable":
+            raise ValueError("unknown post-Effect Verification outcome")
+        if result["final_convergence"] not in {"converged", "blocked", "pending"}:
+            raise ValueError("unknown final convergence")

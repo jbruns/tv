@@ -143,6 +143,39 @@ def test_mode_only_drift_is_one_update_without_semantic_drift() -> None:
     assert assessment.reason_codes == ("managed-file.mode-drift",)
 
 
+def test_distinct_malformed_content_has_distinct_stale_precondition_digest() -> None:
+    resource = _resource()
+
+    first = assess_playlist(
+        resource.intent,
+        resource.desired,
+        resource.management,
+        KodiSmartPlaylistObservation(
+            resource.id.value,
+            resource.state_addresses[0],
+            "2026-09-19T08:00:00Z",
+            FileKind.REGULAR,
+            "0644",
+            b"<first-malformed",
+        ),
+    )
+    second = assess_playlist(
+        resource.intent,
+        resource.desired,
+        resource.management,
+        KodiSmartPlaylistObservation(
+            resource.id.value,
+            resource.state_addresses[0],
+            "2026-09-19T08:00:00Z",
+            FileKind.REGULAR,
+            "0644",
+            b"<second-malformed",
+        ),
+    )
+
+    assert first.before_digest != second.before_digest
+
+
 def test_absent_and_desired_absence_cases_are_exact() -> None:
     resource = _resource()
     absent = KodiSmartPlaylistObservation(

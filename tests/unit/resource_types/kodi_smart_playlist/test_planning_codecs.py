@@ -98,3 +98,51 @@ def test_codec_does_not_alias_mutable_input() -> None:
         None,
     )
     assert decode_observation(encode_observation(replace(observation))) == observation
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("resource_id", ""),
+        ("state_address", ""),
+        ("observed_at", "2026-99-99T99:99:99Z"),
+        ("mode", "invalid"),
+    ],
+)
+def test_observation_codec_rejects_invalid_domain_values(
+    field: str,
+    value: object,
+) -> None:
+    observation = KodiSmartPlaylistObservation(
+        "skin.playlist.new-shows",
+        "special://profile/playlists/video/NewShows.xsp",
+        "2026-09-19T08:00:00Z",
+        FileKind.REGULAR,
+        "0644",
+        desired_xml(),
+    )
+    encoded = dict(encode_observation(observation))
+    payload = dict(cast(Mapping[str, object], encoded["payload"]))
+    payload[field] = value
+    encoded["payload"] = payload
+
+    with pytest.raises(ValueError):
+        decode_observation(encoded)
+
+
+def test_absent_observation_codec_rejects_file_content() -> None:
+    observation = KodiSmartPlaylistObservation(
+        "skin.playlist.new-shows",
+        "special://profile/playlists/video/NewShows.xsp",
+        "2026-09-19T08:00:00Z",
+        FileKind.REGULAR,
+        "0644",
+        desired_xml(),
+    )
+    encoded = dict(encode_observation(observation))
+    payload = dict(cast(Mapping[str, object], encoded["payload"]))
+    payload["kind"] = "absent"
+    encoded["payload"] = payload
+
+    with pytest.raises(ValueError):
+        decode_observation(encoded)

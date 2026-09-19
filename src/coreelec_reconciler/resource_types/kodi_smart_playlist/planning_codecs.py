@@ -10,6 +10,10 @@ from coreelec_reconciler.domain.planning import (
     KodiSmartPlaylistObservation,
     PlaylistAssessment,
 )
+from coreelec_reconciler.domain.validation import (
+    require_file_mode,
+    require_rfc3339_utc,
+)
 
 _MAX_CONTENT_BYTES = 65536
 
@@ -67,14 +71,22 @@ def decode_observation(value: Mapping[str, object]) -> KodiSmartPlaylistObservat
             raise ValueError("Observation content must be base64 text") from error
         if len(content) > _MAX_CONTENT_BYTES:
             raise ValueError("Observation content exceeds the safe limit")
-    mode = payload["mode"]
-    if mode is not None and not isinstance(mode, str):
-        raise ValueError("Observation mode must be a string or null")
+    mode = require_file_mode(payload["mode"])
+    kind = FileKind(_string(payload["kind"]))
+    resource_id = _nonempty_string(payload["resource_id"], "Resource ID")
+    state_address = _nonempty_string(payload["state_address"], "State Address")
+    observed_at = require_rfc3339_utc(payload["observed_at"], "observed_at")
+    if kind is FileKind.ABSENT and (mode is not None or content is not None):
+        raise ValueError("absent observation cannot contain file state")
+    if kind is FileKind.REGULAR and mode is None:
+        raise ValueError("regular observation requires mode")
+    if kind not in {FileKind.ABSENT, FileKind.REGULAR} and content is not None:
+        raise ValueError("unsafe observations cannot contain raw content")
     return KodiSmartPlaylistObservation(
-        resource_id=_string(payload["resource_id"]),
-        state_address=_string(payload["state_address"]),
-        observed_at=_string(payload["observed_at"]),
-        kind=FileKind(_string(payload["kind"])),
+        resource_id=resource_id,
+        state_address=state_address,
+        observed_at=observed_at,
+        kind=kind,
         mode=mode,
         content=content,
     )
@@ -168,6 +180,13 @@ def _string(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError("codec value must be a string")
     return value
+
+
+def _nonempty_string(value: object, label: str) -> str:
+    text = _string(value)
+    if not text:
+        raise ValueError(f"{label} must not be empty")
+    return text
 
 
 def _strings(value: object) -> tuple[str, ...]:

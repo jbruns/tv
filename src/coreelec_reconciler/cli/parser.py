@@ -28,6 +28,7 @@ from coreelec_reconciler.application.commands import (
 class ParsedCommand:
     repository_root: str
     command: Command
+    output_document: Literal["plan", "run"] = "plan"
 
 
 type CommandName = Literal[
@@ -68,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument("device_id")
         if name == "plan":
             command_parser.add_argument("--observations", required=True)
+            command_parser.add_argument(
+                "--document",
+                choices=("plan", "run"),
+                default="plan",
+            )
         if name in {"reconcile", "provision"}:
             command_parser.add_argument(
                 "--approve",
@@ -156,4 +162,13 @@ def parse_command(argv: Sequence[str] | None = None) -> ParsedCommand:
         case _ as unreachable:
             assert_never(unreachable)
 
-    return ParsedCommand(repository_root=repository_root, command=command)
+    output_document = (
+        cast(Literal["plan", "run"], args.document)
+        if command_name == "plan"
+        else "plan"
+    )
+    return ParsedCommand(
+        repository_root=repository_root,
+        command=command,
+        output_document=output_document,
+    )

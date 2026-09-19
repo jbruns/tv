@@ -206,7 +206,11 @@ def assess_playlist(
             reasons.append("playlist.semantic-drift")
     except PlaylistXmlError:
         current_model = None
-        semantic_value = {"parse": "malformed"}
+        content_digest = hashlib.sha256(observation.content).hexdigest()
+        semantic_value = {
+            "content_sha256": content_digest,
+            "parse": "malformed",
+        }
         reasons.append("playlist.malformed-current")
     if observation.mode != intent.file_mode:
         reasons.append("managed-file.mode-drift")
@@ -224,6 +228,13 @@ def assess_playlist(
         ),
         presence="present",
     )
+    if current_model is None:
+        before_summary = _summary(
+            content_digest="sha256:" + hashlib.sha256(observation.content).hexdigest(),
+            mode=int(observation.mode, 8),
+            playlist={"parse_status": "malformed"},
+            presence="present",
+        )
     if not reasons:
         return PlaylistAssessment(
             DesiredRelation.SATISFIED,

@@ -65,3 +65,43 @@ def test_validate_cli_accepts_the_same_offline_observation(tmp_path: Path) -> No
     assert result.stdout.startswith(b"inventory ledger valid:")
     assert result.stdout.endswith(b"\n")
     assert result.stderr == b""
+
+
+def test_plan_cli_can_emit_the_nonmutating_run_report(tmp_path: Path) -> None:
+    supplied = tmp_path / "observations.json"
+    supplied.write_bytes(supplied_document(desired_xml()))
+
+    result = _run(
+        "--repository-root",
+        str(FIXTURE_ROOT),
+        "plan",
+        "living-room.ugoos-am6b-plus",
+        "--observations",
+        str(supplied),
+        "--document",
+        "run",
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == b""
+    assert result.stdout.endswith(b"}\n")
+    assert b'"kind":"CoreElecReconcilerRunReport"' in result.stdout
+
+
+def test_blocked_plan_cli_emits_document_and_returns_three(tmp_path: Path) -> None:
+    supplied = tmp_path / "observations.json"
+    supplied.write_bytes(supplied_document(None, kind="symlink", mode="0777"))
+
+    result = _run(
+        "--repository-root",
+        str(FIXTURE_ROOT),
+        "plan",
+        "living-room.ugoos-am6b-plus",
+        "--observations",
+        str(supplied),
+    )
+
+    assert result.returncode == 3
+    assert result.stderr == b""
+    assert result.stdout.endswith(b"}\n")
+    assert b'"disposition":"blocked"' in result.stdout

@@ -11,7 +11,13 @@ and `PlanCommand`. The CLI accepts:
 ```text
 validate --device-id DEVICE --observations FILE
 plan DEVICE --observations FILE
+plan DEVICE --observations FILE --document run
 ```
+
+`plan` writes the canonical Plan by default; `--document run` selects its
+canonical nonmutating planning Run Report. Either JSON document receives
+exactly one framing newline. Canonical bytes used for digests contain no
+newline.
 
 The supplied JSON document is versioned as
 `CoreElecSuppliedPlanningInput` schema version 1. It contains fixed UUIDv7/time

@@ -1,22 +1,23 @@
 """Strict loader for bounded, offline planning inputs."""
 
-import base64
 import re
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
 from coreelec_reconciler.domain.planning import (
-    FileKind,
-    KodiSmartPlaylistObservation,
     PlanningRuntime,
     SuppliedPlanningInput,
 )
+from coreelec_reconciler.domain.validation import (
+    require_rfc3339_utc,
+)
 from coreelec_reconciler.reporting.canonical_json import decode_json_object
+from coreelec_reconciler.resource_types.kodi_smart_playlist.planning_codecs import (
+    decode_observation,
+)
 
-_TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-_MAX_CONTENT_BYTES = 65536
 
 
 def _object(
@@ -36,10 +37,7 @@ def _string(value: object, label: str) -> str:
 
 
 def _time(value: object, label: str) -> str:
-    timestamp = _string(value, label)
-    if _TIME.fullmatch(timestamp) is None:
-        raise ValueError(f"{label} must be RFC 3339 UTC")
-    return timestamp
+    return require_rfc3339_utc(value, label)
 
 
 def _uuid7(value: object, label: str) -> str:
@@ -100,30 +98,13 @@ def load_supplied_planning_input(path: str | Path) -> SuppliedPlanningInput:
         },
         "observation",
     )
-    kind = FileKind(_string(observation["kind"], "observation kind"))
-    mode_value = observation["mode"]
-    mode = None if mode_value is None else _string(mode_value, "observation mode")
-    if mode is not None and re.fullmatch(r"0[0-7]{3}", mode) is None:
-        raise ValueError("observation mode is invalid")
-    encoded = observation["content_base64"]
-    if encoded is None:
-        decoded = None
-    else:
-        try:
-            decoded = base64.b64decode(
-                _string(encoded, "observation content"),
-                validate=True,
-            )
-        except ValueError as error:
-            raise ValueError("observation content is not base64") from error
-        if len(decoded) > _MAX_CONTENT_BYTES:
-            raise ValueError("observation content exceeds the safe limit")
-    if kind is FileKind.ABSENT and (mode is not None or decoded is not None):
-        raise ValueError("absent observation cannot contain file state")
-    if kind is FileKind.REGULAR and mode is None:
-        raise ValueError("regular observation requires mode")
-    if kind not in {FileKind.ABSENT, FileKind.REGULAR} and decoded is not None:
-        raise ValueError("unsafe observations cannot contain raw content")
+    typed_observation = decode_observation(
+        {
+            "payload": dict(observation),
+            "payload_kind": "KodiSmartPlaylistObservation",
+            "payload_schema_version": 1,
+        }
+    )
     return SuppliedPlanningInput(
         runtime=PlanningRuntime(
             planning_run_id=_uuid7(runtime["planning_run_id"], "planning_run_id"),
@@ -151,12 +132,5 @@ def load_supplied_planning_input(path: str | Path) -> SuppliedPlanningInput:
                 "Artifact resolution digest",
             ),
         ),
-        observation=KodiSmartPlaylistObservation(
-            resource_id=_string(observation["resource_id"], "resource_id"),
-            state_address=_string(observation["state_address"], "state_address"),
-            observed_at=_time(observation["observed_at"], "observed_at"),
-            kind=kind,
-            mode=mode,
-            content=decoded,
-        ),
+        observation=typed_observation,
     )

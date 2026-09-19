@@ -83,17 +83,38 @@ def test_formatting_only_observation_differences_produce_identical_reports(
     assert canonical.run_report == formatted.run_report
 
 
-@pytest.mark.parametrize("document_kind", ["plan", "run"])
+@pytest.mark.parametrize(
+    ("document_kind", "field", "invalid"),
+    [
+        ("plan", "unexpected", True),
+        ("plan", "management", "invented_mode"),
+        ("plan", "operation_code", "unknown.operation"),
+        ("run", "unexpected", True),
+        ("run", "final_convergence", "invented_state"),
+    ],
+)
 def test_canonical_decoders_reject_tampering_and_unknown_nested_fields(
     tmp_path: Path,
     document_kind: str,
+    field: str,
+    invalid: object,
 ) -> None:
-    outcome = _plan(tmp_path, desired_xml())
+    content = (
+        desired_xml().replace(b"<limit>50</limit>", b"<limit>25</limit>")
+        if field == "operation_code"
+        else desired_xml()
+    )
+    outcome = _plan(tmp_path, content)
     document = outcome.plan if document_kind == "plan" else outcome.run_report
     assert document is not None
     value = json.loads(document.canonical_bytes)
     if document_kind == "plan":
-        value["resources"][0]["unexpected"] = True
+        target = (
+            value["resources"][0]["changes"][0]
+            if field == "operation_code"
+            else value["resources"][0]
+        )
+        target[field] = invalid
         without_digest = dict(value)
         without_digest.pop("full_digest")
         value["full_digest"] = (
@@ -104,7 +125,7 @@ def test_canonical_decoders_reject_tampering_and_unknown_nested_fields(
         with pytest.raises(ValueError):
             decode_plan(tampered)
     else:
-        value["resource_results"][0]["unexpected"] = True
+        value["resource_results"][0][field] = invalid
         without_digest = dict(value)
         without_digest.pop("current_digest")
         value["current_digest"] = (
