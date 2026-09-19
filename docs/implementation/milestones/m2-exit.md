@@ -190,7 +190,7 @@ Differences from the accepted issue #58 contract: **none**.
 [Hosted Offline CI run
 35435861956](https://github.com/jbruns/tv/actions/runs/35435861956)
 passed against source commit
-`d44b732f81f593d3b1f312bf5c4dd2e257c1b074`:
+`d44b732b70af914ad420013e03cc92743a2ba70c`:
 
 - [Linux Python offline](https://github.com/jbruns/tv/actions/runs/35435861956/job/105878270935)
   passed in 27 seconds;
