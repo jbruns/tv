@@ -42,14 +42,14 @@ def read_repository_file(path: Path, root: Path) -> str:
 
 def visible_markdown_lines(text: str) -> list[tuple[int, str]]:
     visible: list[tuple[int, str]] = []
-    fence: str | None = None
+    fence: tuple[str, int] | None = None
     for line_number, line in enumerate(text.splitlines(), start=1):
         marker = FENCE_RE.match(line)
         if marker:
             token = marker.group(1)
             if fence is None:
-                fence = token[0]
-            elif token[0] == fence:
+                fence = (token[0], len(token))
+            elif token[0] == fence[0] and len(token) >= fence[1]:
                 fence = None
             continue
         if fence is None:

@@ -91,7 +91,8 @@ documents, and git history.
 - reports duplicate explicit HTML or attribute anchors;
 - reports missing linked repository paths;
 - rejects paths that resolve outside the repository;
-- ignores fenced examples; and
+- ignores fenced examples, closing a fence only with the opener character and
+  at least the opener length; and
 - skips external URLs without requesting or reading them.
 
 Focused fixture checks covered a valid local anchor, a balanced-parenthesis
@@ -105,7 +106,8 @@ Exact final results on macOS arm64 with Python 3.14.2:
 | --- | --- |
 | `python3 scripts/check_markdown.py` | Passed: `Markdown validation passed for 47 file(s).`; 0.10 seconds |
 | Focused fixture command below | `focused validator tests: 7 behaviors passed`; 0.07 seconds |
-| `git diff --check origin/main...HEAD && git diff --check` | Passed with no output; 0.02 seconds |
+| Focused fence regression command below | `fence regression tests: 3 behaviors passed`; 0.07 seconds |
+| `git diff --check origin/main...HEAD && git diff --check` | Passed with no output; 0.03 seconds |
 | `if git grep 'docs/superpowers/' -- ':!docs/implementation/milestones/m0-exit.md'; then exit 1; else test $? -eq 1; fi` | Passed: no matches; 0.01 seconds |
 | `for test_script in tests/test-*.sh; do case "$test_script" in *test-helper.sh) continue;; esac; bash "$test_script" || exit; done` | Passed: 8 scripts in 395 seconds |
 
@@ -162,6 +164,34 @@ PY
 status=$?
 rm -rf .validator-fixture scripts/__pycache__
 exit $status
+```
+
+The exact focused fence regression command was:
+
+```bash
+python3 -B - <<'PY'
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "check_markdown", "scripts/check_markdown.py"
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader
+spec.loader.exec_module(module)
+
+assert module.visible_markdown_lines(
+    "````python\n[hidden](missing.md)\n```\n"
+    "[still hidden](missing.md)\n"
+) == []
+assert module.visible_markdown_lines(
+    "````\n[hidden](missing.md)\n`````\n[visible](README.md)\n"
+) == [(4, "[visible](README.md)")]
+assert module.visible_markdown_lines(
+    "````\n[hidden](missing.md)\n~~~~\n[still hidden](missing.md)\n"
+) == []
+print("fence regression tests: 3 behaviors passed")
+PY
+rm -rf scripts/__pycache__
 ```
 
 ## Scope and ownership
