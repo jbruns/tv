@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 
@@ -79,3 +80,41 @@ def test_plan_rejects_observation_binding_mismatch(tmp_path: Path) -> None:
     assert isinstance(outcome, PlanOutcome)
     assert outcome.plan is None
     assert outcome.diagnostics == ("observation.binding-mismatch",)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("started_at", "2026-09-19T08:00:01Z"),
+        ("observed_at", "2026-09-19T08:01:01Z"),
+        ("created_at", "2026-09-19T08:01:02Z"),
+        ("ended_at", "2026-09-20T08:01:00Z"),
+        ("expires_at", "2026-09-19T08:01:01Z"),
+        ("created_at", "2026-09-19T08:01:00+00:00"),
+    ],
+)
+def test_plan_rejects_impossible_observation_windows(
+    tmp_path: Path,
+    field: str,
+    invalid: str,
+) -> None:
+    value = json.loads(supplied_document(desired_xml()))
+    if field == "observed_at":
+        value["observation"]["observed_at"] = invalid
+    else:
+        value["runtime"][field] = invalid
+    supplied = tmp_path / "observations.json"
+    supplied.write_text(json.dumps(value))
+
+    outcome = bootstrap(BootstrapSettings(str(FIXTURE_ROOT))).execute(
+        PlanCommand(
+            str(FIXTURE_ROOT),
+            DeviceId("living-room.ugoos-am6b-plus"),
+            str(supplied),
+        )
+    )
+
+    assert isinstance(outcome, PlanOutcome)
+    assert outcome.plan is None
+    assert len(outcome.diagnostics) == 1
+    assert outcome.diagnostics[0].startswith("observation.invalid ")

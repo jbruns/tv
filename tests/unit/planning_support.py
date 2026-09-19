@@ -53,7 +53,7 @@ def supplied_document(
                 "planning_run_id": "0199542a-7800-7000-8000-000000000101",
                 "platform_identity_fingerprint": "sha256:" + "3" * 64,
                 "ssh_host_key_fingerprint": "SHA256:examplePinnedHostKey",
-                "started_at": "2026-09-19T08:00:59Z",
+                "started_at": "2026-09-19T07:59:59Z",
             },
             "schema_version": 1,
         },

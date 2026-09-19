@@ -13,9 +13,24 @@ from coreelec_reconciler.domain.planning import (
 from coreelec_reconciler.domain.validation import (
     require_file_mode,
     require_rfc3339_utc,
+    require_sha256,
 )
 
 _MAX_CONTENT_BYTES = 65536
+_BLOCKERS = {
+    "resource.observe-only-divergence",
+    "resource.unsafe-directory",
+    "resource.unsafe-other",
+    "resource.unsafe-symlink",
+    "resource.unreadable",
+}
+_UPDATE_REASON_COMBINATIONS = {
+    ("managed-file.mode-drift",),
+    ("playlist.malformed-current",),
+    ("playlist.malformed-current", "managed-file.mode-drift"),
+    ("playlist.semantic-drift",),
+    ("playlist.semantic-drift", "managed-file.mode-drift"),
+}
 
 
 def encode_observation(
@@ -93,6 +108,7 @@ def decode_observation(value: Mapping[str, object]) -> KodiSmartPlaylistObservat
 
 
 def encode_assessment(assessment: PlaylistAssessment) -> Mapping[str, object]:
+    _validate_assessment(assessment)
     return {
         "payload": {
             "before_digest": assessment.before_digest,
@@ -140,7 +156,7 @@ def decode_assessment(value: Mapping[str, object]) -> PlaylistAssessment:
     operation = payload["operation_code"]
     if operation is not None and not isinstance(operation, str):
         raise ValueError("Assessment operation must be a string or null")
-    return PlaylistAssessment(
+    assessment = PlaylistAssessment(
         relation=DesiredRelation(_string(payload["relation"])),
         management=ManagementMode(_string(payload["management"])),
         operation_code=operation,
@@ -157,6 +173,8 @@ def decode_assessment(value: Mapping[str, object]) -> PlaylistAssessment:
         ),
         effects=_strings(payload["effects"]),
     )
+    _validate_assessment(assessment)
+    return assessment
 
 
 def _object(
@@ -193,3 +211,94 @@ def _strings(value: object) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise ValueError("codec value must be an array")
     return tuple(_string(item) for item in value)
+
+
+def _validate_assessment(assessment: PlaylistAssessment) -> None:
+    require_sha256(assessment.before_digest, "before_digest")
+    require_sha256(assessment.desired_digest, "desired_digest")
+    if not assessment.before_summary or not assessment.desired_summary:
+        raise ValueError("Assessment summaries must not be empty")
+    if len(dict(assessment.before_summary)) != len(assessment.before_summary):
+        raise ValueError("Assessment before summary has duplicate fields")
+    if len(dict(assessment.desired_summary)) != len(assessment.desired_summary):
+        raise ValueError("Assessment desired summary has duplicate fields")
+    for key, _ in (*assessment.before_summary, *assessment.desired_summary):
+        if not key:
+            raise ValueError("Assessment summary fields must not be empty")
+    if len(set(assessment.reason_codes)) != len(assessment.reason_codes):
+        raise ValueError("Assessment reason codes must be unique")
+    if len(set(assessment.impact_codes)) != len(assessment.impact_codes):
+        raise ValueError("Assessment impact codes must be unique")
+    if len(set(assessment.blocker_codes)) != len(assessment.blocker_codes):
+        raise ValueError("Assessment blocker codes must be unique")
+    if assessment.effects:
+        raise ValueError("KodiSmartPlaylist Assessment cannot declare Effects")
+    if not set(assessment.blocker_codes) <= _BLOCKERS:
+        raise ValueError("Assessment has an unknown blocker code")
+
+    operation = assessment.operation_code
+    if assessment.relation is DesiredRelation.SATISFIED:
+        if (
+            assessment.before_digest != assessment.desired_digest
+            or operation is not None
+            or assessment.reason_codes
+            or assessment.impact_codes
+            or assessment.blocker_codes
+        ):
+            raise ValueError("satisfied Assessment is contradictory")
+        return
+    if assessment.relation is DesiredRelation.NOT_APPLICABLE:
+        if (
+            operation is not None
+            or assessment.reason_codes
+            or assessment.impact_codes
+            or assessment.blocker_codes
+        ):
+            raise ValueError("not-applicable Assessment is contradictory")
+        return
+    if assessment.relation is DesiredRelation.UNVERIFIABLE:
+        if (
+            operation is not None
+            or assessment.reason_codes
+            or assessment.impact_codes
+            or len(assessment.blocker_codes) != 1
+            or assessment.blocker_codes[0] == "resource.observe-only-divergence"
+        ):
+            raise ValueError("unverifiable Assessment is contradictory")
+        return
+
+    if assessment.before_digest == assessment.desired_digest:
+        raise ValueError("divergent Assessment digests must differ")
+    if assessment.management is ManagementMode.OBSERVE_ONLY:
+        if (
+            operation is not None
+            or assessment.impact_codes
+            or assessment.blocker_codes != ("resource.observe-only-divergence",)
+        ):
+            raise ValueError("observe-only divergent Assessment is contradictory")
+    elif assessment.blocker_codes:
+        raise ValueError("enforcing divergent Assessment cannot be blocked")
+
+    if operation == "smart_playlist.create":
+        if assessment.reason_codes != (
+            "playlist.absent",
+        ) or assessment.impact_codes != ("content_mutation",):
+            raise ValueError("create Assessment is contradictory")
+    elif operation == "smart_playlist.remove":
+        if assessment.reason_codes != (
+            "playlist.desired-absent",
+        ) or assessment.impact_codes != ("content_mutation", "removal"):
+            raise ValueError("remove Assessment is contradictory")
+    elif operation == "smart_playlist.update":
+        if (
+            assessment.reason_codes not in _UPDATE_REASON_COMBINATIONS
+            or assessment.impact_codes != ("content_mutation",)
+        ):
+            raise ValueError("update Assessment is contradictory")
+    elif assessment.management is ManagementMode.ENFORCE:
+        raise ValueError("divergent enforcing Assessment requires an operation")
+    elif assessment.reason_codes not in _UPDATE_REASON_COMBINATIONS | {
+        ("playlist.absent",),
+        ("playlist.desired-absent",),
+    }:
+        raise ValueError("observe-only Assessment reasons are invalid")

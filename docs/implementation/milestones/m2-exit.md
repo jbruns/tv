@@ -126,15 +126,18 @@ and no trailing newline. CLI framing adds exactly one LF. Plan full digests
 omit only `full_digest`; semantic digests omit exactly the accepted six event
 metadata fields. Run revision digests omit only `current_digest` and revision
 2 links to the nonpersisted revision-1 planning digest. Duplicate/unknown
-fields, unknown required codes, invalid references, noncanonical bytes, and
-digest tampering are rejected.
+fields, invalid UUIDv7/logical IDs, non-UTC or impossible timestamp ordering,
+unknown or contradictory codes/status/lifecycle combinations, invalid
+references, malformed nested digests, inconsistent Plan references and Run
+revisions, noncanonical bytes, and full/semantic/current digest projection
+tampering are rejected with controlled codec errors.
 
 | Golden | SHA-256 |
 | --- | --- |
 | `tests/fixtures/canonical/plan-actionable.json` | `199869844c10597b82fb3af8f990f31a9825e2f36a51b292ee4c891fda1bccc2` |
 | `tests/fixtures/canonical/plan-noop.json` | `cc44e657e307e6c0e1d7f87ffdba183e2b5e6ebf63ba9de35652b5e638911520` |
-| `tests/fixtures/canonical/run-awaiting-approval.json` | `b3ee0b8b9979d21f9abc9d46199a89d8764637bf468457580371b7b06b508b80` |
-| `tests/fixtures/canonical/run-noop.json` | `9145192495c6edcf74e82eb56e69730015121d3c5923e524f526ccb5b69b85e1` |
+| `tests/fixtures/canonical/run-awaiting-approval.json` | `09429d8de421e8e51e3f44c235779abf25d8b7f75d3121b9056cb9c5a4421551` |
+| `tests/fixtures/canonical/run-noop.json` | `c030a7f2496db63cad2c3566691cd937a655f513ee6a00d25b79ab3f8ea1bbb4` |
 
 ### Local verification
 
@@ -143,28 +146,28 @@ Local evidence used macOS arm64, Python 3.14.2, uv 0.12.3, Ruff 0.16.8, mypy
 
 | Exact command | Result | Elapsed |
 | --- | --- | ---: |
-| `uv run pytest -q tests/unit/resource_types/kodi_smart_playlist tests/unit/planning tests/unit/reporting` | 43 passed | 0.41 s |
-| `uv run pytest -q tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py` | 17 passed under the offline socket guard | 2.18 s |
-| `uv run pytest -q` | 157 passed | 4.48 s |
+| `uv run pytest -q tests/unit/reporting/test_planning_documents.py tests/unit/resource_types/kodi_smart_playlist/test_planning_codecs.py tests/unit/resource_types/kodi_smart_playlist/test_xml_planning.py tests/unit/application/test_plan_offline.py` | 89 passed | 0.45 s |
+| `uv run pytest -q tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py` | 17 passed under the offline socket guard | 1.85 s |
+| `uv run pytest -q` | 208 passed | 4.26 s |
 | `uv run ruff check .` | All checks passed | 0.02 s |
 | documented `ruff format --check` paths | 67 files already formatted | 0.02 s |
 | `uv run mypy` | No issues in 67 source files | 0.11 s |
-| pure/unit/architecture budget command from `docs/development.md` | 140 passed; 2.405 s measured, below 10 s | 2.46 s |
-| complete-offline budget command from `docs/development.md` | 17 passed; 4.504 s aggregate, below 60 s | 2.15 s |
+| pure/unit/architecture budget command from `docs/development.md` | 193 passed; 2.667 s measured, below 10 s | 2.72 s |
+| complete-offline budget command from `docs/development.md` | 17 passed; 4.536 s aggregate, below 60 s | 1.92 s |
 | `uv build` | Source distribution and wheel built | 0.36 s |
 | documented wheel inspection and isolated no-dependency version/help smoke | Passed; 57 wheel entries | not budgeted |
 | `python3 scripts/check_markdown.py` | 56 Markdown files passed | 0.20 s |
 | `uv run python scripts/check_inventory_milestones.py` | 169 rows; digest matched | 0.04 s |
 | `python3 scripts/check_shell_permissions.py --audit` | 146/146 shell rows covered; valid | 0.15 s |
-| documented `tests/test-*.sh` transition loop excluding `test-helper.sh` | 9 scripts passed | 318.36 s |
+| documented `tests/test-*.sh` transition loop excluding `test-helper.sh` | 9 scripts passed | 1,208 s |
 | `git diff --check` | Passed | not budgeted |
 
 Built package digests:
 
 - wheel:
-  `13d0402fb48aaec69a88f26b94d063f8f4a3285c90472e4485e691355c7c4d00`;
+  `61b393a16b190823690f227dc7290e9dcf2888403a23992000f2e59ea80620fe`;
 - source distribution:
-  `fd031b1cfeffc1f110373abe8bea2b1efbab492ec48e0e72472f503821bfd8ef`.
+  `448e7761a81a3a29807c8f5ab2dd4008c17b33d93bafd119746212e5b8681955`.
 
 The mandatory two-axis review found strict-codec gaps, incomplete closed-code
 validation, malformed-content precondition aliasing, invalid timestamp
@@ -172,6 +175,13 @@ acceptance, and missing CLI access to the planning Run Report. The fixes
 centralize Observation validation, validate actual RFC 3339 UTC values and
 closed report vocabularies/references, bind malformed preconditions to a safe
 content digest, and add `plan --document run`.
+
+The blocking strictness correction adds closed playlist semantic vocabulary
+and cardinality, validates rendering intent, rejects contradictory Assessment
+states before Change construction, enforces supplied-observation temporal
+windows, and validates every canonical Plan/Run identity, timestamp, digest,
+reference, status, lifecycle, revision, and projection invariant. Adversarial
+tests cover each boundary, including exact Plan binding for Run references.
 
 ### Security, exclusions, and differences
 
@@ -187,17 +197,13 @@ accessed and no deployment occurred.
 
 Differences from the accepted issue #58 contract: **none**.
 
-[Hosted Offline CI run
-35435861956](https://github.com/jbruns/tv/actions/runs/35435861956)
-passed against source commit
-`d44b732b70af914ad420013e03cc92743a2ba70c`:
-
-- [Linux Python offline](https://github.com/jbruns/tv/actions/runs/35435861956/job/105878270935)
-  passed in 27 seconds;
-- [macOS Python offline](https://github.com/jbruns/tv/actions/runs/35435861956/job/105878270938)
-  passed in 20 seconds;
-- [macOS shell transition](https://github.com/jbruns/tv/actions/runs/35435861956/job/105878270859)
-  passed in 9 minutes 25 seconds.
+Hosted evidence is the required
+[Offline CI check attached to PR #69's final head](https://github.com/jbruns/tv/pull/69/checks).
+The workflow checks out the pull request head SHA explicitly and asserts that
+the checked-out SHA equals `SOURCE_SHA` before running Linux, macOS, and shell
+jobs. This moving PR-head link deliberately prevents this contribution-only
+record from claiming an earlier green commit as evidence for later
+corrections; exact final run/job permalinks are recorded in the PR.
 
 This contribution makes the pure slice ready for later application/execution
 work; it does not satisfy the live pilot gates and does not exit M2.

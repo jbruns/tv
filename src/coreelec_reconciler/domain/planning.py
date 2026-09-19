@@ -33,6 +33,7 @@ class PlanDisposition(StrEnum):
 
 
 class RunStatus(StrEnum):
+    PLANNING = "planning"
     BLOCKED = "blocked"
     NOOP = "noop"
     AWAITING_APPROVAL = "awaiting_approval"

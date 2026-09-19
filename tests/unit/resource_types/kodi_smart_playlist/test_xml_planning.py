@@ -14,6 +14,7 @@ from coreelec_reconciler.domain.planning import (
     DesiredRelation,
     FileKind,
     KodiSmartPlaylistObservation,
+    PlaylistSemanticModel,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning import (
     assess_playlist,
@@ -262,3 +263,77 @@ def test_renderer_has_one_deterministic_utf8_representation() -> None:
 def test_parser_rejects_unsupported_or_malformed_shapes(content: bytes) -> None:
     with pytest.raises(PlaylistXmlError):
         parse_playlist_xml(content)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        desired_xml().replace(b'type="tvshows"', b'type="episodes"'),
+        desired_xml().replace(b"<match>all</match>", b"<match>any</match>"),
+        desired_xml().replace(b'field="playcount"', b'field="title"'),
+        desired_xml().replace(b'operator="is"', b'operator="contains"'),
+        desired_xml().replace(b">0</rule>", b">watched</rule>"),
+        desired_xml().replace(b">dateadded</order>", b">title</order>"),
+        desired_xml().replace(b'direction="descending"', b'direction="random"'),
+        desired_xml().replace(
+            b"</rule>",
+            b'</rule><rule field="playcount" operator="is">0</rule>',
+        ),
+    ],
+)
+def test_invalid_semantic_vocabulary_is_malformed_not_satisfied(
+    content: bytes,
+) -> None:
+    resource = _resource()
+    assessment = assess_playlist(
+        resource.intent,
+        resource.desired,
+        resource.management,
+        KodiSmartPlaylistObservation(
+            resource.id.value,
+            resource.state_addresses[0],
+            "2026-09-19T08:00:00Z",
+            FileKind.REGULAR,
+            "0644",
+            content,
+        ),
+    )
+
+    assert assessment.relation is DesiredRelation.DIVERGENT
+    assert assessment.reason_codes == ("playlist.malformed-current",)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        PlaylistSemanticModel(
+            "episodes",
+            "New Shows",
+            "all",
+            50,
+            (("playcount", "is", 0),),
+            ("dateadded", "descending"),
+        ),
+        PlaylistSemanticModel(
+            "tvshows",
+            "",
+            "all",
+            50,
+            (("playcount", "is", 0),),
+            ("dateadded", "descending"),
+        ),
+        PlaylistSemanticModel(
+            "tvshows",
+            "New Shows",
+            "all",
+            50,
+            (),
+            ("dateadded", "descending"),
+        ),
+    ],
+)
+def test_renderer_rejects_invalid_domain_intent(
+    model: PlaylistSemanticModel,
+) -> None:
+    with pytest.raises(PlaylistXmlError):
+        render_playlist_xml(model)

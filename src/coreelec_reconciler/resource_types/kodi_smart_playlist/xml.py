@@ -7,6 +7,12 @@ from coreelec_reconciler.domain.planning import PlaylistSemanticModel
 
 _DECLARATION = re.compile(rb"^\s*<\?xml\s+([^?]+)\?>", re.IGNORECASE)
 _ENCODING = re.compile(rb"encoding\s*=\s*(['\"])([^'\"]+)\1", re.IGNORECASE)
+_MEDIA_TYPES = {"movies", "tvshows"}
+_MATCH_MODES = {"all", "one"}
+_RULE_FIELDS = {"playcount"}
+_RULE_OPERATORS = {"is"}
+_ORDER_FIELDS = {"dateadded"}
+_ORDER_DIRECTIONS = {"ascending", "descending"}
 
 
 class PlaylistXmlError(ValueError):
@@ -27,6 +33,39 @@ def _text(element: ET.Element, label: str) -> str:
     if value is None or not value.strip():
         raise PlaylistXmlError(f"playlist {label} is empty")
     return value.strip()
+
+
+def _closed_text(
+    value: str,
+    accepted: set[str],
+    label: str,
+) -> str:
+    if value not in accepted:
+        raise PlaylistXmlError(f"playlist {label} is unsupported")
+    return value
+
+
+def validate_playlist_model(
+    model: PlaylistSemanticModel,
+) -> PlaylistSemanticModel:
+    _closed_text(model.media_type, _MEDIA_TYPES, "media type")
+    if not model.display_name or len(model.display_name) > 256:
+        raise PlaylistXmlError("playlist name is invalid")
+    if any(ord(character) < 32 for character in model.display_name):
+        raise PlaylistXmlError("playlist name is invalid")
+    _closed_text(model.match, _MATCH_MODES, "match")
+    if type(model.limit) is not int or not 1 <= model.limit <= 10000:
+        raise PlaylistXmlError("playlist limit is invalid")
+    if len(model.rules) != 1:
+        raise PlaylistXmlError("playlist must contain exactly one rule")
+    field, operator, value = model.rules[0]
+    _closed_text(field, _RULE_FIELDS, "rule field")
+    _closed_text(operator, _RULE_OPERATORS, "rule operator")
+    if type(value) is not int or value < 0:
+        raise PlaylistXmlError("playlist rule value is invalid")
+    _closed_text(model.order[0], _ORDER_FIELDS, "order field")
+    _closed_text(model.order[1], _ORDER_DIRECTIONS, "order direction")
+    return model
 
 
 def parse_playlist_xml(content: bytes) -> PlaylistSemanticModel:
@@ -69,17 +108,20 @@ def parse_playlist_xml(content: bytes) -> PlaylistSemanticModel:
         raise PlaylistXmlError("playlist limit is malformed")
     if not rules:
         raise PlaylistXmlError("playlist rules are empty")
-    return PlaylistSemanticModel(
-        media_type=root.attrib["type"],
-        display_name=_text(singletons["name"], "name"),
-        match=_text(singletons["match"], "match"),
-        limit=int(limit_text),
-        rules=tuple(rules),
-        order=(_text(order, "order"), order.attrib["direction"]),
+    return validate_playlist_model(
+        PlaylistSemanticModel(
+            media_type=root.attrib["type"],
+            display_name=_text(singletons["name"], "name"),
+            match=_text(singletons["match"], "match"),
+            limit=int(limit_text),
+            rules=tuple(rules),
+            order=(_text(order, "order"), order.attrib["direction"]),
+        )
     )
 
 
 def render_playlist_xml(model: PlaylistSemanticModel) -> bytes:
+    model = validate_playlist_model(model)
     lines = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>',
         f'<smartplaylist type="{_escape(model.media_type)}">',

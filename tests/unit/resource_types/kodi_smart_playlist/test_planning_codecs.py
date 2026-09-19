@@ -146,3 +146,51 @@ def test_absent_observation_codec_rejects_file_content() -> None:
 
     with pytest.raises(ValueError):
         decode_observation(encoded)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("before_digest", "sha256:no"),
+        ("desired_digest", ""),
+        ("before_summary", {}),
+        ("reason_codes", ["unknown.reason"]),
+        ("reason_codes", ["playlist.semantic-drift", "playlist.semantic-drift"]),
+        ("impact_codes", ["removal"]),
+        ("blocker_codes", ["resource.unknown"]),
+        ("effects", ["effect.remote"]),
+        ("operation_code", "smart_playlist.remove"),
+        ("relation", "satisfied"),
+    ],
+)
+def test_assessment_codec_rejects_invalid_or_contradictory_values(
+    field: str,
+    invalid: object,
+) -> None:
+    resource = load_configuration(
+        FIXTURE_ROOT,
+        DeviceId("living-room.ugoos-am6b-plus"),
+        (SelectorId("selector.skin"),),
+    ).configuration
+    assert resource is not None
+    configured = resource.resources[0]
+    assessment = assess_playlist(
+        configured.intent,
+        configured.desired,
+        configured.management,
+        KodiSmartPlaylistObservation(
+            configured.id.value,
+            configured.state_addresses[0],
+            "2026-09-19T08:00:00Z",
+            FileKind.REGULAR,
+            "0644",
+            desired_xml().replace(b"<limit>50</limit>", b"<limit>25</limit>"),
+        ),
+    )
+    encoded = dict(encode_assessment(assessment))
+    payload = dict(cast(Mapping[str, object], encoded["payload"]))
+    payload[field] = invalid
+    encoded["payload"] = payload
+
+    with pytest.raises(ValueError):
+        decode_assessment(encoded)

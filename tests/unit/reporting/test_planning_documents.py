@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -16,6 +17,13 @@ from coreelec_reconciler.reporting.planning_documents import (
 from tests.unit.planning_support import FIXTURE_ROOT, desired_xml, supplied_document
 
 GOLDEN_ROOT = Path(__file__).parents[2] / "fixtures" / "canonical"
+SEMANTIC_EXCLUSIONS = {
+    "plan_id",
+    "created_at",
+    "expires_at",
+    "full_digest",
+    "semantic_digest",
+}
 
 
 def _plan(tmp_path: Path, content: bytes) -> PlanOutcome:
@@ -32,6 +40,53 @@ def _plan(tmp_path: Path, content: bytes) -> PlanOutcome:
     assert outcome.plan is not None
     assert outcome.run_report is not None
     return outcome
+
+
+def _sha256(value: dict[str, object]) -> str:
+    return "sha256:" + hashlib.sha256(canonical_document_bytes(value)).hexdigest()
+
+
+def _canonical_plan(value: dict[str, object]) -> bytes:
+    semantic = {
+        key: item for key, item in value.items() if key not in SEMANTIC_EXCLUSIONS
+    }
+    producer = dict(cast(dict[str, object], semantic["producer"]))
+    producer.pop("version")
+    semantic["producer"] = producer
+    value["semantic_digest"] = _sha256(semantic)
+    without_full = dict(value)
+    without_full.pop("full_digest")
+    value["full_digest"] = _sha256(without_full)
+    return canonical_document_bytes(value)
+
+
+def _canonical_run(value: dict[str, object]) -> bytes:
+    without_current = dict(value)
+    without_current.pop("current_digest")
+    value["current_digest"] = _sha256(without_current)
+    return canonical_document_bytes(value)
+
+
+def _relink_previous_run(value: dict[str, object]) -> None:
+    initial = {
+        "approvals": [],
+        "device_id": value["device_id"],
+        "ended_at": None,
+        "failures": [],
+        "kind": "CoreElecReconcilerRunReport",
+        "lifecycle_history": ["planning"],
+        "originating_planning_run_id": value["originating_planning_run_id"],
+        "plan_reference": None,
+        "previous_revision_digest": None,
+        "producer": value["producer"],
+        "resource_results": [],
+        "revision": 1,
+        "run_id": value["run_id"],
+        "schema_version": 1,
+        "started_at": value["started_at"],
+        "status": "planning",
+    }
+    value["previous_revision_digest"] = _sha256(initial)
 
 
 @pytest.mark.parametrize(
@@ -155,3 +210,129 @@ def test_digest_bytes_are_exactly_the_canonical_bytes_without_newline(
         run_digest
         == "sha256:" + hashlib.sha256(canonical_document_bytes(run_value)).hexdigest()
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "invalid"),
+    [
+        (("producer", "name"), "other"),
+        (("plan_id",), "not-a-uuid"),
+        (("originating_run_id",), "018f0000-0000-4000-8000-000000000001"),
+        (("created_at",), "2026-09-19T08:01:00+00:00"),
+        (("valid_from",), "2026-09-19T08:00:59Z"),
+        (("expires_at",), "2026-09-19T08:01:00Z"),
+        (("input_digests", "resolved_profile"), "sha256:no"),
+        (("evidence", 0, "evidence_id"), "evidence.other.before"),
+        (("evidence", 0, "observed_at"), "2027-09-19T08:00:00Z"),
+        (("resources", 0, "changes", 0, "reason_codes"), []),
+        (("resources", 0, "changes", 0, "impact_codes"), ["removal"]),
+        (("resources", 0, "changes", 0, "preconditions"), []),
+        (("resources", 0, "changes", 0, "effects"), ["effect.remote"]),
+    ],
+)
+def test_plan_decoder_rejects_adversarial_invariants(
+    tmp_path: Path,
+    path: tuple[str | int, ...],
+    invalid: object,
+) -> None:
+    outcome = _plan(
+        tmp_path,
+        desired_xml().replace(b"<limit>50</limit>", b"<limit>25</limit>"),
+    )
+    assert outcome.plan is not None
+    value = json.loads(outcome.plan.canonical_bytes)
+    target: object = value
+    for component in path[:-1]:
+        target = target[component]  # type: ignore[index]
+    target[path[-1]] = invalid  # type: ignore[index]
+
+    with pytest.raises(ValueError):
+        decode_plan(_canonical_plan(value))
+
+
+@pytest.mark.parametrize(
+    ("path", "invalid"),
+    [
+        (("producer", "name"), "other"),
+        (("run_id",), "not-a-uuid"),
+        (("originating_planning_run_id",), "0190aa00-0000-7000-8000-000000000009"),
+        (("started_at",), "2026-09-19T08:01:01+00:00"),
+        (("ended_at",), "2026-09-19T07:00:00Z"),
+        (("revision",), 3),
+        (("lifecycle_history",), ["noop"]),
+        (("previous_revision_digest",), "sha256:no"),
+        (
+            ("plan_reference", "originating_planning_run_id"),
+            "0190aa00-0000-7000-8000-000000000009",
+        ),
+        (("resource_results", 0, "mutation_outcome"), "applied"),
+    ],
+)
+def test_run_decoder_rejects_adversarial_invariants(
+    tmp_path: Path,
+    path: tuple[str | int, ...],
+    invalid: object,
+) -> None:
+    outcome = _plan(tmp_path, desired_xml())
+    assert outcome.run_report is not None
+    value = json.loads(outcome.run_report.canonical_bytes)
+    target: object = value
+    for component in path[:-1]:
+        target = target[component]  # type: ignore[index]
+    target[path[-1]] = invalid  # type: ignore[index]
+
+    with pytest.raises(ValueError):
+        decode_run_report(_canonical_run(value))
+
+
+def test_run_decoder_can_bind_exact_plan_reference(tmp_path: Path) -> None:
+    outcome = _plan(tmp_path, desired_xml())
+    assert outcome.plan is not None
+    assert outcome.run_report is not None
+    assert (
+        decode_run_report(outcome.run_report.canonical_bytes, outcome.plan)
+        == outcome.run_report
+    )
+
+    value = json.loads(outcome.run_report.canonical_bytes)
+    value["plan_reference"]["plan_id"] = "0190aa00-0000-7000-8000-000000000009"
+    with pytest.raises(ValueError):
+        decode_run_report(_canonical_run(value), outcome.plan)
+
+
+def test_plan_decoder_rejects_full_and_semantic_projection_tampering(
+    tmp_path: Path,
+) -> None:
+    outcome = _plan(tmp_path, desired_xml())
+    assert outcome.plan is not None
+    value = json.loads(outcome.plan.canonical_bytes)
+    value["semantic_digest"] = "sha256:" + "0" * 64
+    without_full = dict(value)
+    without_full.pop("full_digest")
+    value["full_digest"] = _sha256(without_full)
+    with pytest.raises(ValueError, match="semantic digest mismatch"):
+        decode_plan(canonical_document_bytes(value))
+
+    value = json.loads(outcome.plan.canonical_bytes)
+    value["full_digest"] = "sha256:" + "0" * 64
+    with pytest.raises(ValueError, match="full digest mismatch"):
+        decode_plan(canonical_document_bytes(value))
+
+
+def test_run_decoder_rejects_revision_linkage_and_plan_time_order(
+    tmp_path: Path,
+) -> None:
+    outcome = _plan(tmp_path, desired_xml())
+    assert outcome.plan is not None
+    assert outcome.run_report is not None
+    value = json.loads(outcome.run_report.canonical_bytes)
+    value["previous_revision_digest"] = "sha256:" + "0" * 64
+    with pytest.raises(ValueError, match="previous revision digest mismatch"):
+        decode_run_report(_canonical_run(value))
+
+    value = json.loads(outcome.run_report.canonical_bytes)
+    value["started_at"] = "2026-09-19T08:02:00Z"
+    value["ended_at"] = "2026-09-19T08:02:01Z"
+    _relink_previous_run(value)
+    with pytest.raises(ValueError, match="start after Plan creation"):
+        decode_run_report(_canonical_run(value), outcome.plan)

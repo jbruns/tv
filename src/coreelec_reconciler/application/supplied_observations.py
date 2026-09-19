@@ -1,7 +1,5 @@
 """Strict loader for bounded, offline planning inputs."""
 
-import re
-import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -10,14 +8,14 @@ from coreelec_reconciler.domain.planning import (
     SuppliedPlanningInput,
 )
 from coreelec_reconciler.domain.validation import (
-    require_rfc3339_utc,
+    parse_rfc3339_utc,
+    require_sha256,
+    require_uuid7,
 )
 from coreelec_reconciler.reporting.canonical_json import decode_json_object
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning_codecs import (
     decode_observation,
 )
-
-_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def _object(
@@ -34,25 +32,6 @@ def _string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{label} must be a nonempty string")
     return value
-
-
-def _time(value: object, label: str) -> str:
-    return require_rfc3339_utc(value, label)
-
-
-def _uuid7(value: object, label: str) -> str:
-    text = _string(value, label)
-    parsed = uuid.UUID(text)
-    if parsed.version != 7:
-        raise ValueError(f"{label} must be UUIDv7")
-    return text
-
-
-def _digest(value: object, label: str) -> str:
-    text = _string(value, label)
-    if _DIGEST.fullmatch(text) is None:
-        raise ValueError(f"{label} must be a SHA-256 digest")
-    return text
 
 
 def load_supplied_planning_input(path: str | Path) -> SuppliedPlanningInput:
@@ -105,29 +84,46 @@ def load_supplied_planning_input(path: str | Path) -> SuppliedPlanningInput:
             "payload_schema_version": 1,
         }
     )
+    planning_run_id = require_uuid7(runtime["planning_run_id"], "planning_run_id")
+    plan_id = require_uuid7(runtime["plan_id"], "plan_id")
+    if plan_id == planning_run_id:
+        raise ValueError("plan_id and planning_run_id must differ")
+    started_at = parse_rfc3339_utc(runtime["started_at"], "started_at")
+    observed_at = parse_rfc3339_utc(
+        typed_observation.observed_at,
+        "observed_at",
+    )
+    created_at = parse_rfc3339_utc(runtime["created_at"], "created_at")
+    ended_at = parse_rfc3339_utc(runtime["ended_at"], "ended_at")
+    expires_at = parse_rfc3339_utc(runtime["expires_at"], "expires_at")
+    if not started_at <= observed_at <= created_at <= ended_at < expires_at:
+        raise ValueError(
+            "planning timestamps must satisfy "
+            "started_at <= observed_at <= created_at <= ended_at < expires_at"
+        )
     return SuppliedPlanningInput(
         runtime=PlanningRuntime(
-            planning_run_id=_uuid7(runtime["planning_run_id"], "planning_run_id"),
-            plan_id=_uuid7(runtime["plan_id"], "plan_id"),
-            started_at=_time(runtime["started_at"], "started_at"),
-            created_at=_time(runtime["created_at"], "created_at"),
-            ended_at=_time(runtime["ended_at"], "ended_at"),
-            expires_at=_time(runtime["expires_at"], "expires_at"),
+            planning_run_id=planning_run_id,
+            plan_id=plan_id,
+            started_at=str(runtime["started_at"]),
+            created_at=str(runtime["created_at"]),
+            ended_at=str(runtime["ended_at"]),
+            expires_at=str(runtime["expires_at"]),
             endpoint_host=_string(endpoint["host"], "endpoint host"),
             endpoint_port=port,
             ssh_host_key_fingerprint=_string(
                 runtime["ssh_host_key_fingerprint"],
                 "SSH host-key fingerprint",
             ),
-            platform_identity_fingerprint=_digest(
+            platform_identity_fingerprint=require_sha256(
                 runtime["platform_identity_fingerprint"],
                 "platform identity fingerprint",
             ),
-            controller_capabilities_digest=_digest(
+            controller_capabilities_digest=require_sha256(
                 runtime["controller_capabilities_digest"],
                 "controller capabilities digest",
             ),
-            artifact_resolution_digest=_digest(
+            artifact_resolution_digest=require_sha256(
                 runtime["artifact_resolution_digest"],
                 "Artifact resolution digest",
             ),
