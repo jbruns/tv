@@ -187,7 +187,17 @@ accessed and no deployment occurred.
 
 Differences from the accepted issue #58 contract: **none**.
 
-Hosted Linux/macOS and shell-transition evidence is linked from the issue #58
-pull request. This contribution makes the pure slice ready for later
-application/execution work; it does not satisfy the live pilot gates and does
-not exit M2.
+[Hosted Offline CI run
+35435861956](https://github.com/jbruns/tv/actions/runs/35435861956)
+passed against source commit
+`d44b732f81f593d3b1f312bf5c4dd2e257c1b074`:
+
+- [Linux Python offline](https://github.com/jbruns/tv/actions/runs/35435861956/job/105878270935)
+  passed in 27 seconds;
+- [macOS Python offline](https://github.com/jbruns/tv/actions/runs/35435861956/job/105878270938)
+  passed in 20 seconds;
+- [macOS shell transition](https://github.com/jbruns/tv/actions/runs/35435861956/job/105878270859)
+  passed in 9 minutes 25 seconds.
+
+This contribution makes the pure slice ready for later application/execution
+work; it does not satisfy the live pilot gates and does not exit M2.
