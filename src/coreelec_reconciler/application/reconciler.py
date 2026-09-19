@@ -72,9 +72,12 @@ class Reconciler(Protocol):
 class ApplicationReconciler:
     def __init__(
         self,
-        validate_repository: Callable[[str], ValidationOutcome] | None = None,
+        validate_repository: Callable[[ValidateCommand], ValidationOutcome]
+        | None = None,
+        plan_repository: Callable[[PlanCommand], PlanResult] | None = None,
     ) -> None:
         self._validate_repository = validate_repository
+        self._plan_repository = plan_repository
 
     @overload
     def execute(self, command: ValidateCommand) -> ValidateResult: ...
@@ -110,13 +113,15 @@ class ApplicationReconciler:
         match command:
             case ValidateCommand():
                 if self._validate_repository is not None:
-                    return self._validate_repository(command.repository_root)
+                    return self._validate_repository(command)
                 name = "validate"
             case InventoryCommand():
                 name = "inventory"
             case ObserveCommand():
                 name = "observe"
             case PlanCommand():
+                if self._plan_repository is not None:
+                    return self._plan_repository(command)
                 name = "plan"
             case ApplyCommand():
                 name = "apply"

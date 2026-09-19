@@ -58,12 +58,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repository-root", default=".")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("validate")
+    validate_parser = subparsers.add_parser("validate")
+    validate_parser.add_argument("--device-id")
+    validate_parser.add_argument("--observations")
     subparsers.add_parser("inventory")
 
     for name in ("observe", "plan", "reconcile", "provision", "verify"):
         command_parser = subparsers.add_parser(name)
         command_parser.add_argument("device_id")
+        if name == "plan":
+            command_parser.add_argument("--observations", required=True)
         if name in {"reconcile", "provision"}:
             command_parser.add_argument(
                 "--approve",
@@ -100,7 +104,12 @@ def parse_command(argv: Sequence[str] | None = None) -> ParsedCommand:
 
     match command_name:
         case "validate":
-            command: Command = ValidateCommand(repository_root)
+            device_id = cast(str | None, args.device_id)
+            command: Command = ValidateCommand(
+                repository_root,
+                None if device_id is None else DeviceId(device_id),
+                cast(str | None, args.observations),
+            )
         case "inventory":
             command = InventoryCommand(repository_root)
         case "observe":
@@ -112,6 +121,7 @@ def parse_command(argv: Sequence[str] | None = None) -> ParsedCommand:
             command = PlanCommand(
                 repository_root,
                 DeviceId(cast(str, args.device_id)),
+                cast(str, args.observations),
             )
         case "apply":
             command = ApplyCommand(
