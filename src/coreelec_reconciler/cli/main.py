@@ -2,7 +2,10 @@
 
 from collections.abc import Sequence
 
-from coreelec_reconciler.application.outcomes import UnsupportedOutcome
+from coreelec_reconciler.application.outcomes import (
+    UnsupportedOutcome,
+    ValidationOutcome,
+)
 from coreelec_reconciler.bootstrap import BootstrapSettings, bootstrap
 from coreelec_reconciler.cli.parser import parse_command
 
@@ -20,6 +23,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if isinstance(outcome, ValidationOutcome):
+        if not outcome.valid:
+            import sys
+
+            for diagnostic in outcome.diagnostics:
+                print(diagnostic, file=sys.stderr)
+            return 2
+        dispositions = " ".join(
+            f"{name}={count}" for name, count in outcome.disposition_totals
+        )
+        print(
+            f"inventory ledger valid: rows={outcome.row_count} "
+            f"{dispositions} sha256={outcome.sha256}"
+        )
     return 0
 
 

@@ -9,6 +9,7 @@ integrations.
 
 - [Shared room setup runbook](docs/runbook.md)
 - [Python development and packaging](docs/development.md)
+- [Inventory ownership ledger contract](docs/implementation/inventory-ownership-ledger.md)
 - [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)
 - [Shared Ugoos setup guide](docs/devices/ugoos-am6b-plus/coreelec-21.3.md)
 - [Ugoos provisioning operations guide](docs/operations/provision-ugoos.md)
@@ -48,6 +49,7 @@ docs/
   network/                    Shared network onboarding and control rules
   operations/                 Shared provisioning procedures
   runbook.md                  Shared room setup workflow
+inventory/                    Accepted inventory ownership ledger
 rooms/
   theater/                    Installed Theater inventory and device guides
   living/                     Living room template and device-guide index

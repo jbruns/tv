@@ -29,16 +29,18 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
-testpaths = ["tests/scaffold", "tests/ci"]
+testpaths = ["tests/scaffold", "tests/inventory", "tests/ci"]
 
 [tool.mypy]
 python_version = "3.14"
 strict = true
 files = [
+  "scripts/check_inventory_milestones.py",
   "scripts/run_test_budget.py",
   "src",
   "tests/conftest.py",
   "tests/scaffold",
+  "tests/inventory",
   "tests/ci",
   "tests/support",
 ]

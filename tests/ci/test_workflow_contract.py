@@ -37,6 +37,8 @@ def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
     assert any(
         "uv run ruff format --check" in command
         and "scripts/run_test_budget.py" in command
+        and "scripts/check_inventory_milestones.py" in command
+        and "tests/inventory" in command
         and "tests/support" in command
         for command in run_commands
     )
@@ -51,9 +53,13 @@ def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
     )
     assert any(
         "tests/scaffold/test_application.py "
-        "tests/scaffold/test_architecture.py tests/ci"
+        "tests/scaffold/test_architecture.py tests/inventory tests/ci"
         in command
         and "--budget-seconds 10" in command
+        for command in run_commands
+    )
+    assert any(
+        "uv run python scripts/check_inventory_milestones.py" in command
         for command in run_commands
     )
     assert any(

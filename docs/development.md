@@ -13,9 +13,11 @@ Run the scaffold quality checks and build the source distribution and wheel:
 ```console
 uv run ruff check .
 uv run ruff format --check \
-  src scripts/run_test_budget.py tests/scaffold tests/ci \
+  src scripts/run_test_budget.py scripts/check_inventory_milestones.py \
+  tests/scaffold tests/inventory tests/ci \
   tests/conftest.py tests/support
 uv run mypy
+uv run python scripts/check_inventory_milestones.py
 uv run python scripts/run_test_budget.py \
   --label pure-unit-architecture \
   --budget-seconds 10 \
@@ -24,7 +26,7 @@ uv run python scripts/run_test_budget.py \
   -- \
   .venv/bin/python -m pytest -q \
   tests/scaffold/test_application.py \
-  tests/scaffold/test_architecture.py tests/ci
+  tests/scaffold/test_architecture.py tests/inventory tests/ci
 uv run python scripts/run_test_budget.py \
   --label complete-offline \
   --budget-seconds 60 \
@@ -116,16 +118,13 @@ session, or make network calls.
 ```console
 uv run coreelec-reconciler --version
 uv run coreelec-reconciler --help
+uv run coreelec-reconciler validate
 ```
 
 The command surface is present so later vertical slices can implement behavior
-through the typed `Reconciler.execute` boundary. Until then, operational
-commands return an explicit `not_implemented` diagnostic and exit with status
-2. For example:
-
-```console
-uv run coreelec-reconciler validate
-```
+through the typed `Reconciler.execute` boundary. `validate` currently performs
+the deterministic, offline inventory-ledger gate. Other operational commands
+return an explicit `not_implemented` diagnostic and exit with status 2.
 
 `provision` is command-line sugar for `reconcile`; it is not a separate
 application command. Building with `uv build` packages only
