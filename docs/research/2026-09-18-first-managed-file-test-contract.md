@@ -58,6 +58,47 @@ The exact additions are enumerated in issue 43 section 17. V1 tests must prove
 there is no automatic retry, Delay port, heartbeat takeover, Effect handler,
 automatic prune, path exposure, or cleanup-driven rewrite of terminal truth.
 
+## 0.1 Issue 44 live-acceptance refinement (2026-09-18)
+
+The accepted
+[disposable pilot acceptance procedure](2026-09-18-disposable-pilot-acceptance-procedure.md)
+removes live ambiguity from the scenario contract. The core bundle has one
+unstitched exact-source/wheel/config attempt and these normative outcomes:
+
+| Live case | Canonical status and primitive trace |
+|---|---|
+| absent create | actionable Plan; Run `converged`; `stage-write`, `atomic-replace`, and `chmod` only if create cannot set `0644` atomically |
+| semantic-equivalent formatting | Plan and Run `noop`; no preparation, mutation, or Effect |
+| semantic drift | `converged`; `stage-write`, `atomic-replace`, optional needed `chmod`; no rollback/Effect |
+| mode-only `0600` | `converged`; `chmod` only; bytes/inode/size unchanged |
+| malformed XML | `converged`; `stage-write`, `atomic-replace`, optional needed `chmod`; no rollback/Effect |
+| desired absent | `converged`; approved `remove` only |
+| desired present recreate | `converged`; the create trace above |
+| immediate second Run | Plan and Run `noop`; zero intent/preparation/mutation/Effect and unchanged supported stat/list invariants |
+
+Any deviation fails; implementation-specific rationalization is forbidden.
+The mode-only case exposes a legacy conflict: shell `write_xml_atomic` defaults
+`NewShows.xsp` to `0600`, while Python owns `0644`, and shell verification
+ignores mode. After the first successful Python handoff, shell provisioning
+whose effective scope includes `skin` remains frozen on the dedicated pilot
+until that shell writer/verifier is retired at cutover.
+
+Kodi no-Effect evidence uses exact `Files.GetDirectory` calls for the actual
+playlist URI with media `video` and `properties: ["playcount"]`. Before reset
+the result must include at least one `playcount=0` item; during verified
+absence it must be unavailable; after create it must again include a matching
+item without PID/start change or restart. A human freshly opens the actual
+playlist and sees at least one item. Otherwise the evidence is
+nondiscriminating or the no-Effect decision fails.
+
+Deterministic pre-mutation interruption is not part of the core bundle. It may
+run afterward only in a separate supplemental bundle when the hook proves no
+mutation intent occurred, only normal finalize/known-unchanged
+`failed_partial` actions are possible, and abandon/quarantine are excluded.
+Its result never changes the sealed core verdict. Until such a safe hook
+exists, offline and source-matched production-adapter tests remain the primary
+recovery gate.
+
 ## 1. Decision
 
 The first production slice is accepted only when tests prove the behavior of
@@ -970,7 +1011,8 @@ Preconditions:
 - operator confirms the target is the disposable pilot;
 - issue-44 reset/preparation completed;
 - shell may prepare/reset before handoff, then Python is the sole actor for
-  `NewShows.xsp`;
+  `NewShows.xsp`; after the first successful handoff, shell provisioning whose
+  effective scope includes `skin` remains frozen until cutover retirement;
 - source commit/tree digest and clean/declared dirty state are captured;
 - adapter contract has already proven safe atomic overwrite support.
 
@@ -984,14 +1026,12 @@ Required live cases:
 4. objectively prove whether Kodi observes and can use/display the playlist
    without an Effect; if not, fail acceptance, resolve the narrow Effect
    decision, and rerun rather than falsely passing;
-5. introduce the representative drift selected by issue 44 and repair it;
-6. if issue 44 determines it is operationally safe, induce one ambiguous
-   acknowledgement and prove re-observation; otherwise the shared production
-   adapter contract evidence covers ambiguity without weakening any other
-   live gate;
-7. run again and prove a no-op with no rewrite;
-8. restore/reset the Device according to issue 44;
-9. capture final subtree leak check and post-state evidence.
+5. execute the exact formatting, semantic, mode-only, malformed, absent, and
+   recreate cases and primitive traces fixed by the dated refinement above;
+6. run again and prove a no-op with no rewrite;
+7. restore canonical present mode `0644` according to issue 44 while retaining
+   the shell-skin freeze;
+8. capture final subtree leak check and post-state evidence.
 
 The retained evidence bundle contains:
 
@@ -1004,7 +1044,7 @@ The retained evidence bundle contains:
 - independently recomputed document and revision digests;
 - safe pre/post semantic and mode evidence;
 - Kodi usability result;
-- drift and ambiguity scenario identifiers;
+- exact core scenario identifiers and primitive traces;
 - final cleanup/reset result.
 
 Evidence is stale if it was produced by another commit/source digest, by a
@@ -1017,12 +1057,11 @@ identity guard.
 |---|---|---|
 | #42, this contract | seams, exact behavior/fault/CLI/serialization/adapter/live matrices, fakes, independent oracles, CI platforms, budgets, evidence gates | workspace layout and operational pilot procedure |
 | #43, Run workspace/recovery/Effects | exact local/remote workspace paths, leases/markers, durability, stale ownership, attachment retention, interruption algorithms, retry classification/scheduling, recovery action algorithms, Effect barriers | weakening #42 observation, ambiguity, invariant, or acceptance gates |
-| #44, disposable pilot | reset boundary, operator commands, drift injection, cleanup/restoration, Kodi usability procedure, whether live ambiguity injection is safe | replacing production adapter ambiguity coverage or changing the managed address |
+| #44, disposable pilot | reset boundary, operator commands, exact live drift/status/trace matrix, cleanup/restoration, Kodi usability procedure, and separate supplemental interruption boundary | replacing production adapter ambiguity coverage or changing the managed address |
 
 If #43 introduces retry delays it must add an injected delay capability and
-new deterministic tests. If #44 deems live ambiguity injection unsafe, the
-production adapter contract remains mandatory and all other live gates remain
-unchanged.
+new deterministic tests. Live ambiguity injection is excluded; the production
+adapter contract remains mandatory and all other live gates remain unchanged.
 
 ## 22. Architecture-proven checklist
 

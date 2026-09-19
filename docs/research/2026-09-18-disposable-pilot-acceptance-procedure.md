@@ -2,7 +2,7 @@
 
 Date: 2026-09-18  
 Issue: [#44, Define the disposable-pilot acceptance procedure](https://github.com/jbruns/tv/issues/44)  
-Status: autonomous draft for independent review
+Status: **Accepted contract-level decision**
 
 ## 1. Decision
 
@@ -10,9 +10,9 @@ The first live `KodiSmartPlaylist` acceptance run uses the enrolled
 `ugoos-theater` Device and the actual
 `special://profile/playlists/video/NewShows.xsp` State Address. The procedure
 proves fresh convergence, semantic no-op, representative drift repair,
-approved removal and recreation, Kodi usability without an Effect, recovery
-behavior where safely available, evidence integrity, and an explicit
-Python-to-shell ownership handback.
+approved removal and recreation, Kodi usability without an Effect, and
+evidence integrity. Recovery evidence is a separate supplemental bundle and
+cannot be stitched into the mandatory core acceptance bundle.
 
 This is acceptance infrastructure, not permission to treat the Device
 carelessly. The operator must regard the Device as temporarily disposable for
@@ -35,13 +35,16 @@ implementation pilot without reimaging the Device. If the root already exists,
 validate it; never delete existing Run Infrastructure to manufacture
 freshness.
 
-The accepted ADR 0004 decision still permits a newly reset Device for a later
-full-fleet cutover. Reimage only when the Device is no longer Manageable or a
-reviewed future full-fleet pilot explicitly requires it. A changed host key
-after reimage requires a reviewed inventory identity transition; it is never
-automatically repinned. Reimage also does not necessarily create a new logical
-Device ID because that identity may represent the continuing physical
-installation.
+Issue #44 derives the scoped reset from the Manageable Device/resource scope
+and the accepted architecture's disposable-pilot framing. It does not
+attribute leaf-reset mechanics to ADR 0004, whose source file is not present
+on this branch and must be integrated from the main architecture/ADR branch by
+#45. A full reimage remains available only when the Device is no longer
+Manageable or a reviewed future full-fleet pilot explicitly requires it. A
+changed host key after reimage requires a reviewed inventory identity
+transition; it is never automatically repinned. Reimage also does not
+necessarily create a new logical Device ID because that identity may represent
+the continuing physical installation.
 
 ## 2. Sources and decision boundary
 
@@ -69,10 +72,10 @@ This procedure operationalizes, and does not weaken:
 - leases, markers, preparation, interruption, rollback, quarantine, Effects,
   and cleanup truth in
   [Run workspace, recovery, and Effect contracts](2026-09-18-run-workspace-recovery-effect-contracts.md);
-- ADR 0004, `docs/adr/0004-disposable-pilot-cutover.md`, whose accepted decision
-  makes the pilot Device disposable acceptance infrastructure and requires
-  fresh convergence, representative drift repair, and a second-Run no-op
-  before shell retirement;
+- the accepted architecture/ADR decision recorded in the issue map that makes
+  the pilot Device disposable acceptance infrastructure and requires fresh
+  convergence, representative drift repair, and a second-Run no-op before
+  shell retirement; #45 must integrate the branch-local source documents;
 - the current
   [Ugoos provisioning operations](../operations/provision-ugoos.md),
   [theater Device record](../../rooms/theater/devices/ugoos-am6b-plus.md), and
@@ -109,7 +112,8 @@ The acceptance harness:
   independent observations;
 - stops immediately on any failed, blocked, quarantined, abandoned, ambiguous,
   or unexpected result;
-- seals the attempt and runs the offline bundle verifier.
+- seals the attempt, exits, and then invokes the repository's independent
+  offline bundle-verifier tool as a separate process.
 
 Automation may not answer operator attestations, approve an unexpected identity
 change, clear recovery state, retry a Device operation, or infer that a Kodi
@@ -126,14 +130,14 @@ The operator:
 - declares and signs the shell-to-Python handoff;
 - remains at the display for Kodi UI checks;
 - decides whether to abort when automation reports a guard failure;
-- signs the Python-to-shell handback after the bundle is sealed.
+- attests that Python ownership is sealed after the bundle is sealed.
 
 The operator does not manually edit the playlist during a scenario. All
 planned drift is a serialized, logged harness fixture phase.
 
 ### 3.3 Actor ownership epochs
 
-There are three explicit epochs:
+There are three explicit phases:
 
 1. **Shell preparation epoch.** Before handoff, shell tooling or a human may
    inspect, prepare, or reset the exact playlist leaf under this procedure.
@@ -141,15 +145,27 @@ There are three explicit epochs:
    is sealed, Python is the sole ordinary actor for the Resource. Shell
    provisioning whose effective scope includes `skin`, manual playlist edits,
    Home Assistant provisioning, and every other undeclared actor are frozen.
-3. **Shell operational epoch.** A signed handback ends Python ownership and
-   restores ordinary shell operational ownership until final cutover. Because
-   shell and Python Desired State for New Shows is semantically identical, no
-   content reversal is required.
+3. **Sealed pilot epoch.** After the first successful Python pilot handoff,
+   shell provisioning whose computed effective scope includes `skin` remains
+   frozen on this Device until the shell writer and verifier for this State
+   Address are retired at cutover. There is no shell skin-ownership handback.
+   The Device remains dedicated acceptance infrastructure. Other shell
+   operations are permitted only when their recorded computed effective scope
+   provably excludes `skin` and `NewShows.xsp`.
 
 Never run shell and Python concurrently. Any later Python attempt requires a
-new freeze and handoff. Do not run `provision-coreelec.sh` with an effective
-`skin` scope during the Python epoch: `skin` expands to `core` and `addons`,
-stops/restarts Kodi, and writes more than this Resource.
+new freeze recheck and handoff event. Do not run `provision-coreelec.sh` with
+an effective `skin` scope after the first successful handoff: `skin` expands
+to `core` and `addons`, stops/restarts Kodi, and writes more than this
+Resource.
+
+This freeze is required because the accepted Python Desired State owns mode
+`0644`, while legacy `write_xml_atomic(path, tree, mode=0o600)` writes
+`NewShows.xsp` as `0600` and legacy semantic verification does not verify its
+mode. Semantic/content equality therefore does **not** make resuming shell
+skin ownership safe. Home Assistant status traffic may continue and lifecycle policy may
+resume only after the core evidence is sealed, but shell skin ownership does
+not resume.
 
 ## 4. Fixed identities and accepted Desired State
 
@@ -194,6 +210,13 @@ source tree and bind it to:
 - a monotonic scenario sequence;
 - the bundle format and verifier version.
 
+The exact present and absent Desired State documents, their named Profile IDs,
+and the inventory selection that chooses them must already be committed in the
+same clean acceptance commit. Each scenario records the selected Profile and
+Intent IDs plus their independently computed digests. Working-tree edits,
+generated out-of-tree Intent, or changing a Profile between Runs invalidate
+the attempt.
+
 The harness may append new immutable objects and atomically advance an
 append-only journal. It may not overwrite previously recorded evidence.
 Sealing writes a final manifest whose digest covers every retained object.
@@ -214,7 +237,8 @@ pilot-acceptance-<attempt-id>/
 │   ├── git-status.txt
 │   ├── source-tree.sha256
 │   ├── wheel-metadata.json
-│   └── wheel.sha256
+│   ├── wheel.sha256
+│   └── authored-inputs.json
 ├── environment/
 │   ├── controller.json
 │   ├── tools.json
@@ -222,17 +246,23 @@ pilot-acceptance-<attempt-id>/
 │   ├── platform.json
 │   ├── home-assistant.json
 │   ├── kodi-process.json
+│   ├── storage-stat-capabilities.json
 │   └── command-log.jsonl
 ├── preflight/
 │   ├── readiness.json
 │   ├── infrastructure-root.json
 │   ├── active-state-scan.json
-│   ├── atomic-capability.json
-│   ├── reset-dry-run.json
-│   ├── reset-apply.json
+│   ├── adapter-contract-binding.json
+│   ├── protocol-negotiation.json
+│   ├── safe-probe-root.json
 │   ├── sibling-snapshot.before.json
-│   ├── sibling-snapshot.after.json
-│   └── handoff.json
+│   └── sibling-snapshot.after.json
+├── transitions/
+│   └── <seq>-<scenario>/
+│       ├── reset-dry-run.json
+│       ├── reset-apply.json
+│       ├── handoff.json
+│       └── freeze-recheck.json
 ├── offline-contracts/
 │   ├── linux.json
 │   ├── macos.json
@@ -240,8 +270,10 @@ pilot-acceptance-<attempt-id>/
 │   ├── ambiguity-cases.json
 │   └── junit/
 │       └── <suite>.xml
+├── live-device/
+│   └── junit/
+│       └── <suite>.xml
 ├── scenarios/
-│   ├── 00-optional-interruption/
 │   ├── 01-absent-create/
 │   ├── 02-formatting-noop/
 │   ├── 03-semantic-drift/
@@ -261,15 +293,17 @@ pilot-acceptance-<attempt-id>/
 │   ├── target-attestation.json
 │   ├── freeze-attestation.json
 │   ├── kodi-ui-attestations.jsonl
-│   └── handback-attestation.json
+│   └── ownership-seal-attestation.json
 ├── final/
 │   ├── canonical-state.json
 │   ├── active-state-scan.json
 │   ├── run-leftovers.json
 │   ├── lifecycle-reconciliation.json
-│   ├── handback.json
+│   ├── ownership-seal.json
+│   ├── shell-skin-freeze.json
 │   └── verdict.json
 └── verifier/
+    ├── source-binding.json
     ├── invocation.json
     ├── results.json
     └── results.sha256
@@ -279,6 +313,7 @@ Each scenario directory contains, when applicable:
 
 ```text
 <scenario>/
+├── selection.json
 ├── fixture-intent.json
 ├── fixture-result.json
 ├── plan.json
@@ -317,6 +352,8 @@ Record:
 
 - source commit, clean committed status, source-tree digest, wheel filename,
   wheel digest, package version, and installed distribution metadata;
+- committed present/absent Profile and inventory-selection paths, selected
+  Profile/Intent IDs, and independent input digests for every scenario;
 - Linux and macOS offline results and production-adapter contract results for
   the same commit and wheel;
 - Python, uv, package, Paramiko, SSH client/server, CoreELEC, Kodi, Home
@@ -325,14 +362,17 @@ Record:
 - logical and physical Device identity, endpoint, independently pinned host
   key, platform/model/release, boot identity, profile-root identity, and time
   observations;
-- initial and final Home Assistant override, lifecycle state, Kodi PID, and
-  process start identity;
+- initial and final Home Assistant override; all allowed Home Assistant status
+  traffic; lifecycle state; and Kodi PID/process start identity;
 - every Plan, Run revision, attachment digest, marker generation,
   preparation manifest, intent, primitive trace, Verification, rollback
   result, recovery action, cleanup receipt, and terminal report;
 - independent content bytes digest, semantic tuple, entry type, mode,
-  ownership, full stat tuple, and parent-directory listing around each case;
-- structured operator attestations and final handback.
+  ownership, supported stat tuple, and fixed parent-directory listing before
+  and after every fixture, mutation, and no-op;
+- every sequenced reset, handoff, and freeze recheck, proving each fixture
+  mutation interval is bracketed by valid handoff/freeze events;
+- structured operator attestations and final Python ownership seal.
 
 Do not record secrets, environment values, private keys, raw local private
 paths, unrelated media names, broad directory trees, Kodi library contents, or
@@ -340,9 +380,14 @@ screenshots by default. Redact controller usernames and workspace locations
 where they are not part of a public contract. The operator UI attestation is
 the default because a screenshot can leak media and household information.
 
-### 5.3 Offline bundle verifier
+### 5.3 Independent offline bundle verifier
 
-A separate offline verifier must:
+A separately invoked repository script/tool runs only after the acceptance
+harness exits. Its source commit and source digest are recorded. It may share
+only schema definitions and cryptographic primitives with production code; it
+must not share Resource assessment, scenario verdict, or pass/fail logic.
+
+The verifier must:
 
 1. reject an unsealed, modified, duplicate-path, path-traversing, or
    schema-incompatible bundle;
@@ -352,13 +397,15 @@ A separate offline verifier must:
    bindings throughout;
 4. replay the independent report-invariant checker;
 5. independently recompute machine-verifiable pass/fail verdicts;
-6. prove scenario order, terminality, cleanup, no retry, and no stitching;
+6. prove scenario order, terminality, cleanup, no retry, no stitching, and
+   that every fixture mutation interval is bracketed by the corresponding
+   sequenced handoff and freeze-recheck events;
 7. identify every operator-only assertion and refuse to manufacture it from
    machine evidence;
 8. emit one deterministic result and digest without Device access.
 
 The verifier must not import or call `KodiSmartPlaylist.assess`, its renderer,
-or the production report verdict function.
+the production scenario verdict, or the production report verdict function.
 
 ## 6. Preconditions
 
@@ -371,6 +418,8 @@ All conditions are mandatory before the handoff.
 - The commit is reachable from the expected branch.
 - The wheel was built from that exact clean tree.
 - The installed wheel digest and metadata match the recorded wheel.
+- The committed inventory selection and named present/absent Profiles exist in
+  that tree; their selected Intent IDs and digests are recorded before contact.
 - Required pure, offline, Linux, macOS, shared adapter, and production-adapter
   contract tests pass for the same commit.
 - Ambiguous-outcome adapter cases pass even though live ambiguity injection is
@@ -397,14 +446,35 @@ All conditions are mandatory before the handoff.
 - Kodi lifecycle state is `running`.
 - Kodi JSON-RPC is available.
 - Kodi PID and a stable process-start identity are recorded.
-- The initial keep-running override value is recorded so it can be restored at
-  handback.
+- Before reset, the harness invokes this exact JSON-RPC request shape:
+
+  ```json
+  {
+    "jsonrpc": "2.0",
+    "id": "pilot-new-shows",
+    "method": "Files.GetDirectory",
+    "params": {
+      "directory": "special://profile/playlists/video/NewShows.xsp",
+      "media": "video",
+      "properties": ["playcount"]
+    }
+  }
+  ```
+
+  The response must contain at least one item whose `playcount` is `0`;
+  otherwise abort because later no-Effect evidence would be nondiscriminating.
+- Record only the response shape, item count, and safe item identifiers needed
+  to prove that match; do not retain unrelated library metadata.
+- The initial keep-running override value is recorded so it can be restored
+  after the final evidence seal.
 - Home Assistant provisioning/reload/restart is frozen for the acceptance
   window.
 
-Kodi PID and start identity must remain unchanged throughout the Python epoch.
-Any restart, including an unrequested lifecycle restart, invalidates the
-attempt.
+Kodi PID and start identity must remain unchanged throughout the core
+acceptance window. Home Assistant status traffic is allowed and recorded, but
+any lifecycle `start` or `stop`, shell provisioning, or PID/start-identity
+change invalidates the core bundle. Keep the override on until after final
+evidence is sealed.
 
 ### 6.4 No unresolved work
 
@@ -435,13 +505,23 @@ The readiness guard runs before fixture reset and again before each Run:
    lookup;
 7. bind parent and leaf observations to stable identities used for stale
    rechecks;
-8. verify same-directory exclusive creation, file and directory durability,
-   atomic replacement, fresh readback, and supported stat precision through
-   the accepted production adapter capability;
+8. consume source-matched production-adapter contract evidence and perform
+   nonmutating protocol capability negotiation;
 9. independently confirm the resolved leaf corresponds to the literal logical
    address.
 
 The guard must not create the playlist or silently repair unsafe parents.
+
+Any live write capability probe is a distinct preflight operation, not a probe
+before each Run. It uses a separately declared safe probe root, records its
+binding, and fully removes and verifies that root before the baseline snapshot.
+It must not create or delete `/storage/.coreelec-reconciler/`; production code
+alone proves genuine first use.
+
+Before any no-op case, record `/storage` filesystem timestamp granularity and
+the stat fields the server/protocol exposes. The supported tuple is fixed for
+the attempt. Unsupported fields are declared before scenarios and never
+silently omitted later.
 
 ### 7.1 Run Infrastructure root
 
@@ -491,7 +571,11 @@ The helper:
 - aborts without mutation if any assertion fails.
 
 Dry-run is mandatory immediately before apply, and apply consumes the digest of
-that dry-run result. A changed identity or state invalidates it.
+that dry-run result. A changed identity or state invalidates it. After reset
+proves filesystem absence, repeat the exact preflight `Files.GetDirectory`
+call. It must fail or return unavailable for the playlist. If Kodi continues
+to serve the playlist through cache, abort because the later no-Effect result
+would be nondiscriminating.
 
 ### 8.2 Conceptual invocation
 
@@ -519,7 +603,7 @@ RESET_HELPER="./implementation-defined-reset-helper"
   --evidence "$PILOT_EVIDENCE_DIR"
 
 "$RESET_HELPER" apply \
-  --from-dry-run "$PILOT_EVIDENCE_DIR/preflight/reset-dry-run.json" \
+  --from-dry-run "$PILOT_EVIDENCE_DIR/transitions/01-absent-create/reset-dry-run.json" \
   --evidence "$PILOT_EVIDENCE_DIR"
 ```
 
@@ -561,7 +645,9 @@ produce a signed, typed handoff event:
 
 The signature mechanism must be typed and verifiable but must not place a
 private key or secret in the bundle. The harness rechecks freeze evidence
-before every Run and after every declared fixture mutation.
+before every Run and after every declared fixture mutation. Each reset,
+handoff, and recheck is appended under
+`transitions/<seq>-<scenario>/`; no occurrence overwrites another.
 
 ## 10. Independent state oracle
 
@@ -587,23 +673,12 @@ Scenarios run in this order. A scenario starts only after the previous Run is
 terminal, its evidence is appended, its cleanup is verified, and its scenario
 record is sealed. Fixture mutation is a distinct phase between Runs.
 
-### 11.0 Optional deterministic pre-mutation interruption
-
-Run this only if the implementation exposes the exact tested hook after
-preparation is durable and before mutation intent/device mutation.
-
-1. Start the Run from the reset absent state.
-2. Trigger the deterministic hook after preparation, before mutation.
-3. Observe the terminal/interrupted truth; do not retry.
-4. Inspect through the public recovery interface.
-5. Perform only the computed allowed recovery action.
-6. Prove no playlist mutation occurred and cleanup is exact.
-7. Run the scoped reset helper again and re-establish the handoff.
-
-This is never an acknowledgement-loss or ambiguous-outcome injection. If the
-tested hook is unavailable, record `not_applicable` and perform the exercise
-later on a separate controlled Device. Its absence does not weaken the core
-fresh/drift/no-op gates.
+Every status and primitive trace below is normative. Any deviation fails the
+core bundle; it may not be rationalized from implementation details.
+Immediately before and after every fixture mutation, production mutation, and
+no-op, record the same fixed bounded parent-directory listing. Any transient
+sibling, leaked stage/backup/helper entry, or unexplained listing difference
+fails the bundle.
 
 ### 11.1 Absent to create: fresh convergence
 
@@ -611,9 +686,13 @@ Precondition: the leaf is freshly verified absent.
 
 Required proof:
 
+- the Plan is actionable and the Run status is exactly `converged`;
 - an actionable `create` mutation intent exists;
+- the ordered mutation trace is `stage-write`, `atomic-replace`, plus `chmod`
+  only when the create primitive cannot set mode `0644` atomically;
 - exactly one applied Resource Change names
   `special://profile/playlists/video/NewShows.xsp`;
+- there is no remove, rollback, or Effect trace;
 - there is no Effect intent, Effect trace, Kodi restart, or unrelated Change;
 - fresh Verification occurs after mutation;
 - the independent oracle observes a regular file, exact semantics, and mode
@@ -635,7 +714,7 @@ handoff.
 
 The following Run must:
 
-- assess the Resource as semantically converged;
+- produce Plan status and Run status exactly `noop`;
 - emit zero mutation intents, primitive mutation traces, Changes, Effects, and
   preparation manifest;
 - leave bytes, SHA-256, and the full stat tuple identical to the fixture;
@@ -650,19 +729,22 @@ This proves semantic comparison rather than byte normalization.
 As a declared fixture phase, atomically install valid playlist XML differing
 only by `limit=49`, with mode `0644`.
 
-The Run must emit one `update`, use the accepted same-directory stale-safe
-atomic replacement path, freshly verify exact desired semantics and mode
-`0644`, preserve unrelated siblings, emit no Effect, and keep Kodi PID stable.
+The Run status must be exactly `converged`. It emits one `update` with ordered
+`stage-write`, `atomic-replace`, and `chmod` only if needed; uses the accepted
+same-directory stale-safe atomic replacement path; freshly verifies exact
+desired semantics and mode `0644`; preserves unrelated siblings; and emits no
+rollback or Effect.
 
 ### 11.4 Mode-only drift
 
 As a declared fixture phase, change only the regular leaf mode from `0644` to
 `0600`; prove bytes and semantics did not change.
 
-The Run must repair mode to `0644`, freshly verify it, preserve semantic bytes
-unless the accepted implementation contract necessarily combines content and
-mode replacement, and record the exact normalized intermediate and final
-state. There is no Effect.
+The Run status must be exactly `converged` with a `chmod`-only trace. Content
+bytes, digest, inode, and size remain unchanged; there is no stage-write,
+replace, remove, rollback, or Effect. This is intentionally the legacy-shell
+conflict case: legacy shell writes this XML through a `0600` default and does
+not verify mode, so shell skin scope remains frozen after Python handoff.
 
 ### 11.5 Malformed regular XML
 
@@ -670,41 +752,51 @@ As a declared fixture phase, atomically install a small malformed regular XML
 fixture at mode `0644`. Do not use a symlink, directory, device node, or
 unreadable file.
 
-The Run must classify repairable malformed-content drift, atomically restore
-the accepted document, freshly verify exact semantics and mode, preserve
-siblings, and emit no Effect.
+The Run status must be exactly `converged`. It classifies repairable
+malformed-content drift and emits ordered `stage-write`, `atomic-replace`, plus
+`chmod` only if needed. It freshly verifies exact semantics/mode, preserves
+siblings, and emits no remove, rollback, or Effect.
 
 ### 11.6 Explicit desired absent
 
-Use reviewed Desired State declaring this Resource absent. The Plan must show
-an explicit approved `remove`, never hide deletion in update or cleanup.
+Use the committed named absent Profile/Intent. The Plan must show an explicit
+approved `remove`, never hide deletion in update or cleanup.
 
-The Run must remove only the exact regular leaf, durably verify fresh absence,
-preserve siblings, emit no Effect, and keep Kodi PID stable. This scenario
-does not assert playlist usability while absence is desired.
+The Run status must be exactly `converged` with a remove-only primitive trace.
+It removes only the exact regular leaf, durably verifies fresh absence,
+preserves siblings, emits no write/chmod/rollback/Effect, and keeps Kodi PID
+stable. The exact `Files.GetDirectory` call must now fail or return unavailable;
+continued cached success aborts the bundle as nondiscriminating.
 
 ### 11.7 Desired present: recreate and Kodi usability
 
-Restore the canonical present Desired State. The Run must repeat the create
-proof from 11.1.
+Select the committed named present Profile/Intent. The Run status is exactly
+`converged` and repeats the create trace from 11.1.
 
 Then, without restarting Kodi:
 
-1. JSON-RPC opens or evaluates the actual playlist URI;
-2. the response discriminates usable playlist behavior from mere path
-   existence;
-3. the operator sees `New Shows` in the Kodi UI and opens it;
-4. the operator records a structured pass/fail attestation without a
-   screenshot;
-5. the harness proves Kodi PID/start identity is unchanged.
+1. invoke exactly `Files.GetDirectory` for
+   `special://profile/playlists/video/NewShows.xsp`, media `video`, with the
+   same reviewed video properties as preflight;
+2. require at least one returned item matching `playcount=0`, recording only
+   response shape, count, and safe identifiers;
+3. prove Kodi PID/start identity is unchanged and no restart occurred;
+4. the operator freshly navigates to the actual playlist, opens it, and
+   observes at least one item—not merely its home-screen label;
+5. record structured `pass`, `fail`, `error`, or `empty` without a screenshot.
+
+If restart/PID change occurs, or only a restart makes the query/UI work, fail
+and open the narrow Effect decision.
 
 ### 11.8 Immediate second-Run no-op
 
 Without any intervening fixture, actor, or Desired State change, immediately
 run the same present reconciliation again.
 
-It must satisfy every no-op criterion in section 12 and repeat JSON-RPC plus
-operator usability evidence with the same Kodi process.
+Plan and Run status must be exactly `noop`; there are zero mutation intents,
+preparations, primitive traces, Changes, Effects, or cleanup mutations. It must
+satisfy every no-op and stat/list invariant in section 12 and repeat the exact
+JSON-RPC plus operator usability evidence with the same Kodi process.
 
 ### 11.9 Excluded live injections
 
@@ -721,14 +813,37 @@ These remain mandatory offline/shared-production-adapter contracts. Excluding
 them from this live Device protects unrelated state and does not relax their
 acceptance status.
 
+### 11.10 Supplemental recovery-evidence bundle
+
+Only after the core acceptance bundle has passed and been sealed may a new,
+separate supplemental bundle exercise deterministic pre-mutation
+interruption/recovery. It never becomes a core scenario and cannot alter,
+stitch, or retroactively strengthen/weaken the core verdict.
+
+Run it only when the production test hook proves all of the following before
+the Run begins:
+
+- interruption occurs after durable preparation but before mutation intent;
+- computed allowed actions are limited to normal finalize and/or
+  known-unchanged terminal `failed_partial`;
+- abandon and quarantine are impossible outcomes for the exercised state;
+- no mutation intent or Device mutation can have occurred.
+
+If the hook could quarantine, dead-end, or require abandonment, do not run it
+live. Stop the supplemental bundle on any unexpected status and never continue
+within it after a failed/interrupted Run. Failure of this bundle does not alter
+the already sealed core bundle. Until a safe live hook exists, the architecture
+recovery gate remains primarily #42 offline and production-adapter evidence.
+
 ## 12. Exact no-op proof
 
 A no-op passes only if:
 
 - independent before and after bytes are identical;
 - SHA-256 is identical;
-- `(dev,inode,mtime_ns,ctime_ns,size,mode,uid,gid)` is identical where each
-  field is supported;
+- inode, bytes, mode, size, mtime, and ctime are identical wherever the
+  predeclared server capability exposes them; other supported tuple fields
+  such as device, uid, and gid are also identical;
 - the semantic tuple and mode remain exact;
 - Plan and Run contain zero mutation intents, Resource Changes, primitive
   mutation traces, Effects, and preparation manifest;
@@ -739,24 +854,25 @@ A no-op passes only if:
 - Kodi PID/start identity is stable;
 - JSON-RPC usability and operator UI usability pass.
 
-If a filesystem cannot provide one stat field, the capability record must say
-so before the case; it cannot disappear opportunistically from after-state
-evidence.
+`/storage` timestamp granularity and supported stat fields are recorded before
+the no-op cases. An unsupported field must be declared then; it cannot
+disappear opportunistically from after-state evidence.
 
 ## 13. Fixture mutation protocol
 
 All drift injection is a harness-owned, serialized phase between Runs:
 
 1. prove the previous Run terminal and cleanup-complete;
-2. append a typed fixture intent naming the exact permitted leaf and
-   transformation;
+2. append a typed fixture intent naming the exact permitted leaf,
+   transformation, committed Profile/Intent selection, and digest;
 3. temporarily suspend the Python sole-actor claim for only that fixture;
 4. recheck Device/path identity and stale preconditions;
 5. apply the exact no-follow, same-directory fixture mutation;
 6. sync and independently observe the result;
 7. prove sibling and Run Infrastructure invariants;
 8. append a typed fixture result;
-9. immediately re-establish and sign the Python handoff;
+9. immediately append a new sequenced Python handoff and freeze recheck under
+   `transitions/<seq>-<scenario>/`;
 10. begin the next Run.
 
 No interactive editor, unlogged `ssh`, wildcard, recursive operation, or
@@ -764,13 +880,18 @@ manual content change is permitted.
 
 ## 14. Kodi no-Effect decision
 
-The live test must discriminate observability:
+The live test must discriminate observability using one exact JSON-RPC method:
 
-- before the first creation, the actual playlist URI is absent or unusable;
-- after convergence, with unchanged Kodi PID/start identity, JSON-RPC can
-  open/evaluate the actual URI;
-- a human at the display sees and opens `New Shows`;
-- after recreate and after immediate no-op, the same checks still pass.
+- before reset, `Files.GetDirectory` for the actual playlist URI, media
+  `video`, and reviewed video properties returns at least one item matching
+  `playcount=0`;
+- after reset/absence, that same call fails or reports the URI unavailable;
+  continued cached success aborts as nondiscriminating;
+- after creation, with unchanged Kodi PID/start identity and no restart, the
+  same call again returns at least one matching item;
+- a human freshly navigates to and opens the actual playlist and observes at
+  least one item; merely seeing a home label is insufficient;
+- after recreate and immediate no-op, the same machine and human checks pass.
 
 Legacy shell behavior is evidence only. Its grouped `skin` transaction stops
 and restarts Kodi, but that does not establish an automatic Effect policy.
@@ -790,8 +911,9 @@ Example operator attestation:
   "scenario_id": "07-recreate-and-kodi",
   "device_id": "ugoos-theater",
   "display_path_confirmed": true,
-  "playlist_label_seen": "New Shows",
+  "actual_playlist_navigated": true,
   "playlist_opened": true,
+  "item_observed": true,
   "unexpected_restart_seen": false,
   "result": "pass",
   "operator": "recorded-operator-id",
@@ -812,7 +934,7 @@ An attempt passes only when:
 - no quarantine, abandonment, active marker, nonterminal Run, or run-owned
   leftover remains;
 - canonical present state and Kodi usability are restored;
-- lifecycle reconciliation and handback complete;
+- Python ownership is sealed and the persistent shell-skin freeze is recorded;
 - the sealed bundle passes the independent offline verifier;
 - the bundle includes genuine first-use infrastructure proof, or is explicitly
   classified as a repeat fixture that does not satisfy that milestone gate.
@@ -868,34 +990,37 @@ state exactly matches the before-state or an enumerated Run-produced state and
 all bindings remain valid. Third-party drift, unreadability, or ambiguity
 blocks rollback. Cleanup failure cannot rewrite terminal truth.
 
-## 17. Cleanup and handback
+## 17. Cleanup and ownership seal
 
-Successful scenario cleanup is not final handback. At the end:
+Successful scenario cleanup is not the final ownership seal. At the end:
 
 1. verify the last Run is terminal and its scenario evidence sealed;
 2. independently verify canonical present semantics and mode `0644`;
 3. prove no active local index/lease, remote marker, quarantine, nonterminal
    Run, exact Run-owned temporary, staged file, helper, backup, or leftover;
-4. retain all evidence and seal the bundle;
-5. run the offline verifier;
-6. write and sign the Python-to-shell handback;
-7. restore the Home Assistant keep-running override to its recorded initial
-   value;
-8. invoke or observe ordinary lifecycle reconciliation;
-9. confirm the lifecycle state is healthy and Kodi's resulting state matches
-   policy;
-10. record final lifecycle and handback evidence.
+4. while the override remains on, inspect the pending Home Assistant lifecycle
+   reconciliation and prove restoring the initial value will not issue a
+   `start`/`stop` or stop Kodi;
+5. write and sign the Python ownership seal and persistent shell-skin freeze;
+6. retain all core evidence and seal the bundle;
+7. exit the harness and separately invoke the repository bundle verifier;
+8. only after the seal succeeds, restore the recorded keep-running value;
+9. allow ordinary lifecycle reconciliation/status traffic and confirm health;
+10. retain the post-seal operational restoration record separately; it cannot
+    modify the sealed core verdict.
 
-The handback ends Python ownership and resumes the shell operational epoch.
-Do not run shell `skin` provisioning merely as cleanup. It is permitted only
-after handback, would begin a new actor epoch, and is not part of this
-acceptance attempt.
+The seal does not hand skin ownership back to shell. Shell provisioning whose
+effective scope includes `skin` stays frozen until its writer and verifier for
+this State Address are retired at cutover. Other shell operations require a
+recorded effective-scope proof excluding `skin` and `NewShows.xsp`.
 
 ## 18. Operator checklist
 
 ### Before Device contact
 
 - [ ] Confirm branch, clean commit, source digest, wheel digest, and versions.
+- [ ] Confirm named committed present/absent Profiles and inventory selection;
+      record selected Profile/Intent IDs and digests.
 - [ ] Confirm Linux/macOS offline and production-adapter contracts match that
       source and wheel.
 - [ ] Create the empty evidence bundle and record its attempt ID.
@@ -911,6 +1036,8 @@ acceptance attempt.
 - [ ] Turn `input_boolean.ugoos_theater_keep_kodi_running` on.
 - [ ] Confirm lifecycle `running`, Kodi JSON-RPC available, and record PID/start
       identity.
+- [ ] Run the exact pre-reset `Files.GetDirectory` query and prove at least one
+      `playcount=0` item without retaining unrelated metadata.
 - [ ] Freeze Home Assistant provisioning and all other playlist actors.
 
 ### Transaction and path readiness
@@ -921,6 +1048,10 @@ acceptance attempt.
       remotely.
 - [ ] Resolve the actual `special://profile` root and exact playlist leaf.
 - [ ] Pass no-follow/type/read/root-containment checks.
+- [ ] Record `/storage` timestamp granularity and supported stat fields.
+- [ ] Bind source-matched adapter contracts; negotiate protocol capabilities
+      nonmutatingly; if a write probe is required, use and fully clean only the
+      declared safe probe root before baseline.
 - [ ] Validate or genuinely first-create Run Infrastructure; never delete it.
 - [ ] Pass durability and atomic capability guards.
 
@@ -930,12 +1061,11 @@ acceptance attempt.
 - [ ] Review exact leaf, prestate digest/stat, sibling invariants, and no-touch
       exclusions.
 - [ ] Apply reset and verify fresh absence.
-- [ ] Sign shell-to-Python handoff and freeze evidence.
+- [ ] Repeat exact JSON-RPC and prove unavailable; abort on cached success.
+- [ ] Append sequenced handoff and freeze evidence.
 
-### Scenarios
+### Core scenarios
 
-- [ ] Optional deterministic pre-mutation interruption/recovery, if supported.
-- [ ] Reset again after the optional case.
 - [ ] Absent → create/fresh convergence.
 - [ ] Confirm first creation is usable without Kodi restart.
 - [ ] Equivalent formatting → semantic no-op with unchanged bytes/stat.
@@ -949,12 +1079,18 @@ acceptance attempt.
 ### Finalization
 
 - [ ] Verify canonical present state and no leftovers.
-- [ ] Seal bundle and pass offline verification.
-- [ ] Sign Python-to-shell handback.
-- [ ] Restore the initial Home Assistant override.
+- [ ] While override remains on, prove restoring its initial value will not
+      issue lifecycle `start`/`stop` or stop Kodi.
+- [ ] Seal bundle, exit harness, and separately pass offline verification.
+- [ ] Seal Python ownership and preserve shell `skin` freeze until cutover.
+- [ ] After seal, restore the initial Home Assistant override.
 - [ ] Observe lifecycle reconciliation and health.
-- [ ] Confirm issue #44 and the Wayfinder map remain unchanged pending
-      independent review.
+
+### Supplemental recovery evidence
+
+- [ ] Only after core seal, start a separate supplemental bundle if the safe
+      pre-mutation hook proves the section 11.10 allowed-action constraints.
+- [ ] Never stitch supplemental evidence into the core verdict.
 
 ## 19. Conceptual command sequence
 
@@ -973,6 +1109,7 @@ set -eu
 : "${PILOT_EVIDENCE_DIR:?}"
 
 HARNESS="./implementation-defined-pilot-harness"
+VERIFIER="./repository-independent-bundle-verifier"
 
 "$HARNESS" initialize \
   --attempt-id "$PILOT_ATTEMPT_ID" \
@@ -982,37 +1119,73 @@ HARNESS="./implementation-defined-pilot-harness"
 
 "$HARNESS" preflight \
   --endpoint "$PILOT_ENDPOINT" \
-  --host-key-sha256 "$PILOT_HOST_KEY_SHA256"
+  --host-key-sha256 "$PILOT_HOST_KEY_SHA256" \
+  --record-stat-capabilities \
+  --profile present.acceptance \
+  --profile absent.acceptance
 
-"$HARNESS" reset --dry-run
-"$HARNESS" reset --apply-reviewed-dry-run
-"$HARNESS" handoff --from shell-operations --to python-reconciler
+"$HARNESS" kodi-check --phase before-reset \
+  --method Files.GetDirectory \
+  --directory special://profile/playlists/video/NewShows.xsp \
+  --media video
 
-"$HARNESS" run-scenario absent-create
+"$HARNESS" reset --scenario absent-create --dry-run
+"$HARNESS" reset --scenario absent-create --apply-reviewed-dry-run
+"$HARNESS" kodi-check --phase after-reset --expect unavailable
+"$HARNESS" handoff --scenario absent-create \
+  --from shell-operations --to python-reconciler
+"$HARNESS" freeze-recheck --scenario absent-create
+
+"$HARNESS" run-scenario absent-create --profile present.acceptance
 "$HARNESS" inject-fixture equivalent-formatting
-"$HARNESS" run-scenario formatting-noop
+"$HARNESS" handoff --scenario formatting-noop --from fixture --to python-reconciler
+"$HARNESS" freeze-recheck --scenario formatting-noop
+"$HARNESS" run-scenario formatting-noop --profile present.acceptance
 "$HARNESS" inject-fixture semantic-limit-49
-"$HARNESS" run-scenario semantic-drift
+"$HARNESS" handoff --scenario semantic-drift --from fixture --to python-reconciler
+"$HARNESS" freeze-recheck --scenario semantic-drift
+"$HARNESS" run-scenario semantic-drift --profile present.acceptance
 "$HARNESS" inject-fixture mode-0600
-"$HARNESS" run-scenario mode-drift
+"$HARNESS" handoff --scenario mode-drift --from fixture --to python-reconciler
+"$HARNESS" freeze-recheck --scenario mode-drift
+"$HARNESS" run-scenario mode-drift --profile present.acceptance
 "$HARNESS" inject-fixture malformed-regular-xml
-"$HARNESS" run-scenario malformed-xml
-"$HARNESS" run-scenario explicit-removal
-"$HARNESS" run-scenario recreate-and-kodi
-"$HARNESS" run-scenario immediate-noop
+"$HARNESS" handoff --scenario malformed-xml --from fixture --to python-reconciler
+"$HARNESS" freeze-recheck --scenario malformed-xml
+"$HARNESS" run-scenario malformed-xml --profile present.acceptance
+"$HARNESS" freeze-recheck --scenario explicit-removal
+"$HARNESS" run-scenario explicit-removal --profile absent.acceptance \
+  --approval reviewed-removal-approval
+"$HARNESS" freeze-recheck --scenario recreate-and-kodi
+"$HARNESS" run-scenario recreate-and-kodi --profile present.acceptance
+"$HARNESS" kodi-check --phase after-recreate \
+  --method Files.GetDirectory \
+  --directory special://profile/playlists/video/NewShows.xsp \
+  --media video
+"$HARNESS" freeze-recheck --scenario immediate-noop
+"$HARNESS" run-scenario immediate-noop --profile present.acceptance
 
-"$HARNESS" finalize
-"$HARNESS" verify-bundle --offline
-"$HARNESS" handback --from python-reconciler --to shell-operations
+"$HARNESS" seal-core --preserve-shell-skin-freeze
+"$VERIFIER" verify --offline --bundle "$PILOT_EVIDENCE_DIR"
+
+# Optional only after the core bundle is sealed and independently verified.
+SUPPLEMENTAL_EVIDENCE_DIR="${PILOT_EVIDENCE_DIR}.supplemental-recovery"
+"$HARNESS" initialize-supplemental \
+  --evidence "$SUPPLEMENTAL_EVIDENCE_DIR" \
+  --require-safe-pre-mutation-hook
+"$HARNESS" run-supplemental pre-mutation-recovery
+"$HARNESS" seal-supplemental
+"$VERIFIER" verify --offline --bundle "$SUPPLEMENTAL_EVIDENCE_DIR"
 ```
 
 The operator performs the display attestations when prompted. The harness
-must not automate or default those answers.
+must not automate or default those answers. The supplemental commands are
+omitted entirely unless the hook proves section 11.10 safe before mutation.
 
 ## 20. Milestone acceptance implications
 
-The first managed-file milestone is accepted only when independent review
-approves this procedure and one unstitched, sealed bundle proves:
+The first managed-file milestone is accepted only when one execution of this
+accepted procedure produces an unstitched, sealed bundle that proves:
 
 - same-commit Linux/macOS offline and production-adapter contracts;
 - exact Device and path binding;
@@ -1023,15 +1196,17 @@ approves this procedure and one unstitched, sealed bundle proves:
 - approved absence and recreation;
 - actual Kodi usability without restart or Effect;
 - immediate second-Run no rewrite;
-- exact cleanup, canonical final state, lifecycle restoration, and handback;
+- exact cleanup, canonical final state at `0644`, lifecycle restoration,
+  sealed Python ownership, and persistent shell-skin freeze;
 - independent offline bundle verification.
 
 A repeat fixture without first-use infrastructure proof is useful regression
-evidence but cannot satisfy the milestone by itself. A live ambiguity
-injection is not required in v1; the mandatory shared production-adapter
-contracts carry that proof. A deterministic pre-mutation interruption may be
-live only through the tested hook and is otherwise deferred to a separate
-controlled Device exercise.
+evidence but cannot satisfy the milestone by itself. Live ambiguity injection
+is excluded; the mandatory shared production-adapter contracts carry that
+proof. A deterministic pre-mutation interruption belongs
+only to a separate post-core supplemental bundle through the safe tested hook.
+Its failure cannot alter the sealed core result; without such a hook, #42
+offline/adapter evidence remains the primary architecture recovery gate.
 
 Failure does not imply a factory reset. Reimage only under the triggers in
 section 1. Otherwise, preserve evidence, execute computed recovery, restore
@@ -1040,14 +1215,14 @@ a wholly new attempt with a new evidence bundle and handoff.
 
 ## 21. Autonomous safety conclusion
 
-The procedure is operationally acceptable for independent review with these
-fixed conclusions:
+The procedure is accepted with these fixed conclusions:
 
 - scoped Resource reset is safer and more probative than repeated full-device
   reimaging;
 - the actual production address is necessary to test Kodi observability;
-- explicit ownership epochs prevent shell/Python races without requiring
-  semantic content reversal;
+- explicit ownership phases prevent shell/Python races; because shell writes
+  this XML as `0600` while Python requires `0644`, semantic equality does not
+  permit shell skin ownership to resume;
 - Home Assistant enrollment remains active, with the keep-running override
   controlling lifecycle interference;
 - live ambiguity and unsafe-node injection add Device risk without adding
@@ -1059,5 +1234,6 @@ fixed conclusions:
 - legacy shell restart behavior is not policy. The pilot decides empirically
   whether issue #40's no-Effect default holds.
 
-This draft intentionally leaves issue #44 open and the Wayfinder map unchanged
-until independent review is complete.
+The final accepted outcome leaves the playlist canonical at mode `0644`,
+seals Python ownership, and keeps this Device dedicated as pilot acceptance
+infrastructure with shell `skin` scope frozen until cutover.
