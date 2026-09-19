@@ -35,6 +35,13 @@ def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
     assert "uv run mypy" in run_commands
     assert "uv build" in run_commands
     assert any(
+        "uv pip install" in command
+        and "coreelec-reconciler --version" in command
+        and "coreelec-reconciler --help" in command
+        and "ZipFile" in command
+        for command in run_commands
+    )
+    assert any(
         "tests/scaffold/test_application.py "
         "tests/scaffold/test_architecture.py tests/ci"
         in command

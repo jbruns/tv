@@ -34,6 +34,53 @@ uv run python scripts/run_test_budget.py \
   -- \
   .venv/bin/python -m pytest -q tests/scaffold/test_cli.py
 uv build
+uv run python - <<'PY'
+import hashlib
+from pathlib import Path
+from zipfile import ZipFile
+
+wheels = list(Path("dist").glob("*.whl"))
+assert len(wheels) == 1, wheels
+with ZipFile(wheels[0]) as archive:
+    names = archive.namelist()
+    entry_point_paths = [
+        name for name in names if name.endswith(".dist-info/entry_points.txt")
+    ]
+    assert len(entry_point_paths) == 1, entry_point_paths
+    entry_points = archive.read(entry_point_paths[0]).decode()
+assert all(
+    name.startswith(("coreelec_reconciler/", "coreelec_reconciler-"))
+    for name in names
+), names
+assert "coreelec-reconciler = coreelec_reconciler.cli.main:main" in entry_points
+evidence_directory = Path(".ci-evidence")
+evidence_directory.mkdir(exist_ok=True)
+(evidence_directory / "wheel-contents.txt").write_text(
+    "\n".join(names) + "\n",
+    encoding="utf-8",
+)
+digests = []
+artifacts = [
+    *Path("dist").glob("*.whl"),
+    *Path("dist").glob("*.tar.gz"),
+]
+for artifact in sorted(artifacts):
+    with artifact.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    digests.append(f"{digest}  {artifact}")
+(evidence_directory / "artifacts.sha256").write_text(
+    "\n".join(digests) + "\n",
+    encoding="utf-8",
+)
+print(f"wheel inspection passed: {wheels[0]} ({len(names)} files)")
+print("\n".join(digests))
+PY
+uv venv --python 3.14 --clear .wheel-venv
+uv pip install --python .wheel-venv/bin/python --no-deps dist/*.whl
+mkdir -p .wheel-smoke
+(cd .wheel-smoke && \
+  ../.wheel-venv/bin/coreelec-reconciler --version && \
+  ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null)
 ```
 
 The first selection contains pure, unit, architecture, and CI-helper tests and

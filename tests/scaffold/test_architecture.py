@@ -42,3 +42,21 @@ def test_production_package_has_one_bootstrap_composition_root() -> None:
     ]
 
     assert bootstrap_definitions == [PACKAGE_ROOT / "bootstrap.py"]
+
+
+def test_network_modules_are_limited_to_approved_boundaries() -> None:
+    prohibited_modules = {"socket", "urllib", "httpx", "requests", "paramiko"}
+    violations = {
+        path.relative_to(PACKAGE_ROOT): modules & prohibited_modules
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if (
+            modules := {
+                module.split(".", maxsplit=1)[0] for module in imported_modules(path)
+            }
+            & prohibited_modules
+        )
+        and "adapters" not in path.parts
+        and "cli" not in path.parts
+    }
+
+    assert violations == {}

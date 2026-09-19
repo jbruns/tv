@@ -10,6 +10,8 @@ coreelec-lifecycle-reports/
 
 # Python development and build outputs.
 .venv/
+.wheel-venv/
+.wheel-smoke/
 .ci-evidence/
 dist/
 __pycache__/
