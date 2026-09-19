@@ -22,6 +22,10 @@ class UnsupportedOutcome:
 class ValidationOutcome:
     valid: bool
     diagnostics: tuple[str, ...]
+    row_count: int
+    sha256: str
+    role_totals: tuple[tuple[str, int], ...]
+    disposition_totals: tuple[tuple[str, int], ...]
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,5261 @@
+{
+  "schema_version": 1,
+  "catalog": "accepted-managed-state-v1",
+  "accepted_totals": {
+    "rows": 169,
+    "roles": {
+      "resource": 128,
+      "guard": 5,
+      "effect": 5,
+      "guided-action": 6,
+      "run-infrastructure": 4,
+      "unmanaged-inventory-fact": 21
+    },
+    "dispositions": {
+      "migrate": 153,
+      "retire": 5,
+      "outside": 11
+    }
+  },
+  "rows": [
+    {
+      "id": "ADDON-001",
+      "state_address": "Enabled flag for each ART-001..041 in Kodi add-on registry",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ADDON-002",
+      "state_address": "Installed user add-on collection under /storage/.kodi/addons/*/addon.xml outside selected lock",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M6",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ADDON-003",
+      "state_address": "Allowed observed IDs (9 scraper/autocomplete add-ons)",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "retire",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-001",
+      "state_address": "repository.emby.kodi",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-002",
+      "state_address": "repository.dontpanic",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-003",
+      "state_address": "repository.jurialmunkey",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-004",
+      "state_address": "plugin.service.emby-next-gen",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-005",
+      "state_address": "plugin.video.themoviedb.helper",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-006",
+      "state_address": "pvr.nextpvr",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-007",
+      "state_address": "script.plexmod",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-008",
+      "state_address": "skin.arctic.fuse.3",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-009",
+      "state_address": "weather.ha",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-010",
+      "state_address": "resource.language.en_us",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-011",
+      "state_address": "script.artistslideshow",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-012",
+      "state_address": "resource.images.arctic.waves",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-013",
+      "state_address": "resource.images.weatherfanart.multi",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-014",
+      "state_address": "resource.images.moviecountryicons.maps",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-015",
+      "state_address": "resource.images.studios.white",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-016",
+      "state_address": "resource.uisounds.fromashes",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-017",
+      "state_address": "inputstream.adaptive",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-018",
+      "state_address": "inputstream.ffmpegdirect",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-019",
+      "state_address": "resource.font.robotocjksc",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-020",
+      "state_address": "resource.images.studios.coloured",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-021",
+      "state_address": "resource.images.weathericons.white",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-022",
+      "state_address": "script.module.addon.signals",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-023",
+      "state_address": "script.module.certifi",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-024",
+      "state_address": "script.module.chardet",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-025",
+      "state_address": "script.module.defusedxml",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-026",
+      "state_address": "script.module.dateutil",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-027",
+      "state_address": "script.module.future",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-028",
+      "state_address": "script.module.idna",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-029",
+      "state_address": "script.module.infotagger",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-030",
+      "state_address": "script.module.inputstreamhelper",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-031",
+      "state_address": "script.module.iso8601",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-032",
+      "state_address": "script.module.jurialmunkey",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-033",
+      "state_address": "script.module.kodi-six",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-034",
+      "state_address": "script.module.pysocks",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-035",
+      "state_address": "script.module.qrcode",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-036",
+      "state_address": "script.module.requests",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-037",
+      "state_address": "script.module.six",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-038",
+      "state_address": "script.module.urllib3",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-039",
+      "state_address": "script.module.yaml",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-040",
+      "state_address": "script.skinvariables",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ART-041",
+      "state_address": "script.texturemaker",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CEC-001",
+      "state_address": "standby_pc_on_tv_standby",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CEC-002",
+      "state_address": "activate_source",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CEC-003",
+      "state_address": "wake_devices",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CEC-004",
+      "state_address": "standby_devices",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CEC-005",
+      "state_address": "standby_tv_on_pc_standby",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-001",
+      "state_address": "locale.language",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-002",
+      "state_address": "locale.country",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-003",
+      "state_address": "locale.keyboardlayouts",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-004",
+      "state_address": "locale.timezonecountry",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-005",
+      "state_address": "locale.timezone",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-006",
+      "state_address": "/storage/.cache/timezone (TIMEZONE=\u2026)",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-007",
+      "state_address": "/etc/localtime representation and current date offset",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-008",
+      "state_address": "general.addonupdates",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-009",
+      "state_address": "input.enablemouse",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-010",
+      "state_address": "filelists.showaddsourcebuttons",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-011",
+      "state_address": "filelists.showextensions",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-012",
+      "state_address": "filelists.showparentdiritems",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-013",
+      "state_address": "videolibrary.flattentvshows",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-014",
+      "state_address": "videolibrary.ignorevideoextras",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-015",
+      "state_address": "videolibrary.ignorevideoversions",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-016",
+      "state_address": "videolibrary.showallitems",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-017",
+      "state_address": "videolibrary.tvshowsselectfirstunwatcheditem",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-018",
+      "state_address": "videoplayer.adjustrefreshrate",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-019",
+      "state_address": "videoplayer.usedisplayasclock",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-020",
+      "state_address": "services.esallinterfaces",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-021",
+      "state_address": "services.esenabled",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-022",
+      "state_address": "services.webserver",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-023",
+      "state_address": "services.webserverauthentication",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-024",
+      "state_address": "services.webserverpassword",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-025",
+      "state_address": "services.webserverport",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-026",
+      "state_address": "services.webserverssl",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-027",
+      "state_address": "services.webserverusername",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-028",
+      "state_address": "audiooutput.audiodevice",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "CORE-029",
+      "state_address": "audiooutput.passthroughdevice",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "EFFECT-001",
+      "state_address": "Provisioning-wide Kodi stop/start",
+      "role": "effect",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "EFFECT-002",
+      "state_address": "tz-data.service restart",
+      "role": "effect",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "EFFECT-003",
+      "state_address": "sshd.service restart",
+      "role": "effect",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "EFFECT-004",
+      "state_address": "Skinvariables buildviews execution and skin reload",
+      "role": "effect",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "EFFECT-005",
+      "state_address": "Device reboot",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "none",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "FACT-001",
+      "state_address": "Network interface names/MAC addresses, ip addr, and routes",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "FACT-002",
+      "state_address": "Active state of sshd.service, kodi.service, opentee_linuxdriver.service",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "FACT-003",
+      "state_address": "Dolby Vision module files at three candidate paths, SHA-256, lsmod, and modinfo",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "FACT-004",
+      "state_address": "HDMI disp_cap, dc_cap, hdr_cap, dv_cap, aud_cap sysfs files",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "FACT-005",
+      "state_address": "/proc/asound/cards and /storage free space",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "FACT-006",
+      "state_address": "Controller-to-Device Kodi JSON-RPC reachability",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-001",
+      "state_address": "Kodi JSON-RPC method capabilities",
+      "role": "guided-action",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-002",
+      "state_address": "Current Kodi GUI window/control labels",
+      "role": "guided-action",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-003",
+      "state_address": "PM4K pinned/installed version",
+      "role": "guided-action",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-004",
+      "state_address": "PM4K account token presence in auth.token or JSON myplex.MyPlexAccount.authToken",
+      "role": "guided-action",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-005",
+      "state_address": "PM4K server binding",
+      "role": "guided-action",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-006",
+      "state_address": "Emby add-on state database/account ladder",
+      "role": "guided-action",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-007",
+      "state_address": "Home Assistant Weather runtime readiness",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "GUIDE-008",
+      "state_address": "NextPVR runtime readiness",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "LIFE-001",
+      "state_address": "/storage/.config/kodi-lifecycle, mode 0700",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "LIFE-002",
+      "state_address": "/storage/.ssh/authorized_keys marked homeassistant-ugoos-kodi-lifecycle entry",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "LIFE-003",
+      "state_address": "kodi.service running/stopped state during gateway install",
+      "role": "effect",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PATCH-001",
+      "state_address": "weather.ha/resources/settings.xml, ha_request_attempts type",
+      "role": "run-infrastructure",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "repository",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PATCH-002",
+      "state_address": "weather.ha/lib/homeassistant/_adapter.py retry loop",
+      "role": "run-infrastructure",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "repository",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PATCH-003",
+      "state_address": "script.plexmod/lib/monitor.py shutdown path",
+      "role": "run-infrastructure",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "repository",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PATCH-004",
+      "state_address": "TMDb Helper service.py worker daemon flags and cronjob.py abort recheck",
+      "role": "run-infrastructure",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "repository",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PLAT-001",
+      "state_address": "CoreELEC identity in /etc/os-release and /etc/release",
+      "role": "guard",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PLAT-002",
+      "state_address": "Device-tree model /proc/device-tree/model",
+      "role": "guard",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PLAT-003",
+      "state_address": "Kernel and hostname",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "external",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PLAT-004",
+      "state_address": "Lifecycle platform guard in /etc/os-release",
+      "role": "guard",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "PLAT-005",
+      "state_address": "Installed OpenSSH capability (/usr/sbin/sshd -V)",
+      "role": "guard",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-001",
+      "state_address": "videoscreen.resolution",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-002",
+      "state_address": "videoscreen.whitelist",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-003",
+      "state_address": "coreelec.amlogic.disabledolbyvision",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-004",
+      "state_address": "coreelec.amlogic.dolbyvisionled",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-005",
+      "state_address": "audiooutput.passthrough",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-006",
+      "state_address": "audiooutput.ac3passthrough",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-007",
+      "state_address": "audiooutput.eac3passthrough",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-008",
+      "state_address": "audiooutput.dtspassthrough",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-009",
+      "state_address": "audiooutput.truehdpassthrough",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-010",
+      "state_address": "audiooutput.dtshdpassthrough",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "ROOM-011",
+      "state_address": "audiooutput.channels",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-001",
+      "state_address": "guisettings.xml lookandfeel.skin",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-002",
+      "state_address": "guisettings.xml lookandfeel.soundskin",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-003",
+      "state_address": "addon_data/skin.arctic.fuse.3/settings.xml: TV hub 1101 (Name, Toggle, Icon, Mode, Spotlight.Label, .Path, .Target, Shortcut.Path, .Target)",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-004",
+      "state_address": "Same file: Movies hub 1102, same nine fields",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-005",
+      "state_address": "Same file: Plex hub 1103 (Name, Toggle, Icon, Shortcut.Path; clear Shortcut.Target, three spotlight fields)",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-006",
+      "state_address": "Same file: custom hub 1104 nine fields removed; verifier checks six behaviorally active destination/toggle fields blank",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-007",
+      "state_address": "Same file: PVR hub HomeSwitcher.1107.Toggle; clear Hub.1107.DisableSearch, DisableChannels, DisableGroups, DisableRecordings",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-008",
+      "state_address": "Same file: HomeSwitcher.1108.Toggle",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-009",
+      "state_address": "Same file: option tiles 01.include=NowPlaying, 02.include=Settings, 04.include=SystemInfo",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-010",
+      "state_address": "Same file: Weather tile 03.include; remove 03.path and 03.target",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-011",
+      "state_address": "script.skinvariables/.../skinvariables-shortcut-homewidgets.json",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-012",
+      "state_address": ".../skinvariables-shortcut-1101widgets.json",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-013",
+      "state_address": ".../skinvariables-shortcut-1102widgets.json",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-014",
+      "state_address": ".../skinvariables-shortcut-powermenu.json",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-015",
+      "state_address": "addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json, library.seasons",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-016",
+      "state_address": "Same, library.episodes",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-017",
+      "state_address": "Installed skin 1080i/script-skinviewtypes-includes.xml: compiled seasons expression owner",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-018",
+      "state_address": "Same compiled include: episodes expression owner",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-019",
+      "state_address": "playlists/video/InProgressMovies90Days.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-020",
+      "state_address": "InProgressShows90Days.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-021",
+      "state_address": "RecentlyAiredEpisodes30Days.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-022",
+      "state_address": "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-023",
+      "state_address": "TraktPopularTVShows.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-024",
+      "state_address": "TraktWeekendBoxOffice.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-025",
+      "state_address": "NewShows.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M4",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-026",
+      "state_address": "NewMovies.xsp",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-027",
+      "state_address": "RecentlyReleasedMovies90Days.xsp absence",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SKIN-028",
+      "state_address": "RecentlyReleasedMoviesCurrentYear.xsp absence",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M7",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SSH-001",
+      "state_address": "Controller-local administrator identity and .pub file (default ~/.ssh/coreelec_admin_ed25519)",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SSH-002",
+      "state_address": "/storage/.ssh/authorized_keys: administrator key line",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "outside",
+      "milestone": "M8",
+      "current_owner_or_executor": "operator",
+      "closure": {
+        "state": "outside",
+        "closing_issue": 35,
+        "closing_pr": 61
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "not-applicable",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SSH-003",
+      "state_address": "/storage/.cache/services/sshd.conf with password authentication disabled",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SSH-004",
+      "state_address": "SSH host key acceptance / known-hosts state",
+      "role": "guard",
+      "disposition": "migrate",
+      "milestone": "M8",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-001",
+      "state_address": "weather.addon in guisettings.xml",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M5",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-002",
+      "state_address": "addon_data/weather.ha/settings.xml: ha_server",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-003",
+      "state_address": "Same file: ha_key",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-004",
+      "state_address": "Same file: ha_weather_forecast_entity_id",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-005",
+      "state_address": "Same file: ha_sun_entity_id",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-006",
+      "state_address": "addon_data/pvr.nextpvr/instance-settings-1.xml: host",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-007",
+      "state_address": "Same file: hostprotocol",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-008",
+      "state_address": "Same file: kodi_addon_instance_enabled",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-009",
+      "state_address": "Same file: kodi_addon_instance_name",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-010",
+      "state_address": "Same file: pin",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-011",
+      "state_address": "Same file: port",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-012",
+      "state_address": "addon_data/plugin.video.themoviedb.helper/settings.xml: mdblist_apikey",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-013",
+      "state_address": "Same file: omdb_apikey",
+      "role": "resource",
+      "disposition": "migrate",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-014",
+      "state_address": "addon_data/script.plexmod/settings.xml: remove allow_insecure",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "retire",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-015",
+      "state_address": "Same: remove local_mode",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "retire",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-016",
+      "state_address": "Same: remove local_servers_json",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "retire",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    },
+    {
+      "id": "SVC-017",
+      "state_address": "Same: remove local_profiles_json",
+      "role": "unmanaged-inventory-fact",
+      "disposition": "retire",
+      "milestone": "M6",
+      "current_owner_or_executor": "shell",
+      "closure": {
+        "state": "open",
+        "closing_issue": null,
+        "closing_pr": null
+      },
+      "evidence": {
+        "test": "tests/inventory/test_ledger.py",
+        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
+        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+      },
+      "transfers": [],
+      "shell_write_set": {
+        "status": "unaudited",
+        "items": []
+      },
+      "permitted_effects": {
+        "status": "unaudited",
+        "items": []
+      },
+      "recovery": {
+        "state": "none",
+        "evidence": null
+      }
+    }
+  ]
+}

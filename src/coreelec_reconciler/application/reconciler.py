@@ -1,5 +1,6 @@
 """Single typed application execution boundary."""
 
+from collections.abc import Callable
 from typing import Protocol, assert_never, final, overload
 
 from coreelec_reconciler.application.commands import (
@@ -28,6 +29,7 @@ from coreelec_reconciler.application.outcomes import (
     UnsupportedOutcome,
     UnsupportedReason,
     ValidateResult,
+    ValidationOutcome,
     VerifyResult,
 )
 
@@ -68,6 +70,12 @@ class Reconciler(Protocol):
 
 @final
 class ApplicationReconciler:
+    def __init__(
+        self,
+        validate_repository: Callable[[str], ValidationOutcome] | None = None,
+    ) -> None:
+        self._validate_repository = validate_repository
+
     @overload
     def execute(self, command: ValidateCommand) -> ValidateResult: ...
 
@@ -101,6 +109,8 @@ class ApplicationReconciler:
     def execute(self, command: Command) -> Outcome:
         match command:
             case ValidateCommand():
+                if self._validate_repository is not None:
+                    return self._validate_repository(command.repository_root)
                 name = "validate"
             case InventoryCommand():
                 name = "inventory"
