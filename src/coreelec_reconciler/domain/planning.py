@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from coreelec_reconciler.domain.configuration import ManagementMode
+from coreelec_reconciler.domain.execution import RunStatus as RunStatus
 
 
 class Presence(StrEnum):
@@ -30,13 +31,6 @@ class PlanDisposition(StrEnum):
     NOOP = "noop"
     ACTIONABLE = "actionable"
     BLOCKED = "blocked"
-
-
-class RunStatus(StrEnum):
-    PLANNING = "planning"
-    BLOCKED = "blocked"
-    NOOP = "noop"
-    AWAITING_APPROVAL = "awaiting_approval"
 
 
 @dataclass(frozen=True, slots=True)
