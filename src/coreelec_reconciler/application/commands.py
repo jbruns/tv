@@ -72,6 +72,8 @@ class RecoverCommand:
     repository_root: str
     run_id: RunId
     action: str
+    approval: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Protocol
 
 from coreelec_reconciler.domain.configuration import (
     DesiredPresence,
@@ -27,6 +28,20 @@ type IntentEncoder = Callable[[KodiSmartPlaylistIntent], Mapping[str, object]]
 type IntentDecoder = Callable[[Mapping[str, object]], KodiSmartPlaylistIntent]
 
 
+class ErasedResourceExecution(Protocol):
+    """Private heterogeneous execution seam; persisted values remain typed."""
+
+    def observe(self) -> object: ...
+
+    def prepare(self, change: object) -> object: ...
+
+    def apply(self, prepared: object) -> object: ...
+
+    def verify(self, prepared: object) -> object: ...
+
+    def rollback(self, prepared: object) -> object: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResourceDescriptor:
     type_code: str
@@ -34,3 +49,4 @@ class ResourceDescriptor:
     state_addresses: StateAddressResolver
     encode_intent: IntentEncoder
     decode_intent: IntentDecoder
+    execution: ErasedResourceExecution | None = None
