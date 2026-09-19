@@ -71,8 +71,10 @@ def test_shell_transition_suite_remains_a_separate_job() -> None:
     assert shell_job["runs-on"] == "macos-15"
     assert shell_job["timeout-minutes"] == 15
     run_commands = [step["run"] for step in shell_job["steps"] if "run" in step]
+    assert "uv sync --frozen" in run_commands
     assert any(
         "for test_script in tests/test-*.sh" in command
         and "*test-helper.sh) continue" in command
+        and 'export PATH="$PWD/.venv/bin:$PATH"' in command
         for command in run_commands
     )

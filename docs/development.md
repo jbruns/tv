@@ -99,7 +99,8 @@ The [offline CI workflow](../.github/workflows/offline-ci.yml) runs the same
 frozen sync, Ruff, strict mypy, exact pytest selectors, budgets, and package
 build on Linux x86_64 and macOS arm64. Its least-privilege token grants only
 read access to repository contents. The existing shell tests remain visible
-as the separate `Shell transition suite` job through M11 and are not charged
+as the separate macOS `Shell transition suite` job through M11, use the same
+frozen environment for their Python fixture dependencies, and are not charged
 to Python's budgets.
 
 The installed command is `coreelec-reconciler`. Its version and help paths are
