@@ -508,10 +508,13 @@ def compute_recovery_actions(
         }
         and evidence.effect_disposition is not EffectDisposition.AMBIGUOUS
     )
-    normal_finalize = evidence.terminal_revision_durable or (
-        stable_and_bound
-        and evidence.current_relation is not StateRelation.UNKNOWN
-        and not evidence.forward_work_unperformed
+    normal_finalize = not corrupt and (
+        evidence.terminal_revision_durable
+        or (
+            stable_and_bound
+            and evidence.current_relation is not StateRelation.UNKNOWN
+            and not evidence.forward_work_unperformed
+        )
     )
     abandon = (
         evidence.binding_matches is not False

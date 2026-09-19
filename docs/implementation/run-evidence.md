@@ -53,6 +53,12 @@ Each workspace contains one Run and one linear immutable revision chain:
 - terminal truth has no canonical successor;
 - a complete verified chain is returned, never an unchecked head alone.
 
+The workspace identity persists schema and Run kind, producer, Run ID,
+workspace ID, Device ID, originating planning Run ID, exact Plan ID and full
+digest, creation time, Device binding digest, boot identity, and ownership
+token digest. Every loaded or proposed revision must match that complete
+projection.
+
 Attachments are immutable and content-addressed. Reads verify bytes, digest,
 kind, and codec. The full random ownership token is a private mode-`0600`
 object; canonical evidence contains only its SHA-256 digest.
@@ -64,6 +70,9 @@ mode `0600`. It rejects symlink and nonregular objects at trust boundaries.
 Publication uses private same-directory writes, file full-sync, atomic
 replacement, parent-directory sync, reread verification, and explicit
 acknowledgement through the private `LocalDurability` seam.
+Reads and durability operations walk directories with open-relative,
+no-follow descriptors where supported and reject symlinked or non-directory
+parents and symlinked/nonregular final objects.
 
 Device and Run revision leases are independent. The derived Device-active
 index contains stable identifiers, revision/digest, status, authority phase,
@@ -73,8 +82,10 @@ scan/rebuild succeeds.
 
 Compare-and-append uses the held Run lease plus expected revision and digest.
 A lost append acknowledgement receives one bounded reconciliation: accept the
-matching durable successor, or repeat the same idempotent append once only if
-the head is unchanged. It never retries Device work or creates a branch.
+matching durable successor only after head, state, and index agree, or resume
+the same idempotent publication once when the head is unchanged. An identical
+orphan revision file is never success by itself. It never retries Device work
+or creates a branch.
 
 ## Terminal truth, cleanup, and retention
 

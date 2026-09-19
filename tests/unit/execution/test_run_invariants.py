@@ -101,6 +101,26 @@ def test_corruption_reduces_recovery_authority_to_inspect_and_abandon() -> None:
     assert action(actions, RecoveryActionCode.FINALIZE, FinalizeMode.ABANDON).allowed
 
 
+def test_terminal_flag_cannot_authorize_normal_finalize_on_corrupt_chain() -> None:
+    actions = compute_recovery_actions(
+        replace(
+            evidence(),
+            chain_valid=False,
+            terminal_revision_durable=True,
+        )
+    )
+    assert not action(
+        actions,
+        RecoveryActionCode.FINALIZE,
+        FinalizeMode.NORMAL,
+    ).allowed
+    assert action(
+        actions,
+        RecoveryActionCode.FINALIZE,
+        FinalizeMode.ABANDON,
+    ).allowed
+
+
 def test_unstable_or_unknown_state_never_expands_authority() -> None:
     unstable = compute_recovery_actions(replace(evidence(), stable_snapshot=False))
     unknown = compute_recovery_actions(

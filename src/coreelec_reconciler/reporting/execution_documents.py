@@ -119,12 +119,17 @@ def verify_run_revision_chain(
     if decoded[0].revision != 1 or first_value["previous_revision_digest"] is not None:
         raise ValueError("Run revision chain must begin at revision 1")
     run_id = decoded[0].run_id
+    immutable_identity = execution_run_identity(
+        decode_json_object(decoded[0].canonical_bytes)
+    )
     terminal_seen = False
     previous_status: RunStatus | None = None
     for index, report in enumerate(decoded):
         value = decode_json_object(report.canonical_bytes)
         if report.run_id != run_id or report.revision != index + 1:
             raise ValueError("Run revision chain identity or sequence mismatch")
+        if execution_run_identity(value) != immutable_identity:
+            raise ValueError("Run immutable identity bindings changed")
         if (
             index
             and value["previous_revision_digest"] != decoded[index - 1].current_digest
@@ -139,6 +144,34 @@ def verify_run_revision_chain(
         terminal_seen = report.status in TERMINAL_RUN_STATUSES
         previous_status = report.status
     return decoded
+
+
+def execution_run_identity(value: dict[str, object]) -> dict[str, object]:
+    """Return the complete immutable identity projection for one execution Run."""
+    reference = value.get("plan_reference")
+    authority = value.get("authority")
+    recovery = value.get("recovery")
+    if (
+        not isinstance(reference, dict)
+        or not isinstance(authority, dict)
+        or not isinstance(recovery, dict)
+    ):
+        raise ValueError("Run immutable identity bindings are malformed")
+    return {
+        "binding_digest": authority.get("binding_digest"),
+        "boot_id": authority.get("boot_id"),
+        "created_at": value.get("started_at"),
+        "device_id": value.get("device_id"),
+        "kind": value.get("kind"),
+        "originating_planning_run_id": value.get("originating_planning_run_id"),
+        "ownership_token_digest": authority.get("ownership_token_digest"),
+        "plan_full_digest": reference.get("plan_full_digest"),
+        "plan_id": reference.get("plan_id"),
+        "producer": value.get("producer"),
+        "run_id": value.get("run_id"),
+        "schema_version": value.get("schema_version"),
+        "workspace_id": recovery.get("workspace_id"),
+    }
 
 
 def check_run_report_invariants(

@@ -28,11 +28,16 @@ from coreelec_reconciler.reporting.canonical_json import (
     canonical_document_bytes,
     decode_json_object,
 )
+from coreelec_reconciler.reporting.execution_documents import (
+    execution_run_identity,
+)
 
 from .local_durability import (
     AcknowledgementLost,
+    DurabilityError,
     LocalDurability,
     PosixLocalDurability,
+    read_regular_file,
 )
 
 
@@ -50,6 +55,23 @@ class CompareConflict(RunStoreError):
 
 class CorruptRunStore(RunStoreError):
     pass
+
+
+_IDENTITY_FIELDS = {
+    "binding_digest",
+    "boot_id",
+    "created_at",
+    "device_id",
+    "kind",
+    "originating_planning_run_id",
+    "ownership_token_digest",
+    "plan_full_digest",
+    "plan_id",
+    "producer",
+    "run_id",
+    "schema_version",
+    "workspace_id",
+}
 
 
 class RunStore:
@@ -153,13 +175,13 @@ class RunStore:
             child = directory / name
             child.mkdir(mode=0o700)
             os.chmod(child, 0o700)
-        identity = {
-            "device_id": device_id.value,
-            "ownership_token_digest": ownership_token_digest,
-            "run_id": run_id.value,
-            "schema_version": 1,
-            "workspace_id": workspace_id.value,
-        }
+        identity = execution_run_identity(initial_value)
+        if (
+            identity["device_id"] != device_id.value
+            or identity["workspace_id"] != workspace_id.value
+            or identity["ownership_token_digest"] != ownership_token_digest
+        ):
+            raise RunStoreError("initial Run immutable bindings are inconsistent")
         try:
             self._publish(
                 directory / "identity.json",
@@ -211,6 +233,8 @@ class RunStore:
     def load_chain(self, run_id: RunId) -> VerifiedRunChain:
         workspace = self._workspace_for_run(run_id)
         identity = self._read_object(workspace / "identity.json")
+        if set(identity) != _IDENTITY_FIELDS:
+            raise CorruptRunStore("workspace identity fields are incomplete")
         if _required_string(identity, "run_id") != run_id.value:
             raise CorruptRunStore("workspace identity does not match Run")
         head = self._read_object(workspace / "head.json")
@@ -219,14 +243,23 @@ class RunStore:
         previous_digest: str | None = None
         for number in range(1, head_revision + 1):
             path = workspace / "revisions" / f"{number:08d}.json"
-            if not path.is_file() or path.is_symlink():
-                raise CorruptRunStore("Run revision chain has a gap")
-            stored = self._validate_revision(path.read_bytes())
+            try:
+                stored = self._validate_revision(self._read_bytes(path))
+            except FileNotFoundError as error:
+                raise CorruptRunStore("Run revision chain has a gap") from error
             value = decode_json_object(stored.payload)
             if stored.revision != number:
                 raise CorruptRunStore("Run revision number mismatch")
             if _required_string(value, "run_id") != run_id.value:
                 raise CorruptRunStore("Run revision identity mismatch")
+            try:
+                revision_identity = execution_run_identity(value)
+            except ValueError as error:
+                raise CorruptRunStore(
+                    "Run immutable identity bindings are malformed"
+                ) from error
+            if revision_identity != identity:
+                raise CorruptRunStore("Run immutable identity bindings changed")
             actual_previous = value.get("previous_revision_digest")
             if actual_previous != previous_digest:
                 raise CorruptRunStore("Run revision chain digest mismatch")
@@ -250,7 +283,6 @@ class RunStore:
         intent: AppendIntent,
     ) -> StoredRevision:
         self._require_run_lease(lease)
-        workspace = self._workspace_for_run(lease.run_id)
         chain = self.load_chain(lease.run_id)
         if chain.terminal:
             raise CompareConflict("terminal Run cannot be appended")
@@ -271,66 +303,113 @@ class RunStore:
             raise RunStoreError("append terminal intent does not match status")
         if value.get("status") != intent.next_status.value:
             raise RunStoreError("append status intent does not match payload")
-
-        revision_path = workspace / "revisions" / f"{proposed.revision:08d}.json"
-        if revision_path.exists():
-            if revision_path.read_bytes() == payload:
-                return proposed
-            raise CompareConflict("different successor revision already exists")
+        if execution_run_identity(value) != execution_run_identity(
+            decode_json_object(chain.head.payload)
+        ):
+            raise RunStoreError("Run immutable identity bindings changed")
         try:
-            self._publish(
-                revision_path,
-                payload,
-                f"append-revision-{proposed.revision}",
+            return self._complete_append(
+                lease,
+                expected_revision,
+                expected_digest,
+                proposed,
+                intent,
             )
+        except AcknowledgementLost:
+            try:
+                return self._complete_append(
+                    lease,
+                    expected_revision,
+                    expected_digest,
+                    proposed,
+                    intent,
+                )
+            except AcknowledgementLost as retry_error:
+                raise CompareConflict(
+                    "append acknowledgement reconciliation was lost twice"
+                ) from retry_error
+            except (CompareConflict, CorruptRunStore) as retry_error:
+                raise CompareConflict(
+                    "append acknowledgement reconciliation failed"
+                ) from retry_error
+
+    def _complete_append(
+        self,
+        lease: RevisionLease,
+        expected_revision: int,
+        expected_digest: str,
+        proposed: StoredRevision,
+        intent: AppendIntent,
+    ) -> StoredRevision:
+        workspace = self._workspace_for_run(lease.run_id)
+        chain = self.load_chain(lease.run_id)
+        if chain.head.payload == proposed.payload:
+            pass
+        elif (
+            chain.head.revision == expected_revision
+            and chain.head.digest == expected_digest
+            and not chain.terminal
+        ):
+            revision_path = workspace / "revisions" / f"{proposed.revision:08d}.json"
+            try:
+                existing = self._read_bytes(revision_path)
+            except FileNotFoundError:
+                self._publish(
+                    revision_path,
+                    proposed.payload,
+                    f"append-revision-{proposed.revision}",
+                )
+            else:
+                if existing != proposed.payload:
+                    raise CompareConflict("different successor revision already exists")
             self._publish(
                 workspace / "head.json",
                 _head_bytes(proposed),
                 f"append-head-{proposed.revision}",
             )
-            phase = intent.authority_phase
-            if (
-                intent.device_index is DeviceIndexIntent.ADD_OR_RETAIN_ACTIVE
-                and phase is None
-            ):
-                raise RunStoreError("active index intent requires authority phase")
-            old_state = self._read_object(workspace / "state.json")
-            old_phase = old_state.get("authority_phase")
-            self._publish(
-                workspace / "state.json",
-                canonical_document_bytes(
-                    {
-                        "authority_phase": (
-                            phase.value if phase is not None else old_phase
-                        ),
-                        "status": intent.next_status.value,
-                        "terminal": intent.terminal,
-                    }
-                ),
-                f"append-state-{proposed.revision}",
+        else:
+            raise CompareConflict("Run head changed during append")
+
+        phase = intent.authority_phase
+        if (
+            intent.device_index is DeviceIndexIntent.ADD_OR_RETAIN_ACTIVE
+            and phase is None
+        ):
+            raise RunStoreError("active index intent requires authority phase")
+        old_state = self._read_object(workspace / "state.json")
+        old_phase = old_state.get("authority_phase")
+        self._publish(
+            workspace / "state.json",
+            canonical_document_bytes(
+                {
+                    "authority_phase": phase.value if phase is not None else old_phase,
+                    "status": intent.next_status.value,
+                    "terminal": intent.terminal,
+                }
+            ),
+            f"append-state-{proposed.revision}",
+        )
+        self._apply_index_intent(lease, proposed, intent)
+        self._durability.acknowledge(
+            f"compare-and-append:{lease.run_id.value}:{proposed.revision}"
+        )
+        completed = self.load_chain(lease.run_id)
+        if completed.head != proposed:
+            raise CorruptRunStore("append did not durably advance the Run head")
+        if intent.device_index is DeviceIndexIntent.ADD_OR_RETAIN_ACTIVE:
+            identity = self._read_object(workspace / "identity.json")
+            active = self.find_active_by_device(
+                DeviceId(_required_string(identity, "device_id"))
             )
-            self._apply_index_intent(lease, proposed, intent)
-            self._durability.acknowledge(
-                f"compare-and-append:{lease.run_id.value}:{proposed.revision}"
-            )
-        except AcknowledgementLost as error:
-            reloaded = self.load_chain(lease.run_id)
-            if reloaded.head.payload == payload:
-                return reloaded.head
-            if (
-                reloaded.head.revision == expected_revision
-                and reloaded.head.digest == expected_digest
+            if not any(
+                entry.run_id == lease.run_id
+                and entry.revision == proposed.revision
+                and entry.revision_digest == proposed.digest
+                and entry.status is intent.next_status
+                and entry.authority_phase is phase
+                for entry in active
             ):
-                return self.compare_and_append(
-                    lease,
-                    expected_revision,
-                    expected_digest,
-                    payload,
-                    intent,
-                )
-            raise CompareConflict(
-                "append acknowledgement reconciliation failed"
-            ) from error
+                raise CorruptRunStore("append did not durably reconcile the index")
         return proposed
 
     def attach(
@@ -352,8 +431,15 @@ class RunStore:
         metadata = canonical_document_bytes(
             {"codec": codec, "digest": digest, "kind": kind}
         )
-        if path.exists():
-            if path.read_bytes() != payload or metadata_path.read_bytes() != metadata:
+        try:
+            existing_payload = self._read_bytes(path)
+        except FileNotFoundError:
+            pass
+        else:
+            if (
+                existing_payload != payload
+                or self._read_bytes(metadata_path) != metadata
+            ):
                 raise CorruptRunStore("content-addressed attachment mismatch")
             return reference
         self._publish(path, payload, f"attach:{digest}")
@@ -375,7 +461,7 @@ class RunStore:
             "digest": reference.digest,
             "kind": reference.kind,
         }
-        payload = path.read_bytes()
+        payload = self._read_bytes(path)
         if metadata != expected or _sha256(payload) != reference.digest:
             raise CorruptRunStore("attachment verification failed")
         return LoadedAttachment(reference, payload)
@@ -384,7 +470,10 @@ class RunStore:
         self._require_run_lease(lease)
         workspace = self._workspace_for_run(lease.run_id)
         identity = self._read_object(workspace / "identity.json")
-        token = (workspace / "ownership-token.bin").read_bytes()
+        try:
+            token = self._read_bytes(workspace / "ownership-token.bin")
+        except FileNotFoundError as error:
+            raise CorruptRunStore("ownership token is absent") from error
         if _sha256(token) != identity.get("ownership_token_digest"):
             raise CorruptRunStore("ownership token verification failed")
         return token
@@ -643,31 +732,29 @@ class RunStore:
         return StoredRevision(revision, digest, payload)
 
     def _publish(self, path: Path, payload: bytes, operation_id: str) -> None:
-        if path.exists() and (path.is_symlink() or not path.is_file()):
-            raise CorruptRunStore("unsafe RunStore object")
         temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
         try:
             try:
                 self._durability.write_private(str(temporary), payload)
             except AcknowledgementLost:
-                if not temporary.is_file() or temporary.read_bytes() != payload:
+                if not self._matches_payload(temporary, payload):
                     raise
             try:
                 self._durability.full_sync_file(str(temporary))
             except AcknowledgementLost:
-                if not temporary.is_file() or temporary.read_bytes() != payload:
+                if not self._matches_payload(temporary, payload):
                     raise
             try:
                 self._durability.atomic_replace(str(temporary), str(path))
             except AcknowledgementLost:
-                if not path.is_file() or path.read_bytes() != payload:
+                if not self._matches_payload(path, payload):
                     raise
             try:
                 self._durability.sync_directory(str(path.parent))
             except AcknowledgementLost:
-                if not path.is_file() or path.read_bytes() != payload:
+                if not self._matches_payload(path, payload):
                     raise
-            if path.read_bytes() != payload:
+            if self._read_bytes(path) != payload:
                 raise CorruptRunStore("published bytes failed verification")
             self._durability.acknowledge(operation_id)
         finally:
@@ -675,12 +762,24 @@ class RunStore:
                 temporary.unlink()
 
     def _read_object(self, path: Path) -> dict[str, object]:
-        if path.is_symlink() or not path.is_file():
-            raise CorruptRunStore("required RunStore object is unsafe or absent")
         try:
-            return decode_json_object(path.read_bytes())
-        except ValueError as error:
+            return decode_json_object(self._read_bytes(path))
+        except (DurabilityError, FileNotFoundError, ValueError) as error:
             raise CorruptRunStore("RunStore object is malformed") from error
+
+    def _read_bytes(self, path: Path) -> bytes:
+        try:
+            return read_regular_file(path)
+        except FileNotFoundError:
+            raise
+        except DurabilityError as error:
+            raise CorruptRunStore("RunStore object is unsafe") from error
+
+    def _matches_payload(self, path: Path, payload: bytes) -> bool:
+        try:
+            return self._read_bytes(path) == payload
+        except FileNotFoundError, CorruptRunStore:
+            return False
 
     def _acquire_lock(self, path: Path) -> tuple[str, int]:
         if path.exists() and (

@@ -197,6 +197,52 @@ def test_revision_chain_is_complete_linear_and_terminal() -> None:
 
 
 @pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (("device_id",), "bedroom.different-device"),
+        (
+            ("originating_planning_run_id",),
+            "019950f8-4c00-7000-8000-000000000777",
+        ),
+        (("plan_reference", "plan_id"), "019950f8-4c00-7000-8000-000000000999"),
+        (("plan_reference", "plan_full_digest"), "sha256:" + "9" * 64),
+        (("recovery", "workspace_id"), "workspace:different-workspace"),
+        (("started_at",), "2026-09-19T08:00:01Z"),
+    ],
+)
+def test_revision_chain_rejects_immutable_identity_drift(
+    path: tuple[str, ...],
+    replacement: object,
+) -> None:
+    ready = build_execution_run_report(run_value())
+    successor = run_value(
+        RunStatus.EXECUTING,
+        revision=2,
+        previous=ready.current_digest,
+    )
+    target: object = successor
+    for component in path[:-1]:
+        target = target[component]  # type: ignore[index]
+    target[path[-1]] = replacement  # type: ignore[index]
+    if path == ("originating_planning_run_id",):
+        plan_reference = successor["plan_reference"]
+        assert isinstance(plan_reference, dict)
+        plan_reference["originating_planning_run_id"] = replacement
+    if path in {
+        ("plan_reference", "plan_id"),
+        ("plan_reference", "plan_full_digest"),
+    }:
+        approvals = successor["approvals"]
+        assert isinstance(approvals, list)
+        approval = approvals[0]
+        assert isinstance(approval, dict)
+        approval[path[-1]] = replacement
+    drifted = build_execution_run_report(successor)
+    with pytest.raises(ValueError, match="immutable"):
+        verify_run_revision_chain((ready.canonical_bytes, drifted.canonical_bytes))
+
+
+@pytest.mark.parametrize(
     ("path", "replacement", "message"),
     [
         (("run_id",), ORIGIN_ID, "must differ"),

@@ -42,40 +42,89 @@ class LocalDurability(Protocol):
 class PosixLocalDurability:
     def write_private(self, object_id: str, payload: bytes) -> None:
         path = Path(object_id)
-        _require_safe_parent(path)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags, 0o600)
+        parent_descriptor = _open_directory(path.parent)
         try:
-            os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "wb", closefd=False) as stream:
-                stream.write(payload)
-                stream.flush()
+            descriptor = _open_regular_at(
+                parent_descriptor,
+                path.name,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            try:
+                os.fchmod(descriptor, 0o600)
+                with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                    stream.write(payload)
+                    stream.flush()
+            finally:
+                os.close(descriptor)
         finally:
-            os.close(descriptor)
+            os.close(parent_descriptor)
 
     def full_sync_file(self, object_id: str) -> None:
-        descriptor = os.open(object_id, os.O_RDONLY)
+        path = Path(object_id)
+        parent_descriptor = _open_directory(path.parent)
         try:
-            full_sync = getattr(fcntl, "F_FULLFSYNC", None)
-            if full_sync is not None:
-                try:
-                    fcntl.fcntl(descriptor, full_sync)
-                    return
-                except OSError:
-                    pass
-            os.fsync(descriptor)
+            descriptor = _open_regular_at(
+                parent_descriptor,
+                path.name,
+                os.O_RDONLY,
+            )
+            try:
+                full_sync = getattr(fcntl, "F_FULLFSYNC", None)
+                if full_sync is not None:
+                    try:
+                        fcntl.fcntl(descriptor, full_sync)
+                        return
+                    except OSError:
+                        pass
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
         finally:
-            os.close(descriptor)
+            os.close(parent_descriptor)
 
     def atomic_replace(self, source_id: str, destination_id: str) -> None:
-        os.replace(source_id, destination_id)
+        source = Path(source_id)
+        destination = Path(destination_id)
+        if source.parent != destination.parent:
+            raise DurabilityError("atomic replacement must stay in one directory")
+        parent_descriptor = _open_directory(source.parent)
+        try:
+            source_stat = os.stat(
+                source.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if not stat.S_ISREG(source_stat.st_mode):
+                raise DurabilityError("atomic replacement source is unsafe")
+            try:
+                destination_stat = os.stat(
+                    destination.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                if not stat.S_ISREG(destination_stat.st_mode):
+                    raise DurabilityError("atomic replacement destination is unsafe")
+            os.replace(
+                source.name,
+                destination.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+        except OSError as error:
+            raise DurabilityError("atomic replacement failed safely") from error
+        finally:
+            os.close(parent_descriptor)
 
     def sync_directory(self, directory_id: str) -> None:
-        descriptor = os.open(directory_id, os.O_RDONLY)
+        descriptor = _open_directory(Path(directory_id))
         try:
             os.fsync(descriptor)
+        except OSError as error:
+            raise DurabilityError("directory sync failed safely") from error
         finally:
             os.close(descriptor)
 
@@ -165,9 +214,62 @@ class ScriptedLocalDurability:
         )
 
 
-def _require_safe_parent(path: Path) -> None:
-    parent = path.parent
-    if not parent.is_dir() or parent.is_symlink():
-        raise DurabilityError("durability destination parent is unsafe")
-    if path.exists() and (path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode)):
-        raise DurabilityError("durability destination is unsafe")
+def read_regular_file(path: Path) -> bytes:
+    """Read a regular file without following any path component symlink."""
+    parent_descriptor = _open_directory(path.parent)
+    try:
+        descriptor = _open_regular_at(parent_descriptor, path.name, os.O_RDONLY)
+        try:
+            chunks: list[bytes] = []
+            while chunk := os.read(descriptor, 1024 * 1024):
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
+def _open_directory(path: Path) -> int:
+    if not path.is_absolute():
+        raise DurabilityError("local durability paths must be absolute")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open("/", flags)
+    try:
+        for component in path.parts[1:]:
+            if component in {"", ".", ".."}:
+                raise DurabilityError("unsafe local path component")
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except OSError as error:
+        os.close(descriptor)
+        raise DurabilityError("local path contains an unsafe component") from error
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _open_regular_at(
+    parent_descriptor: int,
+    name: str,
+    flags: int,
+    mode: int = 0o600,
+) -> int:
+    if not name or name in {".", ".."} or "/" in name:
+        raise DurabilityError("unsafe local file name")
+    safe_flags = flags | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(name, safe_flags, mode, dir_fd=parent_descriptor)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            os.close(descriptor)
+            raise DurabilityError("local object is not a regular file")
+        return descriptor
+    except FileNotFoundError:
+        raise
+    except OSError as error:
+        raise DurabilityError("local file operation failed safely") from error
