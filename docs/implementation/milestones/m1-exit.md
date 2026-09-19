@@ -3,7 +3,8 @@
 Date: 2026-09-18
 
 Status: Accepted candidate for merge through issue
-[#55](https://github.com/jbruns/tv/issues/55). This record does not authorize
+[#55](https://github.com/jbruns/tv/issues/55) and pull request
+[#66](https://github.com/jbruns/tv/pull/66). This record does not authorize
 deployment, Device access, or Device mutation.
 
 ## Bound source and delivery
@@ -21,10 +22,10 @@ merge `907612571365f9b15cf5d756cc5962735746ca94`, tree
 | Inventory ownership ledger and validators | [#54](https://github.com/jbruns/tv/issues/54), [#65](https://github.com/jbruns/tv/pull/65) | `809207ea699b310bf4f3552c589202545858672c`, `5b63881394f1cd9454ec1fb25390e86bcb4d6b8a` | `13ebf1a126a67de0f56fc408a5ba762e814cf2a9`, `5b63881394f1cd9454ec1fb25390e86bcb4d6b8a` |
 
 The source trees equal their merge trees, proving that each reviewed PR head
-is present unchanged in merged `main`. This exit record is delivered by the
-merge-commit-only pull request for issue #55. Its metadata commit adds only
-this authoritative record; the verified implementation source remains the
-commit and tree above.
+is present unchanged in merged `main`. This exit record is delivered by
+merge-commit-only PR [#66](https://github.com/jbruns/tv/pull/66), closing issue
+#55. Its metadata commits add only this authoritative record; the verified
+implementation source remains the commit and tree above.
 
 ## Hosted Linux and macOS evidence
 
