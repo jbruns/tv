@@ -136,10 +136,10 @@
 <body>
 <main>
   <section class="banner">
-    <span class="throwaway">Throwaway logic prototype — not production implementation or a final decision</span>
-    <h1>CoreELEC Reconciler module and interface candidates</h1>
-    <p class="question">Which module/interfaces give CLI callers and tests the most leverage while keeping Resource Type semantics, Device I/O, execution, reporting, and recovery local and enforcing inward dependency direction?</p>
-    <p class="muted">Use this prototype to compare five candidate module shapes and drive one <code>KodiSmartPlaylist</code> Resource through difficult lifecycle cases. The recommended hybrid is a candidate for maintainer walkthrough, not an accepted architecture.</p>
+    <span class="throwaway">Throwaway logic prototype — accepted decision evidence, not production implementation</span>
+    <h1>CoreELEC Reconciler module and interface contract</h1>
+    <p class="question">How does the confirmed single typed application interface keep workflow orchestration, Resource Type semantics, Device I/O, execution, reporting, and recovery local while enforcing inward dependency direction?</p>
+    <p class="muted">The final selection is the typed <code>Reconciler.execute(command)</code> interface with command-specific overloads, a private typed Resource Type runtime, and only real external seams. Rejected candidates remain available for comparison.</p>
   </section>
 
   <section class="panel">
@@ -185,7 +185,7 @@
     </section>
 
     <section class="panel span-12">
-      <h2>All five candidates: depth, locality, seams, and tradeoffs</h2>
+      <h2>Final selection and four rejected candidates: depth, locality, seams, and tradeoffs</h2>
       <div id="tradeoffs" class="scroll"></div>
     </section>
 
@@ -200,7 +200,7 @@
     </section>
 
     <section class="panel span-6">
-      <h2>Internal Resource Type interface / protocol</h2>
+      <h2>Internal Resource Type interface and private erasure</h2>
       <pre id="resource-interface"></pre>
     </section>
     <section class="panel span-6">
@@ -312,8 +312,9 @@ const ReconcilerPrototype = (() => {
 ├── reporting/
 └── cli/                         # composition root`,
     H: `src/coreelec_reconciler/
-├── application.py               # external Reconciler interface
-├── requests.py                  # Plan/Apply/Verify/Recover requests
+├── application/
+│   ├── commands.py              # closed command/outcome unions
+│   └── reconciler.py            # overloaded execute(command)
 ├── config/
 │   ├── boundary.py              # PyYAML/Pydantic only here
 │   ├── composition.py
@@ -326,39 +327,41 @@ const ReconcilerPrototype = (() => {
 │   ├── effects.py
 │   └── failures.py
 ├── resource_types/
-│   ├── contracts.py             # typed ResourceType[I,R,O,C,U]
-│   ├── registry.py              # repository-owned type erasure
+│   ├── contracts.py             # typed ResourceType[I,R,O,C,P,U]
+│   ├── descriptor.py            # immutable descriptor + codecs
+│   ├── registry.py              # closed, private type erasure
 │   ├── builtins.py              # explicit closed registrations
 │   └── kodi_smart_playlist/
 │       ├── models.py
 │       ├── xml.py
 │       └── resource_type.py
+├── capabilities/
+│   └── managed_file.py          # safe path/lstat/stage/stale/atomic/restore
 ├── planning/
 │   ├── planner.py               # pure complete Plan
 │   └── effects.py               # declaration coalescing/barriers
 ├── execution/
-│   ├── executor.py
-│   ├── verification.py          # fresh observe + same assess
-│   ├── rollback.py
+│   ├── execute.py               # deep prepare/apply/verify/rollback operation
 │   └── recovery.py
 ├── ports/
-│   ├── remote_files.py          # SSH/SFTP semantic seam
-│   ├── kodi.py                  # Kodi JSON-RPC seam
-│   ├── runtime.py               # Clock + UUID
+│   ├── device_session.py        # factory + least-authority sessions
+│   ├── ssh.py
+│   ├── sftp.py
+│   ├── runtime_values.py        # clock + UUID
+│   ├── progress.py              # typed non-controlling events
 │   └── run_store.py             # opaque workspace/lease/revisions
 ├── adapters/
-│   ├── paramiko_remote_files.py
-│   ├── kodi_json_rpc.py
-│   ├── system_runtime.py
+│   ├── paramiko_device_session.py
+│   ├── system_runtime_values.py
 │   ├── filesystem_run_store.py
-│   └── fakes.py
+│   └── console_progress.py
 ├── reporting/
 │   ├── canonical_json.py
-│   ├── human.py
-│   └── progress.py
+│   └── human.py
+├── bootstrap.py                 # one explicit composition root
 └── cli/
-    ├── parser.py
-    └── main.py                  # sole production composition root`
+    ├── parser.py                # args -> typed command
+    └── main.py                  # execute -> render only`
   };
 
   const RESOURCE_PROTOCOLS = {
@@ -391,23 +394,26 @@ const ReconcilerPrototype = (() => {
     def assess(resolved, observation) -> Assessment: ...
     def apply(change, writer, metadata, revisions) -> Receipt: ...
     def rollback(record, writer, metadata, revisions) -> Receipt: ...`,
-    H: `class ResourceType[I, R, O, C, U](Protocol):
+    H: `class ResourceType[I, R, O, C, P, U](Protocol):
     type_code: ResourceTypeCode
-    def resolve(self, authored: AuthoredResource[I], context) -> Result[R, Diagnostics]: ...
+    def resolve(self, intent: I, capabilities: CapabilitySnapshot) -> Result[R, Failure]: ...
     def observe(self, resource: R, context: ObservationContext) -> Result[O, Failure]: ...
     def assess(self, resource: R, observation: O) -> Assessment[C]: ...
-    def apply(self, resource: R, change: C, before: O, context: ApplyContext) -> Result[Applied[U], Failure]: ...
-    def rollback(self, resource: R, undo: U, context: ApplyContext) -> Result[RollbackReceipt, Failure]: ...
+    def prepare(self, resource: R, change: C, before: O, context: PrepareContext) -> Result[P, Failure]: ...
+    def apply(self, prepared: P, context: ApplyContext) -> Result[MutationReceipt, Failure]: ...
+    def rollback(self, rollback: U, context: ApplyContext) -> Result[MutationReceipt, Failure]: ...
 
 class ResourceRuntime(Protocol):
-    """Private erased engine-facing form; casts/codecs stay in registry."""
+    """Private erased engine-facing form; validated cast stays in descriptor."""
     def resolve(self, envelope, context) -> ResolvedEnvelope: ...
     def observe(self, envelope, context) -> ObservationEnvelope: ...
     def assess(self, envelope, observation) -> AssessmentEnvelope: ...
-    def apply(self, envelope, change, before, context) -> AppliedEnvelope: ...
+    def prepare(self, envelope, change, before, context) -> PreparedEnvelope: ...
+    def apply(self, prepared, context) -> MutationReceipt: ...
     def rollback(self, envelope, undo, context) -> RollbackReceipt: ...
 
-# Verification deliberately reuses fresh observe() + the same assess().`
+# Verification and rollback Verification always use fresh observe() + assess().
+# Mutation receipts cannot claim Convergence.`
   };
 
   const EXTERNAL = {
@@ -442,23 +448,41 @@ runtime.rollback(...)`,
     },
     H: {
       sketch: `class Reconciler:
-    def plan(self, request: PlanRequest) -> PlanResult: ...
-    def apply(self, request: ApplyRequest) -> RunResult: ...
-    def verify(self, request: VerifyRequest) -> RunResult: ...
-    def recover(self, request: RecoverRequest) -> RunResult: ...
+    @overload
+    def execute(self, command: ValidateCommand) -> ValidateOutcome: ...
+    @overload
+    def execute(self, command: InventoryCommand) -> InventoryOutcome: ...
+    @overload
+    def execute(self, command: ObserveCommand) -> ObserveOutcome: ...
+    @overload
+    def execute(self, command: PlanCommand) -> PlanOutcome: ...
+    @overload
+    def execute(self, command: ApplyCommand) -> ApplyOutcome: ...
+    @overload
+    def execute(self, command: ReconcileCommand) -> ReconcileOutcome: ...
+    @overload
+    def execute(self, command: VerifyCommand) -> VerifyOutcome: ...
+    @overload
+    def execute(self, command: RecoverCommand) -> RecoverOutcome: ...
+    @overload
+    def execute(self, command: ReportCommand) -> ReportOutcome: ...
+    @overload
+    def execute(self, command: ActionCommand) -> ActionOutcome: ...
+    def execute(self, command: Command) -> Outcome: ...
 
-# CLI parses, calls exactly one workflow, then reporting renders.
-# Tests use this same external seam with fake internal adapters.`,
-      notes: "Recommended candidate, not final: B's explicit caller typing, repository-owned typed Resource Type erasure, and D's disciplined real seams. It keeps the external module deep while making genuine internal variation testable."
+# Provision is CLI sugar for ReconcileCommand.
+# Unsupported v1 commands return typed not-implemented/capability outcomes.
+# CLI only parses -> constructs command -> executes -> renders.`,
+      notes: "Final selection: one typed external application interface. Overloads preserve command-specific returns without exposing workflow methods or internal lifecycle phases. The explicit bootstrap composition root wires real adapters and stateful fakes exercise the same seam."
     }
   };
 
   const DESIGNS = [
-    { id: "A", name: "A · Closed Controller.execute", depth: "Very high", locality: "Very high", surface: "1 method + command union", seams: "Few, broad", leverage: "High", risk: "Weaker discovery and narrow return typing" },
-    { id: "B", name: "B · Four Reconciler workflows", depth: "High", locality: "Very high", surface: "4 typed methods", seams: "Focused", leverage: "Very high", risk: "Slightly larger external interface" },
+    { id: "A", name: "A · Untyped/broad Controller.execute", depth: "High", locality: "Very high", surface: "1 method + broad outcome", seams: "Few, broad", leverage: "High", risk: "Rejected: command-specific return typing is lost" },
+    { id: "B", name: "B · Four public workflow methods", depth: "High", locality: "Very high", surface: "4 typed methods", seams: "Focused", leverage: "High", risk: "Rejected: incomplete workflow set and needless public toolkit" },
     { id: "C", name: "C · Broad generic lifecycle", depth: "Low", locality: "Low", surface: "5–6 lifecycle phases", seams: "Lifecycle leaks outward", leverage: "Low", risk: "Flexible but shallow; callers orchestrate" },
     { id: "D", name: "D · Ports-first orchestration", depth: "Medium–high", locality: "High", surface: "Small external, many injected ports", seams: "Many capability seams", leverage: "High if seams are real", risk: "Tiny ports create indirection; aggregate Device may overgrant" },
-    { id: "H", name: "Recommended hybrid · B + typed erasure + disciplined D", depth: "High", locality: "Very high", surface: "4 typed methods", seams: "Only genuine variation", leverage: "Very high", risk: "More methods than A; registry erasure needs care", recommended: true }
+    { id: "H", name: "Final · typed Reconciler.execute + private erasure + real seams", depth: "Very high", locality: "Very high", surface: "1 overloaded method + closed unions", seams: "Only genuine variation", leverage: "Very high", risk: "Private registry erasure needs localized validation", recommended: true }
   ];
 
   const PORTS = {
@@ -485,28 +509,30 @@ runtime.rollback(...)`,
       ["KodiJsonRpc / Clock / IDs", "Production adapters", "Fakes", "Capability-specific"]
     ],
     H: [
-      ["RemoteFiles", "ParamikoRemoteFiles", "MemoryRemoteFiles", "Real seam; hides SSH/SFTP, lstat, staging, atomic rename"],
-      ["KodiJsonRpc", "KodiJsonRpcClient", "RecordingKodiJsonRpc", "Real only when a Resource Type consumes it"],
-      ["Runtime", "SystemClockUuid", "FrozenClockSequenceIds", "Clock/UUID vary in tests"],
+      ["DeviceSessionFactory", "ParamikoDeviceSessionFactory", "FakeDeviceSessionFactory", "Real seam; derives least-authority capability modules"],
+      ["SshPort / SftpPort", "Paramiko session adapters", "Stateful fake session", "First-slice transport seams; no credentials/universal Device reach Resource Types"],
+      ["RuntimeValues", "SystemRuntimeValues", "DeterministicRuntimeValues", "Clock/UUID vary in tests"],
       ["RunStore", "FilesystemRunStore", "MemoryRunStore", "Hides paths; owns compare-and-append revisions, lease, workspace"],
-      ["Not ports", "config/planning/serialization/XML/atomic-file mechanics", "pure functions/private modules", "One implementation: no hypothetical seam"],
-      ["Deferred", "SecretProvider / ArtifactProvider", "—", "Add only when a real consuming Resource Type creates a second adapter need"]
+      ["ProgressSink", "ConsoleProgressSink", "RecordingProgressSink", "Closed non-controlling events; canonical report remains authoritative"],
+      ["Not ports", "config/planning/canonical JSON/XML/registry/effect coalescing", "ordinary/private modules", "One implementation: no hypothetical seam"],
+      ["Deferred", "Secret/Artifact/Kodi JSON-RPC/Effect handlers", "—", "Add only when first consumed"]
     ]
   };
 
   const OWNERSHIP = [
     ["Authored load + fixed composition", "config", "Authored documents → frozen, secret-free resolved Profile"],
     ["Resource-specific address/XML", "KodiSmartPlaylist Resource Type", "Typed Intent → resolved Desired State + State Address"],
-    ["Observation semantics + safety", "KodiSmartPlaylist Resource Type", "Remote file facts → typed Observation/blocker"],
-    ["SSH/SFTP mechanics", "RemoteFiles adapter", "Semantic inspect/replace/remove requests; no Desired State"],
+    ["Observation semantics + safety", "managed_file + KodiSmartPlaylist", "Safe file facts + parsed XML → typed Observation/blocker"],
+    ["SSH/SFTP mechanics", "Device session adapters", "Least-authority SSH/SFTP calls; no Desired State or credentials"],
+    ["Safe file mutation mechanics", "managed_file capability", "Path/lstat/read limits/mode/staging/stale/atomic replace/remove/exact restore"],
     ["Pure comparison + Change", "Resource Type assess", "Desired State + Observation → Assessment/Change/Effect declaration"],
     ["Complete Plan + Effect coalescing", "planning", "Assessments + graph/bindings → immutable Plan"],
-    ["Stale check/lifecycle ordering", "execution", "Plan preconditions + fresh evidence → attempts/results"],
+    ["Prepare/stale/lifecycle ordering", "execution + Resource Type", "Persisted rollback material + opaque prepared change → attempts/results"],
     ["Verification", "execution + Resource Type", "Fresh observe → same assess; never mutation receipt"],
     ["Rollback + rollback Verification", "execution + Resource Type", "Durable undo → receipt → fresh observe/assess"],
     ["Lease/revisions/workspace", "RunStore adapter", "Opaque IDs/digests/actions; filesystem paths never cross"],
     ["Canonical/human output", "reporting", "Plan/Run domain results → bytes/text; Resource Type emits no JSON"],
-    ["Argument mapping/composition", "cli", "Arguments → one typed request; no lifecycle orchestration or SFTP"]
+    ["Argument mapping/composition", "cli + bootstrap", "Arguments → typed command → execute → render; one explicit composition root"]
   ];
 
   const ALLOWED = {
@@ -611,7 +637,7 @@ runtime.rollback(...)`,
     state.rejected = "None.";
     state.importAttempt = { from: "none", to: "none", accepted: null, reason: "No import attempted." };
     state.run.lease = workflow === "plan" || workflow === "verify" ? "not_required" : "acquired_via_run_store";
-    state.trace = [`CLI/test → Reconciler.${workflow}(typed request)`];
+    state.trace = [`CLI/test → Reconciler.execute(${workflow} command) → typed ${workflow} outcome`];
     const queues = {
       plan: ["load", "compose", "resolve", "observe", "assess", "plan_result"],
       apply: ["approve", "precondition_reobserve", "apply_change", "verification_observe", "verification_assess", "effect_barrier", "complete"],
@@ -643,7 +669,7 @@ runtime.rollback(...)`,
     } else if (phase === "observe" || phase === "precondition_reobserve" || phase === "verification_observe" || phase === "recovery_observe") {
       state.run.ioCount += 1;
       state.run.evidenceRevision += 1;
-      state.trace.push(`Resource Type.observe → RemoteFiles.inspect/read → typed Observation (evidence r${state.run.evidenceRevision})`);
+      state.trace.push(`Resource Type.observe → managed_file.observe → SFTP facts → typed Observation (evidence r${state.run.evidenceRevision})`);
       if (r.observation.kind === "symlink") {
         r.relation = "unverifiable";
         r.change = null;
@@ -660,7 +686,7 @@ runtime.rollback(...)`,
         revise(state, "failed_partial");
         return reject(state, "Precondition digest changed after planning; apply stopped with zero mutation.");
       }
-      record(state, `Fresh ${phase.replaceAll("_", " ")} produced typed evidence through RemoteFiles.`);
+      record(state, `Fresh ${phase.replaceAll("_", " ")} produced typed evidence through the managed-file capability.`);
     } else if (phase === "assess") {
       state.trace.push("KodiSmartPlaylist.assess (pure): Desired State + Observation → Assessment");
       if (r.observation.limit === r.desired.limit && r.observation.mode === r.desired.mode) {
@@ -690,14 +716,14 @@ runtime.rollback(...)`,
         r.mutation = "failed_known";
         state.pendingPhases = [];
         revise(state, "failed_partial");
-        return reject(state, "RemoteFiles rejected/failed mutation; transport returned mechanics, not a Convergence decision.");
+        return reject(state, "Managed-file mutation failed; the result reports mechanics, not a Convergence decision.");
       }
       state.run.ioCount += 1;
       state.run.mutationCount += 1;
       r.mutation = "completed";
       r.observation.limit = 50;
       r.observation.digest = "sha256:after-50";
-      state.trace.push("Resource Type.apply → RemoteFiles.atomic_replace; RunStore already holds durable undo");
+      state.trace.push("Resource Type.prepare persisted rollback + stale proof → managed_file.atomic_replace; receipt claims mutation only");
       revise(state, "executing");
       if (state.injections.interruption) {
         state.pendingPhases = [];
@@ -721,7 +747,7 @@ runtime.rollback(...)`,
         record(state, "Fresh observe plus the same assess established Convergence.");
       }
     } else if (phase === "rollback") {
-      state.trace.push("execution → Resource Type.rollback → RemoteFiles atomic restore");
+      state.trace.push("execution → Resource Type.rollback → managed_file exact atomic restore");
       if (state.injections.rollback_failure) {
         r.rollback = "failed";
         r.finalConvergence = "unknown";
@@ -842,7 +868,7 @@ runtime.rollback(...)`,
     if (action.type === "TRANSPORT_DECIDE") {
       state.importAttempt = { from: "transport", to: "convergence", accepted: false, reason: "Rejected: transport reports file/RPC facts and receipts; Resource Type assess decides relation, execution establishes Verification." };
       state.rejected = state.importAttempt.reason;
-      state.trace.push("REJECTED: RemoteFiles attempted to label the Resource converged");
+      state.trace.push("REJECTED: managed-file mutation attempted to label the Resource converged");
       record(state, state.importAttempt.reason, true);
       return state;
     }
@@ -852,13 +878,13 @@ runtime.rollback(...)`,
   const SCENARIOS = [
     {
       title: "1 · Compare five",
-      description: "Switch through every candidate. Watch depth, locality, interface surface, and seam risks. The hybrid is highlighted as a recommendation candidate, not a decision.",
+      description: "Switch through every candidate. The final typed execute design is highlighted; the earlier four-method hybrid remains visible as rejected evidence.",
       steps: [
         ["A: one dispatcher", { type: "SELECT_DESIGN", design: "A" }],
-        ["B: four workflows", { type: "SELECT_DESIGN", design: "B" }],
+        ["B: four methods (rejected)", { type: "SELECT_DESIGN", design: "B" }],
         ["C: broad lifecycle", { type: "SELECT_DESIGN", design: "C" }],
         ["D: ports-first", { type: "SELECT_DESIGN", design: "D" }],
-        ["Hybrid candidate", { type: "SELECT_DESIGN", design: "H" }]
+        ["Final typed execute", { type: "SELECT_DESIGN", design: "H" }]
       ]
     },
     {
@@ -951,18 +977,18 @@ runtime.rollback(...)`,
     },
     {
       title: "10 · Test replacement",
-      description: "Select the hybrid and observe the same Reconciler interface with fake real-seam adapters. Adapter contract tests remain separate.",
+      description: "Select the final design and observe the same Reconciler.execute interface with stateful fake real-seam adapters. Adapter contract tests remain separate.",
       steps: [
         ["Hybrid", { type: "SELECT_DESIGN", design: "H" }], ["Reset state", { type: "RESET" }],
         ["Drift fake", { type: "INJECT", kind: "drift" }], ["Start verify", { type: "START_VERIFY" }],
-        ["Fake RemoteFiles observe", { type: "ADVANCE" }], ["Same assess", { type: "ADVANCE" }], ["Return RunResult", { type: "ADVANCE" }]
+        ["Fake managed-file observe", { type: "ADVANCE" }], ["Same assess", { type: "ADVANCE" }], ["Return typed outcome", { type: "ADVANCE" }]
       ]
     },
     {
       title: "11 · Heterogeneous registry",
-      description: "The hybrid keeps each Resource Type strongly typed, erases only inside a closed repository-owned registry, and does not support third-party plugins.",
+      description: "The final design keeps each Resource Type strongly typed, erases only inside a closed immutable repository-owned registry, and does not support plugins or dynamic registration.",
       steps: [
-        ["Select hybrid", { type: "SELECT_DESIGN", design: "H" }],
+        ["Select final design", { type: "SELECT_DESIGN", design: "H" }],
         ["Reset", { type: "RESET" }], ["Start plan", { type: "START_PLAN" }],
         ["Load closed type code", { type: "ADVANCE" }], ["Compose", { type: "ADVANCE" }],
         ["Registry erases typed definition", { type: "ADVANCE" }]
@@ -1012,12 +1038,12 @@ runtime.rollback(...)`,
     $("tradeoffs").innerHTML = `<table>
       <thead><tr><th>Candidate</th><th>Depth</th><th>Locality</th><th>Interface surface</th><th>Seams</th><th>Caller/test leverage</th><th>Explicit tradeoff</th></tr></thead>
       <tbody>${P.DESIGNS.map(d => `<tr class="${d.id === state.selectedDesign ? "selected" : ""}">
-        <td><button data-design="${d.id}">${esc(d.name)}</button>${d.recommended ? pill("recommended candidate", "recommended") : ""}</td>
+        <td><button data-design="${d.id}">${esc(d.name)}</button>${d.recommended ? pill("final selection", "recommended") : ""}</td>
         <td>${esc(d.depth)}</td><td>${esc(d.locality)}</td><td>${esc(d.surface)}</td><td>${esc(d.seams)}</td>
         <td>${esc(d.leverage)}</td><td>${esc(d.risk)}</td>
       </tr>`).join("")}</tbody>
     </table>
-    <p class="muted"><b>Deletion test:</b> A, B, and the hybrid earn depth because deleting the application module spreads validation, lifecycle ordering, freshness, Effects, rollback, recovery, and reporting knowledge into CLI callers and tests. C mostly deletes a pass-through and leaves that complexity where it already leaked.</p>`;
+    <p class="muted"><b>Deletion test:</b> the final application module earns depth because deleting it spreads validation, lifecycle ordering, freshness, Effects, rollback, recovery, and reporting knowledge into CLI callers and tests. B adds public methods without adding leverage; C mostly deletes a pass-through and leaves complexity where it already leaked.</p>`;
   }
 
   function renderSelectedDesign() {
@@ -1032,7 +1058,7 @@ runtime.rollback(...)`,
   }
 
   function renderArchitecture() {
-    $("dependencies").textContent = `Allowed inward arrows (recommended hybrid)
+    $("dependencies").textContent = `Allowed inward arrows (final selection; AST enforced)
 
 cli ───────────────→ application, reporting
 application ───────→ config, planning, execution, domain, ports
@@ -1046,7 +1072,7 @@ ports ─────────────→ domain
 domain ────────────→ standard library only
 
 Forbidden: domain/planning → Paramiko; planner → adapter;
-CLI → SFTP; Resource Type → reporting/canonical JSON;
+CLI → SFTP; Resource Type → reporting/canonical JSON or adapters;
 transport → Convergence; adapters → CLI/application orchestration.`;
     const attempt = state.importAttempt;
     $("import-result").className = `callout ${attempt.accepted === false ? "bad-text" : attempt.accepted === true ? "good-text" : ""}`;
