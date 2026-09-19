@@ -104,7 +104,9 @@ def test_codec_does_not_alias_mutable_input() -> None:
     ("field", "value"),
     [
         ("resource_id", ""),
+        ("resource_id", "not a logical id"),
         ("state_address", ""),
+        ("state_address", "../../etc/passwd"),
         ("observed_at", "2026-99-99T99:99:99Z"),
         ("mode", "invalid"),
     ],

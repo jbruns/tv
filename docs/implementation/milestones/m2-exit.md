@@ -146,14 +146,14 @@ Local evidence used macOS arm64, Python 3.14.2, uv 0.12.3, Ruff 0.16.8, mypy
 
 | Exact command | Result | Elapsed |
 | --- | --- | ---: |
-| `uv run pytest -q tests/unit/reporting/test_planning_documents.py tests/unit/resource_types/kodi_smart_playlist/test_planning_codecs.py tests/unit/resource_types/kodi_smart_playlist/test_xml_planning.py tests/unit/application/test_plan_offline.py` | 89 passed | 0.45 s |
-| `uv run pytest -q tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py` | 17 passed under the offline socket guard | 1.85 s |
-| `uv run pytest -q` | 208 passed | 4.26 s |
+| `uv run pytest -q tests/unit/reporting/test_planning_documents.py tests/unit/resource_types/kodi_smart_playlist/test_planning_codecs.py tests/unit/resource_types/kodi_smart_playlist/test_xml_planning.py tests/unit/application/test_plan_offline.py` | 96 passed | 0.45 s |
+| `uv run pytest -q tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py` | 17 passed under the offline socket guard | 1.95 s |
+| `uv run pytest -q` | 215 passed | 4.46 s |
 | `uv run ruff check .` | All checks passed | 0.02 s |
 | documented `ruff format --check` paths | 67 files already formatted | 0.02 s |
 | `uv run mypy` | No issues in 67 source files | 0.11 s |
-| pure/unit/architecture budget command from `docs/development.md` | 193 passed; 2.667 s measured, below 10 s | 2.72 s |
-| complete-offline budget command from `docs/development.md` | 17 passed; 4.536 s aggregate, below 60 s | 1.92 s |
+| pure/unit/architecture budget command from `docs/development.md` | 198 passed; 2.740 s measured, below 10 s | 2.79 s |
+| complete-offline budget command from `docs/development.md` | 17 passed; 4.639 s aggregate, below 60 s | 1.95 s |
 | `uv build` | Source distribution and wheel built | 0.36 s |
 | documented wheel inspection and isolated no-dependency version/help smoke | Passed; 57 wheel entries | not budgeted |
 | `python3 scripts/check_markdown.py` | 56 Markdown files passed | 0.20 s |
@@ -165,9 +165,9 @@ Local evidence used macOS arm64, Python 3.14.2, uv 0.12.3, Ruff 0.16.8, mypy
 Built package digests:
 
 - wheel:
-  `61b393a16b190823690f227dc7290e9dcf2888403a23992000f2e59ea80620fe`;
+  `7df097ba1e2f05da6a47693646bb21f7a719d25c148fa4fa26b5c0bb6160d84f`;
 - source distribution:
-  `448e7761a81a3a29807c8f5ab2dd4008c17b33d93bafd119746212e5b8681955`.
+  `e34055ba5d9ef21a6f40746cab164a4fa6a3e01883e686f13c87c855e5f62537`.
 
 The mandatory two-axis review found strict-codec gaps, incomplete closed-code
 validation, malformed-content precondition aliasing, invalid timestamp
@@ -182,6 +182,12 @@ states before Change construction, enforces supplied-observation temporal
 windows, and validates every canonical Plan/Run identity, timestamp, digest,
 reference, status, lifecycle, revision, and projection invariant. Adversarial
 tests cover each boundary, including exact Plan binding for Run references.
+The incremental two-axis review additionally found unchecked playlist order
+cardinality, a Run/Plan identity invariant, and duplicated Resource Type code
+vocabulary. Those findings were fixed with adversarial tests and shared
+type-owned validation. Observation identity syntax is now validated at the
+codec boundary while exact configured binding retains its stable application
+diagnostic.
 
 ### Security, exclusions, and differences
 

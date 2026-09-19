@@ -27,6 +27,12 @@ from coreelec_reconciler.reporting.canonical_json import (
     canonical_document_bytes,
     decode_json_object,
 )
+from coreelec_reconciler.resource_types.kodi_smart_playlist.planning_codecs import (
+    ASSESSMENT_BLOCKER_CODES,
+    PLAYLIST_RESOURCE_ID,
+    PLAYLIST_STATE_ADDRESS,
+    validate_change_codes,
+)
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _PLAN_BASE_FIELDS = {
@@ -83,22 +89,8 @@ _REASONS = {
     "playlist.semantic-drift",
 }
 _IMPACTS = {"content_mutation", "removal"}
-_BLOCKERS = {
-    "resource.observe-only-divergence",
-    "resource.unsafe-directory",
-    "resource.unsafe-other",
-    "resource.unsafe-symlink",
-    "resource.unreadable",
-}
-_UPDATE_REASON_COMBINATIONS = {
-    ("managed-file.mode-drift",),
-    ("playlist.malformed-current",),
-    ("playlist.malformed-current", "managed-file.mode-drift"),
-    ("playlist.semantic-drift",),
-    ("playlist.semantic-drift", "managed-file.mode-drift"),
-}
-_STATE_ADDRESS = "special://profile/playlists/video/NewShows.xsp"
-_RESOURCE_ID = "skin.playlist.new-shows"
+_STATE_ADDRESS = PLAYLIST_STATE_ADDRESS
+_RESOURCE_ID = PLAYLIST_RESOURCE_ID
 _RESOURCE_TYPE = "KodiSmartPlaylist"
 _PRODUCER = {"name": "coreelec-reconciler", "version": "0.1.0"}
 
@@ -672,7 +664,7 @@ def _validate_plan_shape(
         ) != {"id": _RESOURCE_ID, "kind": "resource"}:
             raise ValueError("invalid blocker subject")
         code = _string(blocker["code"], "blocker code")
-        if code not in _BLOCKERS:
+        if code not in ASSESSMENT_BLOCKER_CODES:
             raise ValueError("unknown blocker code")
         blocker_codes.append(code)
         if _string_array(blocker["evidence_refs"], "evidence reference") != [
@@ -916,19 +908,7 @@ def _validate_change_combination(
         raise ValueError("Change before summary must not be empty")
     if not isinstance(desired["summary"], dict) or not desired["summary"]:
         raise ValueError("Change desired summary must not be empty")
-    if operation == "smart_playlist.create":
-        if reasons != ["playlist.absent"] or impacts != ["content_mutation"]:
-            raise ValueError("create Change codes are contradictory")
-    elif operation == "smart_playlist.remove":
-        if reasons != ["playlist.desired-absent"] or impacts != [
-            "content_mutation",
-            "removal",
-        ]:
-            raise ValueError("remove Change codes are contradictory")
-    elif tuple(reasons) not in _UPDATE_REASON_COMBINATIONS or impacts != [
-        "content_mutation"
-    ]:
-        raise ValueError("update Change codes are contradictory")
+    validate_change_codes(operation, tuple(reasons), tuple(impacts))
 
 
 def _validate_run_shape(
@@ -989,6 +969,8 @@ def _validate_run_shape(
     if reference_value["originating_planning_run_id"] != originating_run_id:
         raise ValueError("Plan reference has a different originating Run")
     referenced_plan_id = require_uuid7(reference_value["plan_id"], "referenced plan_id")
+    if referenced_plan_id == originating_run_id:
+        raise ValueError("referenced Plan ID must differ from originating Run ID")
     referenced_digest = require_sha256(
         reference_value["plan_full_digest"],
         "referenced Plan full digest",

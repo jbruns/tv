@@ -63,6 +63,8 @@ def validate_playlist_model(
     _closed_text(operator, _RULE_OPERATORS, "rule operator")
     if type(value) is not int or value < 0:
         raise PlaylistXmlError("playlist rule value is invalid")
+    if len(model.order) != 2:
+        raise PlaylistXmlError("playlist order must contain field and direction")
     _closed_text(model.order[0], _ORDER_FIELDS, "order field")
     _closed_text(model.order[1], _ORDER_DIRECTIONS, "order direction")
     return model

@@ -265,6 +265,10 @@ def test_plan_decoder_rejects_adversarial_invariants(
             ("plan_reference", "originating_planning_run_id"),
             "0190aa00-0000-7000-8000-000000000009",
         ),
+        (
+            ("plan_reference", "plan_id"),
+            "0199542a-7800-7000-8000-000000000101",
+        ),
         (("resource_results", 0, "mutation_outcome"), "applied"),
     ],
 )

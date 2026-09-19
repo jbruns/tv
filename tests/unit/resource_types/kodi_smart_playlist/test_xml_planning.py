@@ -1,5 +1,6 @@
 import base64
 from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -329,6 +330,22 @@ def test_invalid_semantic_vocabulary_is_malformed_not_satisfied(
             50,
             (),
             ("dateadded", "descending"),
+        ),
+        PlaylistSemanticModel(
+            "tvshows",
+            "New Shows",
+            "all",
+            50,
+            (("playcount", "is", 0),),
+            cast(tuple[str, str], ()),
+        ),
+        PlaylistSemanticModel(
+            "tvshows",
+            "New Shows",
+            "all",
+            50,
+            (("playcount", "is", 0),),
+            cast(tuple[str, str], ("dateadded", "descending", "extra")),
         ),
     ],
 )

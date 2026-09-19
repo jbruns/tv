@@ -1,6 +1,7 @@
 """Strict versioned codecs for supplied playlist observations and assessments."""
 
 import base64
+import re
 from collections.abc import Mapping
 
 from coreelec_reconciler.domain.configuration import ManagementMode
@@ -12,19 +13,23 @@ from coreelec_reconciler.domain.planning import (
 )
 from coreelec_reconciler.domain.validation import (
     require_file_mode,
+    require_logical_id,
     require_rfc3339_utc,
     require_sha256,
 )
 
 _MAX_CONTENT_BYTES = 65536
-_BLOCKERS = {
+PLAYLIST_RESOURCE_ID = "skin.playlist.new-shows"
+PLAYLIST_STATE_ADDRESS = "special://profile/playlists/video/NewShows.xsp"
+_STATE_ADDRESS = re.compile(r"special://profile/playlists/video/[A-Za-z0-9._-]+\.xsp")
+ASSESSMENT_BLOCKER_CODES = {
     "resource.observe-only-divergence",
     "resource.unsafe-directory",
     "resource.unsafe-other",
     "resource.unsafe-symlink",
     "resource.unreadable",
 }
-_UPDATE_REASON_COMBINATIONS = {
+UPDATE_REASON_COMBINATIONS = {
     ("managed-file.mode-drift",),
     ("playlist.malformed-current",),
     ("playlist.malformed-current", "managed-file.mode-drift"),
@@ -90,6 +95,9 @@ def decode_observation(value: Mapping[str, object]) -> KodiSmartPlaylistObservat
     kind = FileKind(_string(payload["kind"]))
     resource_id = _nonempty_string(payload["resource_id"], "Resource ID")
     state_address = _nonempty_string(payload["state_address"], "State Address")
+    require_logical_id(resource_id, "Resource ID")
+    if _STATE_ADDRESS.fullmatch(state_address) is None:
+        raise ValueError("Observation State Address is unsupported")
     observed_at = require_rfc3339_utc(payload["observed_at"], "observed_at")
     if kind is FileKind.ABSENT and (mode is not None or content is not None):
         raise ValueError("absent observation cannot contain file state")
@@ -233,7 +241,7 @@ def _validate_assessment(assessment: PlaylistAssessment) -> None:
         raise ValueError("Assessment blocker codes must be unique")
     if assessment.effects:
         raise ValueError("KodiSmartPlaylist Assessment cannot declare Effects")
-    if not set(assessment.blocker_codes) <= _BLOCKERS:
+    if not set(assessment.blocker_codes) <= ASSESSMENT_BLOCKER_CODES:
         raise ValueError("Assessment has an unknown blocker code")
 
     operation = assessment.operation_code
@@ -279,26 +287,44 @@ def _validate_assessment(assessment: PlaylistAssessment) -> None:
     elif assessment.blocker_codes:
         raise ValueError("enforcing divergent Assessment cannot be blocked")
 
-    if operation == "smart_playlist.create":
-        if assessment.reason_codes != (
-            "playlist.absent",
-        ) or assessment.impact_codes != ("content_mutation",):
-            raise ValueError("create Assessment is contradictory")
-    elif operation == "smart_playlist.remove":
-        if assessment.reason_codes != (
-            "playlist.desired-absent",
-        ) or assessment.impact_codes != ("content_mutation", "removal"):
-            raise ValueError("remove Assessment is contradictory")
-    elif operation == "smart_playlist.update":
-        if (
-            assessment.reason_codes not in _UPDATE_REASON_COMBINATIONS
-            or assessment.impact_codes != ("content_mutation",)
-        ):
-            raise ValueError("update Assessment is contradictory")
+    if operation in {
+        "smart_playlist.create",
+        "smart_playlist.remove",
+        "smart_playlist.update",
+    }:
+        validate_change_codes(
+            operation,
+            assessment.reason_codes,
+            assessment.impact_codes,
+        )
     elif assessment.management is ManagementMode.ENFORCE:
         raise ValueError("divergent enforcing Assessment requires an operation")
-    elif assessment.reason_codes not in _UPDATE_REASON_COMBINATIONS | {
+    elif assessment.reason_codes not in UPDATE_REASON_COMBINATIONS | {
         ("playlist.absent",),
         ("playlist.desired-absent",),
     }:
         raise ValueError("observe-only Assessment reasons are invalid")
+
+
+def validate_change_codes(
+    operation: str,
+    reasons: tuple[str, ...],
+    impacts: tuple[str, ...],
+) -> None:
+    accepted: dict[
+        str,
+        set[tuple[tuple[str, ...], tuple[str, ...]]],
+    ] = {
+        "smart_playlist.create": {
+            (("playlist.absent",), ("content_mutation",)),
+        },
+        "smart_playlist.remove": {
+            (("playlist.desired-absent",), ("content_mutation", "removal")),
+        },
+        "smart_playlist.update": {
+            (reason_codes, ("content_mutation",))
+            for reason_codes in UPDATE_REASON_COMBINATIONS
+        },
+    }
+    if operation not in accepted or (reasons, impacts) not in accepted[operation]:
+        raise ValueError(f"{operation} codes are contradictory")
