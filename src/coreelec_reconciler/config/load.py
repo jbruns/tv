@@ -26,8 +26,11 @@ from coreelec_reconciler.domain.configuration import (
     Artifact,
     ConfigurationLoadResult,
     DesiredPresence,
+    DeviceEndpoint,
     ManagementMode,
+    ProfileRootCapability,
     ResolvedConfiguration,
+    ResolvedDevice,
     Resource,
     SecretReference,
 )
@@ -772,6 +775,17 @@ def load_configuration(
             dependency_order=dependency_order,
             artifacts=artifacts,
             secret_references=(secret,),
+            device=ResolvedDevice(
+                id=device_id,
+                endpoint=DeviceEndpoint(
+                    host=device.endpoint.host,
+                    port=device.endpoint.port,
+                ),
+                ssh_username=device.ssh.username,
+                host_key_reference=device.ssh.host_key.reference,
+                credential_reference=secret,
+                profile_root=ProfileRootCapability("/storage/.kodi/userdata"),
+            ),
         ),
         diagnostics=(),
     )
