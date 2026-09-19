@@ -17,14 +17,15 @@ worktree.
 | --- | --- | --- | --- |
 | Accepted untracked Reconciler foundation | PR [#60](https://github.com/jbruns/tv/pull/60) merge `d36f46f1138d8903d7391baa4675c75727f90fc1` | `666e390ec9e6e11c15d0f9ae9b17375f0554b6e4` | Issue [#49](https://github.com/jbruns/tv/issues/49), source hashes below |
 | Accepted decision and research integration | PR [#61](https://github.com/jbruns/tv/pull/61) merge `3a7147a96ba1e13a0725c7f8b36c9f6a45e9111a` | `c118dd6593670f10c02aa0e4d76f95d69e5f8833` | Issue [#50](https://github.com/jbruns/tv/issues/50), PR #61 provenance table |
-| M0 deletion, link repair, validator, and exit evidence | `25aea17f738367abbd1ad5e7f104f62a2301dfab` | `fffe6b02c673e31669e2e5dc7954005217f739c6` | Issue #51 and merge-commit-only PR #62 |
+| M0 deletion, link repair, validator, and exit evidence | `b125e5814b5055b8ae4b1759d7b02fb8ccfb1e72` | `273e3daafdc1cdb7b828759a5e6db7763bda38b9` | Issue #51 and merge-commit-only PR #62 |
 
 That evidence snapshot contains the complete deletion, retained facts,
-repaired links, validator, and exact test record. The final metadata-only
-commit binds it to PR #62. When the PR is merged, Git binds the merged tree to
-the PR head as the merge commit's second parent; the merge commit and its tree
-cannot be named before they exist. A merge result whose second parent does not
-contain this evidence snapshot does not satisfy this exit.
+repaired links, corrected fence handling, validator, and exact test record.
+The following metadata-only commit binds it to PR #62. When the PR is merged,
+Git binds the merged tree to the PR head as the merge commit's second parent;
+the merge commit and its tree cannot be named before they exist. A merge
+result whose second parent does not contain this evidence snapshot does not
+satisfy this exit.
 
 The six preservation hashes recorded by PR #60 still match the files in the
 PR #61 merged tree:
