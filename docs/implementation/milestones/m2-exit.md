@@ -76,3 +76,117 @@ provider/key IDs now reject invalid values before domain construction.
 
 Hosted Linux/macOS and shell-transition evidence is linked from the pull
 request. No Device was accessed and no deployment occurred.
+
+## Issue #58 pure planning contribution
+
+Date: 2026-09-19
+
+Status: **Issue #58 contribution only. M2 remains open and is not sealed by
+this record.**
+
+### Scope and acceptance mapping
+
+Issue #58 adds strict semantic Kodi Smart Playlist XML parsing/rendering,
+typed bounded supplied Observations, pure assessment, exact Changes and
+preconditions, canonical immutable Plan values, canonical nonmutating planning
+Run values, strict codecs/digests, and offline `validate`/`plan` application
+and CLI paths for `skin.playlist.new-shows`.
+
+The accepted behavior matrix passed:
+
+| Case | Relation and Change | Plan / planning Run |
+| --- | --- | --- |
+| absent, desired present | divergent; `smart_playlist.create`; reason `playlist.absent` | `actionable` / `awaiting_approval` |
+| semantic equivalent, including whitespace, CRLF, BOM, and attribute order | satisfied; no Change | `noop` / `noop` |
+| semantic drift | divergent; `smart_playlist.update`; reason `playlist.semantic-drift` | `actionable` / `awaiting_approval` |
+| mode-only `0600` | divergent; `smart_playlist.update`; reason `managed-file.mode-drift` | `actionable` / `awaiting_approval` |
+| malformed safe regular XML | divergent; `smart_playlist.update`; reason `playlist.malformed-current` | `actionable` / `awaiting_approval` |
+| present, desired absent | divergent; `smart_playlist.remove`; reason `playlist.desired-absent` | `actionable` / `awaiting_approval` |
+| absent, desired absent | satisfied; no Change | `noop` / `noop` |
+| unsafe non-regular state | unverifiable; typed blocker; no Change | `blocked` / `blocked` |
+
+All Changes retain the logical State Address
+`special://profile/playlists/video/NewShows.xsp`, a normalized before-state
+digest precondition, safe before/desired summaries, verified rollback
+capability, and no Effects. Removal additionally carries the ordered
+`removal` impact and approval scope. Observe-only divergence is blocked and
+cannot produce a Change.
+
+Sanitized test inputs use only the synthetic endpoint
+`coreelec-living-room.example.test`, an example pinned-host-key fingerprint,
+fixed UUIDv7 values, fixed UTC times, fixed SHA-256 placeholders, and the
+public playlist semantics `New Shows`, `tvshows`, `playcount is 0`, limit 50,
+date-added descending, mode `0644`. Raw XML is bounded input and is absent
+from canonical Plan/Run evidence.
+
+### Canonical and golden evidence
+
+Canonical JSON is UTF-8 with sorted object keys, no insignificant whitespace,
+and no trailing newline. CLI framing adds exactly one LF. Plan full digests
+omit only `full_digest`; semantic digests omit exactly the accepted six event
+metadata fields. Run revision digests omit only `current_digest` and revision
+2 links to the nonpersisted revision-1 planning digest. Duplicate/unknown
+fields, unknown required codes, invalid references, noncanonical bytes, and
+digest tampering are rejected.
+
+| Golden | SHA-256 |
+| --- | --- |
+| `tests/fixtures/canonical/plan-actionable.json` | `199869844c10597b82fb3af8f990f31a9825e2f36a51b292ee4c891fda1bccc2` |
+| `tests/fixtures/canonical/plan-noop.json` | `cc44e657e307e6c0e1d7f87ffdba183e2b5e6ebf63ba9de35652b5e638911520` |
+| `tests/fixtures/canonical/run-awaiting-approval.json` | `b3ee0b8b9979d21f9abc9d46199a89d8764637bf468457580371b7b06b508b80` |
+| `tests/fixtures/canonical/run-noop.json` | `9145192495c6edcf74e82eb56e69730015121d3c5923e524f526ccb5b69b85e1` |
+
+### Local verification
+
+Local evidence used macOS arm64, Python 3.14.2, uv 0.12.3, Ruff 0.16.8, mypy
+2.3.1, and pytest 9.1.1.
+
+| Exact command | Result | Elapsed |
+| --- | --- | ---: |
+| `uv run pytest -q tests/unit/resource_types/kodi_smart_playlist tests/unit/planning tests/unit/reporting` | 43 passed | 0.41 s |
+| `uv run pytest -q tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py` | 17 passed under the offline socket guard | 2.18 s |
+| `uv run pytest -q` | 157 passed | 4.48 s |
+| `uv run ruff check .` | All checks passed | 0.02 s |
+| documented `ruff format --check` paths | 67 files already formatted | 0.02 s |
+| `uv run mypy` | No issues in 67 source files | 0.11 s |
+| pure/unit/architecture budget command from `docs/development.md` | 140 passed; 2.405 s measured, below 10 s | 2.46 s |
+| complete-offline budget command from `docs/development.md` | 17 passed; 4.504 s aggregate, below 60 s | 2.15 s |
+| `uv build` | Source distribution and wheel built | 0.36 s |
+| documented wheel inspection and isolated no-dependency version/help smoke | Passed; 57 wheel entries | not budgeted |
+| `python3 scripts/check_markdown.py` | 56 Markdown files passed | 0.20 s |
+| `uv run python scripts/check_inventory_milestones.py` | 169 rows; digest matched | 0.04 s |
+| `python3 scripts/check_shell_permissions.py --audit` | 146/146 shell rows covered; valid | 0.15 s |
+| `git diff --check` | Passed | not budgeted |
+
+Built package digests:
+
+- wheel:
+  `13d0402fb48aaec69a88f26b94d063f8f4a3285c90472e4485e691355c7c4d00`;
+- source distribution:
+  `fd031b1cfeffc1f110373abe8bea2b1efbab492ec48e0e72472f503821bfd8ef`.
+
+The mandatory two-axis review found strict-codec gaps, incomplete closed-code
+validation, malformed-content precondition aliasing, invalid timestamp
+acceptance, and missing CLI access to the planning Run Report. The fixes
+centralize Observation validation, validate actual RFC 3339 UTC values and
+closed report vocabularies/references, bind malformed preconditions to a safe
+content digest, and add `plan --document run`.
+
+### Security, exclusions, and differences
+
+Mutation guards prove `validate` and `plan` do not write files. All Python
+tests, including CLI subprocesses, run under the offline socket guard. Output
+contains normalized semantics and safe digests only; raw XML, secrets,
+transport diagnostics, controller-local paths, and staging names are excluded.
+
+SSH/SFTP, live Device access, durable Run workspace, apply, Verification,
+rollback, recovery, Effect execution, authored `RemoteFile`, mutable globals,
+and hard-coded Desired State policy remain out of scope. No Device was
+accessed and no deployment occurred.
+
+Differences from the accepted issue #58 contract: **none**.
+
+Hosted Linux/macOS and shell-transition evidence is linked from the issue #58
+pull request. This contribution makes the pure slice ready for later
+application/execution work; it does not satisfy the live pilot gates and does
+not exit M2.
