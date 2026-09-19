@@ -27,7 +27,8 @@ decode_resolved_configuration(content)
 
 It emits UTF-8 JSON with lexicographically sorted object keys, no insignificant
 whitespace, and no trailing newline. Decode rejects duplicate fields, unknown
-top-level fields, unsupported versions, and noncanonical bytes.
+fields at every schema-defined object boundary, missing fields, invalid nested
+types/values, unsupported versions, and noncanonical bytes.
 
 ## Implemented authored forms
 
@@ -51,7 +52,9 @@ Selectors choose Resources by typed selector ID and add the complete upstream
 Resource dependency closure. Dependencies are validated globally before
 selection and emitted in deterministic dependency order. Exclusive logical
 State Address ownership is checked across every composed Resource regardless
-of management mode or desired presence.
+of management mode or desired presence. Dependency failures retain the source
+of the composed `requires` field and emit deterministic diagnostics; a missing
+edge or cycle prevents any dependency order or configuration from escaping.
 
 ## Restrictions
 

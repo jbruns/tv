@@ -375,53 +375,120 @@ def _dependency_order(
     resources: Mapping[str, Resource],
 ) -> tuple[tuple[ResourceId, ...], list[Diagnostic]]:
     diagnostics: list[Diagnostic] = []
-    state: dict[str, int] = {}
-    order: list[ResourceId] = []
-
-    def visit(resource_id: str, trail: tuple[str, ...]) -> None:
-        status = state.get(resource_id, 0)
-        if status == 2:
-            return
-        if status == 1:
-            diagnostics.append(
-                _diagnostic(
-                    "",
-                    "dependency.cycle",
-                    "Resource dependencies must be acyclic.",
-                    ("resources", resource_id, "requires"),
-                    resource_id,
-                )
-            )
-            return
-        state[resource_id] = 1
-        for required in resources[resource_id].requires:
+    for resource_id in sorted(resources):
+        resource = resources[resource_id]
+        source = dict(resource.origins).get("requires", "repository")
+        for required in sorted(resource.requires, key=lambda item: item.value):
             if required.value not in resources:
                 diagnostics.append(
                     _diagnostic(
-                        "",
+                        source,
                         "dependency.unresolved",
                         f"Resource dependency {required.value} is not declared.",
-                        ("resources", resource_id, "requires"),
+                        (
+                            "resources",
+                            resource_id,
+                            "requires",
+                            required.value,
+                        ),
                         resource_id,
                     )
                 )
-            elif required.value not in trail:
-                visit(required.value, (*trail, resource_id))
-            else:
-                diagnostics.append(
-                    _diagnostic(
-                        "",
-                        "dependency.cycle",
-                        "Resource dependencies must be acyclic.",
-                        ("resources", resource_id, "requires"),
-                        resource_id,
-                    )
+
+    index = 0
+    indices: dict[str, int] = {}
+    low_links: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    components: list[tuple[str, ...]] = []
+
+    def connect(resource_id: str) -> None:
+        nonlocal index
+        indices[resource_id] = index
+        low_links[resource_id] = index
+        index += 1
+        stack.append(resource_id)
+        on_stack.add(resource_id)
+        dependencies = sorted(
+            required.value
+            for required in resources[resource_id].requires
+            if required.value in resources
+        )
+        for dependency_id in dependencies:
+            if dependency_id not in indices:
+                connect(dependency_id)
+                low_links[resource_id] = min(
+                    low_links[resource_id],
+                    low_links[dependency_id],
                 )
-        state[resource_id] = 2
+            elif dependency_id in on_stack:
+                low_links[resource_id] = min(
+                    low_links[resource_id],
+                    indices[dependency_id],
+                )
+        if low_links[resource_id] != indices[resource_id]:
+            return
+        component: list[str] = []
+        while True:
+            member = stack.pop()
+            on_stack.remove(member)
+            component.append(member)
+            if member == resource_id:
+                break
+        components.append(tuple(sorted(component)))
+
+    for resource_id in sorted(resources):
+        if resource_id not in indices:
+            connect(resource_id)
+
+    for component in sorted(components):
+        subject_id = component[0]
+        self_cycle = any(
+            dependency.value == subject_id
+            for dependency in resources[subject_id].requires
+        )
+        if len(component) > 1 or self_cycle:
+            source = dict(resources[subject_id].origins).get(
+                "requires",
+                "repository",
+            )
+            diagnostics.append(
+                _diagnostic(
+                    source,
+                    "dependency.cycle",
+                    "Resource dependency cycle includes: " + ", ".join(component) + ".",
+                    ("resources", subject_id, "requires"),
+                    subject_id,
+                )
+            )
+
+    diagnostics.sort(
+        key=lambda item: (
+            item.code,
+            item.subject_id or "",
+            item.path,
+            item.message,
+        )
+    )
+    if diagnostics:
+        return (), diagnostics
+
+    visited: set[str] = set()
+    order: list[ResourceId] = []
+
+    def append_in_dependency_order(resource_id: str) -> None:
+        if resource_id in visited:
+            return
+        visited.add(resource_id)
+        for required in sorted(
+            resources[resource_id].requires,
+            key=lambda item: item.value,
+        ):
+            append_in_dependency_order(required.value)
         order.append(resources[resource_id].id)
 
     for resource_id in sorted(resources):
-        visit(resource_id, ())
+        append_in_dependency_order(resource_id)
     return tuple(order), diagnostics
 
 

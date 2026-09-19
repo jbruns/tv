@@ -30,13 +30,13 @@ Ruff 0.16.8, mypy 2.3.1, and pytest 9.1.1.
 
 | Exact command | Result | Elapsed |
 | --- | --- | ---: |
-| `uv run pytest -q tests/unit/config` | 23 passed | 0.28 s |
+| `uv run pytest -q tests/unit/config` | 37 passed | 0.35 s |
 | `uv run ruff check .` and the documented `ruff format --check` paths | Passed; 50 files formatted | 0.04 s |
 | `uv run mypy` | No issues in 50 source files | 0.10 s |
-| Pure/unit/architecture budget command from `docs/development.md` | 81 passed; 2.171 s measured selection, below 10 s | 2.22 s |
-| Complete-offline budget command from `docs/development.md` | 14 passed; 3.014 s aggregate, below 60 s | 0.89 s |
-| `uv run pytest -q` | 95 passed | 2.87 s |
-| `uv build` | Source distribution and wheel built | 0.37 s |
+| Pure/unit/architecture budget command from `docs/development.md` | 95 passed; 2.173 s measured selection, below 10 s | 2.22 s |
+| Complete-offline budget command from `docs/development.md` | 14 passed; 3.027 s aggregate, below 60 s | 0.90 s |
+| `uv run pytest -q` | 109 passed | 2.94 s |
+| `uv build` | Source distribution and wheel built | 0.40 s |
 | Documented wheel inspection and installed-wheel smoke | Passed; 47 wheel entries; version/help passed | 0.03 s inspection |
 | `python3 scripts/check_markdown.py` | 55 Markdown files passed | 0.20 s |
 | `uv run python scripts/check_inventory_milestones.py` | Passed | 0.04 s |
@@ -57,9 +57,9 @@ Fixture SHA-256 digests:
 The canonical resolved configuration is 1,818 bytes with SHA-256
 `004d7e8c39e512fae99572a8e912d6eecd6b3fe0f9088584acae41f61da2208b`.
 The built wheel SHA-256 is
-`2ab42f827087adb9697bd4945c119f50b18af6138c971fdd72b1f2bbeff0006a`;
+`8da0e53ead050fad2b8bc46ed2e6f98a48b66dddfd661cc18f45024de0da10ad`;
 the source distribution SHA-256 is
-`f140e212bb7c064fe959b0bc1550d70be1b6a098f1e89ecd326affe2f054b24f`.
+`421f2aa8131bfc21e710194f5f818068695e93bad34516a219de8e21e5fee7a7`.
 
 The mandatory two-axis code review found configuration-boundary ownership and
 three fail-closed gaps. The implementation was revised to add the immutable
@@ -68,6 +68,11 @@ composition, validate every layer before merge, reject unapproved playlist
 values, reject incomplete nested Intent with diagnostics, validate unknown
 types in unselected Profiles, and reject unsupported Artifact dependency
 constraints.
+
+The incremental correction review found no standards issue. Its one remaining
+spec finding identified canonical string values that still needed schema
+validation; Artifact IDs, dependency IDs, versions, platforms, and secret
+provider/key IDs now reject invalid values before domain construction.
 
 Hosted Linux/macOS and shell-transition evidence is linked from the pull
 request. No Device was accessed and no deployment occurred.

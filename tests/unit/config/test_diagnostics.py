@@ -473,3 +473,131 @@ def test_type_conflict_dependency_cycle_ownership_and_selector_fail_closed(
         "dependency.cycle",
         "selector.unresolved",
     }
+
+
+def _write_dependency_repository(root: Path, order: tuple[str, ...]) -> None:
+    _write(
+        root,
+        "inventory/devices.yaml",
+        """kind: DeviceInventory
+schema_version: 1
+devices:
+  - id: device.dependencies
+    endpoint: {host: example.test, port: 22}
+    ssh:
+      username: root
+      host_key: {policy: pinned, reference: host-key.dependencies}
+      credential: {type: secret, provider: controller.environment, key: ssh.key}
+    profiles: {platform: platform.dependencies}
+""",
+    )
+    _write(
+        root,
+        "secret-providers/providers.yaml",
+        """kind: SecretProviderCatalog
+schema_version: 1
+providers:
+  - id: controller.environment
+    type: environment
+    keys: {ssh.key: {variable: SSH_KEY}}
+""",
+    )
+    dependencies = {
+        "skin.playlist.a": "skin.playlist.b",
+        "skin.playlist.b": "skin.playlist.c",
+        "skin.playlist.c": "skin.playlist.a",
+        "skin.playlist.d": "skin.playlist.missing",
+    }
+    resources = "\n".join(
+        f"""  - id: {resource_id}
+    type: KodiSmartPlaylist
+    management: enforce
+    desired: absent
+    selectors: []
+    requires: [{dependencies[resource_id]}]
+    intent:
+      playlist: {{id: playlist.video.new-shows, media_type: tvshows}}"""
+        for resource_id in order
+    )
+    _write(
+        root,
+        "profiles/platform.yaml",
+        f"""kind: Profile
+schema_version: 1
+id: platform.dependencies
+layer: platform
+resources:
+{resources}
+""",
+    )
+
+
+def test_dependency_failures_have_provenance_and_deterministic_cycle_output(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_dependency_repository(
+        first,
+        (
+            "skin.playlist.a",
+            "skin.playlist.b",
+            "skin.playlist.c",
+            "skin.playlist.d",
+        ),
+    )
+    _write_dependency_repository(
+        second,
+        (
+            "skin.playlist.d",
+            "skin.playlist.c",
+            "skin.playlist.a",
+            "skin.playlist.b",
+        ),
+    )
+
+    first_result = load_configuration(first, DeviceId("device.dependencies"))
+    second_result = load_configuration(second, DeviceId("device.dependencies"))
+    first_dependencies = tuple(
+        (
+            diagnostic.code,
+            diagnostic.source,
+            diagnostic.path,
+            diagnostic.subject_id,
+            diagnostic.message,
+        )
+        for diagnostic in first_result.diagnostics
+        if diagnostic.code.startswith("dependency.")
+    )
+    second_dependencies = tuple(
+        (
+            diagnostic.code,
+            diagnostic.source,
+            diagnostic.path,
+            diagnostic.subject_id,
+            diagnostic.message,
+        )
+        for diagnostic in second_result.diagnostics
+        if diagnostic.code.startswith("dependency.")
+    )
+
+    assert first_result.configuration is None
+    assert second_result.configuration is None
+    assert first_dependencies == second_dependencies
+    assert first_dependencies == (
+        (
+            "dependency.cycle",
+            "profiles/platform.yaml",
+            ("resources", "skin.playlist.a", "requires"),
+            "skin.playlist.a",
+            "Resource dependency cycle includes: skin.playlist.a, "
+            "skin.playlist.b, skin.playlist.c.",
+        ),
+        (
+            "dependency.unresolved",
+            "profiles/platform.yaml",
+            ("resources", "skin.playlist.d", "requires", "skin.playlist.missing"),
+            "skin.playlist.d",
+            "Resource dependency skin.playlist.missing is not declared.",
+        ),
+    )
