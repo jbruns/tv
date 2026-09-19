@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from coreelec_reconciler.application.outcomes import (
+    PlanOutcome,
     UnsupportedOutcome,
     ValidationOutcome,
 )
@@ -37,6 +38,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"inventory ledger valid: rows={outcome.row_count} "
             f"{dispositions} sha256={outcome.sha256}"
         )
+    if isinstance(outcome, PlanOutcome):
+        if outcome.plan is None:
+            import sys
+
+            for diagnostic in outcome.diagnostics:
+                print(diagnostic, file=sys.stderr)
+            return 3
+        import sys
+
+        document = (
+            outcome.run_report if parsed.output_document == "run" else outcome.plan
+        )
+        if document is None:
+            raise RuntimeError("planning outcome omitted a canonical document")
+        sys.stdout.buffer.write(document.canonical_bytes + b"\n")
+        if outcome.disposition == "blocked":
+            return 3
     return 0
 
 

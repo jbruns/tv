@@ -96,7 +96,7 @@ jobs:
           --result .ci-evidence/offline.json
           --
           .venv/bin/python -m pytest -q
-          tests/scaffold/test_cli.py
+          tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py
       - name: Build package
         run: uv build
       - name: Inspect and smoke-test wheel

@@ -36,7 +36,8 @@ uv run python scripts/run_test_budget.py \
   --include-result .ci-evidence/pure.json \
   --result .ci-evidence/offline.json \
   -- \
-  .venv/bin/python -m pytest -q tests/scaffold/test_cli.py
+  .venv/bin/python -m pytest -q \
+  tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py
 uv build
 uv run python - <<'PY'
 import hashlib
@@ -123,10 +124,30 @@ uv run coreelec-reconciler --help
 uv run coreelec-reconciler validate
 ```
 
+Pure playlist planning consumes an explicit bounded offline observation
+document and never opens a Device connection:
+
+```console
+uv run coreelec-reconciler \
+  --repository-root tests/fixtures/repository \
+  plan living-room.ugoos-am6b-plus \
+  --observations observations/living-room.ugoos-am6b-plus.json
+```
+
+`plan` writes canonical `CoreElecReconcilerPlan` JSON plus exactly one framing
+newline. Add `--document run` to write the corresponding canonical
+nonmutating planning Run Report instead. The canonical bytes used for either
+digest contain no newline. The same input document can be checked with
+`validate --device-id ... --observations ...`; validation and planning read
+authored configuration and supplied observations only and never write files
+or create network connections.
+
 The command surface is present so later vertical slices can implement behavior
-through the typed `Reconciler.execute` boundary. `validate` currently performs
-the deterministic, offline inventory-ledger gate. Other operational commands
-return an explicit `not_implemented` diagnostic and exit with status 2.
+through the typed `Reconciler.execute` boundary. `validate` performs the
+deterministic offline inventory-ledger gate and can additionally validate the
+first playlist planning input. `plan` implements the pure
+`skin.playlist.new-shows` slice. Other operational commands return an explicit
+`not_implemented` diagnostic and exit with status 2.
 
 `provision` is command-line sugar for `reconcile`; it is not a separate
 application command. Building with `uv build` packages only

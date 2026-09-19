@@ -64,7 +64,6 @@ def test_validate_checks_the_inventory_ledger() -> None:
     [
         (("inventory",), "inventory"),
         (("observe", "device-1"), "observe"),
-        (("plan", "device-1"), "plan"),
         (("apply", "plan-1"), "apply"),
         (("reconcile", "device-1"), "reconcile"),
         (("provision", "device-1"), "reconcile"),

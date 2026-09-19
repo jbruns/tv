@@ -25,6 +25,8 @@ __all__ = [
 @dataclass(frozen=True, slots=True)
 class ValidateCommand:
     repository_root: str
+    device_id: DeviceId | None = None
+    observations_file: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,7 @@ class ObserveCommand:
 class PlanCommand:
     repository_root: str
     device_id: DeviceId
+    observations_file: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

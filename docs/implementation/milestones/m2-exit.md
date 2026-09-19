@@ -76,3 +76,140 @@ provider/key IDs now reject invalid values before domain construction.
 
 Hosted Linux/macOS and shell-transition evidence is linked from the pull
 request. No Device was accessed and no deployment occurred.
+
+## Issue #58 pure planning contribution
+
+Date: 2026-09-19
+
+Status: **Issue #58 contribution only. M2 remains open and is not sealed by
+this record.**
+
+### Scope and acceptance mapping
+
+Issue #58 adds strict semantic Kodi Smart Playlist XML parsing/rendering,
+typed bounded supplied Observations, pure assessment, exact Changes and
+preconditions, canonical immutable Plan values, canonical nonmutating planning
+Run values, strict codecs/digests, and offline `validate`/`plan` application
+and CLI paths for `skin.playlist.new-shows`.
+
+The accepted behavior matrix passed:
+
+| Case | Relation and Change | Plan / planning Run |
+| --- | --- | --- |
+| absent, desired present | divergent; `smart_playlist.create`; reason `playlist.absent` | `actionable` / `awaiting_approval` |
+| semantic equivalent, including whitespace, CRLF, BOM, and attribute order | satisfied; no Change | `noop` / `noop` |
+| semantic drift | divergent; `smart_playlist.update`; reason `playlist.semantic-drift` | `actionable` / `awaiting_approval` |
+| mode-only `0600` | divergent; `smart_playlist.update`; reason `managed-file.mode-drift` | `actionable` / `awaiting_approval` |
+| malformed safe regular XML | divergent; `smart_playlist.update`; reason `playlist.malformed-current` | `actionable` / `awaiting_approval` |
+| present, desired absent | divergent; `smart_playlist.remove`; reason `playlist.desired-absent` | `actionable` / `awaiting_approval` |
+| absent, desired absent | satisfied; no Change | `noop` / `noop` |
+| unsafe non-regular state | unverifiable; typed blocker; no Change | `blocked` / `blocked` |
+
+All Changes retain the logical State Address
+`special://profile/playlists/video/NewShows.xsp`, a normalized before-state
+digest precondition, safe before/desired summaries, verified rollback
+capability, and no Effects. Removal additionally carries the ordered
+`removal` impact and approval scope. Observe-only divergence is blocked and
+cannot produce a Change.
+
+Sanitized test inputs use only the synthetic endpoint
+`coreelec-living-room.example.test`, an example pinned-host-key fingerprint,
+fixed UUIDv7 values, fixed UTC times, fixed SHA-256 placeholders, and the
+public playlist semantics `New Shows`, `tvshows`, `playcount is 0`, limit 50,
+date-added descending, mode `0644`. Raw XML is bounded input and is absent
+from canonical Plan/Run evidence.
+
+### Canonical and golden evidence
+
+Canonical JSON is UTF-8 with sorted object keys, no insignificant whitespace,
+and no trailing newline. CLI framing adds exactly one LF. Plan full digests
+omit only `full_digest`; semantic digests omit exactly the accepted six event
+metadata fields. Run revision digests omit only `current_digest` and revision
+2 links to the nonpersisted revision-1 planning digest. Duplicate/unknown
+fields, invalid UUIDv7/logical IDs, non-UTC or impossible timestamp ordering,
+unknown or contradictory codes/status/lifecycle combinations, invalid
+references, malformed nested digests, inconsistent Plan references and Run
+revisions, noncanonical bytes, and full/semantic/current digest projection
+tampering are rejected with controlled codec errors.
+
+| Golden | SHA-256 |
+| --- | --- |
+| `tests/fixtures/canonical/plan-actionable.json` | `199869844c10597b82fb3af8f990f31a9825e2f36a51b292ee4c891fda1bccc2` |
+| `tests/fixtures/canonical/plan-noop.json` | `cc44e657e307e6c0e1d7f87ffdba183e2b5e6ebf63ba9de35652b5e638911520` |
+| `tests/fixtures/canonical/run-awaiting-approval.json` | `09429d8de421e8e51e3f44c235779abf25d8b7f75d3121b9056cb9c5a4421551` |
+| `tests/fixtures/canonical/run-noop.json` | `c030a7f2496db63cad2c3566691cd937a655f513ee6a00d25b79ab3f8ea1bbb4` |
+
+### Local verification
+
+Local evidence used macOS arm64, Python 3.14.2, uv 0.12.3, Ruff 0.16.8, mypy
+2.3.1, and pytest 9.1.1.
+
+| Exact command | Result | Elapsed |
+| --- | --- | ---: |
+| `uv run pytest -q tests/unit/reporting/test_planning_documents.py tests/unit/resource_types/kodi_smart_playlist/test_planning_codecs.py tests/unit/resource_types/kodi_smart_playlist/test_xml_planning.py tests/unit/application/test_plan_offline.py` | 96 passed | 0.45 s |
+| `uv run pytest -q tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py` | 17 passed under the offline socket guard | 1.95 s |
+| `uv run pytest -q` | 215 passed | 4.46 s |
+| `uv run ruff check .` | All checks passed | 0.02 s |
+| documented `ruff format --check` paths | 67 files already formatted | 0.02 s |
+| `uv run mypy` | No issues in 67 source files | 0.11 s |
+| pure/unit/architecture budget command from `docs/development.md` | 198 passed; 2.740 s measured, below 10 s | 2.79 s |
+| complete-offline budget command from `docs/development.md` | 17 passed; 4.639 s aggregate, below 60 s | 1.95 s |
+| `uv build` | Source distribution and wheel built | 0.36 s |
+| documented wheel inspection and isolated no-dependency version/help smoke | Passed; 57 wheel entries | not budgeted |
+| `python3 scripts/check_markdown.py` | 56 Markdown files passed | 0.20 s |
+| `uv run python scripts/check_inventory_milestones.py` | 169 rows; digest matched | 0.04 s |
+| `python3 scripts/check_shell_permissions.py --audit` | 146/146 shell rows covered; valid | 0.15 s |
+| documented `tests/test-*.sh` transition loop excluding `test-helper.sh` | 9 scripts passed | 1,208 s |
+| `git diff --check` | Passed | not budgeted |
+
+Built package digests:
+
+- wheel:
+  `7df097ba1e2f05da6a47693646bb21f7a719d25c148fa4fa26b5c0bb6160d84f`;
+- source distribution:
+  `e34055ba5d9ef21a6f40746cab164a4fa6a3e01883e686f13c87c855e5f62537`.
+
+The mandatory two-axis review found strict-codec gaps, incomplete closed-code
+validation, malformed-content precondition aliasing, invalid timestamp
+acceptance, and missing CLI access to the planning Run Report. The fixes
+centralize Observation validation, validate actual RFC 3339 UTC values and
+closed report vocabularies/references, bind malformed preconditions to a safe
+content digest, and add `plan --document run`.
+
+The blocking strictness correction adds closed playlist semantic vocabulary
+and cardinality, validates rendering intent, rejects contradictory Assessment
+states before Change construction, enforces supplied-observation temporal
+windows, and validates every canonical Plan/Run identity, timestamp, digest,
+reference, status, lifecycle, revision, and projection invariant. Adversarial
+tests cover each boundary, including exact Plan binding for Run references.
+The incremental two-axis review additionally found unchecked playlist order
+cardinality, a Run/Plan identity invariant, and duplicated Resource Type code
+vocabulary. Those findings were fixed with adversarial tests and shared
+type-owned validation. Observation identity syntax is now validated at the
+codec boundary while exact configured binding retains its stable application
+diagnostic.
+
+### Security, exclusions, and differences
+
+Mutation guards prove `validate` and `plan` do not write files. All Python
+tests, including CLI subprocesses, run under the offline socket guard. Output
+contains normalized semantics and safe digests only; raw XML, secrets,
+transport diagnostics, controller-local paths, and staging names are excluded.
+
+SSH/SFTP, live Device access, durable Run workspace, apply, Verification,
+rollback, recovery, Effect execution, authored `RemoteFile`, mutable globals,
+and hard-coded Desired State policy remain out of scope. No Device was
+accessed and no deployment occurred.
+
+Differences from the accepted issue #58 contract: **none**.
+
+Hosted evidence is the required
+[Offline CI check attached to PR #69's final head](https://github.com/jbruns/tv/pull/69/checks).
+The workflow checks out the pull request head SHA explicitly and asserts that
+the checked-out SHA equals `SOURCE_SHA` before running Linux, macOS, and shell
+jobs. This moving PR-head link deliberately prevents this contribution-only
+record from claiming an earlier green commit as evidence for later
+corrections; exact final run/job permalinks are recorded in the PR.
+
+This contribution makes the pure slice ready for later application/execution
+work; it does not satisfy the live pilot gates and does not exit M2.

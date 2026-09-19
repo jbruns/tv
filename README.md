@@ -11,6 +11,7 @@ integrations.
 - [Python development and packaging](docs/development.md)
 - [Inventory ownership ledger contract](docs/implementation/inventory-ownership-ledger.md)
 - [Authored configuration implementation](docs/implementation/authored-configuration.md)
+- [Pure Kodi Smart Playlist planning](docs/implementation/pure-playlist-planning.md)
 - [Shell write-set audit evidence](docs/implementation/shell-write-set-audit.md)
 - [Legacy shell write-set permissions](docs/operations/shell-write-set-permissions.md)
 - [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)

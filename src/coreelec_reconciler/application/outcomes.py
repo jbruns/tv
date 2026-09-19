@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
+from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
 
 
 class UnsupportedReason(StrEnum):
@@ -44,6 +45,9 @@ class PlanOutcome:
     run_id: RunId
     plan_id: PlanId | None
     disposition: str
+    plan: CanonicalPlan | None = None
+    run_report: CanonicalRunReport | None = None
+    diagnostics: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
