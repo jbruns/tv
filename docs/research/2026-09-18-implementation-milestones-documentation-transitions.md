@@ -6,6 +6,15 @@ Ticket: [Choose implementation milestones and documentation transitions](https:/
 
 Status: **Accepted autonomous contract-level decision**
 
+## 0. Shell-test CI amendment (2026-09-19)
+
+Legacy shell tests remain in the repository as manually runnable reference
+evidence, but they are no longer part of routine CI, readiness, milestone
+acceptance, or Python budgets. This amendment supersedes every prospective
+requirement below to keep a shell transition job green. It does not transfer
+Device ownership: shell remains the authorized actor for each State Address
+until the accepted Python ownership handoff for that address.
+
 ## 1. Decision
 
 Implementation proceeds through milestones M0–M11 plus a parallel supply-chain
@@ -32,8 +41,8 @@ The route has these fixed properties:
    set that proves its unique facts are preserved and repairs every inbound
    link. Git history is the archive.
 3. M1 creates the production Python 3.14 scaffold and Linux x86_64/macOS arm64
-   CI. The current shell suites continue in a separate transition job until
-   retirement and do not count against Python's budgets.
+   CI. Legacy shell suites remain manually runnable reference evidence and do
+   not count against Python's budgets or milestone acceptance.
 4. M2 is pure configuration, domain, planning, and reporting. M3 adds offline
    managed-file execution and recovery. M4 alone performs the first live
    `NewShows.xsp` pilot.
@@ -151,9 +160,9 @@ execution with `time.monotonic_ns()`. Dependency synchronization, environment
 creation, wheel build, and live Device work are outside the measured interval.
 No retry, rerun, quarantine, ignored failure, or `xfail` can satisfy a gate.
 
-The existing shell tests run in a separate transition job from M1 through
-M10. Their approximately seven-minute runtime is recorded separately and is
-not included in the Python 10/60-second budgets.
+Legacy shell tests remain available as a manual reference command. Their
+approximately seven-minute runtime is not part of routine CI, milestone
+acceptance, or the Python 10/60-second budgets.
 
 ### 3.3 Ownership ledger
 
@@ -285,8 +294,10 @@ surface without implementing Device mutation.
   canonical JSON golden infrastructure, and installed-wheel smoke tests.
 - Add Python 3.14 CI for Linux x86_64 and macOS arm64 with frozen sync,
   10/60-second budgets, and the 300-second hang watchdog.
-- Add a separate current-shell transition job that runs the existing shell
-  suites without charging their time to Python budgets.
+- At M1, add a separate current-shell transition job that runs the existing
+  shell suites without charging their time to Python budgets. The 2026-09-19
+  amendment removes this job after M2 while retaining the command as manual
+  reference evidence.
 - Add inventory coverage and ownership-ledger schemas/checkers.
 - Audit actual shell behavior into a machine-readable write-set/Effect map,
   including conditional writes, shared-document writes, dependencies that
@@ -313,7 +324,7 @@ sessions, mutation, recovery, and live acceptance.
 - Ruff format/lint, strict mypy, pytest architecture/unit/offline selections,
   and wheel build/inspection on both supported platforms;
 - installed CLI import and `--help` outside the checkout;
-- current shell transition suite in its separate job;
+- historical M1 shell transition evidence, without making it an ongoing gate;
 - inventory checker proves 169 unique classified IDs, accepted
   role/disposition, exactly one assigned milestone, and the correct current
   executor or owner without demanding future milestone closure;
@@ -325,8 +336,9 @@ sessions, mutation, recovery, and live acceptance.
 **Ownership state.** Shell remains the sole Device mutation actor. M1 records
 the precise current owner for every non-Device row. Python CLI is non-mutating.
 
-**Documentation changes.** Add contributor/build/CI instructions and explain
-the separate shell transition job. Operator instructions remain shell-current.
+**Documentation changes.** Add contributor/build/CI instructions, record the
+historical shell transition evidence, and document the manual reference
+command. Operator instructions remain shell-current.
 
 **Failure / recovery.** A failed platform job blocks M2. Dependency or budget
 failure reopens the relevant foundation decision; it is not waived locally.
@@ -377,7 +389,7 @@ verification against a Device, rollback, recovery, and live pilot.
 - socket guard and architecture imports prove the pure core cannot contact a
   Device;
 - independent Plan/Run invariant checker passes every fixture;
-- shell transition job and documentation validators remain green.
+- documentation validators remain green.
 
 **Ownership state.** Shell remains the sole Device mutation actor. Python can
 validate and plan only; non-Device ownership remains as recorded at M1.
@@ -429,7 +441,7 @@ usability decision, and all later Resource Types.
 - shared fake and production-adapter contracts;
 - installed-wheel CLI behavior away from the checkout;
 - deterministic pilot harness dry run and independent bundle verification;
-- current shell transition job remains green.
+- shell ownership and permission-ledger invariants remain valid.
 
 **Ownership state.** Shell remains the sole live Device mutation actor. Python
 mutation exists but is not authorized on the pilot; non-Device ownership is
@@ -496,7 +508,7 @@ shared Kodi settings, add-ons, and fleet rollout.
   state, and no unresolved recovery;
 - CI/check proof that shell operations whose write set intersects `SKIN-025`
   are rejected, with the immediate frozen-`skin` operator warning present;
-- Python 10/60-second and shell transition jobs remain green.
+- Python 10/60-second jobs remain green.
 
 **Ownership state.** Python owns `SKIN-025`. Shell may not regain `skin`
 ownership on the pilot, even when playlist content is semantically equal.
@@ -805,7 +817,7 @@ documentation switch, and production fleet deployment.
 
 - `scripts/check_inventory_milestones.py` against inventory,
   classification, milestone map, and ownership ledger;
-- all Linux/macOS Python gates and separate shell transition job;
+- all Linux/macOS Python gates;
 - all documentation validators;
 - sealed full-profile fresh/drift/no-op pilot bundle with independent
   verification;
@@ -909,7 +921,8 @@ fallback or release gap.
   2. deletion of active shell provisioning/configuration code, shell-only
      libraries, fixture hooks, and shell tests.
 - No release, deployment, or operator handoff may occur between the commits.
-- Remove the shell transition CI job only with the shell-removal commit.
+- Keep the already-manual legacy shell tests only as historical reference
+  until the shell-removal commit deletes them.
 - Preserve the last shell-capable commit/tag and exact reimage/bootstrap
   instructions as historical recovery, not an executable fallback.
 - Re-run the M0 unique-fact preservation and inbound-link checks before shell
@@ -1168,8 +1181,9 @@ Issue #46 defines the build handoff in
 - [ ] M0 integrates every accepted source with stable links and provenance.
 - [ ] The superseded plan/spec tree is removed with unique-fact proof and all
       inbound links repaired.
-- [ ] M1 enforces Linux x86_64/macOS arm64 Python 3.14 CI, exact 10/60-second
-      budgets, and separate shell transition coverage.
+- [ ] M1 enforces Linux x86_64/macOS arm64 Python 3.14 CI and exact
+      10/60-second budgets; legacy shell tests remain manual reference
+      evidence rather than a gate.
 - [ ] M2 and M3 preserve the accepted pure/execution split.
 - [ ] M4 binds evidence to the post-integration source and permanently freezes
       effective shell `skin` scope on the pilot.
