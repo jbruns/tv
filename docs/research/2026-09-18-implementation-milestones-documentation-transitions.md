@@ -4,7 +4,7 @@ Date: 2026-09-18
 
 Ticket: [Choose implementation milestones and documentation transitions](https://github.com/jbruns/tv/issues/45)
 
-Status: **Draft autonomous contract-level decision for independent review**
+Status: **Accepted autonomous contract-level decision**
 
 ## 1. Decision
 
@@ -23,9 +23,11 @@ M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10 -> M11
 
 The route has these fixed properties:
 
-1. M0 integrates every accepted planning source into one authoritative
-   history before implementation begins. No build issue may bind acceptance
-   to untracked files, a worktree-only state, or a branch URL.
+1. M0 first preserves accepted foundational files that currently exist only
+   as untracked main-worktree content, then integrates every accepted
+   committed planning source into one authoritative history. Acceptance
+   cannot remain bound to untracked state, but the reviewed preservation
+   commit is a valid and required first integration commit.
 2. `docs/superpowers/` is removed in M0, in the same reviewed change set that
    proves its unique facts are preserved and repairs every inbound link. Git
    history is the archive.
@@ -41,10 +43,12 @@ The route has these fixed properties:
 6. All 169 classified inventory IDs are assigned exactly once in section 6.
    The accepted totals remain 153 migrate, 5 retire, and 11 outside.
 7. Live mutation windows on the disposable pilot are serialized. There is one
-   actor and one active ownership ledger for every State Address.
+   current executor or owner and one active ownership ledger for every
+   inventory row.
 8. M10 requires an evidence-based Python-only observation window of at least
    24 hours and one complete Kodi/TV lifecycle cycle. It is an additional
-   normal-use observation, not a substitute for tests or pilot cases.
+   normal-use observation, not a substitute for tests or pilot cases, and
+   judges explained convergence rather than requiring zero physical writes.
 9. M11 removes active shell, shell tests, and final shell-facing documentation
    in one coordinated merge train. Git history and exact reimage/bootstrap
    instructions preserve recovery knowledge; shell is not retained as a
@@ -55,12 +59,20 @@ The route has these fixed properties:
 
 ### 2.1 Accepted inputs
 
-M0 must integrate the following accepted records, preserving their original
-commits and issue history:
+M0 must integrate the following accepted records. The first group has no
+prior commit provenance and must be preserved in its first reviewed commit:
 
 - root `CONTEXT.md`, `AGENTS.md`, and `docs/agents/`;
 - `docs/architecture/coreelec-reconciler.md`;
-- ADRs 0001–0006;
+- ADRs 0001–0004;
+- any other accepted untracked foundation found during the pre-integration
+  inspection.
+
+That first commit records issue/map attribution and the exact accepted file
+set without claiming a nonexistent earlier commit. M0 then integrates these
+committed branch records with their real commit and issue provenance:
+
+- ADRs 0005–0006;
 - [current managed State Address inventory](2026-09-18-current-managed-state-inventory.md);
 - [managed-state classification](2026-09-18-managed-state-classification.md);
 - [authored configuration schema](2026-09-18-authored-configuration-schema.md);
@@ -70,7 +82,6 @@ commits and issue history:
 - [Run workspace, recovery, and Effect contracts](2026-09-18-run-workspace-recovery-effect-contracts.md);
 - [disposable-pilot acceptance procedure](2026-09-18-disposable-pilot-acceptance-procedure.md);
 - the accepted Python 3.14 foundation research and toolchain proof;
-- [ADR 0005](../adr/0005-stable-addon-artifact-supply-chain.md);
 - the accepted issue decisions through issue #44 and proof issue #48.
 
 The integration commit series is the **G0 planning baseline**. M0 records its
@@ -81,16 +92,20 @@ acceptance source.
 
 ### 2.2 Integration rules
 
-- Preserve commit provenance by merging or cherry-picking the accepted
-  commits with their issue references; do not copy only their final text into
-  an unattributed squash.
+- Before branch integration, inspect dirty main without reverting, cleaning,
+  overwriting, or silently absorbing unrelated files. Create the reviewed
+  foundational preservation commit described above.
+- Preserve actual branch commit provenance by merging or cherry-picking the
+  accepted commits with their issue references; do not copy only their final
+  text into an unattributed squash.
 - Resolve conflicting refinements in dependency order: issue 43 refinements
   supersede the earlier recovery sketches, and issue 44 refinements supersede
   earlier live-pilot wording.
 - Rewrite cross-document, map, and issue-comment links after integration to
   stable repository paths on the authoritative branch. Branch URLs may remain
   only as historical provenance links.
-- Do not treat untracked files in the main worktree as integrated.
+- Do not bind acceptance to untracked files. Accepted untracked foundations
+  become integrated only through the reviewed first commit.
 - Run repository-wide Markdown link, fence, and table validation after the
   paths stabilize.
 - Record the integrated commit and tree digest in the M1 scaffold and in the
@@ -117,6 +132,11 @@ Failure never permits a milestone to be marked partially complete by deleting
 evidence or narrowing acceptance after the fact. Correct the implementation,
 recover or reimage under the accepted rules, and produce a fresh attempt.
 
+Roadmap-wide, no sharding, quarantine, retry, threshold change, or selection
+change may hide a performance or correctness regression. Amending a test
+budget requires retained evidence and a reviewed architecture decision; a
+milestone or build issue cannot weaken the budget locally.
+
 ### 3.2 Test budgets
 
 The accepted Python budgets are exact:
@@ -138,28 +158,44 @@ not included in the Python 10/60-second budgets.
 ### 3.3 Ownership ledger
 
 The repository gains a machine-readable and human-readable ownership ledger
-in M1. For each classified State Address it records:
+in M1. Its schema supports Device and non-Device rows. For each inventory row
+it records:
 
 - inventory ID and logical State Address;
-- disposition;
-- active actor: `shell`, `python`, `outside`, or `retired`;
-- milestone and evidence bundle that authorized the current actor;
-- shell selector/effective scope still permitted;
-- replacement operator document;
+- accepted role and disposition;
+- current executor or owner: `shell`, `python`, `repository`, `operator`,
+  `external`, or `none`;
+- closure state, assigned milestone, and the evidence bundle that authorizes
+  the current state;
+- precise shell write set and Effects still permitted, if any;
+- replacement or retained documentation;
 - unresolved recovery or quarantine state.
 
-An address cannot have both shell and Python as active mutation actors.
-Transfer is append-only evidence: prestate, handoff, Python acceptance, and
-shell-scope freeze or retirement. Shell is permitted only where the computed
-effective scope is proven disjoint from every Python-owned address.
+A Device address cannot have both shell and Python as mutation actors.
+Repository-owned build/provenance rows, operator Guided Actions, external
+health dependencies, and ownerless retired rows use their precise closure
+semantics rather than a forced shell/Python actor. Transfer is append-only
+evidence: prestate, handoff, Python acceptance, and shell-write-set freeze or
+retirement. Shell is permitted only where its audited complete write set,
+including conditional/shared writes and side effects, is proven disjoint from
+every Python-owned address.
+
+At each handoff, update both the guard and ledger before any later mutation.
+After explicit reimage and Device-identity review, and only before a Python
+handoff, one recorded shell full-provisioning run may establish a new
+baseline. That exception invalidates all old live acceptance evidence and
+requires fresh Python ownership evidence. No shell overlap is permitted after
+the handoff.
 
 ### 3.4 JIT design rule
 
-At the start of M5–M8, open and resolve only the Resource Type, Effect, Guard,
-Guided Action, or health decisions required for that milestone's declared
-inventory rows. Those issues may refine transport capabilities and recovery
-semantics only with an explicit compatibility decision against the accepted
-core contracts.
+During predecessor implementation, JIT design issues may be opened for the
+next milestone's declared Resource Type, Effect, Guard, Guided Action, or
+health needs. This enables pipeline work, but those issues cannot become
+accepted build instructions and implementation cannot begin until predecessor
+exit evidence is accepted. They may refine transport capabilities and
+recovery semantics only with an explicit compatibility decision against the
+accepted core contracts.
 
 Build issues for M3 and later are generated only after the predecessor exit
 and the required JIT decisions are accepted. M0, M1, and M2 are the only
@@ -176,13 +212,18 @@ implementation issues that may be generated together at plan handoff.
 
 - Issues #34–#44 and #48 are accepted.
 - Their source commits and branch tips are recorded.
-- The target integration branch is clean and protected from unrelated edits.
+- Issue #46 is accepted and authorizes the initial M0/M1/M2 build issues.
+- The target branch and dirty main worktree have been inspected; unrelated
+  edits are identified and protected from reversion or accidental inclusion.
 
 **In scope.**
 
-- Integrate every source in section 2.1, including root context/agent files,
-  architecture, ADRs 0001–0006, inventory/classification, and research
-  contracts #38–#44.
+- Create the first reviewed commit for accepted untracked `CONTEXT.md`,
+  `AGENTS.md`, `docs/agents/`, `docs/architecture/coreelec-reconciler.md`,
+  ADRs 0001–0004, and any other accepted untracked foundation, with issue/map
+  attribution and no false prior-commit claim.
+- Then integrate every committed source in section 2.1, including ADRs
+  0005–0006, inventory/classification, and research contracts #38–#44.
 - Reconcile refinements and rewrite internal links to stable repository paths.
 - Verify the unique-fact preservation table in the current inventory.
 - Remove all of `docs/superpowers/`.
@@ -211,8 +252,9 @@ Device contact, and operator ownership transfer.
 - `git diff --check`;
 - recorded G0 commit/tree digest and provenance map.
 
-**Ownership state.** Shell remains the sole active mutation actor. Python owns
-nothing.
+**Ownership state.** Shell remains the sole Device mutation actor. Non-Device
+rows retain their classified repository/operator/external/none owner; Python
+owns nothing.
 
 **Documentation changes.** Planning records become authoritative in their
 stable locations. Durable README, runbook, Device, room, audio, add-on,
@@ -222,7 +264,8 @@ lifecycle, system, and network documentation remains current.
 facts or broken links block M0; restoring `docs/superpowers/` as an active
 documentation layer is not the remedy.
 
-**Dependencies.** First milestone; blocks every implementation milestone.
+**Dependencies.** First build milestone after issue #46; blocks every later
+implementation milestone.
 
 ### M1 — Production scaffold, CI, transition coverage, and issue foundation
 
@@ -245,17 +288,21 @@ surface without implementing Device mutation.
 - Add a separate current-shell transition job that runs the existing shell
   suites without charging their time to Python budgets.
 - Add inventory coverage and ownership-ledger schemas/checkers.
+- Audit actual shell behavior into a machine-readable write-set/Effect map,
+  including conditional writes, shared-document writes, dependencies that
+  expand execution, service changes, and other side effects. Component and
+  selector names are descriptive only; allowed shell operations are computed
+  from disjoint write sets.
 - Add automated Markdown links, fences, tables, command examples, and
   documented-path validation.
 - Bind generated acceptance manifests to G0 and current implementation source
   commits/tree digests.
-- Establish build-issue labels/readiness hooks after issue #46 decides their
-  names and workflow.
+- Establish the issue #46 build-issue labels and readiness hooks.
 
 **Inventory IDs.** None transfer ownership.
 
-**JIT decisions required.** Issue #46 must settle issue size, readiness,
-acceptance, and handoff rules before implementation issues are created.
+**JIT decisions required.** None. Issue #46 is a prerequisite to M0 and plan
+handoff, not an M1 JIT decision.
 
 **Explicitly deferred.** Profile semantics, real Resource behavior, Device
 sessions, mutation, recovery, and live acceptance.
@@ -267,10 +314,16 @@ sessions, mutation, recovery, and live acceptance.
   and wheel build/inspection on both supported platforms;
 - installed CLI import and `--help` outside the checkout;
 - current shell transition suite in its separate job;
-- inventory checker proves 169 unique classified IDs and roadmap coverage;
+- inventory checker proves 169 unique classified IDs, accepted
+  role/disposition, exactly one assigned milestone, and the correct current
+  executor or owner without demanding future milestone closure;
+- audited shell write-set/Effect map covers every current mutation path and
+  demonstrates that later freeze decisions can be based on actual behavior,
+  never selector labels;
 - documentation validators and `git diff --check`.
 
-**Ownership state.** Shell remains sole actor. Python CLI is non-mutating.
+**Ownership state.** Shell remains the sole Device mutation actor. M1 records
+the precise current owner for every non-Device row. Python CLI is non-mutating.
 
 **Documentation changes.** Add contributor/build/CI instructions and explain
 the separate shell transition job. Operator instructions remain shell-current.
@@ -326,7 +379,8 @@ verification against a Device, rollback, recovery, and live pilot.
 - independent Plan/Run invariant checker passes every fixture;
 - shell transition job and documentation validators remain green.
 
-**Ownership state.** Shell remains active. Python can validate and plan only.
+**Ownership state.** Shell remains the sole Device mutation actor. Python can
+validate and plan only; non-Device ownership remains as recorded at M1.
 
 **Documentation changes.** Add authored configuration and non-mutating
 `validate`/`plan` operator references, clearly marked preview/non-owning.
@@ -377,8 +431,9 @@ usability decision, and all later Resource Types.
 - deterministic pilot harness dry run and independent bundle verification;
 - current shell transition job remains green.
 
-**Ownership state.** Shell remains sole live actor. Python mutation exists but
-is not authorized on the pilot.
+**Ownership state.** Shell remains the sole live Device mutation actor. Python
+mutation exists but is not authorized on the pilot; non-Device ownership is
+unchanged.
 
 **Documentation changes.** Add recovery/report reference material and
 explicitly state that live ownership has not transferred.
@@ -399,8 +454,12 @@ Python using the complete issue-44 procedure.
 - M3 accepted on Linux and macOS for the exact source commit/tree digest.
 - Disposable pilot identity, host key, platform, boot identity, path safety,
   lifecycle quiet window, and no-unresolved-work checks pass.
-- One clean, committed wheel/config source is selected; evidence from another
-  source commit cannot satisfy this milestone.
+- One clean, committed wheel, configuration, source-code subtree digest, and
+  G0 contract baseline are selected; evidence from any other bound digest
+  cannot satisfy this milestone. Documentation-only commits after sealing do
+  not invalidate the bundle when wheel, code, configuration, and lock digests
+  are unchanged. Any relevant code, configuration, or lock change does.
+- The eventual acceptance commit must be an ancestor of cutover `main`.
 
 **In scope.**
 
@@ -415,11 +474,12 @@ Python using the complete issue-44 procedure.
   evidence-bundle verification.
 - Append-only shell-to-Python handoff and ownership seal.
 - Immediate operator warning and CI/check guard that prevents
-  `provision-coreelec.sh` from running on the pilot when its computed effective
-  scope includes `skin`.
-- A permanent pilot freeze for shell `skin` scope. Shell remains allowed only
-  for recorded, computed scopes proven disjoint from `skin` and
-  `NewShows.xsp`.
+  `provision-coreelec.sh` from running on the pilot when its audited effective
+  write set intersects `SKIN-025`.
+- The issue-44 permanent pilot freeze for shell `skin` scope remains as a
+  coarse warning, while enforcement uses actual write sets. Shell remains
+  allowed only for recorded operations whose complete writes and Effects are
+  proven disjoint from `SKIN-025` and every other Python-owned address.
 
 **JIT decisions required.** Only a narrow Effect decision if live evidence
 disproves the accepted no-Effect default. Acceptance must be rerun from a new
@@ -434,8 +494,8 @@ shared Kodi settings, add-ons, and fleet rollout.
 - sealed, unstitched core bundle and independent verifier;
 - canonical final playlist at `0644`, no leaked subtree, restored lifecycle
   state, and no unresolved recovery;
-- CI/check proof that effective shell `skin` invocation on the pilot is
-  rejected;
+- CI/check proof that shell operations whose write set intersects `SKIN-025`
+  are rejected, with the immediate frozen-`skin` operator warning present;
 - Python 10/60-second and shell transition jobs remain green.
 
 **Ownership state.** Python owns `SKIN-025`. Shell may not regain `skin`
@@ -454,7 +514,8 @@ handoff. Never resume shell `skin` to repair the Resource.
 ### M5 — Shared Kodi settings, room Intent, and timezone
 
 **Objective.** Transfer the shared Kodi/CoreELEC settings documents and their
-coalesced Effects without recreating shell component ownership.
+coalesced Effects without recreating shell component ownership. One
+`KodiGuiSettings` Resource owns every managed `guisettings.xml` address.
 
 **Prerequisites / entry.** M4 accepted and the pilot shell `skin` freeze is
 enforced.
@@ -465,6 +526,8 @@ enforced.
   secret-safe web settings, audio Intent resolution, and derived timezone
   evidence `CORE-007`;
 - `ROOM-001–ROOM-011`;
+- `SVC-001`, because `weather.addon` is another address in the same shared
+  `guisettings.xml` ownership boundary;
 - `SKIN-001–SKIN-002`, because they are addresses in the shared
   `guisettings.xml` ownership boundary;
 - `EFFECT-001–EFFECT-002`, with coalesced Kodi and timezone barriers,
@@ -482,6 +545,7 @@ enforced.
 - timezone accepted representations and Effect/rollback behavior;
 - audio/display Intent resolvers and capability ambiguity;
 - secret-safe evidence for web settings;
+- Weather selector dependency and Health-versus-Verification boundary;
 - Kodi readiness and shared-document rollback boundaries.
 
 **Explicitly deferred.** Add-on ownership/settings, CEC, SSH hardening, skin
@@ -497,8 +561,13 @@ documents outside `guisettings.xml`, Guided Actions, and generic inventory.
 - no concurrent or overlapping shell mutation window.
 
 **Ownership state.** Python owns all M5 IDs on the pilot. The shell ledger
-removes effective scopes that can touch the shared GUI/timezone documents;
-only proven-disjoint shell scopes remain allowed.
+freezes every actual write set that can touch the shared GUI/timezone
+documents, even when that orphans a later selector/component label. Only
+audited, proven-disjoint shell write sets remain allowed. Required add-on and
+service state scheduled for M6 remains frozen and stable on the dedicated
+pilot until transfer; shell cannot repair it. A pre-handoff reimage may use
+the single recorded re-baseline exception in section 3.3, invalidating old
+live acceptance and requiring fresh Python evidence.
 
 **Documentation changes.** Add Python settings/timezone/room procedures.
 Narrow shell provisioning documentation and examples to its remaining
@@ -531,9 +600,9 @@ and add-on settings using accepted Artifact provenance.
   `ADDON_UNMANAGED_ALLOWED`;
 - `PATCH-001–PATCH-004`, replacing Device runtime transforms with
   reproducibly prebuilt Artifacts;
-- `SVC-001–SVC-017`, including Weather, NextPVR, TMDb Helper settings,
-  explicit dependency/presence semantics, and retirement of the four PM4K
-  cleanup mutations unless an accepted pinned Artifact decision absorbs them;
+- `SVC-002–SVC-017`, including Weather, NextPVR, and TMDb Helper settings,
+  explicit dependency/presence semantics, and the already accepted
+  retirement of the four PM4K cleanup mutations;
 - stable-first policy, digest pins, prerelease exception evidence, dependency
   expansion, final installed-content Verification, and secret redaction;
 - serialized live pilot fresh convergence, drift repair, and second-Run no-op.
@@ -544,12 +613,14 @@ and add-on settings using accepted Artifact provenance.
   rollback, dependency, and final-content verification;
 - each add-on settings document boundary and absence behavior;
 - Weather/NextPVR/TMDb secret-safe evidence;
-- whether any `SVC-014–SVC-017` outcome is deliberately absorbed into a
-  reviewed pinned Artifact rather than retired.
+- no conditional reopening of `SVC-014–SVC-017`: any future absorption
+  requires an explicit classification amendment, count/checker update, and
+  reviewed milestone-contract change.
 
 **Explicitly deferred.** Release-discovery/update-PR automation may remain
 incomplete here if live accepted Artifacts can already be built and validated
-reproducibly. It must be complete before M11. Guided onboarding remains M8.
+reproducibly. It must be complete before M10 starts. Guided onboarding remains
+M8.
 
 **Exit commands / evidence.**
 
@@ -572,6 +643,11 @@ or commands only where ownership has transferred.
 **Failure / recovery.** A digest, provenance, dependency, or prerelease-policy
 failure blocks before Device mutation. Failed live install uses tested
 Resource rollback/recovery; no Device-side patch retry is allowed.
+
+M6 may be executed as dependency-ordered submilestones or batches after its
+JIT decisions. Every split preserves this one JIT contract, the exact M6
+mapping and counts, serialized live mutation, and one final M6 completion
+gate; no batch is an independently accepted milestone.
 
 **Dependencies.** Requires M5 and the live-acceptance portion of #47; blocks
 M7.
@@ -735,9 +811,11 @@ documentation switch, and production fleet deployment.
   verification;
 - proof of zero missing, duplicate, or disposition-mismatched IDs.
 
-**Ownership state.** Python owns every migrated State Address on the pilot.
-Shell has no authorized mutation scope on the pilot, but remains present and
-tested until M11.
+**Ownership state.** Python owns every migrated Device Resource and executes
+its accepted Guards and Effects on the pilot. Repository, operator, external,
+and none remain the precise owners for build/provenance, Guided Action,
+health/inventory, and retired rows. Shell has no authorized mutation scope on
+the pilot, but remains present and tested until M11.
 
 **Documentation changes.** Complete Python operator documentation and mark
 shell docs historical-pending-retirement without removing recovery/bootstrap
@@ -755,16 +833,22 @@ Run recovery and requires a fresh acceptance attempt.
 operable through normal use before authorizing shell retirement.
 
 **Prerequisites / entry.** M9 accepted; pilot is canonical, fully Python-owned,
-and has no unresolved Run or recovery state.
+has no unresolved Run or recovery state, and #47 release-discovery/update-PR
+automation is accepted. No #47 merge is permitted during the bound window.
 
 **In scope.**
 
 - One continuous observation window of at least 24 hours.
 - At least one complete Kodi/TV lifecycle cycle under normal Home Assistant
   policy.
-- No shell mutation, unresolved recovery, drift, or required manual repair.
-- Beginning and ending Python verification/report evidence, lifecycle
-  evidence, Health Checks, and ownership-ledger snapshots.
+- No shell mutation, unexplained divergence, manual repair, or unresolved
+  recovery.
+- Every runtime write either normalizes to Desired State or is explicitly
+  classified as allowed unmanaged or runtime-owned state. Physical writes are
+  not forbidden merely because a no-op logical Plan remains converged.
+- Python verification/report evidence, Health Checks, and ownership-ledger
+  snapshots sampled before and after at least one complete Kodi/TV lifecycle
+  cycle.
 - Final cutover authorization review.
 - Record the last shell-capable commit/tag and exact Manageable Device
   reimage/bootstrap instructions as historical recovery sources.
@@ -781,11 +865,15 @@ milestone.
 - timestamped start/end verification and canonical no-op;
 - lifecycle cycle evidence and health results;
 - audit proving no shell mutation and no unresolved recovery;
+- evidence that every observed runtime write/divergence is normalized or
+  explicitly classified;
 - repeated full offline/CI gates;
 - signed cutover authorization.
 
-Any issue restarts the full window after correction. Time elapsed before the
-issue does not count toward a later attempt.
+Any managed divergence requires a fix, new acceptance evidence, and a restart
+of the full window. Any unexplained divergence, manual repair, unresolved
+recovery, or prohibited merge also restarts it. Time elapsed before the issue
+does not count toward a later attempt.
 
 **Ownership state.** Python remains sole pilot mutation actor. Shell is present
 only as inactive code under CI.
@@ -798,7 +886,7 @@ instructions, rerun the required tests/pilot acceptance, and restart the
 window. Do not restore dual ownership.
 
 **Dependencies.** Requires M9 and completion of #47's release-discovery/
-update-PR automation before cutover authorization; blocks M11.
+update-PR automation before the observation starts; blocks M11.
 
 ### M11 — Coordinated documentation transition and shell retirement
 
@@ -824,6 +912,12 @@ fallback or release gap.
 - Remove the shell transition CI job only with the shell-removal commit.
 - Preserve the last shell-capable commit/tag and exact reimage/bootstrap
   instructions as historical recovery, not an executable fallback.
+- Re-run the M0 unique-fact preservation and inbound-link checks before shell
+  deletion.
+- Explicitly disposition the shell-authored `config/` tree and `rooms` values:
+  migrated desired values move into accepted Profiles/Artifact catalog;
+  retained room files remain installed-system facts; shell-only configuration
+  is removed with shell. No second source of Desired State remains.
 - Run the complete Python, documentation, inventory, package, and clean-tree
   gates against the final combined tree.
 
@@ -842,6 +936,8 @@ separate authorization and rollout plan.
 - Markdown links/fences/tables/command-example validation;
 - searches proving no active shell provisioning entry point, shell test, or
   operator example remains;
+- repeated unique-fact/link validation and proof that `config/`/`rooms`
+  contain no competing Desired State source;
 - wheel/install/CLI smoke tests and `git diff --check`;
 - one release artifact built only from the combined final tree.
 
@@ -854,17 +950,19 @@ Accepted ADRs and research remain engineering records; room documents remain
 installed-system truth, not acceptance journals.
 
 **Failure / recovery.** Before release, revert the isolated shell-removal
-commit if a gate fails. After cutover, fix Python or reimage/bootstrap from the
-documented boundary; do not restore shell and dual ownership. This preserves
-ADR 0004.
+commit if a combined-tree gate fails, keeping both commits in the same merge
+train with no release gap. After release, fix Python or reimage/bootstrap from
+the documented boundary; do not restore shell ownership or dual ownership.
+This preserves ADR 0004.
 
 **Dependencies.** Requires M10 and complete #47; final roadmap milestone.
 
 ## 5. Parallel issue #47 supply-chain lane
 
-Issue #47 begins after M1 because it needs the production toolchain, CI, schema
-validation, and issue foundation, but it is not a prerequisite for M2–M5
-settings work.
+The decision in issue #47 should be resolved before issue #46 and plan handoff
+when possible. Its implementation lane begins in parallel after M1 because it
+needs the production toolchain, CI, schema validation, and issue foundation,
+but it is not a prerequisite for M2–M5 settings work.
 
 Its integration points are:
 
@@ -873,8 +971,9 @@ Its integration points are:
 | After M1 | Decision work and prototype may begin against the authoritative schemas and CI |
 | Before M6 live add-on acceptance | Reproducible Artifact build; upstream, patch-set, and final provenance digests; catalog/dependency validation; stable/prerelease policy enforcement |
 | During M6 | `KodiAddon` consumes only validated, digest-pinned final Artifacts; no runtime Device patching |
-| Before M10 authorization / M11 cutover | Eligible-release discovery and evidence-rich update-PR automation complete; never auto-merge or deploy |
-| Before issue #46 can close the overall plan | The decision ticket itself is resolved and its build work is represented in the issue graph |
+| Before M10 starts | Eligible-release discovery and evidence-rich update-PR automation complete; never auto-merge or deploy |
+| During a bound M10 window | No #47 merge; a required change ends the window and a new one starts after acceptance |
+| Before issue #46 plan handoff, when possible | The decision ticket is resolved and its implementation lane is represented in the issue graph |
 
 The `KodiAddon` Resource may be coded before release-discovery automation is
 complete, but no live add-on acceptance may use an Artifact whose reproducible
@@ -891,8 +990,8 @@ No ID is implied by prose.
 | Milestone | Exact IDs | Rows | Migrate | Retire | Outside | Closure |
 |---|---|---:|---:|---:|---:|---|
 | M4 | `SKIN-025` | 1 | 1 | 0 | 0 | First live managed-file ownership transfer |
-| M5 | `CORE-001–CORE-029`; `ROOM-001–ROOM-011`; `SKIN-001–SKIN-002`; `EFFECT-001–EFFECT-002` | 44 | 44 | 0 | 0 | Shared Kodi/CoreELEC settings, room Intent, timezone, and Effects |
-| M6 | `ART-001–ART-041`; `ADDON-001–ADDON-003`; `PATCH-001–PATCH-004`; `SVC-001–SVC-017` | 65 | 59 | 5 | 1 | Add-ons/Artifacts/settings; retire `ADDON-003` and `SVC-014–SVC-017`; audit outside `ADDON-002` |
+| M5 | `CORE-001–CORE-029`; `ROOM-001–ROOM-011`; `SVC-001`; `SKIN-001–SKIN-002`; `EFFECT-001–EFFECT-002` | 45 | 45 | 0 | 0 | Complete shared Kodi/CoreELEC GUI settings boundary, room Intent, timezone, and Effects |
+| M6 | `ART-001–ART-041`; `ADDON-001–ADDON-003`; `PATCH-001–PATCH-004`; `SVC-002–SVC-017` | 64 | 58 | 5 | 1 | Add-ons/Artifacts/settings; accepted retirement of `ADDON-003` and `SVC-014–SVC-017`; audit outside `ADDON-002` |
 | M7 | `SKIN-003–SKIN-024`; `SKIN-026–SKIN-028`; `EFFECT-004` | 26 | 26 | 0 | 0 | Remaining skin/settings/generated state |
 | M8 | `PLAT-001–PLAT-005`; `SSH-001–SSH-004`; `CEC-001–CEC-005`; `GUIDE-001–GUIDE-008`; `LIFE-001–LIFE-003`; `EFFECT-003`; `EFFECT-005`; `FACT-001–FACT-006` | 33 | 23 | 0 | 10 | Remaining Resources/Guards/Actions/health/inventory; outside `PLAT-003`, `SSH-001–SSH-002`, `EFFECT-005`, `FACT-001–FACT-006` |
 | **Total** | **All classified IDs** | **169** | **153** | **5** | **11** | **Exactly once** |
@@ -912,19 +1011,24 @@ M1 adds `scripts/check_inventory_milestones.py`. It must:
 2. expand every classification range and reject overlap or omission;
 3. expand every section 6.1 milestone range and reject overlap or omission;
 4. join by ID and require classification role/disposition to remain unchanged;
-5. compare the ownership ledger, tests, docs, and evidence index at the
-   relevant milestone;
+5. compare the ownership ledger, tests, docs, and evidence index with
+   phase-aware rules: at M1 every row has a current executor/owner and exactly
+   one assigned milestone, but closure/evidence/replacement-doc requirements
+   apply only once that assigned milestone is accepted;
 6. assert the exact role totals `128/5/5/6/4/21`, disposition totals
    `153/5/11`, and grand total `169`;
 7. emit a sorted audit table:
 
 ```text
-id | role | disposition | milestone | active_actor | test | evidence | doc
+id | role | disposition | milestone | current_owner | closure | test | evidence | doc
 ```
 
 CI fails on a missing ID, duplicate ID, changed role/disposition, unknown ID,
-unclosed migrate row, active actor for a retired/outside row, or ownership
-transfer without evidence and a replacement operator document.
+an invalid current owner for the row's role/disposition/phase, premature
+closure, or an accepted ownership transfer without evidence and replacement
+operator documentation. Future `migrate` rows remain open and explicitly
+shell-owned, or use the correct current non-Device owner, until their assigned
+milestone is accepted; there is no unconditional “unclosed migrate” failure.
 
 M9 runs the same checker against the complete implementation and evidence;
 M11 runs it against the final Python-only tree.
@@ -962,23 +1066,25 @@ truth. Durable docs state the current supported system and recovery boundary.
 
 ## 8. Build-issue relationship
 
-Issue #45 decides this milestone contract. Issue #46 decides the mechanics for
-turning it into build issues: maximum issue size, acceptance format, ownership
-boundaries, readiness labels, predecessor evidence, documentation obligations,
-and anti-speculation rules.
+Issue #45 decides this milestone contract. Issue #46 must be accepted before
+any build issue is created; it decides maximum issue size, acceptance format,
+ownership boundaries, readiness labels, predecessor evidence, documentation
+obligations, and anti-speculation rules.
 
 After #46 is accepted, the plan handoff may generate initial issues only for:
 
 - M0 authoritative integration and `docs/superpowers/` removal;
 - M1 production scaffold/CI/shell-transition foundation;
 - M2 pure configuration/domain/planning/reporting tracer;
-- the independent #47 supply-chain decision/work lane as allowed by its own
-  graph.
+- the independent #47 implementation lane, only if its decision is already
+  accepted and its own graph permits it.
 
-M3 is generated after M2 exit. M4 is generated after M3 exit. M5–M8 begin
-with their prerequisite JIT design issues; implementation issues are generated
-only after those decisions and the predecessor exit. M9–M11 issues are
-generated after the preceding evidence exposes their concrete inputs.
+M3 is generated after M2 exit. M4 is generated after M3 exit. During
+predecessor implementation, the next milestone's JIT design issues may be
+opened, but they cannot become accepted build instructions or start
+implementation before predecessor exit evidence. M5–M8 implementation issues
+are generated only after those decisions and predecessor exit. M9–M11 issues
+are generated after the preceding evidence exposes their concrete inputs.
 
 No issue may turn the later milestone outcomes in this record into invented
 method signatures, filenames, schemas, transport capabilities, or Effect
@@ -993,19 +1099,28 @@ This record creates no build issues and changes no issue state or map.
   controlled recovery path, not a way to erase failed evidence.
 - Shell and Python never mutate concurrently.
 - After M4, shell effective `skin` scope is permanently frozen on the pilot.
-- After each later transfer, the frozen-scope ledger expands before another
-  shell command is allowed.
+- After each later transfer, the audited write-set guard and ownership ledger
+  expand before another shell command is allowed. Permission is based on
+  disjoint actual writes and Effects, never component/selector labels.
+- One recorded full shell provisioning run is permitted only after explicit
+  reimage/identity review and before a new Python handoff. It establishes a
+  new baseline, invalidates old live acceptance, and requires fresh Python
+  evidence; no shell overlap is allowed after handoff.
 - M9 full-profile acceptance precedes M10 observation.
 - M10 lasts at least 24 hours and includes one complete Kodi/TV lifecycle
-  cycle. Any shell mutation, unresolved recovery, drift, or manual repair
-  restarts it.
+  cycle, sampled before and after. It passes only with no unexplained
+  divergence, manual repair, or unresolved recovery and with every runtime
+  write normalized or explicitly classified. Any managed divergence requires
+  a fix/new evidence and restarts it; zero physical writes is not required.
 - The last shell-capable commit/tag and exact reimage/bootstrap steps are
-  retained as history. Shell is not retained as an executable fallback.
+  retained as history/reimage source. Shell is not retained as a runtime
+  fallback.
 - Before the final release, the isolated shell-removal commit may be reverted
   if combined-tree gates fail. After release, recover by fixing Python or
-  reimaging to the Manageable Device boundary, never by restoring dual
+  reimaging to the Manageable Device boundary, never by restoring shell
   ownership.
 - M11 has no release gap between final documentation and shell deletion.
+- No #47 merge may occur during a bound M10 observation window.
 - No milestone authorizes production fleet deployment.
 
 ## 10. Acceptance checklist
@@ -1018,7 +1133,11 @@ This record creates no build issues and changes no issue state or map.
 - [ ] M2 and M3 preserve the accepted pure/execution split.
 - [ ] M4 binds evidence to the post-integration source and permanently freezes
       effective shell `skin` scope on the pilot.
-- [ ] M5–M8 resolve prerequisite designs JIT and serialize live mutation.
+- [ ] M5 transfers the complete shared `guisettings.xml` boundary, including
+      `SVC-001`, and every shell permission is based on audited disjoint
+      write sets.
+- [ ] M5–M8 pipeline prerequisite designs JIT without allowing implementation
+      before predecessor exit, and serialize live mutation.
 - [ ] #47 gates M6 live Artifact acceptance and is complete before cutover.
 - [ ] All 169 IDs map exactly once with totals 153 migrate, 5 retire, and
       11 outside.
@@ -1026,8 +1145,10 @@ This record creates no build issues and changes no issue state or map.
       documentation together.
 - [ ] M9 proves complete inventory and full-profile pilot acceptance.
 - [ ] M10 proves at least 24 hours plus one complete normal lifecycle without
-      shell mutation, unresolved recovery, drift, or manual repair.
+      shell mutation, unexplained divergence, unresolved recovery, or manual
+      repair, with runtime writes normalized or explicitly classified.
 - [ ] M11 uses isolated documentation and shell-removal commits in one merge
-      train and leaves no active shell fallback.
-- [ ] Issue #45 and the Wayfinder map remain open/unchanged until independent
-      review accepts this draft.
+      train, revalidates fact/link preservation, dispositions `config/` and
+      `rooms`, and leaves no active shell fallback.
+- [ ] Issue #45 and the Wayfinder map record this accepted decision and issue
+      #46 is the first implementation prerequisite.
