@@ -1,7 +1,9 @@
 # Disposable pilot acceptance procedure
 
-Date: 2026-09-18  
-Issue: [#44, Define the disposable-pilot acceptance procedure](https://github.com/jbruns/tv/issues/44)  
+Date: 2026-09-18
+
+Issue: [#44, Define the disposable-pilot acceptance procedure](https://github.com/jbruns/tv/issues/44)
+
 Status: **Accepted contract-level decision**
 
 ## 1. Decision
