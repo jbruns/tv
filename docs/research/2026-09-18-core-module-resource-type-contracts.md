@@ -9,6 +9,31 @@ Interactive evidence:
 
 Status: **Accepted contract-level implementation decision**
 
+## 0. Test-driven refinement and erratum (2026-09-18)
+
+[Issue 42](https://github.com/jbruns/tv/issues/42) test design found that the
+original compact mutation sketches could not represent transport ambiguity and
+that ordinary SFTP rename does not portably guarantee atomic replacement over
+an existing destination. This narrow erratum corrects those sketches without
+changing the accepted module boundaries, lifecycle, or ownership.
+
+- Remote mutation outcomes are a closed union of `applied`,
+  `definitely_not_applied`, and `ambiguous`. SSH command outcomes make the same
+  distinction between completed execution, definite non-execution, and
+  ambiguous transport loss.
+- `ManagedFiles.apply` and `ManagedFiles.restore` return typed mutation
+  outcomes, never `None`. Execution always performs a fresh observation and
+  never infers Device state or Convergence from a receipt.
+- The SFTP port exposes atomic replace-over-existing as an explicit capability.
+  The Paramiko adapter implements it with `SFTPClient.posix_rename`
+  (`posix-rename@openssh.com`). Lack of that capability blocks before mutation.
+  Remove-then-rename is not an allowed fallback.
+- The SFTP port also exposes the metadata and mode operations actually needed
+  by managed-file behavior. Fakes implement matching case-sensitive POSIX
+  semantics.
+- Prepared and rollback payloads remain closed, safe, versioned persisted data
+  under the codec rules already accepted below.
+
 ## 1. Question
 
 What production module structure and typed interfaces give callers and tests
@@ -733,10 +758,16 @@ class DefectRecord:
     safe_message: str
 
 
+class MutationDisposition(StrEnum):
+    APPLIED = "applied"
+    DEFINITELY_NOT_APPLIED = "definitely_not_applied"
+    AMBIGUOUS = "ambiguous"
+
+
 @dataclass(frozen=True, slots=True)
 class MutationReceipt:
     operation: str
-    completed: bool
+    disposition: MutationDisposition
     evidence_digest: str | None
 ```
 
@@ -834,6 +865,7 @@ sketch uses `Any` or an unchecked cast.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Generic, Protocol, TypeVar
 
 
@@ -885,10 +917,16 @@ class PreparedChange(Generic[PreparedT, RollbackT]):
     precondition_digest: str
 
 
+class MutationDisposition(StrEnum):
+    APPLIED = "applied"
+    DEFINITELY_NOT_APPLIED = "definitely_not_applied"
+    AMBIGUOUS = "ambiguous"
+
+
 @dataclass(frozen=True, slots=True)
 class MutationReceipt:
     operation: str
-    completed: bool
+    disposition: MutationDisposition
 
 
 class ResourceType[
@@ -949,6 +987,7 @@ raises “unsupported.”
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 
@@ -1141,14 +1180,39 @@ class SessionRequirements:
 
 
 @dataclass(frozen=True, slots=True)
-class SshResult:
+class SshCompleted:
     exit_status: int
     stdout: bytes
     stderr: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class SshDefinitelyNotApplied:
+    failure_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class SshAmbiguous:
+    failure_code: str
+
+
+type SshOutcome = SshCompleted | SshDefinitelyNotApplied | SshAmbiguous
+
+
+class MutationDisposition(StrEnum):
+    APPLIED = "applied"
+    DEFINITELY_NOT_APPLIED = "definitely_not_applied"
+    AMBIGUOUS = "ambiguous"
+
+
+@dataclass(frozen=True, slots=True)
+class MutationReceipt:
+    operation: str
+    disposition: MutationDisposition
+
+
 class SshPort(Protocol):
-    def run(self, argv: tuple[str, ...], stdin: bytes | None = None) -> SshResult: ...
+    def run(self, argv: tuple[str, ...], stdin: bytes | None = None) -> SshOutcome: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1162,7 +1226,9 @@ class SftpPort(Protocol):
     def lstat(self, path: str) -> SftpAttributes: ...
     def read(self, path: str, limit: int) -> bytes: ...
     def write(self, path: str, content: bytes, mode: int) -> None: ...
-    def rename(self, source: str, destination: str) -> None: ...
+    def chmod(self, path: str, mode: int) -> None: ...
+    def supports_atomic_replace(self) -> bool: ...
+    def atomic_replace(self, source: str, destination: str) -> MutationReceipt: ...
     def remove(self, path: str) -> None: ...
 
 
@@ -1238,21 +1304,36 @@ class ManagedFileRollback:
     token: str
 
 
+class MutationDisposition(StrEnum):
+    APPLIED = "applied"
+    DEFINITELY_NOT_APPLIED = "definitely_not_applied"
+    AMBIGUOUS = "ambiguous"
+
+
+@dataclass(frozen=True, slots=True)
+class MutationReceipt:
+    operation: str
+    disposition: MutationDisposition
+
+
 class ManagedFiles(Protocol):
     def observe(self, path: ManagedPath, read_limit: int) -> ManagedFileObservation: ...
     def prepare(
         self,
         change: ManagedFileChange,
     ) -> tuple[PreparedManagedFileChange, ManagedFileRollback]: ...
-    def apply(self, prepared: PreparedManagedFileChange) -> None: ...
-    def restore(self, rollback: ManagedFileRollback) -> None: ...
+    def apply(self, prepared: PreparedManagedFileChange) -> MutationReceipt: ...
+    def restore(self, rollback: ManagedFileRollback) -> MutationReceipt: ...
 ```
 
 `capabilities/managed_file.py` is a deep internal module over SSH/SFTP. It
 owns safe path derivation, parent policy, `lstat`, symlink and non-regular-file
 rejection, read limits, mode handling, staging, rollback attachment
-persistence, immediate stale recheck, same-directory atomic replacement,
+persistence, immediate stale recheck, guarded same-directory atomic
+replace-over-existing through the required OpenSSH extension,
 atomic removal where supported, cleanup, and exact content/mode restoration.
+It never implements replacement as remove followed by rename. Mutation
+receipts preserve ambiguity, and execution always re-observes afterward.
 
 `KodiSmartPlaylist` owns playlist identity, deterministic XML, XML parsing,
 semantic comparison, and typed playlist Changes. It calls managed-file
@@ -1713,4 +1794,3 @@ Build tickets must preserve:
 15. explicit typed unsupported outcomes;
 16. AST-enforced forbidden imports;
 17. repository data excluded from the wheel.
-
