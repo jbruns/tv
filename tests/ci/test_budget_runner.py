@@ -126,6 +126,7 @@ def test_runner_cleans_up_descendants_on_timeout(
 ) -> None:
     result_path = scratch_directory / "result.json"
     ready_path = scratch_directory / "descendant.pid"
+    process_group_path = scratch_directory / "process-group.pid"
     terminated_path = scratch_directory / "descendant-terminated"
     signal_setup = (
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)"
@@ -150,7 +151,8 @@ ready.write_text(str(os.getpid()))
 signal.pause()
 """
     parent_code = (
-        "import signal, subprocess, sys; "
+        "import os, signal, subprocess, sys; from pathlib import Path; "
+        f"Path({str(process_group_path)!r}).write_text(str(os.getpgrp())); "
         f"subprocess.Popen([sys.executable, '-c', {descendant_code!r}], "
         "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
         "stderr=subprocess.DEVNULL); "
@@ -171,9 +173,9 @@ signal.pause()
             assert not terminated_path.exists()
         else:
             assert terminated_path.read_text(encoding="utf-8") == "terminated"
-        descendant_pid = int(ready_path.read_text(encoding="utf-8"))
-        with pytest.raises(ProcessLookupError):
-            os.kill(descendant_pid, 0)
+        process_group_id = int(process_group_path.read_text(encoding="utf-8"))
+        with pytest.raises((PermissionError, ProcessLookupError)):
+            os.killpg(process_group_id, 0)
         evidence = json.loads(result_path.read_text(encoding="utf-8"))
         assert evidence["timed_out"] is True
         assert evidence["command_exit_code"] == 124

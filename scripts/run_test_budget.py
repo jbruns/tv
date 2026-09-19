@@ -12,7 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-PROCESS_GROUP_GRACE_SECONDS = 1.0
+PROCESS_GROUP_GRACE_SECONDS = 0.25
 PROCESS_GROUP_POLL_SECONDS = 0.01
 
 
@@ -57,16 +57,17 @@ def append_job_summary(evidence: dict[str, Any]) -> None:
         )
 
 
-def process_group_exists(process_group_id: int) -> bool:
+def process_group_is_signalable(process_group_id: int) -> bool:
     try:
         os.killpg(process_group_id, 0)
-    except ProcessLookupError:
+    except PermissionError, ProcessLookupError:
+        # Descendants share our uid; EPERM means no live member remains signalable.
         return False
     return True
 
 
 def wait_for_process_group_exit(process_group_id: int, deadline: float) -> bool:
-    while process_group_exists(process_group_id):
+    while process_group_is_signalable(process_group_id):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
@@ -77,7 +78,7 @@ def wait_for_process_group_exit(process_group_id: int, deadline: float) -> bool:
 def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     process_group_id = process.pid
     deadline = time.monotonic() + PROCESS_GROUP_GRACE_SECONDS
-    with suppress(ProcessLookupError):
+    with suppress(PermissionError, ProcessLookupError):
         os.killpg(process_group_id, signal.SIGTERM)
 
     if process.poll() is None:
@@ -87,7 +88,9 @@ def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     if wait_for_process_group_exit(process_group_id, deadline):
         return
 
-    with suppress(ProcessLookupError):
+    if not process_group_is_signalable(process_group_id):
+        return
+    with suppress(PermissionError, ProcessLookupError):
         os.killpg(process_group_id, signal.SIGKILL)
     if process.poll() is None:
         process.wait(timeout=PROCESS_GROUP_GRACE_SECONDS)
