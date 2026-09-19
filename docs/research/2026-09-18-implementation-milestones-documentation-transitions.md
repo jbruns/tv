@@ -28,9 +28,9 @@ The route has these fixed properties:
    committed planning source into one authoritative history. Acceptance
    cannot remain bound to untracked state, but the reviewed preservation
    commit is a valid and required first integration commit.
-2. `docs/superpowers/` is removed in M0, in the same reviewed change set that
-   proves its unique facts are preserved and repairs every inbound link. Git
-   history is the archive.
+2. The superseded plan/spec tree is removed in M0, in the same reviewed change
+   set that proves its unique facts are preserved and repairs every inbound
+   link. Git history is the archive.
 3. M1 creates the production Python 3.14 scaffold and Linux x86_64/macOS arm64
    CI. The current shell suites continue in a separate transition job until
    retirement and do not count against Python's budgets.
@@ -205,8 +205,8 @@ implementation issues that may be generated together at plan handoff.
 
 ### M0 — Integrate authoritative planning and remove superseded plans
 
-**Objective.** Establish one authoritative planning baseline and remove
-`docs/superpowers/` without losing durable facts.
+**Objective.** Establish one authoritative planning baseline and remove the
+superseded plan/spec tree without losing durable facts.
 
 **Prerequisites / entry.**
 
@@ -226,7 +226,7 @@ implementation issues that may be generated together at plan handoff.
   0005–0006, inventory/classification, and research contracts #38–#44.
 - Reconcile refinements and rewrite internal links to stable repository paths.
 - Verify the unique-fact preservation table in the current inventory.
-- Remove all of `docs/superpowers/`.
+- Remove the complete superseded plan/spec tree.
 - Repair the three content links into that tree from:
   `docs/devices/ugoos-am6b-plus/room-desired-state.md`,
   `docs/devices/ugoos-am6b-plus/addon-onboarding-contract.md`, and
@@ -247,7 +247,7 @@ Device contact, and operator ownership transfer.
 **Exit commands / evidence.**
 
 - repository Markdown link, fence, and table validators;
-- an inbound-link search proving no live reference to `docs/superpowers/`;
+- an inbound-link search proving no live reference to the deleted tree;
 - a unique-fact preservation checklist tied to section 6 of the inventory;
 - `git diff --check`;
 - recorded G0 commit/tree digest and provenance map.
@@ -261,7 +261,7 @@ stable locations. Durable README, runbook, Device, room, audio, add-on,
 lifecycle, system, and network documentation remains current.
 
 **Failure / recovery.** Revert or correct the integration before M1. Missing
-facts or broken links block M0; restoring `docs/superpowers/` as an active
+facts or broken links block M0; restoring the superseded tree as an active
 documentation layer is not the remedy.
 
 **Dependencies.** First build milestone after issue #46; blocks every later
@@ -1068,7 +1068,7 @@ M11 runs it against the final Python-only tree.
 | `docs/home-assistant/ugoos-kodi-lifecycle.md` and HA assets | Retain because runtime policy is outside Reconciler | Validate examples in transition CI | M8 replaces Device gateway installation steps while retaining HA runtime policy | Exercise one lifecycle cycle | Retain |
 | `docs/network/` | Retain bootstrap/network truth | Validate links/examples | Update only if connection/host-key workflow changes | Confirm reimage/bootstrap path | Retain |
 | `docs/decisions/` and accepted ADRs/research | Retain engineering records | Add stable links from implementation docs | Append superseding decisions rather than rewriting history | Retain | Retain |
-| `docs/superpowers/` | Preserve unique facts, repair inbound links, delete in same M0 change set | Absent | Absent | Absent | Absent |
+| Superseded plan/spec tree | Preserve unique facts, repair inbound links, delete in same M0 change set | Absent | Absent | Absent | Absent |
 | Python operator reference | Not yet | Add validate/plan, then recovery/report reference | Add per-Resource workflows with every ownership transfer | Complete full-profile and cutover/reimage docs | Authoritative |
 | Shell source/tests/examples | Retain | Run separate transition CI | Freeze/narrow by ownership ledger; never silently overlap | Present but inactive on pilot | Delete in isolated commit in coordinated merge train |
 
@@ -1080,7 +1080,7 @@ Documentation validation is automated from M1:
 - shell/Python command examples in controlled dry-run/help modes;
 - generated CLI help snippets where used;
 - ownership-ledger references and inventory IDs;
-- a deny-list preventing deleted `docs/superpowers/` links;
+- a deny-list preventing links to deleted superseded documents;
 - after M11, a deny-list for active shell provisioning examples.
 
 Acceptance bundles and dated pilot results remain evidence, not room or Device
@@ -1095,7 +1095,7 @@ obligations, and anti-speculation rules.
 
 After #46 is accepted, the plan handoff may generate initial issues only for:
 
-- M0 authoritative integration and `docs/superpowers/` removal;
+- M0 authoritative integration and superseded-document removal;
 - M1 production scaffold/CI/shell-transition foundation;
 - M2 pure configuration/domain/planning/reporting tracer;
 - the independent #47 implementation lane, only if its decision is already
@@ -1166,8 +1166,8 @@ Issue #46 defines the build handoff in
 ## 10. Acceptance checklist
 
 - [ ] M0 integrates every accepted source with stable links and provenance.
-- [ ] `docs/superpowers/` is removed with unique-fact proof and all inbound
-      links repaired.
+- [ ] The superseded plan/spec tree is removed with unique-fact proof and all
+      inbound links repaired.
 - [ ] M1 enforces Linux x86_64/macOS arm64 Python 3.14 CI, exact 10/60-second
       budgets, and separate shell transition coverage.
 - [ ] M2 and M3 preserve the accepted pure/execution split.

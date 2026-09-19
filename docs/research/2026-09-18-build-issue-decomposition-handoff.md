@@ -185,9 +185,9 @@ not production input. G0 must contain no production `src/`, `pyproject.toml`,
 or `uv.lock`.
 
 M0 also creates the dependency-free `scripts/check_markdown.py`, preserves
-unique historical facts, repairs links, removes `docs/superpowers/`, converts
-temporary branch references to stable repository paths or SHA provenance, and
-records `docs/implementation/milestones/m0-exit.md`.
+unique historical facts, repairs links, removes the superseded plan/spec tree,
+converts temporary branch references to stable repository paths or SHA
+provenance, and records `docs/implementation/milestones/m0-exit.md`.
 
 Wayfinder branches remain until M0 merges and the provenance map is verified.
 They may then be deleted.

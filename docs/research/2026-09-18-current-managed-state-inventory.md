@@ -8,7 +8,7 @@ Ticket: [Catalogue current managed State Addresses](https://github.com/jbruns/tv
 This is a factual inventory of the committed shell implementation at commit
 `b4bb4e7`. It traces every committed entry point, library, configuration file,
 test suite, operator guide, Device guide, room record, Home Assistant asset,
-and superseded `docs/superpowers/` artifact. It records state the implementation
+and superseded implementation artifact. It records state the implementation
 observes, mutates, verifies, reports, backs up, restores, removes, installs,
 patches, or treats as an Effect.
 
@@ -408,9 +408,9 @@ rather than importable modules; tests exercise production text through hidden
 CLI hooks. Live Device acceptance evidence is documentary/manual rather than a
 default automated suite.
 
-## 6. Documentation evidence extraction before `docs/superpowers/` deletion
+## 6. Documentation evidence extraction before superseded artifact deletion
 
-The documentation architecture says `docs/superpowers/` artifacts will be
+The documentation architecture says superseded plan/spec artifacts will be
 removed and that durable docs should retain current operational truth, not
 acceptance journals
 ([`docs/decisions/repository-documentation-architecture.md:L39-L54`](../decisions/repository-documentation-architecture.md#L39-L54)).
@@ -523,8 +523,8 @@ implementation replaces and verifies each JSON file as a whole.
   driver; all hidden production fixture seams were traced.
 - [x] Durable architecture/decision, Device, operations, lifecycle, network,
   runbook, and room documentation.
-- [x] Every committed `docs/superpowers/specs/` and
-  `docs/superpowers/plans/` artifact was examined for facts that must survive
+- [x] Every committed superseded specification and implementation-plan
+  artifact was examined for facts that must survive
   their planned deletion.
 - [x] Home Assistant package and SSH config example were examined to identify
   the Device-side gateway boundary without inventorying runtime policy as a
