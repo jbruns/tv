@@ -6,12 +6,12 @@ import pytest
 from coreelec_reconciler.domain.execution import (
     MarkerCheckpoint,
     MutationDisposition,
+    MutationIntent,
     MutationReceipt,
     NormalizedResourceState,
     Presence,
     RemoteMarkerPhase,
     RemoteOwnershipIdentity,
-    ResourceMutationIntent,
     WorkspaceId,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
@@ -151,7 +151,7 @@ def test_complete_managed_file_lifecycle(
         if desired_content is not None
         else NormalizedResourceState(Presence.ABSENT, None, None, None)
     )
-    intents: list[ResourceMutationIntent] = []
+    intents: list[MutationIntent] = []
     executor = ManagedFileExecutor(device, attachments, intents.append, _marker)
     result = executor.apply(
         _prepared(attachments, before, desired, before_content, desired_content),
@@ -243,3 +243,68 @@ def test_third_party_state_is_not_overwritten_by_rollback() -> None:
     assert result.verification.status is VerificationStatus.MISMATCH
     assert result.rollback is None
     assert device.entry(PATH) == FakeManagedEntry(0o644, b"third-party")
+
+
+def test_rollback_is_noop_when_before_state_is_already_present() -> None:
+    device = FakeManagedFiles()
+    device.put(PATH, FakeManagedEntry(0o644, b"before"))
+    attachments = FakeAttachments()
+    prepared = _prepared(
+        attachments,
+        _state(b"before"),
+        _state(b"desired"),
+        b"before",
+        b"desired",
+    )
+
+    trace, verification = ManagedFileExecutor(
+        device, attachments, lambda intent: None, _marker
+    ).rollback(
+        prepared,
+        resource_id="skin.playlist.new-shows",
+        change_id="change-1",
+    )
+
+    assert trace is not None
+    assert trace.receipts == ()
+    assert verification.status is VerificationStatus.MATCHED
+    assert device.operations == ()
+
+
+def test_intent_is_persisted_before_immediate_marker_check_and_primitive() -> None:
+    events: list[str] = []
+    device = FakeManagedFiles()
+    attachments = FakeAttachments()
+    prepared = _prepared(
+        attachments,
+        NormalizedResourceState(Presence.ABSENT, None, None, None),
+        _state(b"desired"),
+        None,
+        b"desired",
+    )
+
+    executor = ManagedFileExecutor(
+        device,
+        attachments,
+        lambda intent: events.append(f"intent:{intent.primitive.value}"),
+        _marker,
+        lambda marker: events.append(f"marker:{marker.phase.value}"),
+        lambda trace, observation: events.append(
+            f"outcome:{len(trace.receipts)}:{observation.state.presence.value}"
+        ),
+    )
+    executor.apply(
+        prepared,
+        resource_id="skin.playlist.new-shows",
+        change_id="change-1",
+        rollback_approved=False,
+    )
+
+    assert events == [
+        "intent:stage_write",
+        "marker:mutating",
+        "outcome:1:present",
+        "intent:atomic_replace",
+        "marker:mutating",
+        "outcome:2:present",
+    ]

@@ -1,13 +1,30 @@
 """Immutable Resource Type descriptors."""
 
+from __future__ import annotations
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from enum import StrEnum
+from typing import TYPE_CHECKING, Protocol
 
 from coreelec_reconciler.domain.configuration import (
     DesiredPresence,
     KodiSmartPlaylistIntent,
 )
+from coreelec_reconciler.domain.execution import (
+    MutationDisposition,
+    MutationReceipt,
+    MutationTrace,
+)
+
+if TYPE_CHECKING:
+    from coreelec_reconciler.resource_types.managed_file.observation import (
+        ManagedFileObservation,
+    )
+    from coreelec_reconciler.resource_types.managed_file.preparation import (
+        PreparedManagedFile,
+    )
+    from coreelec_reconciler.transports.interfaces import ReadResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,13 +50,159 @@ class ErasedResourceExecution(Protocol):
 
     def observe(self) -> object: ...
 
+    def assess(self, observation: object) -> object: ...
+
     def prepare(self, change: object) -> object: ...
 
     def apply(self, prepared: object) -> object: ...
 
-    def verify(self, prepared: object) -> object: ...
-
     def rollback(self, prepared: object) -> object: ...
+
+    def cleanup(self, prepared: object, terminal_evidence_ref: str) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ErasedResourceExecutionAdapter[ObservationT, ChangeT, PreparedT]:
+    """Runtime-checked erasure for one fully typed Resource implementation."""
+
+    observation_type: type[ObservationT]
+    change_type: type[ChangeT]
+    prepared_type: type[PreparedT]
+    observe_typed: Callable[[], ObservationT]
+    assess_typed: Callable[[ObservationT], object]
+    prepare_typed: Callable[[ChangeT], PreparedT]
+    apply_typed: Callable[[PreparedT], object]
+    rollback_typed: Callable[[PreparedT], object]
+    cleanup_typed: Callable[[PreparedT, str], object]
+
+    def observe(self) -> object:
+        return self.observe_typed()
+
+    def assess(self, observation: object) -> object:
+        if not isinstance(observation, self.observation_type):
+            raise TypeError("Resource Observation type does not match descriptor")
+        return self.assess_typed(observation)
+
+    def prepare(self, change: object) -> object:
+        if not isinstance(change, self.change_type):
+            raise TypeError("Resource Change type does not match descriptor")
+        return self.prepare_typed(change)
+
+    def apply(self, prepared: object) -> object:
+        if not isinstance(prepared, self.prepared_type):
+            raise TypeError("prepared Resource type does not match descriptor")
+        return self.apply_typed(prepared)
+
+    def rollback(self, prepared: object) -> object:
+        if not isinstance(prepared, self.prepared_type):
+            raise TypeError("prepared Resource type does not match descriptor")
+        return self.rollback_typed(prepared)
+
+    def cleanup(self, prepared: object, terminal_evidence_ref: str) -> object:
+        if not isinstance(prepared, self.prepared_type):
+            raise TypeError("prepared Resource type does not match descriptor")
+        return self.cleanup_typed(prepared, terminal_evidence_ref)
+
+
+class ManagedFileCapabilities(Protocol):
+    """Least-authority primitives shared by Resource Types and execution."""
+
+    def lstat(self, path: str) -> ReadResult: ...
+
+    def read(self, path: str, limit: int) -> ReadResult: ...
+
+    def stage_write(
+        self, path: str, content: bytes, mode: int, operation_id: str
+    ) -> MutationReceipt: ...
+
+    def chmod(self, path: str, mode: int, operation_id: str) -> MutationReceipt: ...
+
+    def atomic_replace(
+        self, staged_path: str, destination: str, operation_id: str
+    ) -> MutationReceipt: ...
+
+    def remove(self, path: str, operation_id: str) -> MutationReceipt: ...
+
+    def restore(
+        self,
+        path: str,
+        content: bytes | None,
+        mode: int | None,
+        operation_id: str,
+    ) -> MutationReceipt: ...
+
+    def cleanup(self, path: str, operation_id: str) -> MutationReceipt: ...
+
+
+class ManagedFileVerificationStatus(StrEnum):
+    MATCHED = "matched"
+    MISMATCH = "mismatch"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedFileVerification:
+    status: ManagedFileVerificationStatus
+    observation: ManagedFileObservation
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedFileExecutionResult:
+    mutation: MutationTrace
+    verification: ManagedFileVerification
+    rollback: MutationTrace | None = None
+    rollback_verification: ManagedFileVerification | None = None
+    cleanup: MutationTrace | None = None
+
+    @property
+    def converged(self) -> bool:
+        return self.verification.status is ManagedFileVerificationStatus.MATCHED
+
+    @property
+    def recovery_required(self) -> bool:
+        return (
+            self.verification.status is ManagedFileVerificationStatus.UNKNOWN
+            or any(
+                receipt.disposition is MutationDisposition.AMBIGUOUS
+                for trace in (self.rollback, self.cleanup)
+                if trace is not None
+                for receipt in trace.receipts
+            )
+            or (
+                self.rollback_verification is not None
+                and self.rollback_verification.status
+                is not ManagedFileVerificationStatus.MATCHED
+            )
+        )
+
+
+class ManagedFileLifecycle(Protocol):
+    def apply(
+        self,
+        prepared: PreparedManagedFile,
+        *,
+        resource_id: str,
+        change_id: str,
+        rollback_approved: bool,
+        verify: Callable[[ManagedFileObservation], bool | None] | None = None,
+    ) -> ManagedFileExecutionResult: ...
+
+    def rollback(
+        self,
+        prepared: PreparedManagedFile,
+        *,
+        resource_id: str,
+        change_id: str,
+    ) -> tuple[MutationTrace | None, ManagedFileVerification]: ...
+
+    def cleanup(
+        self,
+        prepared: PreparedManagedFile,
+        *,
+        resource_id: str,
+        change_id: str,
+        terminal_evidence_ref: str,
+    ) -> MutationTrace: ...
 
 
 @dataclass(frozen=True, slots=True)

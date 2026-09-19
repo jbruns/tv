@@ -7,25 +7,75 @@ from coreelec_reconciler.domain.execution import (
     AllowedRecoveryAction,
     FinalizeMode,
     MutationDisposition,
+    MutationReceipt,
     MutationTrace,
     RecoveryActionCode,
+    RecoveryEvidence,
+    RemoteMarkerPhase,
     RunStatus,
+    SealIntent,
+    StateRelation,
+    StoredRevision,
+    VerifiedRunChain,
 )
 from coreelec_reconciler.domain.identifiers import RunId
-from coreelec_reconciler.execution.managed_file import ManagedFileExecutionResult
+from coreelec_reconciler.domain.planning import DesiredRelation
+from coreelec_reconciler.execution.authority import (
+    AcquiredAuthority,
+    AuthorityCoordinator,
+)
 from coreelec_reconciler.execution.progress import PresentationDiagnostic, Progress
-from coreelec_reconciler.execution.recovery import RecoveryInspection
+from coreelec_reconciler.execution.recovery import (
+    RecoveryInspection,
+    RecoveryInspectorPort,
+    inspect_recovery,
+)
+from coreelec_reconciler.resource_types.descriptor import (
+    ErasedResourceExecution,
+    ManagedFileExecutionResult,
+    ManagedFileVerification,
+    ManagedFileVerificationStatus,
+)
 
 
 class ExecutableChange(Protocol):
     @property
     def resource_id(self) -> str: ...
 
+    @property
+    def requires(self) -> tuple[str, ...]: ...
+
+    @property
+    def disruptive(self) -> bool: ...
+
     def prepare(self) -> object: ...
 
     def apply(self, prepared: object) -> ManagedFileExecutionResult: ...
 
-    def cleanup(self, prepared: object) -> object: ...
+    def cleanup(self, prepared: object, terminal_evidence_ref: str) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class BoundExecutableChange:
+    """Private adapter that erases one typed Resource only at engine entry."""
+
+    resource_id: str
+    requires: tuple[str, ...]
+    disruptive: bool
+    runtime: ErasedResourceExecution
+    change: object
+
+    def prepare(self) -> object:
+        return self.runtime.prepare(self.change)
+
+    def apply(self, prepared: object) -> ManagedFileExecutionResult:
+        result = self.runtime.apply(prepared)
+        if not isinstance(result, ManagedFileExecutionResult):
+            raise TypeError("Resource execution returned an invalid result")
+        return result
+
+    def cleanup(self, prepared: object, terminal_evidence_ref: str) -> object:
+        return self.runtime.cleanup(prepared, terminal_evidence_ref)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,9 +115,13 @@ class ExecutionJournal(Protocol):
         result: ManagedFileExecutionResult,
     ) -> None: ...
 
-    def terminal(self, run_id: RunId, status: RunStatus) -> None: ...
+    def terminal(self, run_id: RunId, status: RunStatus) -> StoredRevision: ...
 
     def cleanup(self, run_id: RunId, resource_id: str, result: object) -> None: ...
+
+    def skipped(
+        self, run_id: RunId, resource_id: str, dependency_ids: tuple[str, ...]
+    ) -> None: ...
 
 
 class RecoveryDriver(Protocol):
@@ -85,6 +139,291 @@ class RecoveryDriver(Protocol):
         approval: str | None,
         reason: str | None,
     ) -> ExecutionOutcome: ...
+
+
+class RecoveryResource(Protocol):
+    """Erased recovery view: fresh observe plus the Resource's pure assessment."""
+
+    def observe(self) -> object: ...
+
+    def assess(self, observation: object) -> object: ...
+
+    def rollback(
+        self,
+    ) -> tuple[MutationTrace | None, ManagedFileVerification]: ...
+
+    def cleanup(self, terminal_evidence_ref: str) -> MutationTrace: ...
+
+
+@dataclass(frozen=True, slots=True)
+class BoundRecoveryResource:
+    """Recovery adapter over a decoded typed prepared Resource value."""
+
+    runtime: ErasedResourceExecution
+    prepared: object
+
+    def observe(self) -> object:
+        return self.runtime.observe()
+
+    def assess(self, observation: object) -> object:
+        return self.runtime.assess(observation)
+
+    def rollback(
+        self,
+    ) -> tuple[MutationTrace | None, ManagedFileVerification]:
+        value = self.runtime.rollback(self.prepared)
+        if not isinstance(value, tuple) or len(value) != 2:
+            raise TypeError("Resource rollback returned an invalid result")
+        trace, verification = value
+        if trace is not None and not isinstance(trace, MutationTrace):
+            raise TypeError("Resource rollback trace is invalid")
+        if not isinstance(verification, ManagedFileVerification):
+            raise TypeError("Resource rollback Verification is invalid")
+        return trace, verification
+
+    def cleanup(self, terminal_evidence_ref: str) -> MutationTrace:
+        value = self.runtime.cleanup(self.prepared, terminal_evidence_ref)
+        if not isinstance(value, MutationTrace):
+            raise TypeError("Resource cleanup trace is invalid")
+        return value
+
+
+class RecoveryPersistence(Protocol):
+    """Existing M3.1 evidence operations consumed by recovery."""
+
+    def load_chain(self, run_id: RunId) -> VerifiedRunChain: ...
+
+    def inspection_port(self, run_id: RunId) -> RecoveryInspectorPort: ...
+
+    def resource(self, run_id: RunId) -> RecoveryResource: ...
+
+    def record_verification(
+        self, run_id: RunId, observation: object, assessment: object
+    ) -> StoredRevision: ...
+
+    def record_rollback(
+        self,
+        run_id: RunId,
+        trace: MutationTrace | None,
+        verification: ManagedFileVerification,
+    ) -> StoredRevision: ...
+
+    def record_terminal(self, run_id: RunId, status: RunStatus) -> StoredRevision: ...
+
+    def record_abandonment(
+        self, run_id: RunId, *, approval: str, reason: str
+    ) -> StoredRevision: ...
+
+    def record_cleanup(self, run_id: RunId, trace: MutationTrace) -> str: ...
+
+    def seal(self, run_id: RunId, intent: SealIntent) -> None: ...
+
+
+class RecoveryAuthority(Protocol):
+    """Bound M3.2 authority operations; no takeover or arbitrary marker access."""
+
+    def release(self, run_id: RunId, terminal_digest: str) -> MutationReceipt: ...
+
+    def quarantine(
+        self,
+        run_id: RunId,
+        incident_digest: str,
+        *,
+        approval: str,
+        reason: str,
+    ) -> None: ...
+
+
+class BoundAuthorityStore(Protocol):
+    def load(self, run_id: RunId) -> AcquiredAuthority: ...
+
+    def save(self, run_id: RunId, authority: AcquiredAuthority) -> None: ...
+
+
+class RecoveryClock(Protocol):
+    def utc_now(self) -> str: ...
+
+
+class M3AuthorityRecovery:
+    """Recovery-only adapter over the M3.2 bound authority coordinator."""
+
+    def __init__(
+        self,
+        coordinator: AuthorityCoordinator,
+        authorities: BoundAuthorityStore,
+        clock: RecoveryClock,
+    ) -> None:
+        self._coordinator = coordinator
+        self._authorities = authorities
+        self._clock = clock
+
+    def release(self, run_id: RunId, terminal_digest: str) -> MutationReceipt:
+        authority = self._authorities.load(run_id)
+        if authority.ownership.phase is not RemoteMarkerPhase.TERMINAL_RELEASE_PENDING:
+            authority = self._coordinator.checkpoint(
+                authority,
+                authority.ownership.phase,
+                RemoteMarkerPhase.TERMINAL_RELEASE_PENDING,
+                terminal_digest,
+                updated_at=self._clock.utc_now(),
+            )
+            self._authorities.save(run_id, authority)
+        return self._coordinator.release(authority, terminal_digest)
+
+    def quarantine(
+        self,
+        run_id: RunId,
+        incident_digest: str,
+        *,
+        approval: str,
+        reason: str,
+    ) -> None:
+        del approval, reason
+        authority = self._authorities.load(run_id)
+        if authority.ownership.phase is not RemoteMarkerPhase.QUARANTINE_PENDING:
+            authority = self._coordinator.checkpoint(
+                authority,
+                authority.ownership.phase,
+                RemoteMarkerPhase.QUARANTINE_PENDING,
+                incident_digest,
+                updated_at=self._clock.utc_now(),
+            )
+            self._authorities.save(run_id, authority)
+        self._coordinator.quarantine(
+            authority,
+            incident_digest,
+            updated_at=self._clock.utc_now(),
+        )
+
+
+class RecoveryCoordinator:
+    """Concrete recovery lifecycle over persisted evidence and bound authority."""
+
+    def __init__(
+        self,
+        persistence: RecoveryPersistence,
+        authority: RecoveryAuthority,
+    ) -> None:
+        self._persistence = persistence
+        self._authority = authority
+
+    def inspect(self, run_id: RunId) -> RecoveryInspection:
+        inspection = inspect_recovery(self._persistence.inspection_port(run_id))
+        evidence = inspection.evidence
+        if evidence.run_id != run_id:
+            raise ValueError("persisted recovery evidence does not bind to the Run")
+        if evidence.chain_valid and evidence.chain_complete:
+            chain = self._persistence.load_chain(run_id)
+            if (
+                not chain.revisions
+                or chain.head.revision != chain.revisions[-1].revision
+            ):
+                raise ValueError("persisted recovery chain is incomplete")
+        return inspection
+
+    def resume_verification(self, run_id: RunId) -> ExecutionOutcome:
+        self.inspect(run_id)
+        resource = self._persistence.resource(run_id)
+        observation = resource.observe()
+        assessment = resource.assess(observation)
+        self._persistence.record_verification(run_id, observation, assessment)
+        if _assessment_relation(assessment) is DesiredRelation.SATISFIED:
+            return self._finish(run_id, RunStatus.CONVERGED, resource)
+        refreshed = self.inspect(run_id)
+        if _action_allowed(refreshed, RecoveryActionCode.ROLLBACK, None):
+            return self.rollback(run_id)
+        relation = _assessment_relation(assessment)
+        status = (
+            RunStatus.FAILED_RECOVERY_REQUIRED
+            if relation is DesiredRelation.UNVERIFIABLE
+            else RunStatus.FAILED_PARTIAL
+        )
+        return self._finish(run_id, status, resource)
+
+    def rollback(self, run_id: RunId) -> ExecutionOutcome:
+        self.inspect(run_id)
+        resource = self._persistence.resource(run_id)
+        trace, verification = resource.rollback()
+        self._persistence.record_rollback(run_id, trace, verification)
+        status = (
+            RunStatus.FAILED_ROLLED_BACK
+            if trace is not None
+            and verification.status is ManagedFileVerificationStatus.MATCHED
+            else RunStatus.FAILED_RECOVERY_REQUIRED
+        )
+        return self._finish(run_id, status, resource)
+
+    def finalize(
+        self,
+        run_id: RunId,
+        mode: FinalizeMode,
+        *,
+        approval: str | None,
+        reason: str | None,
+    ) -> ExecutionOutcome:
+        inspection = self.inspect(run_id)
+        if mode is FinalizeMode.ABANDON:
+            if not approval or not reason:
+                raise ValueError("abandonment requires separate approval and reason")
+            terminal = self._persistence.record_abandonment(
+                run_id, approval=approval, reason=reason
+            )
+            self._authority.quarantine(
+                run_id,
+                terminal.digest,
+                approval=approval,
+                reason=reason,
+            )
+            self._persistence.seal(run_id, SealIntent(terminal.revision, True))
+            return ExecutionOutcome(
+                run_id, RunStatus.FAILED_RECOVERY_REQUIRED, (), True
+            )
+        status = _normal_final_status(inspection.evidence)
+        return self._finish(
+            run_id,
+            status,
+            self._persistence.resource(run_id),
+            terminal_already_durable=inspection.evidence.terminal_revision_durable,
+            cleanup_already_complete=inspection.evidence.cleanup_complete,
+        )
+
+    def _finish(
+        self,
+        run_id: RunId,
+        status: RunStatus,
+        resource: RecoveryResource,
+        *,
+        terminal_already_durable: bool = False,
+        cleanup_already_complete: bool = False,
+    ) -> ExecutionOutcome:
+        terminal = (
+            self._persistence.load_chain(run_id).head
+            if terminal_already_durable
+            else self._persistence.record_terminal(run_id, status)
+        )
+        if status is RunStatus.FAILED_RECOVERY_REQUIRED:
+            self._persistence.seal(run_id, SealIntent(terminal.revision, False))
+            return ExecutionOutcome(run_id, status, (), False)
+        if cleanup_already_complete:
+            cleanup_evidence_digest = terminal.digest
+            cleanup_complete = True
+        else:
+            cleanup = resource.cleanup(terminal.digest)
+            cleanup_evidence_digest = self._persistence.record_cleanup(run_id, cleanup)
+            cleanup_complete = all(
+                receipt.disposition is MutationDisposition.APPLIED
+                for receipt in cleanup.receipts
+            )
+        release = (
+            self._authority.release(run_id, cleanup_evidence_digest)
+            if cleanup_complete
+            else None
+        )
+        released = (
+            release is not None and release.disposition is MutationDisposition.APPLIED
+        )
+        self._persistence.seal(run_id, SealIntent(terminal.revision, released))
+        return ExecutionOutcome(run_id, status, (), cleanup_complete)
 
 
 class ExecutionEngine:
@@ -106,7 +445,25 @@ class ExecutionEngine:
         results: list[ManagedFileExecutionResult] = []
         prepared_changes: list[tuple[ExecutableChange, object]] = []
         status = RunStatus.CONVERGED
+        unavailable: set[str] = set()
+        stop_all = False
         for change in approved_plan.changes:
+            if stop_all:
+                unavailable.add(change.resource_id)
+                self._journal.skipped(approved_plan.run_id, change.resource_id, ())
+                continue
+            blocked_by = tuple(
+                dependency
+                for dependency in change.requires
+                if dependency in unavailable
+            )
+            if blocked_by:
+                unavailable.add(change.resource_id)
+                status = RunStatus.FAILED_PARTIAL
+                self._journal.skipped(
+                    approved_plan.run_id, change.resource_id, blocked_by
+                )
+                continue
             prepared = change.prepare()
             self._journal.prepared(approved_plan.run_id, change.resource_id, prepared)
             prepared_changes.append((change, prepared))
@@ -120,22 +477,25 @@ class ExecutionEngine:
             )
             if result.recovery_required:
                 status = RunStatus.FAILED_RECOVERY_REQUIRED
-                break
+                stop_all = True
+                continue
             if not result.converged:
+                unavailable.add(change.resource_id)
                 status = (
                     RunStatus.FAILED_ROLLED_BACK
                     if result.rollback_verification is not None
                     and result.rollback_verification.status.value == "matched"
                     else RunStatus.FAILED_PARTIAL
                 )
-                break
+                if change.disruptive:
+                    stop_all = True
 
-        self._journal.terminal(approved_plan.run_id, status)
+        terminal = self._journal.terminal(approved_plan.run_id, status)
         self._progress.emit("execution.terminal", approved_plan.run_id.value)
         cleanup_complete = True
         for change, prepared in prepared_changes:
             try:
-                cleanup = change.cleanup(prepared)
+                cleanup = change.cleanup(prepared, terminal.digest)
                 self._journal.cleanup(approved_plan.run_id, change.resource_id, cleanup)
                 if isinstance(cleanup, MutationTrace) and any(
                     receipt.disposition is not MutationDisposition.APPLIED
@@ -196,3 +556,42 @@ def _find_allowed(
         ),
         None,
     )
+
+
+def _action_allowed(
+    inspection: RecoveryInspection,
+    code: RecoveryActionCode,
+    mode: FinalizeMode | None,
+) -> bool:
+    action = next(
+        (
+            item
+            for item in inspection.actions
+            if item.code is code and item.finalize_mode is mode
+        ),
+        None,
+    )
+    return action is not None and action.allowed
+
+
+def _assessment_relation(assessment: object) -> DesiredRelation:
+    relation = getattr(assessment, "relation", None)
+    if not isinstance(relation, DesiredRelation):
+        raise ValueError("Resource assessment does not contain a typed relation")
+    return relation
+
+
+def _normal_final_status(evidence: RecoveryEvidence) -> RunStatus:
+    if evidence.terminal_revision_durable:
+        return evidence.canonical_status
+    if evidence.rollback_complete_and_verified:
+        return RunStatus.FAILED_ROLLED_BACK
+    if evidence.current_relation is StateRelation.POST:
+        return RunStatus.CONVERGED
+    if evidence.current_relation in {
+        StateRelation.BEFORE,
+        StateRelation.ALLOWED_INTERMEDIATE,
+        StateRelation.OTHER,
+    }:
+        return RunStatus.FAILED_PARTIAL
+    return RunStatus.FAILED_RECOVERY_REQUIRED

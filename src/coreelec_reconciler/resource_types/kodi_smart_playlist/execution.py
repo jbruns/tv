@@ -1,6 +1,7 @@
 """Typed Kodi Smart Playlist execution kept inside the Resource Type."""
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from coreelec_reconciler.domain.configuration import (
@@ -18,11 +19,10 @@ from coreelec_reconciler.domain.planning import (
     KodiSmartPlaylistObservation,
     PlaylistAssessment,
 )
-from coreelec_reconciler.execution.managed_file import (
+from coreelec_reconciler.resource_types.descriptor import (
     ManagedFileCapabilities,
     ManagedFileExecutionResult,
-    ManagedFileExecutor,
-    ManagedFileVerification,
+    ManagedFileLifecycle,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning import (
     assess_playlist,
@@ -33,6 +33,7 @@ from coreelec_reconciler.resource_types.kodi_smart_playlist.xml import (
 )
 from coreelec_reconciler.resource_types.managed_file.observation import (
     ManagedFileObservation,
+    observe_managed_file,
 )
 from coreelec_reconciler.resource_types.managed_file.paths import (
     ResolvedManagedAddress,
@@ -125,18 +126,43 @@ class KodiSmartPlaylistExecution:
         self,
         files: ManagedFileCapabilities,
         attachments: AttachmentStore,
-        executor: ManagedFileExecutor,
+        lifecycle: ManagedFileLifecycle,
         address: ResolvedManagedAddress,
         binding: PreparationBinding,
+        intent: KodiSmartPlaylistIntent,
+        desired_presence: DesiredPresence,
+        observed_at: Callable[[], str],
         *,
         read_limit: int = 1_048_576,
     ) -> None:
         self._files = files
         self._attachments = attachments
-        self._executor = executor
+        self._lifecycle = lifecycle
         self._address = address
         self._binding = binding
+        self._intent = intent
+        self._desired_presence = desired_presence
+        self._observed_at = observed_at
         self._read_limit = read_limit
+
+    def observe(self) -> ManagedFileObservation:
+        return observe_managed_file(
+            self._files, self._address, read_limit=self._read_limit
+        )
+
+    def assess(self, observation: ManagedFileObservation) -> PlaylistAssessment:
+        return assess(
+            PlaylistChange(
+                self._binding.resource_id,
+                self._binding.change_id,
+                self._intent,
+                self._desired_presence,
+                observation.state,
+                False,
+            ),
+            self._observed_at(),
+            observation,
+        )
 
     def prepare(self, change: PlaylistChange) -> PreparedPlaylistChange:
         desired, content = desired_state(change.intent, change.desired_presence)
@@ -162,30 +188,29 @@ class KodiSmartPlaylistExecution:
         return PreparedPlaylistChange(change, prepared)
 
     def apply(self, prepared: PreparedPlaylistChange) -> ManagedFileExecutionResult:
-        return self._executor.apply(
+        return self._lifecycle.apply(
             prepared.managed_file,
             resource_id=prepared.change.resource_id,
             change_id=prepared.change.change_id,
             rollback_approved=prepared.change.rollback_approved,
+            verify=lambda observation: _assessment_match(self.assess(observation)),
         )
 
-    def verify(self, prepared: PreparedPlaylistChange) -> ManagedFileVerification:
-        return self._executor.verify(prepared.managed_file)
-
-    def rollback(
-        self, prepared: PreparedPlaylistChange
-    ) -> tuple[MutationTrace | None, ManagedFileVerification]:
-        return self._executor.rollback(
+    def rollback(self, prepared: PreparedPlaylistChange) -> object:
+        return self._lifecycle.rollback(
             prepared.managed_file,
             resource_id=prepared.change.resource_id,
             change_id=prepared.change.change_id,
         )
 
-    def cleanup(self, prepared: PreparedPlaylistChange) -> MutationTrace:
-        return self._executor.cleanup(
+    def cleanup(
+        self, prepared: PreparedPlaylistChange, terminal_evidence_ref: str
+    ) -> MutationTrace:
+        return self._lifecycle.cleanup(
             prepared.managed_file,
             resource_id=prepared.change.resource_id,
             change_id=prepared.change.change_id,
+            terminal_evidence_ref=terminal_evidence_ref,
         )
 
 
@@ -207,3 +232,11 @@ def _intermediates(
             ),
         )
     return ()
+
+
+def _assessment_match(assessment: PlaylistAssessment) -> bool | None:
+    if assessment.relation.value == "satisfied":
+        return True
+    if assessment.relation.value == "unverifiable":
+        return None
+    return False

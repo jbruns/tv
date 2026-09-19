@@ -3,13 +3,12 @@
 import json
 import posixpath
 from collections.abc import Callable
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import Protocol
 
 from coreelec_reconciler.domain.execution import (
+    CleanupMutationIntent,
     MarkerCheckpoint,
     MutationDisposition,
+    MutationIntent,
     MutationReceipt,
     MutationTrace,
     NormalizedResourceState,
@@ -17,87 +16,36 @@ from coreelec_reconciler.domain.execution import (
     PrimitiveKind,
     ResourceMutationIntent,
 )
+from coreelec_reconciler.resource_types.descriptor import (
+    ManagedFileCapabilities,
+    ManagedFileExecutionResult,
+    ManagedFileVerification,
+    ManagedFileVerificationStatus,
+)
 from coreelec_reconciler.resource_types.managed_file.observation import (
     ManagedFileObservation,
     observe_managed_file,
+)
+from coreelec_reconciler.resource_types.managed_file.paths import (
+    ManagedPath,
+    ResolvedManagedAddress,
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
     AttachmentStore,
     PreparedManagedFile,
 )
-from coreelec_reconciler.transports.interfaces import ManagedFileReader
+
+VerificationStatus = ManagedFileVerificationStatus
 
 
-class ManagedFileCapabilities(ManagedFileReader, Protocol):
-    """Least-authority mutation surface required by managed-file execution."""
-
-    def stage_write(
-        self, path: str, content: bytes, mode: int, operation_id: str
-    ) -> MutationReceipt: ...
-
-    def chmod(self, path: str, mode: int, operation_id: str) -> MutationReceipt: ...
-
-    def atomic_replace(
-        self, staged_path: str, destination: str, operation_id: str
-    ) -> MutationReceipt: ...
-
-    def remove(self, path: str, operation_id: str) -> MutationReceipt: ...
-
-    def restore(
-        self,
-        path: str,
-        content: bytes | None,
-        mode: int | None,
-        operation_id: str,
-    ) -> MutationReceipt: ...
-
-    def cleanup(self, path: str, operation_id: str) -> MutationReceipt: ...
-
-
-class VerificationStatus(StrEnum):
-    MATCHED = "matched"
-    MISMATCH = "mismatch"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True, slots=True)
-class ManagedFileVerification:
-    status: VerificationStatus
-    observation: ManagedFileObservation
-
-
-@dataclass(frozen=True, slots=True)
-class ManagedFileExecutionResult:
-    mutation: MutationTrace
-    verification: ManagedFileVerification
-    rollback: MutationTrace | None = None
-    rollback_verification: ManagedFileVerification | None = None
-    cleanup: MutationTrace | None = None
-
-    @property
-    def converged(self) -> bool:
-        return self.verification.status is VerificationStatus.MATCHED
-
-    @property
-    def recovery_required(self) -> bool:
-        return (
-            self.verification.status is VerificationStatus.UNKNOWN
-            or any(
-                receipt.disposition is MutationDisposition.AMBIGUOUS
-                for trace in (self.rollback, self.cleanup)
-                if trace is not None
-                for receipt in trace.receipts
-            )
-            or (
-                self.rollback_verification is not None
-                and self.rollback_verification.status is not VerificationStatus.MATCHED
-            )
-        )
-
-
-IntentCheckpoint = Callable[[ResourceMutationIntent], None]
+IntentCheckpoint = Callable[[MutationIntent], None]
 MarkerProvider = Callable[[PrimitiveKind], MarkerCheckpoint]
 MarkerVerifier = Callable[[MarkerCheckpoint], None]
+PrimitiveOutcomeCheckpoint = Callable[
+    [MutationTrace, ManagedFileObservation],
+    None,
+]
+ObservationVerifier = Callable[[ManagedFileObservation], bool | None]
 
 
 class ManagedFileExecutor:
@@ -110,6 +58,7 @@ class ManagedFileExecutor:
         checkpoint: IntentCheckpoint,
         marker: MarkerProvider,
         verify_marker: MarkerVerifier | None = None,
+        outcome_checkpoint: PrimitiveOutcomeCheckpoint | None = None,
         *,
         read_limit: int = 1_048_576,
     ) -> None:
@@ -118,6 +67,9 @@ class ManagedFileExecutor:
         self._checkpoint = checkpoint
         self._marker = marker
         self._verify_marker = verify_marker or (lambda checkpoint: None)
+        self._outcome_checkpoint = outcome_checkpoint or (
+            lambda trace, observation: None
+        )
         self._read_limit = read_limit
 
     def apply(
@@ -127,6 +79,7 @@ class ManagedFileExecutor:
         resource_id: str,
         change_id: str,
         rollback_approved: bool,
+        verify: ObservationVerifier | None = None,
     ) -> ManagedFileExecutionResult:
         receipts: list[MutationReceipt] = []
         path = prepared.address.device_path.value
@@ -134,91 +87,107 @@ class ManagedFileExecutor:
         before = self._observe(prepared)
         if not before.safe or before.state != prepared.before:
             verification = ManagedFileVerification(
-                VerificationStatus.UNKNOWN
+                ManagedFileVerificationStatus.UNKNOWN
                 if not before.safe
-                else VerificationStatus.MISMATCH,
+                else ManagedFileVerificationStatus.MISMATCH,
                 before,
             )
             return ManagedFileExecutionResult(MutationTrace(()), verification)
 
         if prepared.desired.presence is Presence.ABSENT:
-            receipts.append(
-                self._primitive(
-                    prepared,
-                    resource_id,
-                    change_id,
-                    PrimitiveKind.REMOVE,
-                    lambda operation_id: self._files.remove(path, operation_id),
-                )
+            receipt = self._primitive(
+                prepared,
+                resource_id,
+                change_id,
+                PrimitiveKind.REMOVE,
+                lambda operation_id: self._files.remove(path, operation_id),
             )
+            receipts.append(receipt)
+            self._persist_primitive(receipts, prepared.address)
         elif prepared.before.content_digest != prepared.desired.content_digest:
             desired = self._desired_bytes(prepared)
-            receipts.append(
-                self._primitive(
+            receipt = self._primitive(
+                prepared,
+                resource_id,
+                change_id,
+                PrimitiveKind.STAGE_WRITE,
+                lambda operation_id: self._files.stage_write(
+                    staged_path,
+                    desired,
+                    prepared.desired.managed_mode or 0,
+                    operation_id,
+                ),
+            )
+            receipts.append(receipt)
+            staged_observation = self._persist_primitive(
+                receipts,
+                ResolvedManagedAddress(
+                    prepared.address.logical_address, ManagedPath(staged_path)
+                ),
+            )
+            staged_ready = (
+                receipt.disposition is not MutationDisposition.DEFINITELY_NOT_APPLIED
+                and staged_observation.safe
+                and staged_observation.state.presence is Presence.PRESENT
+                and staged_observation.state.content_digest
+                == prepared.desired.content_digest
+            )
+            if staged_ready:
+                receipt = self._primitive(
                     prepared,
                     resource_id,
                     change_id,
-                    PrimitiveKind.STAGE_WRITE,
-                    lambda operation_id: self._files.stage_write(
-                        staged_path,
-                        desired,
-                        prepared.desired.managed_mode or 0,
-                        operation_id,
+                    PrimitiveKind.ATOMIC_REPLACE,
+                    lambda operation_id: self._files.atomic_replace(
+                        staged_path, path, operation_id
                     ),
                 )
-            )
-            if receipts[-1].disposition is MutationDisposition.APPLIED:
-                receipts.append(
-                    self._primitive(
-                        prepared,
-                        resource_id,
-                        change_id,
-                        PrimitiveKind.ATOMIC_REPLACE,
-                        lambda operation_id: self._files.atomic_replace(
-                            staged_path, path, operation_id
-                        ),
-                    )
-                )
+                receipts.append(receipt)
+                current = self._persist_primitive(receipts, prepared.address)
+            else:
+                current = staged_observation
             if (
-                receipts[-1].disposition is MutationDisposition.APPLIED
+                receipt.disposition is not MutationDisposition.DEFINITELY_NOT_APPLIED
+                and current.safe
+                and current.address == prepared.address
+                and current.state.content_digest == prepared.desired.content_digest
                 and prepared.desired.managed_mode is not None
+                and current.state.presence is Presence.PRESENT
+                and current.state.managed_mode != prepared.desired.managed_mode
             ):
-                current = self._observe(prepared)
-                if (
-                    current.safe
-                    and current.state.presence is Presence.PRESENT
-                    and current.state.managed_mode != prepared.desired.managed_mode
-                ):
-                    receipts.append(
-                        self._primitive(
-                            prepared,
-                            resource_id,
-                            change_id,
-                            PrimitiveKind.CHMOD,
-                            lambda operation_id: self._files.chmod(
-                                path,
-                                prepared.desired.managed_mode or 0,
-                                operation_id,
-                            ),
-                        )
-                    )
-        elif prepared.before.managed_mode != prepared.desired.managed_mode:
-            receipts.append(
-                self._primitive(
+                receipt = self._primitive(
                     prepared,
                     resource_id,
                     change_id,
                     PrimitiveKind.CHMOD,
                     lambda operation_id: self._files.chmod(
-                        path, prepared.desired.managed_mode or 0, operation_id
+                        path,
+                        prepared.desired.managed_mode or 0,
+                        operation_id,
                     ),
                 )
+                receipts.append(receipt)
+                self._persist_primitive(receipts, prepared.address)
+        elif prepared.before.managed_mode != prepared.desired.managed_mode:
+            receipt = self._primitive(
+                prepared,
+                resource_id,
+                change_id,
+                PrimitiveKind.CHMOD,
+                lambda operation_id: self._files.chmod(
+                    path, prepared.desired.managed_mode or 0, operation_id
+                ),
             )
+            receipts.append(receipt)
+            self._persist_primitive(receipts, prepared.address)
 
-        verification = self.verify(prepared, prepared.desired)
+        verification = self._verify(prepared, prepared.desired, verify)
         rollback: MutationTrace | None = None
         rollback_verification: ManagedFileVerification | None = None
-        if verification.status is not VerificationStatus.MATCHED and rollback_approved:
+        if (
+            verification.status is not ManagedFileVerificationStatus.MATCHED
+            and rollback_approved
+        ):
             relation = verification.observation.state
             if verification.observation.safe and relation in {
                 prepared.before,
@@ -226,7 +195,7 @@ class ManagedFileExecutor:
                 *prepared.allowed_intermediates,
             }:
                 rollback = self._restore(prepared, resource_id, change_id)
-                rollback_verification = self.verify(prepared, prepared.before)
+                rollback_verification = self._verify(prepared, prepared.before)
         return ManagedFileExecutionResult(
             MutationTrace(tuple(receipts)),
             verification,
@@ -240,8 +209,9 @@ class ManagedFileExecutor:
         *,
         resource_id: str,
         change_id: str,
+        terminal_evidence_ref: str,
     ) -> MutationTrace:
-        return self._cleanup(prepared, resource_id, change_id)
+        return self._cleanup(prepared, resource_id, change_id, terminal_evidence_ref)
 
     def rollback(
         self,
@@ -251,33 +221,47 @@ class ManagedFileExecutor:
         change_id: str,
     ) -> tuple[MutationTrace | None, ManagedFileVerification]:
         observed = self._observe(prepared)
+        if observed.safe and observed.state == prepared.before:
+            return MutationTrace(()), self._verify(prepared, prepared.before)
         if not observed.safe or observed.state not in {
             prepared.before,
             prepared.desired,
             *prepared.allowed_intermediates,
         }:
             return None, ManagedFileVerification(
-                VerificationStatus.UNKNOWN
+                ManagedFileVerificationStatus.UNKNOWN
                 if not observed.safe
-                else VerificationStatus.MISMATCH,
+                else ManagedFileVerificationStatus.MISMATCH,
                 observed,
             )
         trace = self._restore(prepared, resource_id, change_id)
-        return trace, self.verify(prepared, prepared.before)
+        return trace, self._verify(prepared, prepared.before)
 
-    def verify(
+    def _verify(
         self,
         prepared: PreparedManagedFile,
         expected: NormalizedResourceState | None = None,
+        verify: ObservationVerifier | None = None,
     ) -> ManagedFileVerification:
         observation = self._observe(prepared)
+        assessed = verify(observation) if verify is not None else None
         status = (
-            VerificationStatus.UNKNOWN
+            ManagedFileVerificationStatus.UNKNOWN
             if not observation.safe
             else (
-                VerificationStatus.MATCHED
-                if observation.state == (expected or prepared.desired)
-                else VerificationStatus.MISMATCH
+                ManagedFileVerificationStatus.MATCHED
+                if (
+                    assessed is True
+                    or (
+                        verify is None
+                        and observation.state == (expected or prepared.desired)
+                    )
+                )
+                else (
+                    ManagedFileVerificationStatus.UNKNOWN
+                    if assessed is None and verify is not None
+                    else ManagedFileVerificationStatus.MISMATCH
+                )
             )
         )
         return ManagedFileVerification(status, observation)
@@ -304,25 +288,40 @@ class ManagedFileExecutor:
                 operation_id,
             ),
         )
-        return MutationTrace((receipt,))
+        trace = MutationTrace((receipt,))
+        self._persist_primitive(list(trace.receipts), prepared.address)
+        return trace
 
     def _cleanup(
         self,
         prepared: PreparedManagedFile,
         resource_id: str,
         change_id: str,
+        terminal_evidence_ref: str,
     ) -> MutationTrace:
         path = _staged_path(
             prepared.address.device_path.value, prepared.staged_object.object_id
         )
-        receipt = self._primitive(
-            prepared,
-            resource_id,
-            change_id,
-            PrimitiveKind.CLEANUP,
-            lambda operation_id: self._files.cleanup(path, operation_id),
+        operation_id = f"{change_id}.{PrimitiveKind.CLEANUP.value}"
+        marker = self._marker(PrimitiveKind.CLEANUP)
+        self._checkpoint(
+            CleanupMutationIntent(
+                operation_id,
+                PrimitiveKind.CLEANUP,
+                prepared.cleanup_metadata_attachment.digest,
+                terminal_evidence_ref,
+                marker,
+                1,
+            )
         )
-        return MutationTrace((receipt,))
+        self._verify_marker(marker)
+        receipt = self._files.cleanup(path, operation_id)
+        trace = MutationTrace((receipt,))
+        self._persist_primitive(
+            list(trace.receipts),
+            ResolvedManagedAddress(prepared.address.logical_address, ManagedPath(path)),
+        )
+        return trace
 
     def _primitive(
         self,
@@ -353,6 +352,17 @@ class ManagedFileExecutor:
         self._checkpoint(intent)
         self._verify_marker(intent.marker)
         return operation(operation_id)
+
+    def _persist_primitive(
+        self,
+        receipts: list[MutationReceipt],
+        address: ResolvedManagedAddress,
+    ) -> ManagedFileObservation:
+        observation = observe_managed_file(
+            self._files, address, read_limit=self._read_limit
+        )
+        self._outcome_checkpoint(MutationTrace(tuple(receipts)), observation)
+        return observation
 
     def _observe(self, prepared: PreparedManagedFile) -> ManagedFileObservation:
         return observe_managed_file(
