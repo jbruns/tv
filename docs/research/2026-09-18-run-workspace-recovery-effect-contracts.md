@@ -57,7 +57,7 @@ requires a new Plan and execution Run.
 
 Automatic rollback remains enabled only when the exact Change declared it,
 the original approval granted it, complete verified before-state exists, the
-evidence chain and Device binding remain valid, and fresh current state equals
+evidence chain and Device binding remain valid, and a fresh Observation equals
 an exact known post-image or allowed intermediate produced by this Run. It
 never overwrites third-party drift.
 
@@ -71,8 +71,8 @@ tests without scaffolding unused production handlers.
 This research record refines the implementation architecture; it does not
 override accepted ADRs. It refines, but does not replace:
 
-- the accepted CoreELEC Reconciler architecture (tracked integration pending
-  on this planning branch);
+- the accepted
+  [CoreELEC Reconciler architecture](../architecture/coreelec-reconciler.md);
 - ADR 0001's controller-only, on-demand model;
 - ADR 0002's domain Resource model;
 - ADR 0003's exclusive State Address ownership and verified
@@ -83,10 +83,9 @@ override accepted ADRs. It refines, but does not replace:
 
 The architecture documents and ADRs remain authoritative for product
 semantics. This record supplies the previously deferred operational
-implementation contract. Integration into the main architecture document is
-a follow-up because that document is unavailable on this planning branch.
-Earlier research sketches receive the dated refinements linked here rather
-than a precedence claim.
+implementation contract and the dated refinements that future architecture
+updates must retain. Earlier research sketches receive the dated refinements
+linked here rather than a precedence claim.
 
 The legacy lifecycle transaction demonstrates useful safety evidence:
 complete-before-mutate manifests, verified pre-images, explicit phases,
@@ -481,11 +480,11 @@ Rollback is allowed only when all conditions hold:
 - Device identity, pinned host key, platform binding, and applicable boot
   constraints match;
 - no live helper can still mutate the subject;
-- fresh complete current state is available; and
-- current state equals the exact known post-image or an explicitly enumerated
+- a fresh complete Observation is available; and
+- that Observation equals the exact known post-image or an explicitly enumerated
   intermediate produced by this Run.
 
-If current state equals the before-state, rollback performs no mutation and
+If the Observation equals the before-state, rollback performs no mutation and
 freshly verifies `restored_or_unchanged`. If it equals neither before-state
 nor an allowed Run-produced state, rollback blocks to avoid overwriting
 third-party drift.
@@ -1539,7 +1538,7 @@ verifies, or conditionally restores; new forward work replans.
 ### Unconditional rollback
 
 Rejected because it can overwrite third-party changes. Rollback requires an
-exact known Run-produced current state.
+exact known Run-produced observed state.
 
 ### Remote backup authority
 

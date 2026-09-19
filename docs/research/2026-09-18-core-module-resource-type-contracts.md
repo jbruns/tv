@@ -197,10 +197,10 @@ Pydantic boundary conversion, deterministic JSON, AST import rejection,
 wheel isolation, and Paramiko SSH/SFTP behavior. The production design keeps
 those proven constraints while replacing proof-only module shapes.
 
-The architecture file is not tracked on this branch. It was intentionally not
-recreated from main-worktree-only material. When the accepted architecture is
-integrated onto a common branch, its “Application Structure” section must be
-surgically updated to the direction in sections 5 and 6, including the single
+The accepted
+[CoreELEC Reconciler architecture](../architecture/coreelec-reconciler.md) is
+the stable foundation context. Future updates to its “Application Structure”
+section must adopt the direction in sections 5 and 6, including the single
 `execute` interface, pure assessment/fresh Verification rule, and deep
 managed-file capability.
 

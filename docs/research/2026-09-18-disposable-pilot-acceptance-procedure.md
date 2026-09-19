@@ -77,7 +77,9 @@ This procedure operationalizes, and does not weaken:
 - the accepted architecture/ADR decision recorded in the issue map that makes
   the pilot Device disposable acceptance infrastructure and requires fresh
   convergence, representative drift repair, and a second-Run no-op before
-  shell retirement; #45 must integrate the branch-local source documents;
+  shell retirement; the accepted
+  [milestone contract](2026-09-18-implementation-milestones-documentation-transitions.md)
+  integrates these source documents as stable research records;
 - the current
   [Ugoos provisioning operations](../operations/provision-ugoos.md),
   [theater Device record](../../rooms/theater/devices/ugoos-am6b-plus.md), and
