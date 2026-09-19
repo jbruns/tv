@@ -64,6 +64,7 @@ jobs:
         run: >-
           uv run ruff format --check
           src scripts/run_test_budget.py scripts/check_inventory_milestones.py
+          scripts/check_shell_permissions.py
           tests/scaffold tests/inventory tests/ci
           tests/conftest.py tests/support
       - name: Strict mypy

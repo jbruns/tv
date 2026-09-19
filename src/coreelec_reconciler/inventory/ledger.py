@@ -841,6 +841,23 @@ def validate_ledger(path: Path) -> LedgerValidation:
                     inventory_id,
                     f"{field_name}.items",
                 )
+            required_status = None
+            if owner == "shell":
+                required_status = "audited"
+            elif owner == "python":
+                required_status = "frozen"
+            elif disposition == "retire" and owner == "none":
+                required_status = "retired"
+            elif accepted is not None and accepted.initial_owner != "shell":
+                required_status = "not-applicable"
+            if required_status is not None and status != required_status:
+                _diagnostic(
+                    diagnostics,
+                    "ledger.invalid-shell-permission",
+                    f"{field_name}.status must be {required_status} for owner {owner}",
+                    inventory_id,
+                    f"{field_name}.status",
+                )
         recovery = row.get("recovery")
         if not isinstance(recovery, dict):
             _diagnostic(

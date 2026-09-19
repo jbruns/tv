@@ -31,18 +31,64 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "kodi://addons/repository.emby.kodi/enabled",
+          "kodi://addons/repository.dontpanic/enabled",
+          "kodi://addons/repository.jurialmunkey/enabled",
+          "kodi://addons/plugin.service.emby-next-gen/enabled",
+          "kodi://addons/plugin.video.themoviedb.helper/enabled",
+          "kodi://addons/pvr.nextpvr/enabled",
+          "kodi://addons/script.plexmod/enabled",
+          "kodi://addons/skin.arctic.fuse.3/enabled",
+          "kodi://addons/weather.ha/enabled",
+          "kodi://addons/resource.language.en_us/enabled",
+          "kodi://addons/script.artistslideshow/enabled",
+          "kodi://addons/resource.images.arctic.waves/enabled",
+          "kodi://addons/resource.images.weatherfanart.multi/enabled",
+          "kodi://addons/resource.images.moviecountryicons.maps/enabled",
+          "kodi://addons/resource.images.studios.white/enabled",
+          "kodi://addons/resource.uisounds.fromashes/enabled",
+          "kodi://addons/inputstream.adaptive/enabled",
+          "kodi://addons/inputstream.ffmpegdirect/enabled",
+          "kodi://addons/resource.font.robotocjksc/enabled",
+          "kodi://addons/resource.images.studios.coloured/enabled",
+          "kodi://addons/resource.images.weathericons.white/enabled",
+          "kodi://addons/script.module.addon.signals/enabled",
+          "kodi://addons/script.module.certifi/enabled",
+          "kodi://addons/script.module.chardet/enabled",
+          "kodi://addons/script.module.defusedxml/enabled",
+          "kodi://addons/script.module.dateutil/enabled",
+          "kodi://addons/script.module.future/enabled",
+          "kodi://addons/script.module.idna/enabled",
+          "kodi://addons/script.module.infotagger/enabled",
+          "kodi://addons/script.module.inputstreamhelper/enabled",
+          "kodi://addons/script.module.iso8601/enabled",
+          "kodi://addons/script.module.jurialmunkey/enabled",
+          "kodi://addons/script.module.kodi-six/enabled",
+          "kodi://addons/script.module.pysocks/enabled",
+          "kodi://addons/script.module.qrcode/enabled",
+          "kodi://addons/script.module.requests/enabled",
+          "kodi://addons/script.module.six/enabled",
+          "kodi://addons/script.module.urllib3/enabled",
+          "kodi://addons/script.module.yaml/enabled",
+          "kodi://addons/script.skinvariables/enabled",
+          "kodi://addons/script.texturemaker/enabled"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -93,18 +139,22 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -124,18 +174,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/repository.emby.kodi/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -155,18 +211,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/repository.dontpanic/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -186,18 +248,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/repository.jurialmunkey/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -217,18 +285,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/plugin.service.emby-next-gen/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -248,18 +322,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/plugin.video.themoviedb.helper/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -279,18 +359,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/pvr.nextpvr/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -310,18 +396,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.plexmod/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -341,18 +433,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/skin.arctic.fuse.3/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -372,18 +470,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/weather.ha/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -403,18 +507,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.language.en_us/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -434,18 +544,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.artistslideshow/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -465,18 +581,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.images.arctic.waves/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -496,18 +618,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.images.weatherfanart.multi/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -527,18 +655,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.images.moviecountryicons.maps/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -558,18 +692,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.images.studios.white/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -589,18 +729,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.uisounds.fromashes/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -620,18 +766,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/inputstream.adaptive/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -651,18 +803,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/inputstream.ffmpegdirect/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -682,18 +840,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.font.robotocjksc/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -713,18 +877,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.images.studios.coloured/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -744,18 +914,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/resource.images.weathericons.white/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -775,18 +951,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.addon.signals/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -806,18 +988,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.certifi/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -837,18 +1025,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.chardet/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -868,18 +1062,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.defusedxml/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -899,18 +1099,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.dateutil/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -930,18 +1136,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.future/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -961,18 +1173,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.idna/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -992,18 +1210,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.infotagger/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1023,18 +1247,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.inputstreamhelper/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1054,18 +1284,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.iso8601/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1085,18 +1321,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.jurialmunkey/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1116,18 +1358,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.kodi-six/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1147,18 +1395,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.pysocks/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1178,18 +1432,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.qrcode/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1209,18 +1469,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.requests/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1240,18 +1506,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.six/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1271,18 +1543,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.urllib3/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1302,18 +1580,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.module.yaml/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1333,18 +1617,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.skinvariables/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1364,18 +1654,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/addons/script.texturemaker/"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1395,18 +1691,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_pc_on_tv_standby"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1426,18 +1727,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#activate_source"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1457,18 +1763,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#wake_devices"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1488,18 +1799,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_devices"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1519,18 +1835,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_tv_on_pc_standby"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1550,18 +1871,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#locale.language"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1581,18 +1907,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#locale.country"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1612,18 +1943,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#locale.keyboardlayouts"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1643,18 +1979,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#locale.timezonecountry"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1674,18 +2015,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#locale.timezone"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1705,18 +2051,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.cache/timezone#TIMEZONE"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1736,18 +2087,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/etc/localtime (indirect representation selected by tz-data.service)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1767,18 +2123,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#general.addonupdates"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1798,18 +2159,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#input.enablemouse"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1829,18 +2195,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#filelists.showaddsourcebuttons"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1860,18 +2231,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#filelists.showextensions"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1891,18 +2267,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#filelists.showparentdiritems"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1922,18 +2303,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videolibrary.flattentvshows"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1953,18 +2339,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videolibrary.ignorevideoextras"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -1984,18 +2375,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videolibrary.ignorevideoversions"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2015,18 +2411,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videolibrary.showallitems"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2046,18 +2447,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videolibrary.tvshowsselectfirstunwatcheditem"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2077,18 +2483,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videoplayer.adjustrefreshrate"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2108,18 +2519,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videoplayer.usedisplayasclock"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2139,18 +2555,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.esallinterfaces"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2170,18 +2591,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.esenabled"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2201,18 +2627,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.webserver"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2232,18 +2663,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.webserverauthentication"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2263,18 +2699,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.webserverpassword"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2294,18 +2735,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.webserverport"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2325,18 +2771,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.webserverssl"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2356,18 +2807,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#services.webserverusername"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2387,18 +2843,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.audiodevice"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2418,18 +2879,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.passthroughdevice"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2449,18 +2915,20 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2480,18 +2948,20 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2511,18 +2981,20 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-003"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -2542,18 +3014,20 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3038,18 +3512,22 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.config/kodi-lifecycle"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "LIFE-003"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3069,18 +3547,22 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.ssh/authorized_keys#homeassistant-ugoos-kodi-lifecycle"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "LIFE-003"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3100,18 +3582,20 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "LIFE-003"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3255,17 +3739,17 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "recovery": {
@@ -3286,17 +3770,17 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "recovery": {
@@ -3348,17 +3832,17 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "recovery": {
@@ -3379,17 +3863,17 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "recovery": {
@@ -3410,18 +3894,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videoscreen.resolution"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3441,18 +3930,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#videoscreen.whitelist"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3472,18 +3966,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#coreelec.amlogic.disabledolbyvision"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3503,18 +4002,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#coreelec.amlogic.dolbyvisionled"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3534,18 +4038,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.passthrough"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3565,18 +4074,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.ac3passthrough"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3596,18 +4110,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.eac3passthrough"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3627,18 +4146,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.dtspassthrough"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3658,18 +4182,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.truehdpassthrough"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3689,18 +4218,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.dtshdpassthrough"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3720,18 +4254,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#audiooutput.channels"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3751,18 +4290,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#lookandfeel.skin"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3782,18 +4327,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#lookandfeel.soundskin"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3813,18 +4364,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1101.*"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3844,18 +4401,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1102.*"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3875,18 +4438,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1103.*"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3906,18 +4475,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1104.* (managed absence/empty)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3937,18 +4512,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1107.Toggle,Hub.1107.*"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3968,18 +4549,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1108.Toggle"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -3999,18 +4586,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#Options.01.include,Options.02.include,Options.04.include"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4030,18 +4623,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#Options.03.include,path,target"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4061,18 +4660,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4092,18 +4697,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4123,18 +4734,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4154,18 +4771,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4185,18 +4808,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json#library.seasons"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4216,18 +4845,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json#library.episodes"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4247,18 +4882,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://home/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml#library.seasons compiled expression"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4278,18 +4919,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://home/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml#library.episodes compiled expression"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4309,18 +4956,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/InProgressMovies90Days.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4340,18 +4993,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/InProgressShows90Days.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4371,18 +5030,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4402,18 +5067,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4433,18 +5104,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/TraktPopularTVShows.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4464,18 +5141,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/TraktWeekendBoxOffice.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4495,18 +5178,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/NewShows.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4526,18 +5215,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/NewMovies.xsp"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4557,18 +5252,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp (managed absence)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4588,18 +5289,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp (managed absence)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4681,18 +5388,23 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.cache/services/sshd.conf#SSH_ARGS",
+          "/storage/.cache/services/sshd.conf#SSHD_DISABLE_PW_AUTH"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-003"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4712,17 +5424,17 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "permitted_effects": {
-        "status": "unaudited",
+        "status": "audited",
         "items": []
       },
       "recovery": {
@@ -4743,18 +5455,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/guisettings.xml#weather.addon"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4774,18 +5492,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_server"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4805,18 +5529,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_key"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4836,18 +5566,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_weather_forecast_entity_id"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4867,18 +5603,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_sun_entity_id"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4898,18 +5640,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#host"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4929,18 +5677,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#hostprotocol"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4960,18 +5714,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#kodi_addon_instance_enabled"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -4991,18 +5751,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#kodi_addon_instance_name"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5022,18 +5788,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#pin"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5053,18 +5825,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#port"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5084,18 +5862,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/plugin.video.themoviedb.helper/settings.xml#mdblist_apikey"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5115,18 +5899,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/plugin.video.themoviedb.helper/settings.xml#omdb_apikey"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5146,18 +5936,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.plexmod/settings.xml#allow_insecure (managed absence)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5177,18 +5973,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.plexmod/settings.xml#local_mode (managed absence)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5208,18 +6010,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.plexmod/settings.xml#local_servers_json (managed absence)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",
@@ -5239,18 +6047,24 @@
         "closing_pr": null
       },
       "evidence": {
-        "test": "tests/inventory/test_ledger.py",
-        "evidence": "docs/research/2026-09-18-managed-state-classification.md",
-        "documentation": "docs/research/2026-09-18-implementation-milestones-documentation-transitions.md"
+        "test": "tests/inventory/test_shell_permissions.py",
+        "evidence": "inventory/shell-write-sets.json",
+        "documentation": "docs/operations/shell-write-set-permissions.md"
       },
       "transfers": [],
       "shell_write_set": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "special://profile/addon_data/script.plexmod/settings.xml#local_profiles_json (managed absence)"
+        ]
       },
       "permitted_effects": {
-        "status": "unaudited",
-        "items": []
+        "status": "audited",
+        "items": [
+          "EFFECT-001",
+          "EFFECT-002",
+          "EFFECT-004"
+        ]
       },
       "recovery": {
         "state": "none",

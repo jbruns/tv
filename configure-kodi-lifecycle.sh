@@ -443,6 +443,18 @@ run_recovery_mode() {
   fi
 }
 
+enforce_shell_permissions() {
+  local operation="$1" output status
+  set +e
+  output="$(python3 "${SCRIPT_DIR}/scripts/check_shell_permissions.py" \
+    --entry-point configure-kodi-lifecycle.sh \
+    --operation "${operation}" 2>&1)"
+  status=$?
+  set -e
+  (( status == 0 )) \
+    || die "Shell write-set permission denied before Device contact: ${output}"
+}
+
 # Prints operator recovery commands appropriate to DEPLOYMENT_STATE. Uses the
 # no-argument (pointer-based) form of --rollback-transaction/
 # --inspect-transaction whenever TRANSACTION was never learned (finding C2's
@@ -496,6 +508,13 @@ main() {
         "${INSPECT_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" || \
         "${FINALIZE_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
     [[ "${DRY_RUN}" != "1" ]] || die "--dry-run cannot be combined with transaction recovery modes"
+    if [[ "${ROLLBACK_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
+      enforce_shell_permissions rollback
+    elif [[ "${FINALIZE_TRANSACTION}" != "${RECOVERY_FLAG_UNSET}" ]]; then
+      enforce_shell_permissions finalize
+    else
+      enforce_shell_permissions inspect
+    fi
     run_recovery_mode
     return 0
   fi
@@ -503,6 +522,7 @@ main() {
   [[ -n "${TARGET}" ]] || die "--target is required"
   [[ -n "${CONTROLLER_PUBLIC_KEY}" ]] || die "--controller-public-key is required"
   [[ -n "${CONTROLLER_IDENTITY}" ]] || die "--controller-identity is required"
+  enforce_shell_permissions deploy
   [[ -f "${CONTROLLER_PUBLIC_KEY}" ]] || die "--controller-public-key file does not exist: ${CONTROLLER_PUBLIC_KEY}"
   [[ -f "${CONTROLLER_IDENTITY}" ]] || die "--controller-identity file does not exist: ${CONTROLLER_IDENTITY}"
 

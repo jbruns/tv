@@ -1,0 +1,1623 @@
+{
+  "schema_version": 1,
+  "catalog": "accepted-managed-state-v1",
+  "authority": "Audited from executable mutation primitives and reachable call paths; selector names only choose audited records and never grant permission.",
+  "source_files": [
+    "provision-coreelec.sh",
+    "configure-coreelec-addons.sh",
+    "configure-kodi-lifecycle.sh",
+    "lib/coreelec-lifecycle.sh",
+    "lib/coreelec-addon-workflows.sh",
+    "lib/coreelec-artifacts.sh",
+    "lib/coreelec-config.sh",
+    "lib/coreelec-env.sh",
+    "lib/coreelec-ssh.sh"
+  ],
+  "artifact_inventory_ids": {
+    "inputstream.adaptive": "ART-017",
+    "inputstream.ffmpegdirect": "ART-018",
+    "plugin.service.emby-next-gen": "ART-004",
+    "plugin.video.themoviedb.helper": "ART-005",
+    "pvr.nextpvr": "ART-006",
+    "repository.dontpanic": "ART-002",
+    "repository.emby.kodi": "ART-001",
+    "repository.jurialmunkey": "ART-003",
+    "resource.font.robotocjksc": "ART-019",
+    "resource.images.arctic.waves": "ART-012",
+    "resource.images.moviecountryicons.maps": "ART-014",
+    "resource.images.studios.coloured": "ART-020",
+    "resource.images.studios.white": "ART-015",
+    "resource.images.weatherfanart.multi": "ART-013",
+    "resource.images.weathericons.white": "ART-021",
+    "resource.language.en_us": "ART-010",
+    "resource.uisounds.fromashes": "ART-016",
+    "script.artistslideshow": "ART-011",
+    "script.module.addon.signals": "ART-022",
+    "script.module.certifi": "ART-023",
+    "script.module.chardet": "ART-024",
+    "script.module.dateutil": "ART-026",
+    "script.module.defusedxml": "ART-025",
+    "script.module.future": "ART-027",
+    "script.module.idna": "ART-028",
+    "script.module.infotagger": "ART-029",
+    "script.module.inputstreamhelper": "ART-030",
+    "script.module.iso8601": "ART-031",
+    "script.module.jurialmunkey": "ART-032",
+    "script.module.kodi-six": "ART-033",
+    "script.module.pysocks": "ART-034",
+    "script.module.qrcode": "ART-035",
+    "script.module.requests": "ART-036",
+    "script.module.six": "ART-037",
+    "script.module.urllib3": "ART-038",
+    "script.module.yaml": "ART-039",
+    "script.plexmod": "ART-007",
+    "script.skinvariables": "ART-040",
+    "script.texturemaker": "ART-041",
+    "skin.arctic.fuse.3": "ART-008",
+    "weather.ha": "ART-009"
+  },
+  "entry_points": {
+    "provision-coreelec.sh": {
+      "deploy": {
+        "dependencies": {
+          "baseline": [
+            "core",
+            "cec",
+            "addons",
+            "services",
+            "skin"
+          ],
+          "core": [],
+          "cec": [],
+          "addons": [],
+          "services": [
+            "addons"
+          ],
+          "skin": [
+            "core",
+            "addons"
+          ],
+          "room": [
+            "core"
+          ]
+        },
+        "scopes": {
+          "baseline": {
+            "call_path_ids": []
+          },
+          "core": {
+            "call_path_ids": [
+              "provision.core-settings",
+              "provision.kodi-timezone-effects"
+            ]
+          },
+          "cec": {
+            "call_path_ids": [
+              "provision.cec-settings",
+              "provision.kodi-timezone-effects"
+            ]
+          },
+          "addons": {
+            "call_path_ids": [
+              "provision.selected-addon-directories",
+              "provision.selected-addon-enablement",
+              "provision.addon-inventory",
+              "provision.kodi-timezone-effects",
+              "provision.buildviews"
+            ]
+          },
+          "services": {
+            "call_path_ids": [
+              "provision.services-settings",
+              "provision.kodi-timezone-effects"
+            ]
+          },
+          "skin": {
+            "call_path_ids": [
+              "provision.skin-settings",
+              "provision.kodi-timezone-effects",
+              "provision.buildviews"
+            ]
+          },
+          "room": {
+            "call_path_ids": [
+              "provision.room-settings",
+              "provision.kodi-timezone-effects"
+            ]
+          }
+        },
+        "harden_ssh": {
+          "call_path_ids": [
+            "provision.harden-ssh",
+            "provision.sshd-effect"
+          ]
+        },
+        "always_call_path_ids": [
+          "provision.preflight",
+          "provision.bootstrap-admin-key"
+        ]
+      },
+      "finalize": {
+        "call_path_ids": [],
+        "run_infrastructure": [
+          "/storage/.cache/coreelec-provision/current-transaction",
+          "/storage/backup/coreelec-provision/<transaction>"
+        ]
+      },
+      "rollback": {
+        "call_path_ids": [
+          "provision.rollback"
+        ]
+      }
+    },
+    "configure-coreelec-addons.sh": {
+      "observe": {
+        "call_path_ids": [
+          "addons.observe"
+        ]
+      },
+      "interactive": {
+        "call_path_ids": [
+          "addons.observe",
+          "addons.interactive"
+        ]
+      }
+    },
+    "configure-kodi-lifecycle.sh": {
+      "deploy": {
+        "call_path_ids": [
+          "lifecycle.preflight",
+          "lifecycle.deploy"
+        ]
+      },
+      "rollback": {
+        "call_path_ids": [
+          "lifecycle.rollback"
+        ]
+      },
+      "finalize": {
+        "call_path_ids": []
+      },
+      "inspect": {
+        "call_path_ids": []
+      }
+    }
+  },
+  "run_infrastructure": [
+    "/storage/.cache/coreelec-provision/**",
+    "/storage/backup/coreelec-provision/**",
+    "/storage/.cache/kodi-lifecycle/**",
+    "/storage/backup/kodi-lifecycle/**"
+  ],
+  "known_conflicts": {
+    "SKIN-025": {
+      "state_address": "special://profile/playlists/video/NewShows.xsp",
+      "shell_physical_path": "/storage/.kodi/userdata/playlists/video/NewShows.xsp",
+      "shell_mode": "0600",
+      "python_mode": "0644",
+      "shell_verifies_mode": false,
+      "permission_rule": "Any operation whose audited inventory IDs include SKIN-025 is rejected once the ledger owner is python or the row is frozen."
+    }
+  },
+  "unknowns": [
+    {
+      "id": "addon-owned-state-mutated-by-guided-GUI-workflow",
+      "entry_point": "configure-coreelec-addons.sh",
+      "operation": "interactive",
+      "pilot_blocker": true
+    },
+    {
+      "id": "provision-rollback-transaction-write-set",
+      "entry_point": "provision-coreelec.sh",
+      "operation": "rollback",
+      "pilot_blocker": true
+    }
+  ],
+  "coverage": {
+    "writes": [
+      "ADDON-001",
+      "ART-001",
+      "ART-002",
+      "ART-003",
+      "ART-004",
+      "ART-005",
+      "ART-006",
+      "ART-007",
+      "ART-008",
+      "ART-009",
+      "ART-010",
+      "ART-011",
+      "ART-012",
+      "ART-013",
+      "ART-014",
+      "ART-015",
+      "ART-016",
+      "ART-017",
+      "ART-018",
+      "ART-019",
+      "ART-020",
+      "ART-021",
+      "ART-022",
+      "ART-023",
+      "ART-024",
+      "ART-025",
+      "ART-026",
+      "ART-027",
+      "ART-028",
+      "ART-029",
+      "ART-030",
+      "ART-031",
+      "ART-032",
+      "ART-033",
+      "ART-034",
+      "ART-035",
+      "ART-036",
+      "ART-037",
+      "ART-038",
+      "ART-039",
+      "ART-040",
+      "ART-041",
+      "CEC-001",
+      "CEC-002",
+      "CEC-003",
+      "CEC-004",
+      "CEC-005",
+      "CORE-001",
+      "CORE-002",
+      "CORE-003",
+      "CORE-004",
+      "CORE-005",
+      "CORE-006",
+      "CORE-007",
+      "CORE-008",
+      "CORE-009",
+      "CORE-010",
+      "CORE-011",
+      "CORE-012",
+      "CORE-013",
+      "CORE-014",
+      "CORE-015",
+      "CORE-016",
+      "CORE-017",
+      "CORE-018",
+      "CORE-019",
+      "CORE-020",
+      "CORE-021",
+      "CORE-022",
+      "CORE-023",
+      "CORE-024",
+      "CORE-025",
+      "CORE-026",
+      "CORE-027",
+      "CORE-028",
+      "CORE-029",
+      "LIFE-001",
+      "LIFE-002",
+      "ROOM-001",
+      "ROOM-002",
+      "ROOM-003",
+      "ROOM-004",
+      "ROOM-005",
+      "ROOM-006",
+      "ROOM-007",
+      "ROOM-008",
+      "ROOM-009",
+      "ROOM-010",
+      "ROOM-011",
+      "SKIN-001",
+      "SKIN-002",
+      "SKIN-003",
+      "SKIN-004",
+      "SKIN-005",
+      "SKIN-006",
+      "SKIN-007",
+      "SKIN-008",
+      "SKIN-009",
+      "SKIN-010",
+      "SKIN-011",
+      "SKIN-012",
+      "SKIN-013",
+      "SKIN-014",
+      "SKIN-015",
+      "SKIN-016",
+      "SKIN-017",
+      "SKIN-018",
+      "SKIN-019",
+      "SKIN-020",
+      "SKIN-021",
+      "SKIN-022",
+      "SKIN-023",
+      "SKIN-024",
+      "SKIN-025",
+      "SKIN-026",
+      "SKIN-027",
+      "SKIN-028",
+      "SSH-003",
+      "SVC-001",
+      "SVC-002",
+      "SVC-003",
+      "SVC-004",
+      "SVC-005",
+      "SVC-006",
+      "SVC-007",
+      "SVC-008",
+      "SVC-009",
+      "SVC-010",
+      "SVC-011",
+      "SVC-012",
+      "SVC-013",
+      "SVC-014",
+      "SVC-015",
+      "SVC-016",
+      "SVC-017"
+    ],
+    "effects": [
+      "EFFECT-001",
+      "EFFECT-002",
+      "EFFECT-003",
+      "EFFECT-004",
+      "LIFE-003"
+    ],
+    "observations": [
+      "ADDON-003",
+      "PLAT-001",
+      "PLAT-002",
+      "PLAT-004",
+      "PLAT-005",
+      "SSH-004"
+    ]
+  },
+  "inventory_targets": {
+    "ADDON-001": [
+      "kodi://addons/repository.emby.kodi/enabled",
+      "kodi://addons/repository.dontpanic/enabled",
+      "kodi://addons/repository.jurialmunkey/enabled",
+      "kodi://addons/plugin.service.emby-next-gen/enabled",
+      "kodi://addons/plugin.video.themoviedb.helper/enabled",
+      "kodi://addons/pvr.nextpvr/enabled",
+      "kodi://addons/script.plexmod/enabled",
+      "kodi://addons/skin.arctic.fuse.3/enabled",
+      "kodi://addons/weather.ha/enabled",
+      "kodi://addons/resource.language.en_us/enabled",
+      "kodi://addons/script.artistslideshow/enabled",
+      "kodi://addons/resource.images.arctic.waves/enabled",
+      "kodi://addons/resource.images.weatherfanart.multi/enabled",
+      "kodi://addons/resource.images.moviecountryicons.maps/enabled",
+      "kodi://addons/resource.images.studios.white/enabled",
+      "kodi://addons/resource.uisounds.fromashes/enabled",
+      "kodi://addons/inputstream.adaptive/enabled",
+      "kodi://addons/inputstream.ffmpegdirect/enabled",
+      "kodi://addons/resource.font.robotocjksc/enabled",
+      "kodi://addons/resource.images.studios.coloured/enabled",
+      "kodi://addons/resource.images.weathericons.white/enabled",
+      "kodi://addons/script.module.addon.signals/enabled",
+      "kodi://addons/script.module.certifi/enabled",
+      "kodi://addons/script.module.chardet/enabled",
+      "kodi://addons/script.module.defusedxml/enabled",
+      "kodi://addons/script.module.dateutil/enabled",
+      "kodi://addons/script.module.future/enabled",
+      "kodi://addons/script.module.idna/enabled",
+      "kodi://addons/script.module.infotagger/enabled",
+      "kodi://addons/script.module.inputstreamhelper/enabled",
+      "kodi://addons/script.module.iso8601/enabled",
+      "kodi://addons/script.module.jurialmunkey/enabled",
+      "kodi://addons/script.module.kodi-six/enabled",
+      "kodi://addons/script.module.pysocks/enabled",
+      "kodi://addons/script.module.qrcode/enabled",
+      "kodi://addons/script.module.requests/enabled",
+      "kodi://addons/script.module.six/enabled",
+      "kodi://addons/script.module.urllib3/enabled",
+      "kodi://addons/script.module.yaml/enabled",
+      "kodi://addons/script.skinvariables/enabled",
+      "kodi://addons/script.texturemaker/enabled"
+    ],
+    "ART-001": [
+      "/storage/.kodi/addons/repository.emby.kodi/"
+    ],
+    "ART-002": [
+      "/storage/.kodi/addons/repository.dontpanic/"
+    ],
+    "ART-003": [
+      "/storage/.kodi/addons/repository.jurialmunkey/"
+    ],
+    "ART-004": [
+      "/storage/.kodi/addons/plugin.service.emby-next-gen/"
+    ],
+    "ART-005": [
+      "/storage/.kodi/addons/plugin.video.themoviedb.helper/"
+    ],
+    "ART-006": [
+      "/storage/.kodi/addons/pvr.nextpvr/"
+    ],
+    "ART-007": [
+      "/storage/.kodi/addons/script.plexmod/"
+    ],
+    "ART-008": [
+      "/storage/.kodi/addons/skin.arctic.fuse.3/"
+    ],
+    "ART-009": [
+      "/storage/.kodi/addons/weather.ha/"
+    ],
+    "ART-010": [
+      "/storage/.kodi/addons/resource.language.en_us/"
+    ],
+    "ART-011": [
+      "/storage/.kodi/addons/script.artistslideshow/"
+    ],
+    "ART-012": [
+      "/storage/.kodi/addons/resource.images.arctic.waves/"
+    ],
+    "ART-013": [
+      "/storage/.kodi/addons/resource.images.weatherfanart.multi/"
+    ],
+    "ART-014": [
+      "/storage/.kodi/addons/resource.images.moviecountryicons.maps/"
+    ],
+    "ART-015": [
+      "/storage/.kodi/addons/resource.images.studios.white/"
+    ],
+    "ART-016": [
+      "/storage/.kodi/addons/resource.uisounds.fromashes/"
+    ],
+    "ART-017": [
+      "/storage/.kodi/addons/inputstream.adaptive/"
+    ],
+    "ART-018": [
+      "/storage/.kodi/addons/inputstream.ffmpegdirect/"
+    ],
+    "ART-019": [
+      "/storage/.kodi/addons/resource.font.robotocjksc/"
+    ],
+    "ART-020": [
+      "/storage/.kodi/addons/resource.images.studios.coloured/"
+    ],
+    "ART-021": [
+      "/storage/.kodi/addons/resource.images.weathericons.white/"
+    ],
+    "ART-022": [
+      "/storage/.kodi/addons/script.module.addon.signals/"
+    ],
+    "ART-023": [
+      "/storage/.kodi/addons/script.module.certifi/"
+    ],
+    "ART-024": [
+      "/storage/.kodi/addons/script.module.chardet/"
+    ],
+    "ART-025": [
+      "/storage/.kodi/addons/script.module.defusedxml/"
+    ],
+    "ART-026": [
+      "/storage/.kodi/addons/script.module.dateutil/"
+    ],
+    "ART-027": [
+      "/storage/.kodi/addons/script.module.future/"
+    ],
+    "ART-028": [
+      "/storage/.kodi/addons/script.module.idna/"
+    ],
+    "ART-029": [
+      "/storage/.kodi/addons/script.module.infotagger/"
+    ],
+    "ART-030": [
+      "/storage/.kodi/addons/script.module.inputstreamhelper/"
+    ],
+    "ART-031": [
+      "/storage/.kodi/addons/script.module.iso8601/"
+    ],
+    "ART-032": [
+      "/storage/.kodi/addons/script.module.jurialmunkey/"
+    ],
+    "ART-033": [
+      "/storage/.kodi/addons/script.module.kodi-six/"
+    ],
+    "ART-034": [
+      "/storage/.kodi/addons/script.module.pysocks/"
+    ],
+    "ART-035": [
+      "/storage/.kodi/addons/script.module.qrcode/"
+    ],
+    "ART-036": [
+      "/storage/.kodi/addons/script.module.requests/"
+    ],
+    "ART-037": [
+      "/storage/.kodi/addons/script.module.six/"
+    ],
+    "ART-038": [
+      "/storage/.kodi/addons/script.module.urllib3/"
+    ],
+    "ART-039": [
+      "/storage/.kodi/addons/script.module.yaml/"
+    ],
+    "ART-040": [
+      "/storage/.kodi/addons/script.skinvariables/"
+    ],
+    "ART-041": [
+      "/storage/.kodi/addons/script.texturemaker/"
+    ],
+    "CEC-001": [
+      "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_pc_on_tv_standby"
+    ],
+    "CEC-002": [
+      "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#activate_source"
+    ],
+    "CEC-003": [
+      "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#wake_devices"
+    ],
+    "CEC-004": [
+      "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_devices"
+    ],
+    "CEC-005": [
+      "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_tv_on_pc_standby"
+    ],
+    "CORE-001": [
+      "special://profile/guisettings.xml#locale.language"
+    ],
+    "CORE-002": [
+      "special://profile/guisettings.xml#locale.country"
+    ],
+    "CORE-003": [
+      "special://profile/guisettings.xml#locale.keyboardlayouts"
+    ],
+    "CORE-004": [
+      "special://profile/guisettings.xml#locale.timezonecountry"
+    ],
+    "CORE-005": [
+      "special://profile/guisettings.xml#locale.timezone"
+    ],
+    "CORE-006": [
+      "/storage/.cache/timezone#TIMEZONE"
+    ],
+    "CORE-007": [
+      "/etc/localtime (indirect representation selected by tz-data.service)"
+    ],
+    "CORE-008": [
+      "special://profile/guisettings.xml#general.addonupdates"
+    ],
+    "CORE-009": [
+      "special://profile/guisettings.xml#input.enablemouse"
+    ],
+    "CORE-010": [
+      "special://profile/guisettings.xml#filelists.showaddsourcebuttons"
+    ],
+    "CORE-011": [
+      "special://profile/guisettings.xml#filelists.showextensions"
+    ],
+    "CORE-012": [
+      "special://profile/guisettings.xml#filelists.showparentdiritems"
+    ],
+    "CORE-013": [
+      "special://profile/guisettings.xml#videolibrary.flattentvshows"
+    ],
+    "CORE-014": [
+      "special://profile/guisettings.xml#videolibrary.ignorevideoextras"
+    ],
+    "CORE-015": [
+      "special://profile/guisettings.xml#videolibrary.ignorevideoversions"
+    ],
+    "CORE-016": [
+      "special://profile/guisettings.xml#videolibrary.showallitems"
+    ],
+    "CORE-017": [
+      "special://profile/guisettings.xml#videolibrary.tvshowsselectfirstunwatcheditem"
+    ],
+    "CORE-018": [
+      "special://profile/guisettings.xml#videoplayer.adjustrefreshrate"
+    ],
+    "CORE-019": [
+      "special://profile/guisettings.xml#videoplayer.usedisplayasclock"
+    ],
+    "CORE-020": [
+      "special://profile/guisettings.xml#services.esallinterfaces"
+    ],
+    "CORE-021": [
+      "special://profile/guisettings.xml#services.esenabled"
+    ],
+    "CORE-022": [
+      "special://profile/guisettings.xml#services.webserver"
+    ],
+    "CORE-023": [
+      "special://profile/guisettings.xml#services.webserverauthentication"
+    ],
+    "CORE-024": [
+      "special://profile/guisettings.xml#services.webserverpassword"
+    ],
+    "CORE-025": [
+      "special://profile/guisettings.xml#services.webserverport"
+    ],
+    "CORE-026": [
+      "special://profile/guisettings.xml#services.webserverssl"
+    ],
+    "CORE-027": [
+      "special://profile/guisettings.xml#services.webserverusername"
+    ],
+    "CORE-028": [
+      "special://profile/guisettings.xml#audiooutput.audiodevice"
+    ],
+    "CORE-029": [
+      "special://profile/guisettings.xml#audiooutput.passthroughdevice"
+    ],
+    "LIFE-001": [
+      "/storage/.config/kodi-lifecycle"
+    ],
+    "LIFE-002": [
+      "/storage/.ssh/authorized_keys#homeassistant-ugoos-kodi-lifecycle"
+    ],
+    "ROOM-001": [
+      "special://profile/guisettings.xml#videoscreen.resolution"
+    ],
+    "ROOM-002": [
+      "special://profile/guisettings.xml#videoscreen.whitelist"
+    ],
+    "ROOM-003": [
+      "special://profile/guisettings.xml#coreelec.amlogic.disabledolbyvision"
+    ],
+    "ROOM-004": [
+      "special://profile/guisettings.xml#coreelec.amlogic.dolbyvisionled"
+    ],
+    "ROOM-005": [
+      "special://profile/guisettings.xml#audiooutput.passthrough"
+    ],
+    "ROOM-006": [
+      "special://profile/guisettings.xml#audiooutput.ac3passthrough"
+    ],
+    "ROOM-007": [
+      "special://profile/guisettings.xml#audiooutput.eac3passthrough"
+    ],
+    "ROOM-008": [
+      "special://profile/guisettings.xml#audiooutput.dtspassthrough"
+    ],
+    "ROOM-009": [
+      "special://profile/guisettings.xml#audiooutput.truehdpassthrough"
+    ],
+    "ROOM-010": [
+      "special://profile/guisettings.xml#audiooutput.dtshdpassthrough"
+    ],
+    "ROOM-011": [
+      "special://profile/guisettings.xml#audiooutput.channels"
+    ],
+    "SKIN-001": [
+      "special://profile/guisettings.xml#lookandfeel.skin"
+    ],
+    "SKIN-002": [
+      "special://profile/guisettings.xml#lookandfeel.soundskin"
+    ],
+    "SKIN-003": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1101.*"
+    ],
+    "SKIN-004": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1102.*"
+    ],
+    "SKIN-005": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1103.*"
+    ],
+    "SKIN-006": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1104.* (managed absence/empty)"
+    ],
+    "SKIN-007": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1107.Toggle,Hub.1107.*"
+    ],
+    "SKIN-008": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1108.Toggle"
+    ],
+    "SKIN-009": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#Options.01.include,Options.02.include,Options.04.include"
+    ],
+    "SKIN-010": [
+      "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#Options.03.include,path,target"
+    ],
+    "SKIN-011": [
+      "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
+    ],
+    "SKIN-012": [
+      "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json"
+    ],
+    "SKIN-013": [
+      "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json"
+    ],
+    "SKIN-014": [
+      "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json"
+    ],
+    "SKIN-015": [
+      "special://profile/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json#library.seasons"
+    ],
+    "SKIN-016": [
+      "special://profile/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json#library.episodes"
+    ],
+    "SKIN-017": [
+      "special://home/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml#library.seasons compiled expression"
+    ],
+    "SKIN-018": [
+      "special://home/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml#library.episodes compiled expression"
+    ],
+    "SKIN-019": [
+      "special://profile/playlists/video/InProgressMovies90Days.xsp"
+    ],
+    "SKIN-020": [
+      "special://profile/playlists/video/InProgressShows90Days.xsp"
+    ],
+    "SKIN-021": [
+      "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp"
+    ],
+    "SKIN-022": [
+      "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp"
+    ],
+    "SKIN-023": [
+      "special://profile/playlists/video/TraktPopularTVShows.xsp"
+    ],
+    "SKIN-024": [
+      "special://profile/playlists/video/TraktWeekendBoxOffice.xsp"
+    ],
+    "SKIN-025": [
+      "special://profile/playlists/video/NewShows.xsp"
+    ],
+    "SKIN-026": [
+      "special://profile/playlists/video/NewMovies.xsp"
+    ],
+    "SKIN-027": [
+      "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp (managed absence)"
+    ],
+    "SKIN-028": [
+      "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp (managed absence)"
+    ],
+    "SSH-003": [
+      "/storage/.cache/services/sshd.conf#SSH_ARGS",
+      "/storage/.cache/services/sshd.conf#SSHD_DISABLE_PW_AUTH"
+    ],
+    "SVC-001": [
+      "special://profile/guisettings.xml#weather.addon"
+    ],
+    "SVC-002": [
+      "special://profile/addon_data/weather.ha/settings.xml#ha_server"
+    ],
+    "SVC-003": [
+      "special://profile/addon_data/weather.ha/settings.xml#ha_key"
+    ],
+    "SVC-004": [
+      "special://profile/addon_data/weather.ha/settings.xml#ha_weather_forecast_entity_id"
+    ],
+    "SVC-005": [
+      "special://profile/addon_data/weather.ha/settings.xml#ha_sun_entity_id"
+    ],
+    "SVC-006": [
+      "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#host"
+    ],
+    "SVC-007": [
+      "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#hostprotocol"
+    ],
+    "SVC-008": [
+      "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#kodi_addon_instance_enabled"
+    ],
+    "SVC-009": [
+      "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#kodi_addon_instance_name"
+    ],
+    "SVC-010": [
+      "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#pin"
+    ],
+    "SVC-011": [
+      "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#port"
+    ],
+    "SVC-012": [
+      "special://profile/addon_data/plugin.video.themoviedb.helper/settings.xml#mdblist_apikey"
+    ],
+    "SVC-013": [
+      "special://profile/addon_data/plugin.video.themoviedb.helper/settings.xml#omdb_apikey"
+    ],
+    "SVC-014": [
+      "special://profile/addon_data/script.plexmod/settings.xml#allow_insecure (managed absence)"
+    ],
+    "SVC-015": [
+      "special://profile/addon_data/script.plexmod/settings.xml#local_mode (managed absence)"
+    ],
+    "SVC-016": [
+      "special://profile/addon_data/script.plexmod/settings.xml#local_servers_json (managed absence)"
+    ],
+    "SVC-017": [
+      "special://profile/addon_data/script.plexmod/settings.xml#local_profiles_json (managed absence)"
+    ]
+  },
+  "outside_inventory_targets": {
+    "SSH-002": [
+      "/storage/.ssh/authorized_keys#administrator-key-line"
+    ]
+  },
+  "primitive_families": [
+    {
+      "id": "atomic-file-mutation",
+      "primitive": "Python write_xml_atomic/write_json_atomic/remove_managed_file and atomic shell file replacement",
+      "entry_points": [
+        "provision-coreelec.sh"
+      ],
+      "call_paths": {
+        "provision.bootstrap-admin-key": {
+          "inventory_ids": [],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": [
+            "SSH-002"
+          ]
+        },
+        "provision.harden-ssh": {
+          "inventory_ids": [
+            "SSH-003"
+          ],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        },
+        "provision.core-settings": {
+          "inventory_ids": [
+            "CORE-001",
+            "CORE-002",
+            "CORE-003",
+            "CORE-004",
+            "CORE-005",
+            "CORE-006",
+            "CORE-008",
+            "CORE-009",
+            "CORE-010",
+            "CORE-011",
+            "CORE-012",
+            "CORE-013",
+            "CORE-014",
+            "CORE-015",
+            "CORE-016",
+            "CORE-017",
+            "CORE-018",
+            "CORE-019",
+            "CORE-020",
+            "CORE-021",
+            "CORE-022",
+            "CORE-023",
+            "CORE-024",
+            "CORE-025",
+            "CORE-026",
+            "CORE-027",
+            "CORE-028",
+            "CORE-029"
+          ],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        },
+        "provision.cec-settings": {
+          "inventory_ids": [
+            "CEC-001",
+            "CEC-002",
+            "CEC-003",
+            "CEC-004",
+            "CEC-005"
+          ],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        },
+        "provision.services-settings": {
+          "inventory_ids": [
+            "SVC-001",
+            "SVC-002",
+            "SVC-003",
+            "SVC-004",
+            "SVC-005",
+            "SVC-006",
+            "SVC-007",
+            "SVC-008",
+            "SVC-009",
+            "SVC-010",
+            "SVC-011",
+            "SVC-012",
+            "SVC-013",
+            "SVC-014",
+            "SVC-015",
+            "SVC-016",
+            "SVC-017"
+          ],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        },
+        "provision.skin-settings": {
+          "inventory_ids": [
+            "SKIN-001",
+            "SKIN-002",
+            "SKIN-003",
+            "SKIN-004",
+            "SKIN-005",
+            "SKIN-006",
+            "SKIN-007",
+            "SKIN-008",
+            "SKIN-009",
+            "SKIN-010",
+            "SKIN-011",
+            "SKIN-012",
+            "SKIN-013",
+            "SKIN-014",
+            "SKIN-015",
+            "SKIN-016",
+            "SKIN-019",
+            "SKIN-020",
+            "SKIN-021",
+            "SKIN-022",
+            "SKIN-023",
+            "SKIN-024",
+            "SKIN-025",
+            "SKIN-026",
+            "SKIN-027",
+            "SKIN-028"
+          ],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        },
+        "provision.room-settings": {
+          "inventory_ids": [
+            "ROOM-001",
+            "ROOM-002",
+            "ROOM-003",
+            "ROOM-004",
+            "ROOM-005",
+            "ROOM-006",
+            "ROOM-007",
+            "ROOM-008",
+            "ROOM-009",
+            "ROOM-010",
+            "ROOM-011"
+          ],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        }
+      },
+      "inventory_targets": {
+        "SSH-002": [
+          "/storage/.ssh/authorized_keys#administrator-key-line"
+        ],
+        "SSH-003": [
+          "/storage/.cache/services/sshd.conf#SSH_ARGS",
+          "/storage/.cache/services/sshd.conf#SSHD_DISABLE_PW_AUTH"
+        ],
+        "CORE-001": [
+          "special://profile/guisettings.xml#locale.language"
+        ],
+        "CORE-002": [
+          "special://profile/guisettings.xml#locale.country"
+        ],
+        "CORE-003": [
+          "special://profile/guisettings.xml#locale.keyboardlayouts"
+        ],
+        "CORE-004": [
+          "special://profile/guisettings.xml#locale.timezonecountry"
+        ],
+        "CORE-005": [
+          "special://profile/guisettings.xml#locale.timezone"
+        ],
+        "CORE-006": [
+          "/storage/.cache/timezone#TIMEZONE"
+        ],
+        "CORE-008": [
+          "special://profile/guisettings.xml#general.addonupdates"
+        ],
+        "CORE-009": [
+          "special://profile/guisettings.xml#input.enablemouse"
+        ],
+        "CORE-010": [
+          "special://profile/guisettings.xml#filelists.showaddsourcebuttons"
+        ],
+        "CORE-011": [
+          "special://profile/guisettings.xml#filelists.showextensions"
+        ],
+        "CORE-012": [
+          "special://profile/guisettings.xml#filelists.showparentdiritems"
+        ],
+        "CORE-013": [
+          "special://profile/guisettings.xml#videolibrary.flattentvshows"
+        ],
+        "CORE-014": [
+          "special://profile/guisettings.xml#videolibrary.ignorevideoextras"
+        ],
+        "CORE-015": [
+          "special://profile/guisettings.xml#videolibrary.ignorevideoversions"
+        ],
+        "CORE-016": [
+          "special://profile/guisettings.xml#videolibrary.showallitems"
+        ],
+        "CORE-017": [
+          "special://profile/guisettings.xml#videolibrary.tvshowsselectfirstunwatcheditem"
+        ],
+        "CORE-018": [
+          "special://profile/guisettings.xml#videoplayer.adjustrefreshrate"
+        ],
+        "CORE-019": [
+          "special://profile/guisettings.xml#videoplayer.usedisplayasclock"
+        ],
+        "CORE-020": [
+          "special://profile/guisettings.xml#services.esallinterfaces"
+        ],
+        "CORE-021": [
+          "special://profile/guisettings.xml#services.esenabled"
+        ],
+        "CORE-022": [
+          "special://profile/guisettings.xml#services.webserver"
+        ],
+        "CORE-023": [
+          "special://profile/guisettings.xml#services.webserverauthentication"
+        ],
+        "CORE-024": [
+          "special://profile/guisettings.xml#services.webserverpassword"
+        ],
+        "CORE-025": [
+          "special://profile/guisettings.xml#services.webserverport"
+        ],
+        "CORE-026": [
+          "special://profile/guisettings.xml#services.webserverssl"
+        ],
+        "CORE-027": [
+          "special://profile/guisettings.xml#services.webserverusername"
+        ],
+        "CORE-028": [
+          "special://profile/guisettings.xml#audiooutput.audiodevice"
+        ],
+        "CORE-029": [
+          "special://profile/guisettings.xml#audiooutput.passthroughdevice"
+        ],
+        "CEC-001": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_pc_on_tv_standby"
+        ],
+        "CEC-002": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#activate_source"
+        ],
+        "CEC-003": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#wake_devices"
+        ],
+        "CEC-004": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_devices"
+        ],
+        "CEC-005": [
+          "/storage/.kodi/userdata/peripheral_data/<exactly-one-*CEC*.xml>#standby_tv_on_pc_standby"
+        ],
+        "SVC-001": [
+          "special://profile/guisettings.xml#weather.addon"
+        ],
+        "SVC-002": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_server"
+        ],
+        "SVC-003": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_key"
+        ],
+        "SVC-004": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_weather_forecast_entity_id"
+        ],
+        "SVC-005": [
+          "special://profile/addon_data/weather.ha/settings.xml#ha_sun_entity_id"
+        ],
+        "SVC-006": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#host"
+        ],
+        "SVC-007": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#hostprotocol"
+        ],
+        "SVC-008": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#kodi_addon_instance_enabled"
+        ],
+        "SVC-009": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#kodi_addon_instance_name"
+        ],
+        "SVC-010": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#pin"
+        ],
+        "SVC-011": [
+          "special://profile/addon_data/pvr.nextpvr/instance-settings-1.xml#port"
+        ],
+        "SVC-012": [
+          "special://profile/addon_data/plugin.video.themoviedb.helper/settings.xml#mdblist_apikey"
+        ],
+        "SVC-013": [
+          "special://profile/addon_data/plugin.video.themoviedb.helper/settings.xml#omdb_apikey"
+        ],
+        "SVC-014": [
+          "special://profile/addon_data/script.plexmod/settings.xml#allow_insecure (managed absence)"
+        ],
+        "SVC-015": [
+          "special://profile/addon_data/script.plexmod/settings.xml#local_mode (managed absence)"
+        ],
+        "SVC-016": [
+          "special://profile/addon_data/script.plexmod/settings.xml#local_servers_json (managed absence)"
+        ],
+        "SVC-017": [
+          "special://profile/addon_data/script.plexmod/settings.xml#local_profiles_json (managed absence)"
+        ],
+        "SKIN-001": [
+          "special://profile/guisettings.xml#lookandfeel.skin"
+        ],
+        "SKIN-002": [
+          "special://profile/guisettings.xml#lookandfeel.soundskin"
+        ],
+        "SKIN-003": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1101.*"
+        ],
+        "SKIN-004": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1102.*"
+        ],
+        "SKIN-005": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1103.*"
+        ],
+        "SKIN-006": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1104.* (managed absence/empty)"
+        ],
+        "SKIN-007": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1107.Toggle,Hub.1107.*"
+        ],
+        "SKIN-008": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#HomeSwitcher.1108.Toggle"
+        ],
+        "SKIN-009": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#Options.01.include,Options.02.include,Options.04.include"
+        ],
+        "SKIN-010": [
+          "special://profile/addon_data/skin.arctic.fuse.3/settings.xml#Options.03.include,path,target"
+        ],
+        "SKIN-011": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json"
+        ],
+        "SKIN-012": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json"
+        ],
+        "SKIN-013": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json"
+        ],
+        "SKIN-014": [
+          "special://profile/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json"
+        ],
+        "SKIN-015": [
+          "special://profile/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json#library.seasons"
+        ],
+        "SKIN-016": [
+          "special://profile/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json#library.episodes"
+        ],
+        "SKIN-019": [
+          "special://profile/playlists/video/InProgressMovies90Days.xsp"
+        ],
+        "SKIN-020": [
+          "special://profile/playlists/video/InProgressShows90Days.xsp"
+        ],
+        "SKIN-021": [
+          "special://profile/playlists/video/RecentlyAiredEpisodes30Days.xsp"
+        ],
+        "SKIN-022": [
+          "special://profile/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp"
+        ],
+        "SKIN-023": [
+          "special://profile/playlists/video/TraktPopularTVShows.xsp"
+        ],
+        "SKIN-024": [
+          "special://profile/playlists/video/TraktWeekendBoxOffice.xsp"
+        ],
+        "SKIN-025": [
+          "special://profile/playlists/video/NewShows.xsp"
+        ],
+        "SKIN-026": [
+          "special://profile/playlists/video/NewMovies.xsp"
+        ],
+        "SKIN-027": [
+          "special://profile/playlists/video/RecentlyReleasedMovies90Days.xsp (managed absence)"
+        ],
+        "SKIN-028": [
+          "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp (managed absence)"
+        ],
+        "ROOM-001": [
+          "special://profile/guisettings.xml#videoscreen.resolution"
+        ],
+        "ROOM-002": [
+          "special://profile/guisettings.xml#videoscreen.whitelist"
+        ],
+        "ROOM-003": [
+          "special://profile/guisettings.xml#coreelec.amlogic.disabledolbyvision"
+        ],
+        "ROOM-004": [
+          "special://profile/guisettings.xml#coreelec.amlogic.dolbyvisionled"
+        ],
+        "ROOM-005": [
+          "special://profile/guisettings.xml#audiooutput.passthrough"
+        ],
+        "ROOM-006": [
+          "special://profile/guisettings.xml#audiooutput.ac3passthrough"
+        ],
+        "ROOM-007": [
+          "special://profile/guisettings.xml#audiooutput.eac3passthrough"
+        ],
+        "ROOM-008": [
+          "special://profile/guisettings.xml#audiooutput.dtspassthrough"
+        ],
+        "ROOM-009": [
+          "special://profile/guisettings.xml#audiooutput.truehdpassthrough"
+        ],
+        "ROOM-010": [
+          "special://profile/guisettings.xml#audiooutput.dtshdpassthrough"
+        ],
+        "ROOM-011": [
+          "special://profile/guisettings.xml#audiooutput.channels"
+        ]
+      }
+    },
+    {
+      "id": "addon-directory-replacement",
+      "primitive": "POSIX mv/rm/cp selected add-on directory replacement",
+      "entry_points": [
+        "provision-coreelec.sh"
+      ],
+      "call_paths": {
+        "provision.selected-addon-directories": {
+          "inventory_ids": [],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": [],
+          "selection": "artifact_inventory_ids"
+        }
+      },
+      "inventory_targets": {
+        "ART-001": [
+          "/storage/.kodi/addons/repository.emby.kodi/"
+        ],
+        "ART-002": [
+          "/storage/.kodi/addons/repository.dontpanic/"
+        ],
+        "ART-003": [
+          "/storage/.kodi/addons/repository.jurialmunkey/"
+        ],
+        "ART-004": [
+          "/storage/.kodi/addons/plugin.service.emby-next-gen/"
+        ],
+        "ART-005": [
+          "/storage/.kodi/addons/plugin.video.themoviedb.helper/"
+        ],
+        "ART-006": [
+          "/storage/.kodi/addons/pvr.nextpvr/"
+        ],
+        "ART-007": [
+          "/storage/.kodi/addons/script.plexmod/"
+        ],
+        "ART-008": [
+          "/storage/.kodi/addons/skin.arctic.fuse.3/"
+        ],
+        "ART-009": [
+          "/storage/.kodi/addons/weather.ha/"
+        ],
+        "ART-010": [
+          "/storage/.kodi/addons/resource.language.en_us/"
+        ],
+        "ART-011": [
+          "/storage/.kodi/addons/script.artistslideshow/"
+        ],
+        "ART-012": [
+          "/storage/.kodi/addons/resource.images.arctic.waves/"
+        ],
+        "ART-013": [
+          "/storage/.kodi/addons/resource.images.weatherfanart.multi/"
+        ],
+        "ART-014": [
+          "/storage/.kodi/addons/resource.images.moviecountryicons.maps/"
+        ],
+        "ART-015": [
+          "/storage/.kodi/addons/resource.images.studios.white/"
+        ],
+        "ART-016": [
+          "/storage/.kodi/addons/resource.uisounds.fromashes/"
+        ],
+        "ART-017": [
+          "/storage/.kodi/addons/inputstream.adaptive/"
+        ],
+        "ART-018": [
+          "/storage/.kodi/addons/inputstream.ffmpegdirect/"
+        ],
+        "ART-019": [
+          "/storage/.kodi/addons/resource.font.robotocjksc/"
+        ],
+        "ART-020": [
+          "/storage/.kodi/addons/resource.images.studios.coloured/"
+        ],
+        "ART-021": [
+          "/storage/.kodi/addons/resource.images.weathericons.white/"
+        ],
+        "ART-022": [
+          "/storage/.kodi/addons/script.module.addon.signals/"
+        ],
+        "ART-023": [
+          "/storage/.kodi/addons/script.module.certifi/"
+        ],
+        "ART-024": [
+          "/storage/.kodi/addons/script.module.chardet/"
+        ],
+        "ART-025": [
+          "/storage/.kodi/addons/script.module.defusedxml/"
+        ],
+        "ART-026": [
+          "/storage/.kodi/addons/script.module.dateutil/"
+        ],
+        "ART-027": [
+          "/storage/.kodi/addons/script.module.future/"
+        ],
+        "ART-028": [
+          "/storage/.kodi/addons/script.module.idna/"
+        ],
+        "ART-029": [
+          "/storage/.kodi/addons/script.module.infotagger/"
+        ],
+        "ART-030": [
+          "/storage/.kodi/addons/script.module.inputstreamhelper/"
+        ],
+        "ART-031": [
+          "/storage/.kodi/addons/script.module.iso8601/"
+        ],
+        "ART-032": [
+          "/storage/.kodi/addons/script.module.jurialmunkey/"
+        ],
+        "ART-033": [
+          "/storage/.kodi/addons/script.module.kodi-six/"
+        ],
+        "ART-034": [
+          "/storage/.kodi/addons/script.module.pysocks/"
+        ],
+        "ART-035": [
+          "/storage/.kodi/addons/script.module.qrcode/"
+        ],
+        "ART-036": [
+          "/storage/.kodi/addons/script.module.requests/"
+        ],
+        "ART-037": [
+          "/storage/.kodi/addons/script.module.six/"
+        ],
+        "ART-038": [
+          "/storage/.kodi/addons/script.module.urllib3/"
+        ],
+        "ART-039": [
+          "/storage/.kodi/addons/script.module.yaml/"
+        ],
+        "ART-040": [
+          "/storage/.kodi/addons/script.skinvariables/"
+        ],
+        "ART-041": [
+          "/storage/.kodi/addons/script.texturemaker/"
+        ]
+      }
+    },
+    {
+      "id": "addon-registry-enablement",
+      "primitive": "Kodi JSON-RPC Addons.SetAddonEnabled",
+      "entry_points": [
+        "provision-coreelec.sh"
+      ],
+      "call_paths": {
+        "provision.selected-addon-enablement": {
+          "inventory_ids": [
+            "ADDON-001"
+          ],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        }
+      },
+      "inventory_targets": {
+        "ADDON-001": [
+          "kodi://addons/repository.emby.kodi/enabled",
+          "kodi://addons/repository.dontpanic/enabled",
+          "kodi://addons/repository.jurialmunkey/enabled",
+          "kodi://addons/plugin.service.emby-next-gen/enabled",
+          "kodi://addons/plugin.video.themoviedb.helper/enabled",
+          "kodi://addons/pvr.nextpvr/enabled",
+          "kodi://addons/script.plexmod/enabled",
+          "kodi://addons/skin.arctic.fuse.3/enabled",
+          "kodi://addons/weather.ha/enabled",
+          "kodi://addons/resource.language.en_us/enabled",
+          "kodi://addons/script.artistslideshow/enabled",
+          "kodi://addons/resource.images.arctic.waves/enabled",
+          "kodi://addons/resource.images.weatherfanart.multi/enabled",
+          "kodi://addons/resource.images.moviecountryicons.maps/enabled",
+          "kodi://addons/resource.images.studios.white/enabled",
+          "kodi://addons/resource.uisounds.fromashes/enabled",
+          "kodi://addons/inputstream.adaptive/enabled",
+          "kodi://addons/inputstream.ffmpegdirect/enabled",
+          "kodi://addons/resource.font.robotocjksc/enabled",
+          "kodi://addons/resource.images.studios.coloured/enabled",
+          "kodi://addons/resource.images.weathericons.white/enabled",
+          "kodi://addons/script.module.addon.signals/enabled",
+          "kodi://addons/script.module.certifi/enabled",
+          "kodi://addons/script.module.chardet/enabled",
+          "kodi://addons/script.module.defusedxml/enabled",
+          "kodi://addons/script.module.dateutil/enabled",
+          "kodi://addons/script.module.future/enabled",
+          "kodi://addons/script.module.idna/enabled",
+          "kodi://addons/script.module.infotagger/enabled",
+          "kodi://addons/script.module.inputstreamhelper/enabled",
+          "kodi://addons/script.module.iso8601/enabled",
+          "kodi://addons/script.module.jurialmunkey/enabled",
+          "kodi://addons/script.module.kodi-six/enabled",
+          "kodi://addons/script.module.pysocks/enabled",
+          "kodi://addons/script.module.qrcode/enabled",
+          "kodi://addons/script.module.requests/enabled",
+          "kodi://addons/script.module.six/enabled",
+          "kodi://addons/script.module.urllib3/enabled",
+          "kodi://addons/script.module.yaml/enabled",
+          "kodi://addons/script.skinvariables/enabled",
+          "kodi://addons/script.texturemaker/enabled"
+        ]
+      }
+    },
+    {
+      "id": "service-state-effect",
+      "primitive": "systemctl stop/start/restart",
+      "entry_points": [
+        "provision-coreelec.sh"
+      ],
+      "call_paths": {
+        "provision.kodi-timezone-effects": {
+          "inventory_ids": [
+            "CORE-007"
+          ],
+          "effect_ids": [
+            "EFFECT-001",
+            "EFFECT-002"
+          ],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        },
+        "provision.sshd-effect": {
+          "inventory_ids": [],
+          "effect_ids": [
+            "EFFECT-003"
+          ],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        }
+      },
+      "inventory_targets": {
+        "CORE-007": [
+          "/etc/localtime (indirect representation selected by tz-data.service)"
+        ]
+      }
+    },
+    {
+      "id": "skin-view-build",
+      "primitive": "kodi-send RunScript(script.skinvariables,action=buildviews,force=True,no_reload=True)",
+      "entry_points": [
+        "provision-coreelec.sh"
+      ],
+      "call_paths": {
+        "provision.buildviews": {
+          "inventory_ids": [
+            "SKIN-017",
+            "SKIN-018"
+          ],
+          "effect_ids": [
+            "EFFECT-004"
+          ],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        }
+      },
+      "inventory_targets": {
+        "SKIN-017": [
+          "special://home/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml#library.seasons compiled expression"
+        ],
+        "SKIN-018": [
+          "special://home/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml#library.episodes compiled expression"
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-gateway",
+      "primitive": "atomic wrapper and marked authorized_keys replacement plus temporary Kodi service transitions",
+      "entry_points": [
+        "configure-kodi-lifecycle.sh"
+      ],
+      "call_paths": {
+        "lifecycle.deploy": {
+          "inventory_ids": [
+            "LIFE-001",
+            "LIFE-002"
+          ],
+          "effect_ids": [
+            "LIFE-003"
+          ],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        },
+        "lifecycle.rollback": {
+          "inventory_ids": [
+            "LIFE-001",
+            "LIFE-002"
+          ],
+          "effect_ids": [
+            "LIFE-003"
+          ],
+          "observation_ids": [],
+          "outside_inventory_ids": []
+        }
+      },
+      "inventory_targets": {
+        "LIFE-001": [
+          "/storage/.config/kodi-lifecycle"
+        ],
+        "LIFE-002": [
+          "/storage/.ssh/authorized_keys#homeassistant-ugoos-kodi-lifecycle"
+        ]
+      }
+    },
+    {
+      "id": "guided-addon-gui",
+      "primitive": "Kodi GUI input and add-on execution",
+      "entry_points": [
+        "configure-coreelec-addons.sh"
+      ],
+      "call_paths": {
+        "addons.interactive": {
+          "inventory_ids": [],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": [],
+          "unknown": "addon-owned-state-mutated-by-guided-GUI-workflow"
+        }
+      },
+      "inventory_targets": {}
+    },
+    {
+      "id": "provision-rollback",
+      "primitive": "transaction-recorded restore and delete",
+      "entry_points": [
+        "provision-coreelec.sh"
+      ],
+      "call_paths": {
+        "provision.rollback": {
+          "inventory_ids": [],
+          "effect_ids": [],
+          "observation_ids": [],
+          "outside_inventory_ids": [],
+          "unknown": "provision-rollback-transaction-write-set"
+        }
+      },
+      "inventory_targets": {}
+    }
+  ],
+  "call_paths": {
+    "provision.preflight": {
+      "inventory_ids": [],
+      "effect_ids": [],
+      "observation_ids": [
+        "PLAT-001",
+        "PLAT-002",
+        "SSH-004"
+      ],
+      "outside_inventory_ids": []
+    },
+    "provision.addon-inventory": {
+      "inventory_ids": [],
+      "effect_ids": [],
+      "observation_ids": [
+        "ADDON-003"
+      ],
+      "outside_inventory_ids": []
+    },
+    "addons.observe": {
+      "inventory_ids": [],
+      "effect_ids": [],
+      "observation_ids": [
+        "GUIDE-001",
+        "GUIDE-002",
+        "GUIDE-003",
+        "GUIDE-004",
+        "GUIDE-005",
+        "GUIDE-006",
+        "GUIDE-007",
+        "GUIDE-008"
+      ],
+      "outside_inventory_ids": []
+    },
+    "lifecycle.preflight": {
+      "inventory_ids": [],
+      "effect_ids": [],
+      "observation_ids": [
+        "PLAT-004",
+        "PLAT-005"
+      ],
+      "outside_inventory_ids": []
+    }
+  }
+}

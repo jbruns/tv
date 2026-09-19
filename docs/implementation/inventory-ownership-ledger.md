@@ -99,11 +99,14 @@ Repository provenance, operator Guided Actions, external Health Checks and
 inventory facts, outside rows, and retirement decisions retain their
 role-specific owner or closure and reject transfer entries.
 
-This issue does not perform the shell write-set audit assigned to issue #56.
-Rows that still have a shell actor therefore use `status: unaudited` with no
-invented addresses or Effects. Non-shell rows use `not-applicable`. Issue #56
-must replace those placeholders with its reviewed exact audit; an unaudited
-state never grants permission to run a shell command.
+Issue #56 completed the shell write-set audit in
+[`inventory/shell-write-sets.json`](../../inventory/shell-write-sets.json).
+All 146 rows with a shell actor use `status: audited`; non-shell rows remain
+`not-applicable`. The map records exact write/Effect coverage, call paths,
+cross-component writes, known dynamic targets, and two fail-closed unknowns.
+The legacy entry points evaluate the audited IDs against this ledger before
+Device contact. A Python-owned, frozen, retired, unaudited, or unknown target
+never grants shell permission.
 
 ## Per-issue update obligation
 

@@ -36,6 +36,7 @@ python_version = "3.14"
 strict = true
 files = [
   "scripts/check_inventory_milestones.py",
+  "scripts/check_shell_permissions.py",
   "scripts/run_test_budget.py",
   "src",
   "tests/conftest.py",
