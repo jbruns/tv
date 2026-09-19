@@ -8,6 +8,7 @@ integrations.
 ## Shared guides
 
 - [Shared room setup runbook](docs/runbook.md)
+- [Python development and packaging](docs/development.md)
 - [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)
 - [Shared Ugoos setup guide](docs/devices/ugoos-am6b-plus/coreelec-21.3.md)
 - [Ugoos provisioning operations guide](docs/operations/provision-ugoos.md)
@@ -57,4 +58,5 @@ config/                       Shared non-secret provisioning contract
 home-assistant/               Deployed Home Assistant assets
 lib/                          Reusable shell libraries
 tests/                        Existing validation coverage
+src/coreelec_reconciler/     Python 3.14 Reconciler package
 ```
