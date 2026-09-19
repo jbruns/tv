@@ -49,7 +49,11 @@ def visible_markdown_lines(text: str) -> list[tuple[int, str]]:
             token = marker.group(1)
             if fence is None:
                 fence = (token[0], len(token))
-            elif token[0] == fence[0] and len(token) >= fence[1]:
+            elif (
+                token[0] == fence[0]
+                and len(token) >= fence[1]
+                and not line[marker.end() :].strip(" \t")
+            ):
                 fence = None
             continue
         if fence is None:
