@@ -1,6 +1,6 @@
 """Frozen authored-configuration domain values."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from coreelec_reconciler.domain.diagnostics import Diagnostic
@@ -32,6 +32,23 @@ class DesiredPresence(StrEnum):
 class SecretReference:
     provider: str
     key: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceEndpoint:
+    host: str
+    port: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDevice:
+    """Validated connection policy; deliberately contains no secret value."""
+
+    id: DeviceId
+    endpoint: DeviceEndpoint
+    ssh_username: str
+    host_key_reference: str
+    credential_reference: SecretReference
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +117,7 @@ class ResolvedConfiguration:
     dependency_order: tuple[ResourceId, ...]
     artifacts: tuple[Artifact, ...]
     secret_references: tuple[SecretReference, ...]
+    device: ResolvedDevice | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
