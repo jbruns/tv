@@ -21,13 +21,35 @@ changing the accepted module boundaries, lifecycle, or ownership.
   `definitely_not_applied`, and `ambiguous`. SSH command outcomes make the same
   distinction between completed execution, definite non-execution, and
   ambiguous transport loss.
-- `ManagedFiles.apply` and `ManagedFiles.restore` return typed mutation
-  outcomes, never `None`. Execution always performs a fresh observation and
-  never infers Device state or Convergence from a receipt.
+- The domain defines `MutationDisposition`, `MutationReceipt`, and the ordered
+  `MutationTrace` once. Every state-changing SFTP primitive used by this slice
+  returns a receipt: stage write, `chmod`, atomic replace, remove, and every
+  rollback restoration operation. A lost acknowledgement is a successful
+  transport-call result whose receipt is `ambiguous`; `Failure` means the
+  adapter can prove the mutation was not applied or could not begin.
+- `ManagedFiles.apply` and `ManagedFiles.restore` return ordered composite
+  traces, never `None`. A trace can truthfully record a partial sequence such
+  as replace `applied` followed by `chmod` `ambiguous`. Execution always
+  re-observes the complete owned state and never infers Device state or
+  Convergence from receipts.
+- `lstat` and reads return typed Result values. An incomplete read or transport
+  loss during a read is a typed unverifiable failure, not mutation ambiguity.
 - The SFTP port exposes atomic replace-over-existing as an explicit capability.
   The Paramiko adapter implements it with `SFTPClient.posix_rename`
   (`posix-rename@openssh.com`). Lack of that capability blocks before mutation.
   Remove-then-rename is not an allowed fallback.
+- `posix_rename` is unconditional. The immediate stale recheck narrows but
+  cannot eliminate the final race. Fresh post-replace Verification detects
+  third-party drift in that window and routes to rollback/recovery; it is never
+  reported converged. The operating assumption is one Python actor, while
+  unexpected third-party drift remains safely detectable rather than silently
+  accepted.
+- Resolution of `special://profile/...` requires an observed typed Kodi profile
+  root capability. Pure Resource resolution maps the accepted VFS scheme to a
+  normalized absolute `ManagedPath`, rejects unknown schemes, missing
+  capability, and root escape, and retains both logical State Address and safe
+  Device path in normalized evidence. The logical State Address remains the
+  ownership identity.
 - The SFTP port also exposes the metadata and mode operations actually needed
   by managed-file behavior. Fakes implement matching case-sensitive POSIX
   semantics.
@@ -730,6 +752,27 @@ class Err(Generic[E]):
 type Result[T, E] = Ok[T] | Err[E]
 
 
+@dataclass(frozen=True, slots=True)
+class LogicalStateAddress:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedPath:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class KodiProfileRootCapability:
+    root: ManagedPath
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedManagedAddress:
+    logical_address: LogicalStateAddress
+    device_path: ManagedPath
+
+
 class FailureKind(StrEnum):
     INVALID_INPUT = "invalid_input"
     CAPABILITY_UNAVAILABLE = "capability_unavailable"
@@ -769,6 +812,9 @@ class MutationReceipt:
     operation: str
     disposition: MutationDisposition
     evidence_digest: str | None
+
+
+type MutationTrace = tuple[MutationReceipt, ...]
 ```
 
 Domain values are frozen standard-library values. Expected operational
@@ -865,8 +911,9 @@ sketch uses `Any` or an unchecked cast.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Generic, Protocol, TypeVar
+
+from coreelec_reconciler.domain.changes import MutationTrace
 
 
 IntentT = TypeVar("IntentT")
@@ -917,18 +964,6 @@ class PreparedChange(Generic[PreparedT, RollbackT]):
     precondition_digest: str
 
 
-class MutationDisposition(StrEnum):
-    APPLIED = "applied"
-    DEFINITELY_NOT_APPLIED = "definitely_not_applied"
-    AMBIGUOUS = "ambiguous"
-
-
-@dataclass(frozen=True, slots=True)
-class MutationReceipt:
-    operation: str
-    disposition: MutationDisposition
-
-
 class ResourceType[
     IntentT,
     ResolvedT,
@@ -967,13 +1002,13 @@ class ResourceType[
         self,
         prepared: PreparedT,
         context: ApplyContext,
-    ) -> Result[MutationReceipt, Failure]: ...
+    ) -> Result[MutationTrace, Failure]: ...
 
     def rollback(
         self,
         rollback: RollbackT,
         context: ApplyContext,
-    ) -> Result[MutationReceipt, Failure]: ...
+    ) -> Result[MutationTrace, Failure]: ...
 ```
 
 `rollback` is optional at the descriptor level: a non-rollback Resource Type
@@ -1164,6 +1199,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from coreelec_reconciler.domain.changes import MutationReceipt
+
 
 @dataclass(frozen=True, slots=True)
 class DeviceConnection:
@@ -1199,18 +1236,6 @@ class SshAmbiguous:
 type SshOutcome = SshCompleted | SshDefinitelyNotApplied | SshAmbiguous
 
 
-class MutationDisposition(StrEnum):
-    APPLIED = "applied"
-    DEFINITELY_NOT_APPLIED = "definitely_not_applied"
-    AMBIGUOUS = "ambiguous"
-
-
-@dataclass(frozen=True, slots=True)
-class MutationReceipt:
-    operation: str
-    disposition: MutationDisposition
-
-
 class SshPort(Protocol):
     def run(self, argv: tuple[str, ...], stdin: bytes | None = None) -> SshOutcome: ...
 
@@ -1222,14 +1247,32 @@ class SftpAttributes:
     modified_ns: int
 
 
+class ReadFailure(Protocol):
+    pass
+
+
+class MutationFailure(Protocol):
+    pass
+
+
+class Result[T, E](Protocol):
+    pass
+
+
 class SftpPort(Protocol):
-    def lstat(self, path: str) -> SftpAttributes: ...
-    def read(self, path: str, limit: int) -> bytes: ...
-    def write(self, path: str, content: bytes, mode: int) -> None: ...
-    def chmod(self, path: str, mode: int) -> None: ...
+    def lstat(self, path: str) -> Result[SftpAttributes, ReadFailure]: ...
+    def read(self, path: str, limit: int) -> Result[bytes, ReadFailure]: ...
+    def write(
+        self, path: str, content: bytes
+    ) -> Result[MutationReceipt, MutationFailure]: ...
+    def chmod(
+        self, path: str, mode: int
+    ) -> Result[MutationReceipt, MutationFailure]: ...
     def supports_atomic_replace(self) -> bool: ...
-    def atomic_replace(self, source: str, destination: str) -> MutationReceipt: ...
-    def remove(self, path: str) -> None: ...
+    def atomic_replace(
+        self, source: str, destination: str
+    ) -> Result[MutationReceipt, MutationFailure]: ...
+    def remove(self, path: str) -> Result[MutationReceipt, MutationFailure]: ...
 
 
 class DeviceSession(Protocol):
@@ -1265,6 +1308,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from coreelec_reconciler.domain.changes import MutationTrace
+from coreelec_reconciler.domain.failures import Failure, Result
+from coreelec_reconciler.domain.identifiers import (
+    ManagedPath,
+    ResolvedManagedAddress,
+)
+
 
 class FileKind(StrEnum):
     ABSENT = "absent"
@@ -1272,13 +1322,8 @@ class FileKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ManagedPath:
-    value: str
-
-
-@dataclass(frozen=True, slots=True)
 class ManagedFileObservation:
-    path: ManagedPath
+    address: ResolvedManagedAddress
     kind: FileKind
     mode: int | None
     size: int
@@ -1304,36 +1349,39 @@ class ManagedFileRollback:
     token: str
 
 
-class MutationDisposition(StrEnum):
-    APPLIED = "applied"
-    DEFINITELY_NOT_APPLIED = "definitely_not_applied"
-    AMBIGUOUS = "ambiguous"
-
-
-@dataclass(frozen=True, slots=True)
-class MutationReceipt:
-    operation: str
-    disposition: MutationDisposition
-
-
 class ManagedFiles(Protocol):
     def observe(self, path: ManagedPath, read_limit: int) -> ManagedFileObservation: ...
     def prepare(
         self,
         change: ManagedFileChange,
     ) -> tuple[PreparedManagedFileChange, ManagedFileRollback]: ...
-    def apply(self, prepared: PreparedManagedFileChange) -> MutationReceipt: ...
-    def restore(self, rollback: ManagedFileRollback) -> MutationReceipt: ...
+    def apply(
+        self, prepared: PreparedManagedFileChange
+    ) -> Result[MutationTrace, Failure]: ...
+    def restore(
+        self, rollback: ManagedFileRollback
+    ) -> Result[MutationTrace, Failure]: ...
 ```
 
 `capabilities/managed_file.py` is a deep internal module over SSH/SFTP. It
-owns safe path derivation, parent policy, `lstat`, symlink and non-regular-file
+owns parent policy, `lstat`, symlink and non-regular-file
 rejection, read limits, mode handling, staging, rollback attachment
-persistence, immediate stale recheck, guarded same-directory atomic
+persistence, immediate stale recheck, same-directory atomic namespace
 replace-over-existing through the required OpenSSH extension,
 atomic removal where supported, cleanup, and exact content/mode restoration.
 It never implements replacement as remove followed by rename. Mutation
-receipts preserve ambiguity, and execution always re-observes afterward.
+traces preserve every per-step ambiguity, and execution always re-observes the
+complete owned state afterward.
+
+`KodiSmartPlaylist.resolve` owns pure VFS resolution. It accepts only the
+`special://profile/` scheme, combines its normalized relative suffix with the
+observed `KodiProfileRootCapability`, and rejects an unknown scheme, a missing
+capability, a non-absolute root, or any normalized escape from that root. The
+resolved Resource and normalized Plan/evidence retain both
+`special://profile/playlists/video/NewShows.xsp` and the safe absolute Device
+path. Ownership and duplicate detection continue to use only the logical State
+Address. Controller-local paths, credentials, and staging/backup/helper names
+never enter those values.
 
 `KodiSmartPlaylist` owns playlist identity, deterministic XML, XML parsing,
 semantic comparison, and typed playlist Changes. It calls managed-file
@@ -1390,10 +1438,15 @@ class RunStore(Protocol):
     def finalize(self, lease: Lease, expected_revision: int) -> StoredRevision: ...
 ```
 
-Paths never cross this seam. Exact lock files, directory layout, fsync,
-retention, remote markers, and recovery algorithms are deferred to issue 43.
-The interface already requires a lease, opaque workspace, attachments,
-compare-and-append revisions, load, and finalize.
+Controller-local workspace paths never cross this seam. Exact lock files,
+directory layout, fsync, retention, remote markers, and recovery algorithms
+are deferred to issue 43. Canonical Resource evidence may publish the logical
+State Address and safe normalized managed Device path, but never credentials
+or temporary staging/backup/helper names. Recovery carries an opaque workspace
+ID; authorized human `inspect` presentation may resolve details without adding
+them to Plan/Run automation fields. The interface already requires a lease,
+opaque workspace, attachments, compare-and-append revisions, load, and
+finalize.
 
 ### 8.11 Runtime values and progress
 
@@ -1504,15 +1557,19 @@ evidence requires one.
 5. The application gathers descriptor-declared resolution capabilities into
    an immutable observed `CapabilitySnapshot`.
 6. `KodiSmartPlaylist.resolve` is pure over Intent plus that snapshot. It
-   derives playlist identity, deterministic desired XML, mode `0644`, and
-   `special://profile/playlists/video/NewShows.xsp`.
+   derives playlist identity, deterministic desired XML, mode `0644`, the
+   logical State Address
+   `special://profile/playlists/video/NewShows.xsp`, and its normalized
+   absolute Device `ManagedPath` beneath the observed Kodi profile root.
+   Missing capability, unknown VFS scheme, or root escape fails resolution.
 7. The application opens a least-authority observation session containing
    only the managed-file read capability required by the descriptor.
 8. `KodiSmartPlaylist.observe` asks managed-file to inspect/read the address.
-   Managed-file owns safe path translation, `lstat`, regular-file enforcement,
-   size limit, content read, mode, and digest. The Resource Type parses XML
-   into a typed playlist Observation. A symlink, non-regular file, unsafe path,
-   or unreadable/oversized content becomes a typed blocker/failure.
+   Managed-file consumes the already normalized `ManagedPath` and owns
+   `lstat`, regular-file enforcement, size limit, content read, mode, and
+   digest. The Resource Type parses XML into a typed playlist Observation. A
+   symlink, non-regular file, unsafe path, or unreadable/oversized content
+   becomes a typed blocker/failure.
 9. `KodiSmartPlaylist.assess` is pure. It is the only operation that decides
    `satisfied`, `divergent`, `not_applicable`, or `unverifiable`; creates the
    typed create/update/remove Change; emits blockers and
@@ -1539,17 +1596,24 @@ evidence requires one.
 15. Execution appends the durable prepared revision before mutation.
 16. `KodiSmartPlaylist.apply` delegates the opaque prepared file change.
     Managed-file performs same-directory atomic replacement/removal and mode
-    enforcement. Its result says mutation completed or failed; it does not
-    say converged.
+    enforcement. It returns an ordered per-step `MutationTrace`; for example,
+    replace may be `applied` while the following `chmod` is `ambiguous`.
+    Transport/acknowledgement loss is an `Ok` ambiguous receipt, while
+    `Failure` proves the affected primitive was not applied or could not
+    begin. The trace does not say converged.
 17. Execution append-revises the mutation result, then performs Verification:
     a fresh managed-file observation, playlist XML parse, and the same pure
-    assessment. Only `satisfied` establishes Convergence.
+    assessment of complete owned state. Only `satisfied` establishes
+    Convergence. Because `posix_rename` is unconditional, this Verification
+    also detects a third-party interleaving after the final stale recheck and
+    routes it to rollback/recovery rather than silently accepting it.
 18. With successful Verification, execution records no Effect, appends the
     authoritative terminal report revision, finalizes the lease/workspace
     according to issue 43 policy, and returns `ApplyOutcome`.
 19. If Verification is divergent/unverifiable and rollback is safe, execution
     invokes the descriptor rollback operation using persisted material.
-    Managed-file restores exact prior content/absence and mode atomically.
+    Managed-file restores exact prior content/absence and mode, returning an
+    ordered trace for every restoration primitive.
 20. Rollback success is not final truth. Execution performs a fresh rollback
     Observation and assesses it against the persisted before-state contract.
     The report preserves the original failure plus
@@ -1574,6 +1638,7 @@ evidence requires one.
 | Fixed composition | `config/composition.py` | authored documents → resolved authored Resources | Layering and provenance are repository-wide rules. |
 | Registry selection | `resource_types/registry.py` | type code → immutable descriptor | Closed built-ins need one explicit lookup. |
 | Capability observation | application plus session/capability modules | selected requirements → snapshot | Resolution receives observed facts without performing I/O itself. |
+| VFS/profile path resolution | `kodi_smart_playlist/resource_type.py` | logical State Address + observed profile root → normalized absolute `ManagedPath` | The Resource owns its accepted VFS scheme and keeps logical ownership distinct from Device representation. |
 | Playlist resolution | `kodi_smart_playlist/resource_type.py` | Intent + snapshot → resolved playlist | Domain identity and representation are type-specific. |
 | XML | `kodi_smart_playlist/xml.py` | playlist model ↔ deterministic XML | XML is playlist representation, not transport or planning. |
 | Safe file observation | `capabilities/managed_file.py` | managed path → safe file facts/content | File hazards and limits are reusable deep mechanics. |
@@ -1604,7 +1669,9 @@ evidence requires one.
 | Malformed regular playlist XML | Expected drift or blocker according to type rule | Typed Observation; assessment decides repairability. |
 | Stale precondition | Expected failure | No mutation; typed stale result and Run revision. |
 | SSH/SFTP timeout or disconnect | Expected failure | Typed transport result, ambiguity preserved for re-observation/recovery. |
-| Mutation adapter reports failure | Expected failure | Failed attempt; never converged. |
+| Mutation adapter returns `Failure` | Expected failure | Adapter proves that primitive was not applied or could not begin; never converged. |
+| Mutation acknowledgement is lost | Expected successful transport-call result | `Ok` receipt with `ambiguous`; retain the ordered trace and re-observe complete owned state. |
+| Read is incomplete or transport is lost | Expected failure | Typed unverifiable read result; never mutation ambiguity. |
 | Fresh Verification mismatch | Expected failure | Rollback route when supported, otherwise truthful failure. |
 | Rollback or rollback Verification failure | Expected failure | `failed_recovery_required`; preserve original failure. |
 | Unsupported closed command in first slice | Expected outcome | Explicit `not_implemented` or `capability_unavailable`. |
@@ -1669,8 +1736,12 @@ Stateful fakes model behavior, not call lists:
   disconnect points, and capability grants;
 - fake RunStore retains lease ownership, workspace attachments, revision
   digests, compare-and-append conflicts, interruption points, and finalization;
-- fake RuntimeValues advances an explicit clock and UUIDv7 sequence;
+- fake RuntimeValues consumes explicit finite clock and UUIDv7 queues;
+  exhaustion or leftover values fail the test;
 - fake ProgressSink records typed events but cannot influence execution.
+
+The first slice has no sleeping or retry scheduler. Issue 43 adds an injected
+delay capability only if its accepted recovery policy requires one.
 
 The primary vertical-slice tests construct the application with those fakes
 and call `Reconciler.execute`. They assert returned outcomes, Device state,

@@ -4,7 +4,7 @@ Date: 2026-09-18
 
 Ticket: [Define the first vertical-slice test contract](https://github.com/jbruns/tv/issues/42)
 
-Status: **Draft autonomous decision for independent review**
+Status: **Accepted autonomous implementation contract**
 
 ## 1. Decision
 
@@ -98,18 +98,25 @@ useful but do not satisfy the installed boundary.
 
 ## 3. Required test-driven refinement of issue 41
 
-Test design exposed three corrections to the accepted module sketches. The
+Test design exposed five corrections to the accepted module sketches. The
 companion issue-41 contract receives a narrow dated erratum:
 
-1. mutation and SSH outcomes are closed unions that distinguish
-   `completed`/`applied`, `definitely_not_applied`, and `ambiguous`;
-2. managed-file apply and restore return typed mutation outcomes, never
-   `None`, while execution always re-observes;
-3. SFTP must provide safe atomic replacement over an existing destination,
+1. the domain defines shared `MutationDisposition`, `MutationReceipt`, and
+   ordered `MutationTrace` values once;
+2. every state-changing SFTP primitive used by the slice—stage write, `chmod`,
+   atomic replace, remove, and rollback restoration—returns a typed receipt;
+   acknowledgement/transport loss is `Ok(receipt(disposition=ambiguous))`,
+   while `Failure` means the adapter proves the operation was not applied or
+   could not begin;
+3. managed-file apply and restore return an ordered composite `MutationTrace`,
+   allowing partial sequences such as replace `applied` then `chmod`
+   `ambiguous`; execution always re-observes the complete owned state;
+4. `lstat` and reads return typed Results; incomplete or transport-lost reads
+   are unverifiable failures, not mutation ambiguity;
+5. SFTP must provide atomic replacement over an existing destination,
    using OpenSSH `posix-rename@openssh.com`/Paramiko `posix_rename` when
-   supported, and must block before mutation when it cannot;
-4. remove-then-rename is forbidden;
-5. prepared and rollback payloads remain closed, safe, and versioned.
+   supported, and must block before mutation when it cannot. It is
+   unconditional, not compare-and-swap; remove-then-rename is forbidden.
 
 These refinements do not change the selected seams, ownership, or lifecycle.
 
@@ -138,7 +145,18 @@ This intentionally refines the proof helper, which combined canonical bytes
 and its terminal newline. Production has separate
 `canonical_document_bytes(value)` and CLI framing behavior.
 
-### 4.3 Live evidence
+### 4.3 Effect acceptance
+
+Issue 40 is authoritative for this Resource: `KodiSmartPlaylist` declares no
+Effect by default. The live pilot must nevertheless answer whether Kodi
+observes and can use the playlist without one. Success is retained acceptance
+evidence. If Kodi does not, the slice does not falsely pass: create or resolve
+the narrow Effect decision, implement its contract, and rerun acceptance.
+Issue 44 owns the objective operator/Device steps. Broader legacy evidence
+that a skin restart was once used is classification evidence, not automatic
+policy for this Resource.
+
+### 4.4 Live evidence
 
 Live Device evidence is mandatory before declaring the managed-file
 architecture or milestone proven. It is:
@@ -160,7 +178,26 @@ Issue 40 assigns that address and sole Python ownership during acceptance.
 The Device must be disposable; no production Device may be used. Issue 44
 defines the exact shell preparation/reset and operator procedure.
 
-### 4.4 CI and acceptance gates
+The live pilot uses the actual `NewShows.xsp` only with all issue-44 identity
+guards, one sole Python actor after reset/handoff, and a fresh source commit or
+declared source-tree digest. It is not default CI and is not run on every
+commit.
+
+### 4.5 Step-zero atomic-overwrite feasibility evidence
+
+The feasibility spike precedes implementation and TDD. On 2026-09-18, under
+the same known-host and identity policy as the prior Paramiko proof, a
+non-production pilot used a unique
+`/storage/.cache/coreelec-reconciler-posix-rename-proof-<uuid>` directory.
+Paramiko `SFTPClient.posix_rename(source, existing_destination)` succeeded;
+the destination bytes became the source bytes, the source was absent, and
+exact cleanup was verified. No managed State Address was touched.
+
+This clears the step-zero feasibility gate and keeps the contract viable. It
+does not substitute for the production adapter shared contract and live
+acceptance against the exact implementation source commit.
+
+### 4.6 CI and acceptance gates
 
 There are currently no CI workflow files. The first implementation milestone
 must add Python 3.14 jobs for:
@@ -176,7 +213,7 @@ No automatic retry, flaky rerun, quarantine, `xfail`, or ignored failure can
 satisfy acceptance. There is no line-coverage percentage gate. The reviewed
 behavior and fault matrix is the coverage gate.
 
-### 4.5 Progress delivery failure
+### 4.7 Progress delivery failure
 
 `ProgressSink` delivery failure is typed, visible, and non-controlling:
 
@@ -280,7 +317,12 @@ tests/
         ├── converged-without-verification.json
         ├── converged-without-post-effect-verification.json
         ├── rolled-back-without-rollback-verification.json
-        └── broken-revision-chain.json
+        ├── broken-revision-chain.json
+        ├── mutated-terminal-revision.json
+        ├── unresolved-evidence-reference.json
+        ├── evidence-subject-binding-mismatch.json
+        ├── evidence-address-binding-mismatch.json
+        └── unknown-final-state-marked-converged.json
 ```
 
 `accepted-new-shows.xsp` may be a captured real sample only after confirming it
@@ -319,6 +361,10 @@ marked illustrative and must become a closed versioned vocabulary.
 | missing Profile/Resource/secret/Artifact reference | rejected |
 | Resource or Artifact dependency cycle | rejected |
 | duplicate State Address ownership | rejected in all desired/management combinations |
+| missing Kodi profile-root capability | `special://profile/...` resolution fails before observation |
+| unknown VFS scheme | resolution rejected |
+| profile-root escape after normalization | resolution rejected |
+| valid `special://profile/...` | retains logical State Address and normalized absolute managed Device path |
 | false `when` | not applicable and no ownership claim |
 | unknown `when` fact/capability | explicit failure, not false |
 | selector expansion | dependency and shared-document closure included |
@@ -329,6 +375,14 @@ marked illustrative and must become a closed versioned vocabulary.
 Composition expected values are literal resolved structures with literal
 origin maps. Tests must not invoke the production merge routine to construct
 expected data.
+
+Pure Resource resolution consumes an observed typed Kodi profile-root
+capability. It accepts the `special://profile/` VFS scheme, normalizes the
+suffix beneath the absolute root into `ManagedPath`, and rejects missing
+capability, unknown schemes, non-absolute roots, and root escapes. Normalized
+Resource evidence and Plan representation include both the logical State
+Address and safe normalized Device path. Ownership and duplicate detection use
+the logical State Address only.
 
 ## 7. Playlist fixtures and independent oracles
 
@@ -411,9 +465,19 @@ A completed or applied receipt means only that the adapter observed completion.
 `definitely_not_applied` means the adapter can prove no server-side mutation.
 `ambiguous` means client acknowledgement cannot determine server state.
 
-All three routes are followed by fresh observation when state may have changed.
-No receipt, exception class, connection close, or missing response establishes
-Convergence.
+Each state-changing primitive returns an `Ok` receipt for `applied`,
+`definitely_not_applied`, or `ambiguous`. In particular, transport or
+acknowledgement loss after a mutation request is `Ok(ambiguous)`, never a
+generic `Failure`. `Failure` means the adapter can prove that primitive was not
+applied or could not begin. Managed-file apply/restore return an ordered
+composite trace so partial sequences remain visible. Every route is followed
+by fresh observation of complete owned state whenever it may have changed. No
+receipt, trace, exception class, connection close, or missing response
+establishes Convergence.
+
+Reads and `lstat` return typed Result values. An incomplete read or transport
+loss during read is a typed unverifiable failure; mutation ambiguity does not
+apply to observation.
 
 ## 9. Stateful fake Device
 
@@ -445,6 +509,12 @@ from the session/capability objects. Assertions use:
 The inspector exposes no call history. Fake call logs, invocation counts, and
 method order are forbidden as behavior assertions.
 
+Fake path behavior is POSIX case-sensitive. Its independent inspector is not
+constructed from the session or mutation objects. For every mutation
+primitive, server-applied and not-applied acknowledgement-loss cases expose
+the identical client signal; only independent state observation distinguishes
+them.
+
 ## 10. Named Device fault/interleaving matrix
 
 Fault point names are test vocabulary, not persisted public codes unless later
@@ -454,28 +524,36 @@ adopted by a versioned schema.
 |---|---|---|
 | `after_plan_observation_before_prepare` | third party changes content/mode | prepare re-observation finds `precondition.normalized-state-digest-mismatch`; no mutation |
 | `after_rollback_capture_before_prepare_recheck` | third party changes state | stale; staged material cleaned/retained only per #43, managed address unchanged by Reconciler |
-| `after_prepare_recheck_before_atomic_replace` | third party changes destination | atomic operation must use a final compare/guard capability or block as stale; it must not overwrite unobserved state |
+| `after_prepare_recheck_before_atomic_replace` | third party changes destination | unconditional atomic replace may overwrite that interleaving; fresh post-replace Verification must detect the mismatch and route to rollback/recovery, never Convergence |
 | `replace_signal_lost_server_applied` | server atomically replaces, client receives transport loss | receipt is `ambiguous`; re-observe may prove Desired State, then report truthfully |
 | `replace_signal_lost_server_not_applied` | identical client transport loss, server leaves original | same `ambiguous` client signal; re-observe proves unchanged/divergent and follows failure/rollback policy |
 | `mode_signal_lost_server_applied` | chmod applies, acknowledgement lost | ambiguous then re-observe complete content/mode |
-| `write_stage_fails` | stage write rejected | definitely not applied; managed address unchanged |
+| `mode_signal_lost_server_not_applied` | identical chmod signal, mode unchanged | same ambiguous receipt; re-observe complete content/mode |
+| `write_stage_signal_lost_server_applied` | stage bytes written, acknowledgement lost | ambiguous stage receipt; managed address remains unchanged and prepare/recovery uses observation |
+| `write_stage_signal_lost_server_not_applied` | identical stage signal, no stage bytes | same ambiguous receipt; managed address remains unchanged |
+| `write_stage_fails` | stage write rejected before application | typed Failure; managed address unchanged |
 | `atomic_replace_unsupported` | extension absent | capability blocker before mutation |
+| `remove_signal_lost_server_applied` | remove applies, acknowledgement lost | ambiguous then fresh absence observation |
+| `remove_signal_lost_server_not_applied` | identical remove signal, file remains | same ambiguous receipt; fresh observation routes failure/rollback |
 | `disconnect_during_observe` | read incomplete | unverifiable; no mutation |
 | `disconnect_after_replace_before_verify` | new session required | persist interruption/recovery truth; never infer success |
+| `replace_applied_chmod_ambiguous` | replace applies, subsequent chmod acknowledgement lost | ordered trace records replace `applied`, chmod `ambiguous`; full content/mode re-observation decides truth |
 | `verification_reads_third_party_drift` | drift after successful replace | Verification mismatch; tested rollback route |
 | `rollback_signal_lost_applied` | restoration applied, acknowledgement lost | ambiguous; fresh rollback Verification decides truth |
 | `rollback_signal_lost_not_applied` | identical signal, no restoration | ambiguous; fresh evidence leads to recovery required |
+| `rollback_replace_applied_chmod_ambiguous` | rollback content restore applies, mode restore acknowledgement lost | ordered rollback trace retains both steps; full rollback Verification decides truth |
 | `cleanup_fails_after_convergence` | managed state converged, staging remains | canonical convergence truth retained, cleanup/recovery diagnostic explicit per #43 |
 
 The two replace ambiguity cases deliberately have identical client-visible
 signals and differ only in the independent server state. A test that branches
 on exception text rather than observation fails this contract.
 
-The last stale window requires the production mutation primitive to prevent an
-unguarded overwrite after the last recheck. The exact compare/guard mechanism
-is an issue-43 implementation decision, but issue 42 requires a failing test
-for the interleaving and forbids accepting a check-then-unconditional-replace
-race.
+OpenSSH `posix-rename` is unconditional, so the final recheck narrows but
+cannot eliminate the race before rename. The contract assumes the Reconciler
+is the sole expected actor, but it does not silently trust that assumption:
+fresh Verification detects third-party drift in the residual window and
+routes it to rollback/recovery. Atomic namespace replacement remains required,
+and remove-plus-rename remains forbidden.
 
 ## 11. RunStore, interruption, and recovery surface
 
@@ -508,6 +586,11 @@ Tests assert only the allowed action set and truthful report state. Exact
 workspace layout, stale-lock algorithm, marker format, cleanup/retention,
 retry scheduler, and recovery algorithms belong to issue 43.
 
+Recovery documents carry only an opaque workspace ID. The `inspect` action may
+resolve operational details through authorized human presentation, but Plan,
+Run, progress, and other automation fields never expose controller-local
+paths, credentials, or temporary staging/backup/helper names.
+
 No first-slice test expects retry sleeps. If issue 43 introduces scheduled
 retry, it must introduce an injected delay capability; tests may not patch or
 sleep real time.
@@ -519,7 +602,12 @@ sleep real time.
 - tests enqueue exact UTC instants and UUIDv7 values;
 - consumption from an empty queue fails the test;
 - unconsumed values fail the test when the scenario closes;
+- both queues are explicit and finite;
 - timezone and locale never affect produced values.
+
+The first slice has no sleeping or retry. Issue 43 adds an injected delay
+capability only if an accepted recovery policy actually needs scheduled delay;
+tests never patch or invoke real sleep.
 
 `RecordingProgressSink` records closed typed events for presentation tests but
 is not used to prove execution behavior. A failing sink can fail on selected
@@ -555,14 +643,20 @@ Shared cases:
 
 - `lstat` does not follow symlinks;
 - regular-file read limit;
-- staged write with required mode;
+- typed `lstat` and read Results, including incomplete-read unverifiable
+  failures;
+- staged write receipt;
 - metadata/mode read and `chmod` behavior needed by managed-file;
 - atomic replace when destination is absent;
 - atomic replace over an existing regular destination;
 - source disappearance and destination replacement semantics;
+- remove receipt;
+- an ordered managed-file trace for multi-step apply and restore;
 - extension/capability absence blocks before managed-address mutation;
 - no remove-plus-rename sequence exists;
-- ambiguous acknowledgement is representable.
+- applied and not-applied acknowledgement loss produce the identical
+  `ambiguous` client signal for write, `chmod`, replace, remove, and rollback
+  restoration primitives.
 
 The production Paramiko adapter must use
 `SFTPClient.posix_rename`, backed by
@@ -583,7 +677,9 @@ Shared fake/production cases:
 - durable revision chain;
 - finalize idempotence only where issue 43 explicitly permits it;
 - restrictive permissions for sensitive workspace material;
-- paths never appear in public outcomes.
+- controller-local workspace paths never appear in public outcomes; the
+  schema-approved logical State Address and safe normalized managed Device path
+  remain permitted Resource evidence.
 
 Filesystem-specific durability, fsync, atomic file replacement, and stale lock
 details remain issue 43 decisions but must receive production contract cases.
@@ -609,8 +705,11 @@ production report validation or status-computation code. It proves at minimum:
   a converged/known-partial status.
 
 Every positive golden is checked. Corrupted fixtures each violate one rule and
-must be rejected. Production and test invariant implementations must not share
-helper functions.
+must be rejected. There is at least one deliberately invalid fixture for every
+enumerated invariant, including terminal immutability, revision linkage,
+evidence reference resolution, evidence subject binding, State Address
+binding, and unknown-final-state versus converged/known-partial status.
+Production and test invariant implementations must not share helper functions.
 
 ## 15. Canonical JSON, digests, and revision chains
 
@@ -649,6 +748,10 @@ conditions.
 ### 16.1 Streams
 
 - JSON stdout is canonical document bytes plus exactly one `LF`.
+- when a modeled non-zero outcome has a canonical outcome document, that JSON
+  is still emitted on stdout before returning its modeled exit code;
+- stdout is empty for usage/parser failures that occur before a canonical
+  Run/outcome exists;
 - stdout contains no progress, warnings, logs, tracebacks, prompts, terminal
   escapes, or bootstrap noise.
 - progress and human diagnostics use stderr.
@@ -670,7 +773,7 @@ The first CLI schema fixes this table:
 | `3` | typed blocked, unsupported, not-implemented, or capability-unavailable outcome; no mutation |
 | `4` | execution failed with a fully known final state |
 | `5` | interrupted or recovery-required/unknown final state |
-| `70` | safely captured internal defect |
+| `1` | uncaught or unclassified defect only |
 
 Tests map typed outcomes, not message text, to these values.
 
@@ -686,8 +789,10 @@ and attachment payload fragments. None may appear in:
 - filenames exposed by outcomes;
 - JUnit or retained acceptance summaries.
 
-The expected logical secret provider/key and normalized public State Address
-may appear where the accepted schemas permit them.
+The expected logical secret provider/key, logical State Address, and safe
+normalized managed Device path may appear where the accepted schemas permit
+them. Controller-local paths, credential values, and temporary
+staging/backup/helper names may not.
 
 ## 17. Architecture, packaging, and offline enforcement
 
@@ -724,26 +829,38 @@ the wheel inside the measured interval.
 Each Linux and macOS CI job:
 
 1. installs/synchronizes with `uv sync --frozen`;
-2. starts a stdlib timing wrapper immediately before pytest;
-3. runs pure/unit/architecture tests with a hard 10-second job-step timeout;
-4. runs the complete offline suite with a hard 60-second job-step timeout;
-5. records monotonic elapsed seconds in the job summary/artifact.
+2. starts a standard-library timing/budget wrapper immediately before pytest;
+3. runs each intended suite exactly once per platform/job: the pure/unit/
+   architecture selection under 10 seconds, then the remaining offline
+   selection needed to make the complete offline total enforceable under 60
+   seconds without rerunning the first selection;
+4. applies a generous 300-second outer hang watchdog that preserves pytest
+   output while the inner wrapper measures only pytest execution;
+5. records monotonic elapsed seconds and budget results in the job
+   summary/artifact.
 
-The wrapper uses `time.monotonic_ns()` and propagates pytest's exit status.
-The CI runner or standard `timeout` facility enforces the hard ceiling; the
-recorded value makes regressions visible. No sleeps, external network, or live
-Device work occurs in either measured suite.
+The inner wrapper uses `time.monotonic_ns()`, enforces the accepted 10/60
+budgets, and propagates pytest's exit status. Frozen synchronization, build,
+and environment creation are outside its measurement. The outer watchdog is
+not a budget waiver. No sleeps, external network, or live Device work occurs
+in either measured suite.
 
 “Cold enough” means a fresh CI job/process after dependency sync, with no
 pytest daemon or persistent test worker. It does not mean deliberately
 discarding uv/download caches and measuring environment setup.
 
+Changing either budget requires a new reviewed architecture decision backed by
+evidence. Shared-runner slowness is investigated; it is never silently waived.
+
 ## 19. TDD tracer-bullet implementation order
 
-Every step begins with one failing test through the named accepted seam:
+The already-passed atomic-overwrite feasibility spike in section 4.5 is step
+zero and precedes implementation. Every implementation step then begins with
+one failing test through the named accepted seam:
 
 1. installed `validate` rejects one invalid Profile before transport;
-2. pure valid Profile composition resolves the literal playlist Intent;
+2. pure valid Profile composition and typed profile-root resolution produce
+   the literal playlist Intent, logical address, and safe Device path;
 3. pure XML parse/render and semantic no-op;
 4. `execute(PlanCommand)` on absent state emits an actionable canonical Plan;
 5. Plan digest/newline golden;
@@ -753,14 +870,15 @@ Every step begins with one failing test through the named accepted seam:
 9. mode and semantic drift repair;
 10. stale-before-mutation rejection;
 11. atomic replace capability refusal;
-12. identical ambiguous signals with applied/not-applied server states;
-13. Verification failure and verified rollback;
-14. rollback ambiguity and recovery-required truth;
-15. interruption/recover/report surface;
-16. progress sink failure invariance and CLI fallback;
-17. production adapter shared contracts;
-18. Linux/macOS packaging, architecture, and budget gates;
-19. live disposable-Device acceptance.
+12. per-primitive identical ambiguous signals and ordered partial traces;
+13. residual post-recheck race detected by Verification;
+14. Verification failure and verified rollback;
+15. rollback ambiguity and recovery-required truth;
+16. interruption/recover/report surface;
+17. progress sink failure invariance and CLI fallback;
+18. production adapter shared contracts;
+19. Linux/macOS packaging, architecture, and budget gates;
+20. live disposable-Device acceptance.
 
 Do not prebuild later workflow machinery merely to satisfy imagined tests.
 Refactoring occurs after a green slice and independent review, not inside the
@@ -788,7 +906,9 @@ Required live cases:
 2. fresh convergence at the actual playlist address;
 3. independently parse the resulting playlist and prove exact semantics and
    mode `0644`;
-4. prove Kodi can use/display the playlist and that no Effect is required;
+4. objectively prove whether Kodi observes and can use/display the playlist
+   without an Effect; if not, fail acceptance, resolve the narrow Effect
+   decision, and rerun rather than falsely passing;
 5. introduce the representative drift selected by issue 44 and repair it;
 6. if issue 44 determines it is operationally safe, induce one ambiguous
    acknowledgement and prove re-observation; otherwise the shared production
@@ -839,11 +959,16 @@ The managed-file architecture is proven only when all are true:
 - [ ] authored validation/composition matrix passes before transport;
 - [ ] playlist semantic, codec, resolution, assessment, and malformed-input
       matrix passes with independent literals;
+- [ ] typed profile-root resolution proves accepted `special://profile/`
+      mapping, unknown-scheme/missing-capability/root-escape rejection, and
+      logical-address plus safe-Device-path evidence;
 - [ ] stateful fake Device and independent inspector prove final state and no
       subtree leaks;
-- [ ] stale and identical-signal ambiguity cases pass;
+- [ ] stale, residual-race Verification, per-primitive identical-signal
+      ambiguity, and ordered partial-trace cases pass;
 - [ ] SFTP safe atomic overwrite-over-existing capability passes in fake and
-      Paramiko contracts, with no fallback;
+      Paramiko contracts, with no fallback; the 2026-09-18 feasibility proof
+      is recorded but does not replace exact-source acceptance;
 - [ ] fresh Verification and rollback Verification invariants pass, including
       corrupted negative documents;
 - [ ] fake and filesystem RunStore revision/lease/attachment contracts pass;
@@ -862,7 +987,8 @@ The managed-file architecture is proven only when all are true:
 - [ ] fresh unquarantined disposable-Device evidence matches the exact accepted
       source digest/commit;
 - [ ] live convergence, independent semantics/mode, Kodi usability, drift
-      repair, second-Run no-op, and reset/restoration pass.
+      repair, second-Run no-op, and reset/restoration pass; a discovered Effect
+      need fails the slice until the narrow decision is resolved and rerun.
 
 Passing only the offline suite means the implementation is ready for pilot
 acceptance. It does not mean the architecture or milestone is proven.
