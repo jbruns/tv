@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
       - name: Install Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -41,8 +43,11 @@ jobs:
       - name: Record environment
         run: |
           mkdir -p .ci-evidence
+          checked_out_sha="$(git rev-parse HEAD)"
+          test "$checked_out_sha" = "$SOURCE_SHA"
           {
             echo "source_sha=${SOURCE_SHA}"
+            echo "checked_out_sha=${checked_out_sha}"
             echo "workflow_sha=${GITHUB_SHA}"
             echo "runner_os=${RUNNER_OS}"
             echo "runner_arch=${RUNNER_ARCH}"
@@ -146,7 +151,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: offline-ci-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          name: offline-ci-${{ runner.os }}-${{ runner.arch }}-${{ env.SOURCE_SHA }}
           path: .ci-evidence/
           if-no-files-found: warn
           include-hidden-files: true
@@ -159,6 +164,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
       - name: Install Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:

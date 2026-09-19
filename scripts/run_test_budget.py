@@ -4,11 +4,16 @@ import argparse
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
+
+PROCESS_GROUP_GRACE_SECONDS = 1.0
+PROCESS_GROUP_POLL_SECONDS = 0.01
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,21 +57,59 @@ def append_job_summary(evidence: dict[str, Any]) -> None:
         )
 
 
+def process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def wait_for_process_group_exit(process_group_id: int, deadline: float) -> bool:
+    while process_group_exists(process_group_id):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(PROCESS_GROUP_POLL_SECONDS, remaining))
+    return True
+
+
+def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    process_group_id = process.pid
+    deadline = time.monotonic() + PROCESS_GROUP_GRACE_SECONDS
+    with suppress(ProcessLookupError):
+        os.killpg(process_group_id, signal.SIGTERM)
+
+    if process.poll() is None:
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+
+    if wait_for_process_group_exit(process_group_id, deadline):
+        return
+
+    with suppress(ProcessLookupError):
+        os.killpg(process_group_id, signal.SIGKILL)
+    if process.poll() is None:
+        process.wait(timeout=PROCESS_GROUP_GRACE_SECONDS)
+    if not wait_for_process_group_exit(
+        process_group_id,
+        time.monotonic() + PROCESS_GROUP_GRACE_SECONDS,
+    ):
+        raise RuntimeError("test process group survived SIGKILL")
+
+
 def main() -> int:
     arguments = parse_args()
     included_elapsed = prior_elapsed(arguments.include_result)
     started = time.monotonic_ns()
     timed_out = False
+    process = subprocess.Popen(arguments.command, start_new_session=True)
     try:
-        completed = subprocess.run(
-            arguments.command,
-            check=False,
-            timeout=arguments.timeout_seconds,
-        )
-        command_exit_code = completed.returncode
+        command_exit_code = process.wait(timeout=arguments.timeout_seconds)
     except subprocess.TimeoutExpired:
         timed_out = True
         command_exit_code = 124
+        terminate_process_group(process)
         print(
             f"{arguments.label}: command exceeded "
             f"{arguments.timeout_seconds:g}s hang watchdog",

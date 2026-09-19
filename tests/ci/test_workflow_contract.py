@@ -20,6 +20,11 @@ def test_workflow_is_least_privilege_and_runs_supported_platforms() -> None:
     assert workflow["env"]["SOURCE_SHA"] == (
         "${{ github.event.pull_request.head.sha || github.sha }}"
     )
+    for job in workflow["jobs"].values():
+        checkout = next(
+            step for step in job["steps"] if step["name"] == "Check out source"
+        )
+        assert checkout["with"]["ref"] == "${{ env.SOURCE_SHA }}"
 
 
 def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
@@ -59,6 +64,18 @@ def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
     )
 
     workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "source_sha=${SOURCE_SHA}" in workflow_text
+    assert 'test "$checked_out_sha" = "$SOURCE_SHA"' in workflow_text
+    assert "checked_out_sha=${checked_out_sha}" in workflow_text
+    assert "workflow_sha=${GITHUB_SHA}" in workflow_text
+    assert (
+        "offline-ci-${{ runner.os }}-${{ runner.arch }}-${{ env.SOURCE_SHA }}"
+        in workflow_text
+    )
+    assert (
+        "offline-ci-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}"
+        not in workflow_text
+    )
     for forbidden in ("continue-on-error", "pytest-rerunfailures", "flaky", "xfail"):
         assert forbidden not in workflow_text
 

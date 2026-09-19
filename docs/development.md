@@ -87,8 +87,11 @@ The first selection contains pure, unit, architecture, and CI-helper tests and
 must finish in under 10 seconds. The second command runs the remaining offline
 tests exactly once and adds the first result, enforcing a complete offline
 total under 60 seconds. Each command has a 300-second hang watchdog; it does
-not waive either budget. The runner writes source, platform, command, status,
-and monotonic timing evidence under `.ci-evidence/`.
+not waive either budget. Each test command starts in its own POSIX process
+session. On timeout the runner signals the complete process group, waits a
+bounded grace period, and escalates to `SIGKILL` so descendants cannot outlive
+the gate. The runner writes source, platform, command, status, and monotonic
+timing evidence under `.ci-evidence/`.
 
 `tests/conftest.py` installs the offline socket guard before test collection
 and passes it to Python subprocesses. Any socket creation fails with
@@ -98,10 +101,13 @@ not belong in these selectors.
 The [offline CI workflow](../.github/workflows/offline-ci.yml) runs the same
 frozen sync, Ruff, strict mypy, exact pytest selectors, budgets, and package
 build on Linux x86_64 and macOS arm64. Its least-privilege token grants only
-read access to repository contents. The existing shell tests remain visible
-as the separate macOS `Shell transition suite` job through M11, use the same
-frozen environment for their Python fixture dependencies, and are not charged
-to Python's budgets.
+read access to repository contents. Pull-request jobs explicitly check out the
+head `SOURCE_SHA`, verify `HEAD` matches it, and use that SHA in evidence
+artifact names. `workflow_sha` separately records GitHub's workflow context,
+which may be a synthetic pull-request merge commit. The existing shell tests
+remain visible as the separate macOS `Shell transition suite` job through M11,
+use the same frozen environment for their Python fixture dependencies, and are
+not charged to Python's budgets.
 
 The installed command is `coreelec-reconciler`. Its version and help paths are
 local metadata operations: they do not load Desired State, create a Device

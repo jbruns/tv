@@ -1,11 +1,28 @@
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path
+from uuid import uuid4
+
+import pytest
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 BUDGET_RUNNER = REPOSITORY_ROOT / "scripts" / "run_test_budget.py"
+
+
+@pytest.fixture
+def scratch_directory() -> Iterator[Path]:
+    path = REPOSITORY_ROOT / f".ci-test.{uuid4().hex}"
+    path.mkdir(mode=0o700)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def run_budget(
@@ -13,6 +30,7 @@ def run_budget(
     *command: str,
     budget_seconds: str = "10",
     include_result: Path | None = None,
+    timeout_seconds: str = "5",
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["SOURCE_SHA"] = "test-source-sha"
@@ -24,7 +42,7 @@ def run_budget(
         "--budget-seconds",
         budget_seconds,
         "--timeout-seconds",
-        "5",
+        timeout_seconds,
         "--result",
         str(result_path),
     ]
@@ -40,8 +58,8 @@ def run_budget(
     )
 
 
-def test_runner_records_a_successful_command(tmp_path: Path) -> None:
-    result_path = tmp_path / "result.json"
+def test_runner_records_a_successful_command(scratch_directory: Path) -> None:
+    result_path = scratch_directory / "result.json"
 
     result = run_budget(result_path, sys.executable, "-c", "print('passed')")
 
@@ -58,8 +76,10 @@ def test_runner_records_a_successful_command(tmp_path: Path) -> None:
     assert evidence["budget_passed"] is True
 
 
-def test_runner_propagates_the_test_process_exit_status(tmp_path: Path) -> None:
-    result_path = tmp_path / "result.json"
+def test_runner_propagates_the_test_process_exit_status(
+    scratch_directory: Path,
+) -> None:
+    result_path = scratch_directory / "result.json"
 
     result = run_budget(
         result_path,
@@ -74,10 +94,12 @@ def test_runner_propagates_the_test_process_exit_status(tmp_path: Path) -> None:
     assert evidence["budget_passed"] is True
 
 
-def test_runner_rejects_an_exceeded_aggregate_budget(tmp_path: Path) -> None:
-    prior_path = tmp_path / "prior.json"
+def test_runner_rejects_an_exceeded_aggregate_budget(
+    scratch_directory: Path,
+) -> None:
+    prior_path = scratch_directory / "prior.json"
     prior_path.write_text('{"total_elapsed_seconds": 1.0}\n', encoding="utf-8")
-    result_path = tmp_path / "result.json"
+    result_path = scratch_directory / "result.json"
 
     result = run_budget(
         result_path,
@@ -94,3 +116,69 @@ def test_runner_rejects_an_exceeded_aggregate_budget(tmp_path: Path) -> None:
     assert evidence["prior_elapsed_seconds"] == 1.0
     assert evidence["total_elapsed_seconds"] >= 1.0
     assert evidence["budget_passed"] is False
+
+
+@pytest.mark.parametrize("ignore_sigterm", [False, True])
+def test_runner_cleans_up_descendants_on_timeout(
+    scratch_directory: Path,
+    *,
+    ignore_sigterm: bool,
+) -> None:
+    result_path = scratch_directory / "result.json"
+    ready_path = scratch_directory / "descendant.pid"
+    terminated_path = scratch_directory / "descendant-terminated"
+    signal_setup = (
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)"
+        if ignore_sigterm
+        else "signal.signal(signal.SIGTERM, terminate)"
+    )
+    descendant_code = f"""
+import os
+import signal
+from pathlib import Path
+
+ready = Path({str(ready_path)!r})
+terminated = Path({str(terminated_path)!r})
+
+def terminate(signum, frame):
+    del signum, frame
+    terminated.write_text("terminated")
+    raise SystemExit(0)
+
+{signal_setup}
+ready.write_text(str(os.getpid()))
+signal.pause()
+"""
+    parent_code = (
+        "import signal, subprocess, sys; "
+        f"subprocess.Popen([sys.executable, '-c', {descendant_code!r}], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL); "
+        "signal.pause()"
+    )
+
+    try:
+        result = run_budget(
+            result_path,
+            sys.executable,
+            "-c",
+            parent_code,
+            timeout_seconds="0.5",
+        )
+
+        assert result.returncode == 124
+        if ignore_sigterm:
+            assert not terminated_path.exists()
+        else:
+            assert terminated_path.read_text(encoding="utf-8") == "terminated"
+        descendant_pid = int(ready_path.read_text(encoding="utf-8"))
+        with pytest.raises(ProcessLookupError):
+            os.kill(descendant_pid, 0)
+        evidence = json.loads(result_path.read_text(encoding="utf-8"))
+        assert evidence["timed_out"] is True
+        assert evidence["command_exit_code"] == 124
+    finally:
+        if ready_path.exists():
+            descendant_pid = int(ready_path.read_text(encoding="utf-8"))
+            with suppress(ProcessLookupError):
+                os.kill(descendant_pid, signal.SIGKILL)
