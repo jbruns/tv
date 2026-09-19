@@ -56,6 +56,30 @@ changing the accepted module boundaries, lifecycle, or ownership.
 - Prepared and rollback payloads remain closed, safe, versioned persisted data
   under the codec rules already accepted below.
 
+### Issue 43 Run ownership and recovery refinement (2026-09-18)
+
+[Issue 43](2026-09-18-run-workspace-recovery-effect-contracts.md) distinguishes
+the controller-local Device lease from the per-workspace revision lease and
+adds a Device-scoped nonterminal Run index plus persistent remote Device
+ownership. `RunStore.acquire` in section 8.10 is therefore superseded by
+separate Device-lease, Run-creation/lease, nonterminal lookup, attachment, and
+compare-and-append operations in the issue-43 sketches.
+
+Recovery also no longer means continuing the generic lifecycle at the next
+step. `resume_verification` may fresh-observe, assess, resolve ambiguity,
+finish pending Verification/post-Effect observation, and route to an already
+approved conditional rollback. It never completes an interrupted forward
+primitive, begins an unperformed Change, or reruns an interrupted Effect.
+Forward work requires a new Plan and execution Run.
+
+The controller-side content-addressed attachment is authoritative rollback
+data. Device-side stage/backup objects are transient aids. Every
+state-changing primitive receives a durable intent revision before execution
+and an ordered trace/ambiguity revision afterwards; intent without outcome is
+ambiguous. These refinements preserve the single `Reconciler.execute`
+interface, deep execution module, strict codecs, and fresh-observe
+Verification rules.
+
 ## 1. Question
 
 What production module structure and typed interfaces give callers and tests

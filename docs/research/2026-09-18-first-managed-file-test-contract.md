@@ -6,6 +6,25 @@ Ticket: [Define the first vertical-slice test contract](https://github.com/jbrun
 
 Status: **Accepted autonomous implementation contract**
 
+## 0. Issue 43 recovery refinement (2026-09-18)
+
+The accepted
+[Run workspace, recovery, and Effect contract](2026-09-18-run-workspace-recovery-effect-contracts.md)
+supplies the workspace algorithms deferred by this record. First-slice tests
+must now distinguish the Device-scoped local lease, the Run workspace revision
+lease, the Device nonterminal index, and remote exclusive ownership.
+
+Interruption tests require durable intent before every state-changing
+primitive and treat intent without outcome as ambiguous. Recovery may inspect,
+fresh-observe/verify, resolve ambiguity, and conditionally rollback; it must
+never finish forward mutation or start an unperformed Change. Rollback is
+allowed only from verified controller-side before-state attachments when
+fresh current state exactly matches a known state produced by the Run.
+
+The exact additions are enumerated in issue 43 section 17. V1 tests must prove
+there is no automatic retry, Delay port, heartbeat takeover, Effect handler,
+automatic prune, path exposure, or cleanup-driven rewrite of terminal truth.
+
 ## 1. Decision
 
 The first production slice is accepted only when tests prove the behavior of
