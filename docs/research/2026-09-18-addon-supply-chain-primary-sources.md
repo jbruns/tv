@@ -43,8 +43,9 @@ requests without auto-merging or deploying.
 The accepted records already constrain that work:
 
 - stable upstream releases are the default;
-- a prerelease requires per-Artifact rationale, a pinned digest, additional
-  acceptance evidence, and an expiry or review trigger;
+- ADR 0005 originally required per-Artifact rationale, a pinned digest,
+  additional acceptance evidence, and an expiry or review trigger; the final
+  issue #47 refinement makes `expires_on` mandatory and limits it to 90 days;
 - a patched Artifact is reproducibly built and records upstream, patch-set,
   and final digests;
 - the Device receives the prebuilt final Artifact rather than running source
@@ -133,11 +134,13 @@ archive for an exact tag because upstream release `0.0.6.6` has no attached
 asset.
 [`provision.conf`](../../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf#L45-L81)
 
-Four archives have a top-level directory that differs from the declared add-on
+Three archives have a top-level directory that differs from the declared add-on
 ID: ART-004 `plugin.service.emby-next-gen`, ART-019
-`resource.font.robotocjksc`, ART-007 `script.plexmod`, and ART-009
-`weather.ha`. These are required compatibility fixtures; installation identity
-comes from `addon.xml`, not the archive root.
+`resource.font.robotocjksc`, and ART-009 `weather.ha`. The configuration comment
+lists four packaging cases, but ART-007 `script.plexmod` has the root
+`script.plexmod/`, exactly equal to its ID, so it is not an override. These are
+required compatibility fixtures; installation identity comes from `addon.xml`,
+not the archive root.
 [`provision.conf` packaging notes](../../config/shared/ugoos-am6b-plus/coreelec-21.3/provision.conf#L212-L219)
 
 ### 2.3 Exact four-patch initial scope
@@ -312,6 +315,13 @@ Important integrity distinctions:
   [Kodi Omega `AddonInfoBuilder.cpp` at verified commit](https://github.com/xbmc/xbmc/blob/f8815ee40f49a700c047982d752be4b2a61420e2/xbmc/addons/addoninfo/AddonInfoBuilder.cpp)
   [Kodi Wiki — Add-on structure](https://kodi.wiki/view/Add-on_structure)
 
+Kodi orders add-on versions with `CAddonVersion`, a Debian-style component
+comparison with epoch and revision handling. Numeric runs compare numerically,
+`~` sorts before the corresponding final version, and local Kodi suffixes such
+as `+matrix.1` participate in ordering. This is not Semantic Versioning.
+[Kodi Omega `AddonVersion.cpp` at verified commit](https://github.com/xbmc/xbmc/blob/f8815ee40f49a700c047982d752be4b2a61420e2/xbmc/addons/AddonVersion.cpp)
+[Kodi Omega version tests at verified commit](https://github.com/xbmc/xbmc/blob/f8815ee40f49a700c047982d752be4b2a61420e2/xbmc/addons/test/TestAddonVersion.cpp)
+
 CoreELEC 21's official add-on packaging script reads the add-on version from
 `addon.xml`, creates a ZIP whose top-level path is the add-on ID, and, for its
 Jenkins bundle, emits a SHA-256 sidecar. This establishes CoreELEC build
@@ -474,8 +484,8 @@ same final SHA-256.
 7. **Attestation does not mean safe.** It proves a signed provenance statement
    subject to verification policy; it does not assess upstream code or patch
    safety.
-8. **The 41-artifact count, category totals, moving-branch list, archive-root
-   exceptions, and four patch groups are repository facts, not external
+8. **The 41-artifact count, category totals, moving-branch list, three actual
+   archive-root exceptions, and four patch groups are repository facts, not external
    claims.** Section 2 validates them against the lock, inventory, tests, and
    current transformer.
 
@@ -514,9 +524,9 @@ policy:
     statement that no deployment occurred.
 11. If attestations are generated, verify them in CI but retain the independent
     upstream/patch/final digest chain as the catalog's provenance record.
-12. Use one repository-wide publication concurrency group so overlapping runs
-    cannot update the same proposal branch concurrently; do not infer ordering
-    from GitHub's concurrency queue.
+12. Use per-Artifact concurrency and immutable per-candidate branches. An exact
+    rerun reuses its PR; a different final digest receives a separate branch
+    and PR. Do not infer ordering from GitHub's concurrency queue.
 
 ## 6. Primary-source URL index
 
@@ -554,6 +564,8 @@ policy:
   <https://github.com/xbmc/xbmc/blob/f8815ee40f49a700c047982d752be4b2a61420e2/xbmc/addons/AddonInstaller.cpp>
 - Kodi Omega manifest implementation:
   <https://github.com/xbmc/xbmc/blob/f8815ee40f49a700c047982d752be4b2a61420e2/xbmc/addons/addoninfo/AddonInfoBuilder.cpp>
+- Kodi Omega add-on version ordering:
+  <https://github.com/xbmc/xbmc/blob/f8815ee40f49a700c047982d752be4b2a61420e2/xbmc/addons/AddonVersion.cpp>
 - CoreELEC 21 add-on packaging:
   <https://github.com/CoreELEC/CoreELEC/blob/15970b8e469b8e299a8947b1751593bdaf53ed82/scripts/install_addon>
 - PKWARE ZIP specification:
@@ -563,7 +575,10 @@ policy:
 - Reproducible Builds archive guidance:
   <https://reproducible-builds.org/docs/archives/>
 
-## 7. Open questions for the later decision
+## 7. Questions resolved by the final decision
+
+The final answers are recorded in
+[`2026-09-18-addon-update-patch-supply-chain.md`](2026-09-18-addon-update-patch-supply-chain.md).
 
 - No general claim is made here that upstream artifacts are signed. For each
   upstream, signature availability and verification procedure must be
@@ -574,15 +589,15 @@ policy:
   insufficient detail for installation semantics, so the CoreELEC-specific
   findings above rely on its official source and release API. Kodi runtime
   behavior is grounded in the Kodi Omega source used by CoreELEC 21.
-- The decision still needs to choose the catalog-update branch strategy,
-  proposal deduplication behavior, workflow cadence, supported discovery
-  adapters in the first increment, canonical patch-set manifest encoding,
-  deterministic ZIP recipe/tool version, attestation policy, and the exact
-  retained evidence format.
-- Each source family needs an explicit stable-channel rule. GitHub Release
+- The decision selects immutable per-candidate branches, exact-rerun reuse,
+  per-Artifact concurrency, source-specific adapters, deterministic
+  repository-owned mirroring, required attestations for repository-built
+  outputs, and rendered evidence values. Exact production file names and
+  pinned tool versions remain build-issue details.
+- Each source family receives an explicit stable-channel rule. GitHub Release
   flags, repository-index membership, version syntax, release names, and
   publisher documentation can disagree; this record establishes that the
   automation must expose such disagreement rather than silently deciding it.
-- The migration must determine how reviewed bytes remain recoverable when an
-  upstream URL is mutable or deletable. A digest detects substitution but does
-  not preserve availability.
+- Mutable, generated, repacked, and patched bytes are retained as
+  repository-owned content-addressed Release assets. A digest still does not
+  preserve availability; deletion remains a catalog failure.

@@ -845,7 +845,48 @@ The pre-transport gate is:
 No stage silently fixes authored input. No Device connection or mutation occurs
 until the complete applicable configuration passes this gate.
 
-## 13. Consequences
+## 13. Issue #47 refinement — origin, distribution, and exceptions
+
+Date: 2026-09-18
+
+This refinement preserves the accepted schema core and narrows Artifact fields
+for the accepted [add-on supply-chain contract](2026-09-18-addon-update-patch-supply-chain.md).
+
+- `origin` replaces the overloaded upstream/source meaning. It records the
+  source adapter, publisher project, requested and resolved retrieval identity,
+  observed mutability, retrieval URL, and independently computed origin digest.
+- `distribution` records the final bytes consumed by the Reconciler: relation
+  to origin (`direct-origin-bytes`, `repacked-from-origin`, or
+  `patched-and-repacked-from-origin`), owner, URL, release/asset IDs when
+  mirrored, immutable-release status, content-addressed asset name, and final
+  SHA-256.
+- Mutable branches, generated archives, patched outputs, and repacked or
+  root-normalized outputs require repository-owned distribution. Untouched
+  stable attached assets or stable Kodi/CoreELEC repository packages may
+  remain direct only while exact digest-pinned bytes are retrievable.
+- A build `recipe` includes exact ID/version patch preconditions, occurrence
+  counts, idempotence, wrong-version refusal, isolated parse/bytecode checks
+  without import execution, manifest/member post-build checks, canonical ZIP
+  policy, and two independent clean-build hashes.
+- Attestation is mandatory for repository-built/repacked/patched final bytes
+  and optional corroboration for direct upstream bytes. It never replaces
+  origin, patch, recipe, or final digests.
+- Candidate dependencies and minimum versions come from the candidate ZIP's
+  validated `addon.xml`. Kodi `CAddonVersion` comparison selects satisfying
+  entries; new or raised dependencies cascade into the same proposal.
+- A prerelease exception must bind exact Artifact/version/origin identity to
+  separately authored default-branch data, a merged approval PR and merge
+  commit, required CODEOWNERS approval, acceptance evidence, approval date,
+  and mandatory `expires_on` no more than 90 days later. `review_trigger` is
+  optional and additive.
+- Scheduled catalog validation and Reconciler preflight validate exception
+  expiry and binding. Expiry blocks Device mutation.
+
+The earlier `source` examples are retained as historical schema sketches. The
+production schema uses the refined `origin` and `distribution` shapes in the
+issue #47 contract.
+
+## 14. Consequences
 
 - Authored files remain readable domain policy rather than transport programs.
 - Device identity and repository organization can evolve independently.

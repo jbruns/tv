@@ -959,6 +959,28 @@ This preserves ADR 0004.
 
 ## 5. Parallel issue #47 supply-chain lane
 
+### 5.1 Issue #47 refinement — 2026-09-18
+
+The accepted [supply-chain contract](2026-09-18-addon-update-patch-supply-chain.md)
+adds exact gates without changing the milestone order:
+
+- after M1, source adapters, candidate-manifest dependency closure, Kodi
+  version ordering, deterministic build, mirror publication, and proposal
+  automation may proceed in parallel;
+- before M6 live add-on acceptance, origin/distribution separation,
+  repository-owned mirrors for every mutable/generated/repacked/patched input,
+  required build attestations, catalog validation, and scheduled plus
+  Reconciler prerelease-expiry preflight are complete;
+- before M10, immutable per-candidate branches, per-Artifact concurrency,
+  exact-rerun reuse, human-commit protection, and evidence-rich PR automation
+  are accepted;
+- issue #47 is resolved and handed to issue #46 before implementation-plan
+  issue generation; resolving #47 does not itself start #46.
+
+ART-009 `weather.ha` is deterministically repacked, patched, attested, and
+published as a repository-owned content-addressed Release asset. It is never
+consumed as codeload distribution bytes.
+
 The decision in issue #47 should be resolved before issue #46 and plan handoff
 when possible. Its implementation lane begins in parallel after M1 because it
 needs the production toolchain, CI, schema validation, and issue foundation,
