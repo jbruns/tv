@@ -86,6 +86,7 @@ class CatalogEntry:
     role: str
     disposition: str
     milestone: str
+    initial_owner: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,15 +131,43 @@ def _catalog() -> dict[str, CatalogEntry]:
         role: str,
         disposition: str,
         milestone: str,
+        *,
+        initial_owner: str | None = None,
     ) -> None:
+        owner = initial_owner or {
+            "resource": "shell",
+            "guard": "shell",
+            "effect": "shell",
+            "guided-action": "operator",
+            "run-infrastructure": "repository",
+        }.get(role)
+        if owner is None:
+            raise AssertionError(f"initial owner required for role {role}")
         for inventory_id in inventory_ids:
             if inventory_id in entries:
                 raise AssertionError(f"duplicate accepted ID {inventory_id}")
-            entries[inventory_id] = CatalogEntry(role, disposition, milestone)
+            entries[inventory_id] = CatalogEntry(
+                role,
+                disposition,
+                milestone,
+                owner,
+            )
 
     add(_ids(_expand("PLAT", 1, 2), "PLAT-004", "PLAT-005"), "guard", "migrate", "M8")
-    add(("PLAT-003",), "unmanaged-inventory-fact", "outside", "M8")
-    add(_expand("SSH", 1, 2), "unmanaged-inventory-fact", "outside", "M8")
+    add(
+        ("PLAT-003",),
+        "unmanaged-inventory-fact",
+        "outside",
+        "M8",
+        initial_owner="external",
+    )
+    add(
+        _expand("SSH", 1, 2),
+        "unmanaged-inventory-fact",
+        "outside",
+        "M8",
+        initial_owner="operator",
+    )
     add(("SSH-003",), "resource", "migrate", "M8")
     add(("SSH-004",), "guard", "migrate", "M8")
     add(
@@ -147,21 +176,57 @@ def _catalog() -> dict[str, CatalogEntry]:
         "migrate",
         "M5",
     )
-    add(("CORE-007",), "unmanaged-inventory-fact", "migrate", "M5")
+    add(
+        ("CORE-007",),
+        "unmanaged-inventory-fact",
+        "migrate",
+        "M5",
+        initial_owner="shell",
+    )
     add(_expand("CEC", 1, 5), "resource", "migrate", "M8")
     add(_expand("ART", 1, 41), "resource", "migrate", "M6")
     add(("ADDON-001",), "resource", "migrate", "M6")
-    add(("ADDON-002",), "unmanaged-inventory-fact", "outside", "M6")
-    add(("ADDON-003",), "unmanaged-inventory-fact", "retire", "M6")
+    add(
+        ("ADDON-002",),
+        "unmanaged-inventory-fact",
+        "outside",
+        "M6",
+        initial_owner="external",
+    )
+    add(
+        ("ADDON-003",),
+        "unmanaged-inventory-fact",
+        "retire",
+        "M6",
+        initial_owner="shell",
+    )
     add(_expand("PATCH", 1, 4), "run-infrastructure", "migrate", "M6")
     add(("SVC-001",), "resource", "migrate", "M5")
     add(_expand("SVC", 2, 13), "resource", "migrate", "M6")
-    add(_expand("SVC", 14, 17), "unmanaged-inventory-fact", "retire", "M6")
+    add(
+        _expand("SVC", 14, 17),
+        "unmanaged-inventory-fact",
+        "retire",
+        "M6",
+        initial_owner="shell",
+    )
     add(_expand("GUIDE", 1, 6), "guided-action", "migrate", "M8")
-    add(_expand("GUIDE", 7, 8), "unmanaged-inventory-fact", "migrate", "M8")
+    add(
+        _expand("GUIDE", 7, 8),
+        "unmanaged-inventory-fact",
+        "migrate",
+        "M8",
+        initial_owner="external",
+    )
     add(_expand("SKIN", 1, 2), "resource", "migrate", "M5")
     add(_expand("SKIN", 3, 16), "resource", "migrate", "M7")
-    add(_expand("SKIN", 17, 18), "unmanaged-inventory-fact", "migrate", "M7")
+    add(
+        _expand("SKIN", 17, 18),
+        "unmanaged-inventory-fact",
+        "migrate",
+        "M7",
+        initial_owner="shell",
+    )
     add(_expand("SKIN", 19, 24), "resource", "migrate", "M7")
     add(("SKIN-025",), "resource", "migrate", "M4")
     add(_expand("SKIN", 26, 28), "resource", "migrate", "M7")
@@ -171,8 +236,20 @@ def _catalog() -> dict[str, CatalogEntry]:
     add(_expand("EFFECT", 1, 2), "effect", "migrate", "M5")
     add(("EFFECT-003",), "effect", "migrate", "M8")
     add(("EFFECT-004",), "effect", "migrate", "M7")
-    add(("EFFECT-005",), "unmanaged-inventory-fact", "outside", "M8")
-    add(_expand("FACT", 1, 6), "unmanaged-inventory-fact", "outside", "M8")
+    add(
+        ("EFFECT-005",),
+        "unmanaged-inventory-fact",
+        "outside",
+        "M8",
+        initial_owner="none",
+    )
+    add(
+        _expand("FACT", 1, 6),
+        "unmanaged-inventory-fact",
+        "outside",
+        "M8",
+        initial_owner="external",
+    )
     return entries
 
 
@@ -226,6 +303,7 @@ def _require_exact_keys(
 
 def _validate_transfer_chain(
     row: JsonObject,
+    accepted: CatalogEntry | None,
     diagnostics: list[LedgerDiagnostic],
 ) -> None:
     inventory_id = row.get("id")
@@ -240,17 +318,21 @@ def _validate_transfer_chain(
         )
         return
     seen_sequences: set[int] = set()
-    role = row.get("role")
-    initial_owners = {
-        "resource": "shell",
-        "guard": "shell",
-        "effect": "shell",
-        "guided-action": "operator",
-        "run-infrastructure": "repository",
-    }
-    initial_owner = initial_owners.get(role) if isinstance(role, str) else None
-    if role == "unmanaged-inventory-fact":
-        initial_owner = row.get("current_owner_or_executor") if not transfers else None
+    initial_owner = accepted.initial_owner if accepted is not None else None
+    transfer_allowed = (
+        accepted is not None
+        and accepted.disposition == "migrate"
+        and accepted.initial_owner == "shell"
+        and accepted.role in {"resource", "guard", "effect", "unmanaged-inventory-fact"}
+    )
+    if transfers and not transfer_allowed:
+        _diagnostic(
+            diagnostics,
+            "ledger.transfer-not-allowed",
+            "this accepted role and ownership state does not transfer",
+            inventory_id if isinstance(inventory_id, str) else None,
+            "transfers",
+        )
     previous_owner: str | None = initial_owner
     for expected_sequence, transfer in enumerate(transfers, start=1):
         if not isinstance(transfer, dict):
@@ -351,6 +433,25 @@ def _validate_transfer_chain(
             inventory_id,
             "current_owner_or_executor",
         )
+    closure = row.get("closure")
+    closure_state = closure.get("state") if isinstance(closure, dict) else None
+    if (
+        not transfers
+        and accepted is not None
+        and row.get("current_owner_or_executor") != accepted.initial_owner
+        and not (
+            accepted.disposition == "retire"
+            and closure_state == "retired"
+            and row.get("current_owner_or_executor") == "none"
+        )
+    ):
+        _diagnostic(
+            diagnostics,
+            "ledger.conflicting-transfer",
+            "current owner differs from the accepted predecessor without a transfer",
+            inventory_id if isinstance(inventory_id, str) else None,
+            "current_owner_or_executor",
+        )
 
 
 def _valid_closure(
@@ -358,6 +459,7 @@ def _valid_closure(
     disposition: str,
     owner: str,
     closure_state: str,
+    initial_owner: str,
 ) -> bool:
     if disposition == "retire":
         return role == "unmanaged-inventory-fact" and (
@@ -380,17 +482,16 @@ def _valid_closure(
     }
     if closure_state == "open":
         return owner in allowed_open_owner.get(role, set())
-    accepted_closure = {
+    accepted_closure: dict[str, tuple[str, set[str]]] = {
         "resource": ("transferred", {"python"}),
         "guard": ("transferred", {"python"}),
         "effect": ("transferred", {"python"}),
         "guided-action": ("accepted", {"operator"}),
         "run-infrastructure": ("accepted", {"repository"}),
-        "unmanaged-inventory-fact": (
-            "evidence-integrated",
-            {"python", "external"},
-        ),
     }
+    if role == "unmanaged-inventory-fact":
+        accepted_owner = "python" if initial_owner == "shell" else initial_owner
+        accepted_closure[role] = ("evidence-integrated", {accepted_owner})
     expected_state, accepted_owners = accepted_closure.get(role, ("", set()))
     return closure_state == expected_state and owner in accepted_owners
 
@@ -646,7 +747,14 @@ def validate_ledger(path: Path) -> LedgerValidation:
                 and isinstance(disposition, str)
                 and isinstance(owner, str)
                 and isinstance(closure_state, str)
-                and not _valid_closure(role, disposition, owner, closure_state)
+                and accepted is not None
+                and not _valid_closure(
+                    role,
+                    disposition,
+                    owner,
+                    closure_state,
+                    accepted.initial_owner,
+                )
             ):
                 _diagnostic(
                     diagnostics,
@@ -777,7 +885,7 @@ def validate_ledger(path: Path) -> LedgerValidation:
                     inventory_id,
                     "recovery.evidence",
                 )
-        _validate_transfer_chain(row, diagnostics)
+        _validate_transfer_chain(row, accepted, diagnostics)
         transfers = row.get("transfers")
         if (
             closure_state == "transferred"

@@ -22,7 +22,8 @@ def write_changed_ledger(
 ) -> Path:
     document = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
     change(document)
-    path = tmp_path / "ownership-ledger.json"
+    path = tmp_path / "inventory" / "ownership-ledger.json"
+    path.parent.mkdir()
     path.write_text(json.dumps(document), encoding="utf-8")
     return path
 
@@ -207,3 +208,98 @@ def test_ledger_rejects_transfer_for_the_wrong_milestone(tmp_path: Path) -> None
     assert "ledger.conflicting-transfer" in diagnostic_codes(
         write_changed_ledger(tmp_path, add_wrong_milestone_transfer)
     )
+
+
+def unmanaged_fact_transfer(source: str) -> dict[str, Any]:
+    return {
+        "sequence": 1,
+        "from": source,
+        "to": "python",
+        "milestone": "M5",
+        "issue": 200,
+        "pull_request": 201,
+        "prestate_evidence": "evidence/prestate.json",
+        "handoff_evidence": "evidence/handoff.json",
+        "acceptance_evidence": "evidence/acceptance.json",
+        "former_owner_freeze_evidence": "evidence/freeze.json",
+        "documentation": "docs/operations/example.md",
+    }
+
+
+def close_core_007(
+    document: dict[str, Any],
+    *,
+    source: str,
+) -> None:
+    row = next(row for row in document["rows"] if row["id"] == "CORE-007")
+    row["current_owner_or_executor"] = "python"
+    row["closure"] = {
+        "state": "evidence-integrated",
+        "closing_issue": 200,
+        "closing_pr": 201,
+    }
+    row["transfers"] = [unmanaged_fact_transfer(source)]
+
+
+def test_unmanaged_fact_rejects_first_transfer_from_wrong_owner(
+    tmp_path: Path,
+) -> None:
+    path = write_changed_ledger(
+        tmp_path,
+        lambda document: close_core_007(document, source="external"),
+    )
+    exit_path = tmp_path / "docs" / "implementation" / "milestones" / "m5-exit.md"
+    exit_path.parent.mkdir(parents=True)
+    exit_path.write_text("# M5 exit\n", encoding="utf-8")
+
+    assert "ledger.conflicting-transfer" in diagnostic_codes(path)
+
+
+def test_unmanaged_fact_accepts_transfer_from_recorded_shell_executor(
+    tmp_path: Path,
+) -> None:
+    path = write_changed_ledger(
+        tmp_path,
+        lambda document: close_core_007(document, source="shell"),
+    )
+    exit_path = tmp_path / "docs" / "implementation" / "milestones" / "m5-exit.md"
+    exit_path.parent.mkdir(parents=True)
+    exit_path.write_text("# M5 exit\n", encoding="utf-8")
+
+    assert validate_ledger(path).valid
+
+
+def close_guide_007(document: dict[str, Any], *, owner: str) -> None:
+    row = next(row for row in document["rows"] if row["id"] == "GUIDE-007")
+    row["current_owner_or_executor"] = owner
+    row["closure"] = {
+        "state": "evidence-integrated",
+        "closing_issue": 202,
+        "closing_pr": 203,
+    }
+
+
+def test_external_health_check_cannot_close_as_python_owned(tmp_path: Path) -> None:
+    path = write_changed_ledger(
+        tmp_path,
+        lambda document: close_guide_007(document, owner="python"),
+    )
+    exit_path = tmp_path / "docs" / "implementation" / "milestones" / "m8-exit.md"
+    exit_path.parent.mkdir(parents=True)
+    exit_path.write_text("# M8 exit\n", encoding="utf-8")
+
+    assert "ledger.invalid-role-closure" in diagnostic_codes(path)
+
+
+def test_external_health_check_closes_without_an_ownership_transfer(
+    tmp_path: Path,
+) -> None:
+    path = write_changed_ledger(
+        tmp_path,
+        lambda document: close_guide_007(document, owner="external"),
+    )
+    exit_path = tmp_path / "docs" / "implementation" / "milestones" / "m8-exit.md"
+    exit_path.parent.mkdir(parents=True)
+    exit_path.write_text("# M8 exit\n", encoding="utf-8")
+
+    assert validate_ledger(path).valid

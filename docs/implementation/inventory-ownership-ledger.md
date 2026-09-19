@@ -69,7 +69,8 @@ Closure is not one generic Device-actor state:
 | Migrated Resource, Guard, or Effect | `transferred` | `python` |
 | Migrated Guided Action | `accepted` | `operator` |
 | Migrated Run Infrastructure | `accepted` | `repository` |
-| Migrated evidence or Health Check fact | `evidence-integrated` | `python` or `external` |
+| Migrated derived evidence fact | `evidence-integrated` | `python` after its shell-to-Python transfer |
+| Migrated external Health Check | `evidence-integrated` | `external` |
 
 A closed row requires positive `closing_issue` and `closing_pr` values.
 Migrated closure before the assigned milestone exit record exists is rejected.
@@ -89,6 +90,14 @@ Sequences must be unique, ownership must form one chain, source and target
 must differ, each milestone must match the row, sequence numbers must be
 contiguous in array order, and the row's current owner must equal the final
 target. Parallel or conflicting transfers fail validation.
+
+The first transfer source is checked against the accepted M1 predecessor, not
+against the row's mutable current-owner field. Transfer-capable rows are
+`migrate` Resources, Guards, Effects, and derived evidence facts whose accepted
+predecessor is `shell`. This includes `CORE-007` and `SKIN-017`–`SKIN-018`.
+Repository provenance, operator Guided Actions, external Health Checks and
+inventory facts, outside rows, and retirement decisions retain their
+role-specific owner or closure and reject transfer entries.
 
 This issue does not perform the shell write-set audit assigned to issue #56.
 Rows that still have a shell actor therefore use `status: unaudited` with no
