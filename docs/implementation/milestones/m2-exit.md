@@ -156,6 +156,7 @@ Local evidence used macOS arm64, Python 3.14.2, uv 0.12.3, Ruff 0.16.8, mypy
 | `python3 scripts/check_markdown.py` | 56 Markdown files passed | 0.20 s |
 | `uv run python scripts/check_inventory_milestones.py` | 169 rows; digest matched | 0.04 s |
 | `python3 scripts/check_shell_permissions.py --audit` | 146/146 shell rows covered; valid | 0.15 s |
+| documented `tests/test-*.sh` transition loop excluding `test-helper.sh` | 9 scripts passed | 318.36 s |
 | `git diff --check` | Passed | not budgeted |
 
 Built package digests:
