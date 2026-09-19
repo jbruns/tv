@@ -4,7 +4,7 @@ Date: 2026-09-18
 
 Ticket: [Define Run workspace, recovery, and Effect contracts](https://github.com/jbruns/tv/issues/43)
 
-Status: **Final autonomous implementation contract; acceptance pending issue closure**
+Status: **Accepted autonomous implementation contract**
 
 ## 1. Decision
 
