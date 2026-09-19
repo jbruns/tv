@@ -15,7 +15,7 @@ uv run ruff check .
 uv run ruff format --check \
   src scripts/run_test_budget.py scripts/check_inventory_milestones.py \
   scripts/check_shell_permissions.py \
-  tests/scaffold tests/inventory tests/ci \
+  tests/scaffold tests/inventory tests/ci tests/unit \
   tests/conftest.py tests/support
 uv run mypy
 uv run python scripts/check_inventory_milestones.py
@@ -28,7 +28,7 @@ uv run python scripts/run_test_budget.py \
   -- \
   .venv/bin/python -m pytest -q \
   tests/scaffold/test_application.py \
-  tests/scaffold/test_architecture.py tests/inventory tests/ci
+  tests/scaffold/test_architecture.py tests/inventory tests/ci tests/unit
 uv run python scripts/run_test_budget.py \
   --label complete-offline \
   --budget-seconds 60 \

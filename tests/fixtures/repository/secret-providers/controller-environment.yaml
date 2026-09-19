@@ -1,0 +1,8 @@
+kind: SecretProviderCatalog
+schema_version: 1
+providers:
+  - id: controller.environment
+    type: environment
+    keys:
+      coreelec.admin-private-key:
+        variable: COREELEC_ADMIN_PRIVATE_KEY_FILE
