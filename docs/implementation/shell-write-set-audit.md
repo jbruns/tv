@@ -16,7 +16,7 @@ implementation.
 The authoritative deterministic map is
 [`inventory/shell-write-sets.json`](../../inventory/shell-write-sets.json),
 SHA-256
-`7d7f777e359a38f7abdd60ab86227056d2b3d4b113a6194464c319a2fe5a01a7`.
+`a3895b96b64fecfbeeb89dff5c4e19ab86f6209ff19b2b4a40d65764582246c2`.
 The updated ownership ledger SHA-256 is
 `7df92594c5d86ec29142d5a758729c0e89a3be1004f66a2a8ab869dfeb1928bc`.
 
@@ -30,8 +30,12 @@ Coverage is exactly 146 accepted shell-actor rows:
 | **Total** | **146** |
 
 The map records eight mutation primitive families and the reachable call paths
-from all three shell entry points. It includes dependency expansion, selected
-artifact directory swaps, add-on enablement, shared-document writes, dynamic
+from all three shell entry points. The validator checks every operation and
+scope against that exact topology, checks each primitive's IDs against the
+authoritative per-ID targets, and rejects local missing, wrong, or swapped
+bindings even when aggregate catalog coverage is unchanged. It includes
+dependency expansion, selected artifact directory swaps, add-on enablement,
+shared-document writes, dynamic
 CEC discovery, `BuildSkinViews` output, lifecycle gateway files, service
 Effects, bootstrap state, rollback/finalize paths, and shell Run
 Infrastructure. All 146 ledger rows changed from `unaudited` to `audited`;
@@ -58,6 +62,11 @@ the other 23 rows remain `not-applicable`.
 Permission is computed from these expanded IDs. A component name never grants
 permission. The checker rejects a mapped ID once its ledger owner is Python or
 its shell fields are frozen/retired.
+
+Every entry point enforces that permission before its first Device contact.
+For the add-on assistant this includes password preparation and read-only Kodi
+capability discovery, so a denied or unknown interactive operation makes zero
+SSH or JSON-RPC calls.
 
 ## Fail-closed unknowns and pilot blockers
 
@@ -95,21 +104,19 @@ failure, or `xfail` was used.
 
 | Command | Result | Timing |
 | --- | --- | ---: |
-| Targeted Python permission/ledger tests | 27 passed | 0.16 s pytest |
-| `bash tests/test-shell-write-sets.sh` | 4/4 passed | included below |
-| Complete `tests/test-*.sh` loop excluding `test-helper.sh` | 9 scripts, 614/614 passed | 475.948 s |
-| Pure/unit/architecture budget command | 40 passed; 2.353 s selection/total, under 10 s | 2.41 s wall |
-| Complete offline budget command | 14 passed; 0.900 s selection, 3.253 s aggregate, under 60 s | 0.95 s wall |
-| Ruff lint and format check | passed; 29 files formatted | included in 1.24 s group |
-| Strict mypy | passed; 29 source files | included in 1.24 s group |
-| `uv run python scripts/check_inventory_milestones.py` | 169 ledger rows; shell audit 146/146; 2 unknowns | included in 1.24 s group |
-| `uv run coreelec-reconciler validate` | passed | included in 1.24 s group |
-| `python3 scripts/check_shell_permissions.py --audit` | map valid; digest above | included in 1.24 s group |
-| `python3 scripts/check_markdown.py` | passed | included in 1.24 s group |
-| `git diff --check` | passed | included in 1.24 s group |
-
-The combined lint, format, type, ledger, installed validator, shell-map,
-Markdown, and diff-check command completed in 1.24 seconds.
+| Targeted Python permission/ledger tests | 41 passed | 0.20 s pytest |
+| Complete Python suite | 70 passed | 2.60 s pytest |
+| `bash tests/test-shell-write-sets.sh` | 5/5 passed | included below |
+| Complete `tests/test-*.sh` loop excluding `test-helper.sh` | 9 scripts, 615/615 passed | 477 s wall |
+| Pure/unit/architecture budget command | 56 passed; 1.999 s selection/total, under 10 s | recorded by budget runner |
+| Complete offline budget command | 14 passed; 0.868 s selection, 2.866 s aggregate, under 60 s | recorded by budget runner |
+| Ruff lint and format check | passed; 29 files formatted | passed |
+| Strict mypy | passed; 29 source files | passed |
+| `uv run python scripts/check_inventory_milestones.py` | 169 ledger rows; shell audit 146/146; 2 unknowns | passed |
+| `uv run coreelec-reconciler validate` | passed | passed |
+| `python3 scripts/check_shell_permissions.py --audit` | map valid; digest above | passed |
+| `python3 scripts/check_markdown.py` | passed; 53 Markdown files | passed |
+| `git diff --check` | passed | passed |
 
 ## Pilot-freeze semantics
 

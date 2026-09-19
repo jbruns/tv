@@ -612,63 +612,47 @@ test_requested_addon_must_be_in_the_pinned_manifest() {
 }
 
 test_introspection_rejects_a_missing_required_method() {
-  local dir config env_file bin_dir output rc
+  local dir bin_dir output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
-  config="${dir}/postdeploy.conf"
-  env_file="${dir}/.env"
-  write_config "${config}" script.plexmod
-  write_shared_env_file "${env_file}" \
-    'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="$(install_ssh_stub "${dir}")"
   write_introspection_response "${dir}/stub/response-default.json" "Input.SendText"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  KODI_PORT="8080"
+  KODI_USER="homeassistant"
+  KODI_WEB_PASSWORD="kodi-web-password-secret"
 
   set +e
-  output="$(
-    COREELEC_SSH_STUB_DIR="${dir}/stub" \
-    UGOOS_ENV_FILE="${env_file}" \
-    PATH="${bin_dir}:${PATH}" \
-    bash "${CLI_SCRIPT}" \
-      --config "${config}" \
-      --interactive \
-      --target coreelec-theater \
-      --addon script.plexmod 2>&1
-  )"
+  output="$(COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    kodi_capabilities 2>&1)"
   rc=$?
   set -e
 
-  assert_failure "${rc}" "interactive runs must fail closed when a required method is missing" || return 1
+  assert_failure "${rc}" "capability discovery must reject a missing required method" || return 1
   assert_contains "${output}" "Input.SendText" "missing method is named in the failure" || return 1
 }
 
 test_introspection_requires_addons_getaddondetails() {
-  local dir config env_file bin_dir output rc
+  local dir bin_dir output rc
   dir="$(make_scratch_dir)"
   trap 'rm -rf -- "${dir}"' RETURN
-  config="${dir}/postdeploy.conf"
-  env_file="${dir}/.env"
-  write_config "${config}" script.plexmod
-  write_shared_env_file "${env_file}" \
-    'KODI_WEB_PASSWORD=kodi-web-password-secret'
   bin_dir="$(install_ssh_stub "${dir}")"
   write_introspection_response "${dir}/stub/response-default.json" "Addons.GetAddonDetails"
+  TARGET="coreelec-theater"
+  SSH_PORT="22"
+  KODI_PORT="8080"
+  KODI_USER="homeassistant"
+  KODI_WEB_PASSWORD="kodi-web-password-secret"
 
   set +e
-  output="$(
-    COREELEC_SSH_STUB_DIR="${dir}/stub" \
-    UGOOS_ENV_FILE="${env_file}" \
-    PATH="${bin_dir}:${PATH}" \
-    bash "${CLI_SCRIPT}" \
-      --config "${config}" \
-      --interactive \
-      --target coreelec-theater \
-      --addon script.plexmod 2>&1
-  )"
+  output="$(COREELEC_SSH_STUB_DIR="${dir}/stub" PATH="${bin_dir}:${PATH}" \
+    kodi_capabilities 2>&1)"
   rc=$?
   set -e
 
   assert_failure "${rc}" \
-    "interactive runs must fail at capability discovery without Addons.GetAddonDetails" || return 1
+    "capability discovery must reject a missing Addons.GetAddonDetails" || return 1
   assert_contains "${output}" "Addons.GetAddonDetails" \
     "the missing add-on details capability is named"
 }

@@ -277,12 +277,14 @@ main() {
   [[ -n "${TARGET}" ]] || die "--target is required"
   coreelec_config_validate
   validate_selected_addons
+  if [[ "${DRY_RUN}" != "1" ]]; then
+    enforce_shell_permissions
+  fi
 
   if [[ "${DRY_RUN}" != "1" ]]; then
     coreelec_prepare_kodi_web_password
     kodi_capabilities >/dev/null
     capability_state="validated"
-    enforce_shell_permissions
   fi
 
   report_file="$(report_path)"

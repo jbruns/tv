@@ -38,8 +38,7 @@ def test_audit_rejects_a_scope_coverage_claim_not_reached_by_operations(
     tmp_path: Path,
 ) -> None:
     document = json.loads(MAP_PATH.read_text(encoding="utf-8"))
-    skin = document["entry_points"]["provision-coreelec.sh"]["deploy"]["scopes"]["skin"]
-    skin["inventory_ids"].remove("SKIN-025")
+    document["coverage"]["writes"].remove("SKIN-025")
     path = tmp_path / "shell-write-sets.json"
     path.write_text(json.dumps(document), encoding="utf-8")
 
@@ -53,14 +52,108 @@ def test_audit_rejects_an_unknown_operation_that_is_not_fail_closed(
     tmp_path: Path,
 ) -> None:
     document = json.loads(MAP_PATH.read_text(encoding="utf-8"))
-    document["entry_points"]["provision-coreelec.sh"]["rollback"]["unknowns"] = []
+    document["entry_points"]["provision-coreelec.sh"]["rollback"]["call_path_ids"] = []
     path = tmp_path / "shell-write-sets.json"
     path.write_text(json.dumps(document), encoding="utf-8")
 
     result = audit_shell_map(path, LEDGER_PATH)
 
     assert not result.valid
-    assert "shell-map.unknown-operation-mismatch" in result.diagnostics
+    assert (
+        "shell-map.operation-mismatch:provision-coreelec.sh:rollback"
+        in result.diagnostics
+    )
+
+
+@pytest.mark.parametrize(
+    "primitive_id",
+    [
+        "atomic-file-mutation",
+        "addon-directory-replacement",
+        "addon-registry-enablement",
+        "service-state-effect",
+        "skin-view-build",
+        "lifecycle-gateway",
+        "guided-addon-gui",
+        "provision-rollback",
+    ],
+)
+def test_audit_rejects_each_mutated_primitive_family(
+    tmp_path: Path,
+    primitive_id: str,
+) -> None:
+    document = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+    primitive = next(
+        item for item in document["primitive_families"] if item["id"] == primitive_id
+    )
+    primitive["call_paths"] = {}
+    path = tmp_path / "shell-write-sets.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    result = audit_shell_map(path, LEDGER_PATH)
+
+    assert not result.valid
+    assert f"shell-map.primitive-mismatch:{primitive_id}" in result.diagnostics
+
+
+@pytest.mark.parametrize(
+    ("entry_point", "operation", "scope"),
+    [
+        ("provision-coreelec.sh", "deploy", "core"),
+        ("provision-coreelec.sh", "deploy", "addons"),
+        ("provision-coreelec.sh", "deploy", "skin"),
+        ("configure-kodi-lifecycle.sh", "deploy", None),
+    ],
+)
+def test_audit_rejects_a_locally_wrong_operation_call_path(
+    tmp_path: Path,
+    entry_point: str,
+    operation: str,
+    scope: str | None,
+) -> None:
+    document = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+    record = document["entry_points"][entry_point][operation]
+    if scope is not None:
+        record = record["scopes"][scope]
+    record["call_path_ids"] = []
+    path = tmp_path / "shell-write-sets.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    result = audit_shell_map(path, LEDGER_PATH)
+
+    key = f"{entry_point}:{operation}" + (f":{scope}" if scope else "")
+    assert not result.valid
+    assert f"shell-map.operation-mismatch:{key}" in result.diagnostics
+
+
+def test_audit_rejects_a_swapped_selected_addon_inventory_id(
+    tmp_path: Path,
+) -> None:
+    document = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+    document["artifact_inventory_ids"]["script.plexmod"] = "ART-008"
+    path = tmp_path / "shell-write-sets.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    result = audit_shell_map(path, LEDGER_PATH)
+
+    assert not result.valid
+    assert "shell-map.artifact-target-mismatch:script.plexmod" in result.diagnostics
+
+
+def test_audit_rejects_a_missing_cross_component_scope_dependency(
+    tmp_path: Path,
+) -> None:
+    document = json.loads(MAP_PATH.read_text(encoding="utf-8"))
+    document["entry_points"]["provision-coreelec.sh"]["deploy"]["dependencies"][
+        "skin"
+    ].remove("addons")
+    path = tmp_path / "shell-write-sets.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    result = audit_shell_map(path, LEDGER_PATH)
+
+    assert not result.valid
+    assert "shell-map.scope-dependency-mismatch" in result.diagnostics
 
 
 def test_inventory_validation_command_includes_shell_audit() -> None:

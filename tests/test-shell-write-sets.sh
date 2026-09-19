@@ -93,8 +93,38 @@ test_provision_entry_point_uses_the_audited_effective_write_set() {
   assert_not_contains "${output}" "SKIN-025"
 }
 
+test_interactive_addon_unknown_is_denied_before_device_contact() {
+  local scratch env_file ssh_log output status bin_dir
+  scratch="$(make_scratch_dir)"
+  env_file="${scratch}/env"
+  ssh_log="${scratch}/ssh.log"
+  bin_dir="${scratch}/bin"
+  trap 'rm -rf -- "${scratch}"' RETURN
+  mkdir "${bin_dir}"
+  printf 'KODI_WEB_PASSWORD=offline-test-password\n' > "${env_file}"
+  cat > "${bin_dir}/ssh" <<'SH'
+#!/bin/sh
+printf 'contacted\n' >> "${SSH_CONTACT_LOG:?}"
+exit 99
+SH
+  chmod +x "${bin_dir}/ssh"
+
+  set +e
+  output="$(PATH="${bin_dir}:${PATH}" SSH_CONTACT_LOG="${ssh_log}" \
+    UGOOS_ENV_FILE="${env_file}" \
+    bash "${ROOT}/configure-coreelec-addons.sh" \
+      --target offline.invalid --addon script.plexmod --interactive 2>&1)"
+  status=$?
+  set -e
+
+  assert_failure "${status}"
+  assert_contains "${output}" "permission denied before Device contact"
+  [[ ! -e "${ssh_log}" ]]
+}
+
 run_all_tests \
   test_addons_scope_reports_indirect_skin_effect_without_new_shows \
   test_skin_handoff_is_rejected_before_device_contact \
   test_dynamic_recovery_scope_fails_closed \
-  test_provision_entry_point_uses_the_audited_effective_write_set
+  test_provision_entry_point_uses_the_audited_effective_write_set \
+  test_interactive_addon_unknown_is_denied_before_device_contact

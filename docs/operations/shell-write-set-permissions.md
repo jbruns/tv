@@ -25,11 +25,16 @@ UGOOS_ENV_FILE=.env ./provision-coreelec.sh \
   --print-shell-write-set
 ```
 
-`--print-shell-write-set` exits before any Device contact. Provisioning and
-lifecycle mutation run the same checker before their first Device call. The
-add-on assistant performs its existing read-only capability preflight first,
-then checks permission before any guided mutation. A mapped inventory row
-owned by Python, or marked `frozen` or `retired`, rejects the operation.
+`--print-shell-write-set` exits before any Device contact. Provisioning,
+lifecycle mutation, and the add-on assistant run the same checker before their
+first Device call, including password preparation and read-only capability
+discovery. A mapped inventory row owned by Python, or marked `frozen` or
+`retired`, rejects the operation.
+
+The audit validates each operation and scope independently. Its declared call
+paths must match the reachable primitive topology, and every primitive's
+inventory IDs must match the authoritative per-ID targets. Aggregate catalog
+coverage cannot hide a missing, wrong, or swapped local binding.
 Unknown entry points, operations, selectors, add-ons, map fields, and dynamic
 targets reject rather than granting permission.
 
