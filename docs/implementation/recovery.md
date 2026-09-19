@@ -18,12 +18,21 @@ marker. The active Device index is added before acquisition and may
 over-report after a crash; it must never under-report. A verified full
 workspace scan is the only way to rebuild it.
 
+The acquisition coordinator always takes the local Device lease, checks (or
+fail-closed rebuilds) the active index, durably creates the Run workspace,
+token, first revision, and index entry, and only then attempts remote creation.
+No lower-level remote mutator is exposed to ordinary orchestration.
+
 Remote authority is granted only by atomic exclusive creation followed by
 marker and parent durability, reread, and digest verification. Existing,
 foreign, malformed, symlinked, nonregular, quarantined, or unknown remote
-state blocks acquisition. Marker updates compare the full identity, token
+state blocks acquisition. Ownership absence and quarantine absence are tested
+inside the same exclusive-create operation, so a quarantine race cannot grant
+authority. Marker updates compare the full identity, token
 digest, generation, phase, and marker digest. Release and quarantine are
-separate operations.
+separate operations. Only legal phase transitions are accepted. Release
+requires a release-pending marker that carries the matching durable terminal
+and cleanup evidence digest; removal compares that evidence atomically.
 
 Elapsed time, a missing process, a PID, a hostname, or a heartbeat never
 authorizes takeover. M3 has no takeover or quarantine-clearing operation.
@@ -55,10 +64,12 @@ and transport failures are unsafe or unverifiable and block preparation.
 Preparation performs no managed-address mutation. It:
 
 1. freshly captures complete presence, kind, bytes, size, digest, and mode;
-2. durably publishes and rereads a content-addressed rollback attachment;
-3. records every normalized state reachable at later primitive boundaries;
-4. builds a complete binding-specific preparation manifest; and
-5. freshly rechecks the original precondition.
+2. durably publishes and rereads content-addressed rollback and desired-image
+   attachments;
+3. publishes and verifies bound metadata for each staged and cleanup object;
+4. records every normalized state reachable at later primitive boundaries;
+5. builds a complete binding-specific preparation manifest; and
+6. freshly rechecks the original precondition.
 
 Attachment, codec, binding, or digest corruption prevents rollback authority.
 A stale final recheck requires replanning and performs no mutation.

@@ -10,6 +10,9 @@ from coreelec_reconciler.domain.configuration import (
     SecretReference,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId
+from coreelec_reconciler.resource_types.managed_file.paths import (
+    resolve_special_profile_path,
+)
 
 FIXTURE_ROOT = Path(__file__).parents[2] / "fixtures" / "repository"
 
@@ -37,6 +40,13 @@ def test_load_retains_complete_secret_free_resolved_device() -> None:
     assert device.host_key_reference == "ssh-host-key.living-room.ugoos-am6b-plus"
     assert device.credential_reference == SecretReference(
         "controller.environment", "coreelec.admin-private-key"
+    )
+    resolved = resolve_special_profile_path(
+        "special://profile/playlists/video/NewShows.xsp",
+        device.profile_root,
+    )
+    assert resolved.device_path.value == (
+        "/storage/.kodi/userdata/playlists/video/NewShows.xsp"
     )
     assert "sentinel-secret" not in repr(device)
 

@@ -3,6 +3,8 @@
 import posixpath
 from dataclasses import dataclass
 
+from coreelec_reconciler.domain.configuration import ProfileRootCapability
+
 
 @dataclass(frozen=True, slots=True)
 class ManagedPath:
@@ -17,11 +19,6 @@ class ManagedPath:
 
 
 @dataclass(frozen=True, slots=True)
-class KodiProfileRootCapability:
-    root: ManagedPath
-
-
-@dataclass(frozen=True, slots=True)
 class ResolvedManagedAddress:
     logical_address: str
     device_path: ManagedPath
@@ -31,9 +28,12 @@ class PathResolutionError(ValueError):
     pass
 
 
+KodiProfileRootCapability = ProfileRootCapability
+
+
 def resolve_special_profile_path(
     logical_address: str,
-    capability: KodiProfileRootCapability | None,
+    capability: ProfileRootCapability | None,
 ) -> ResolvedManagedAddress:
     prefix = "special://profile/"
     if not logical_address.startswith(prefix):
@@ -46,7 +46,10 @@ def resolve_special_profile_path(
     components = suffix.split("/")
     if any(component in {"", ".", ".."} for component in components):
         raise PathResolutionError("State Address traversal is forbidden")
-    root = capability.root.value
+    try:
+        root = ManagedPath(capability.path).value
+    except ValueError as error:
+        raise PathResolutionError("profile root is not a safe absolute path") from error
     candidate = posixpath.normpath(posixpath.join(root, *components))
     if candidate == root or not candidate.startswith(root.rstrip("/") + "/"):
         raise PathResolutionError("resolved path escapes the profile root")

@@ -41,6 +41,11 @@ class DeviceEndpoint:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileRootCapability:
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedDevice:
     """Validated connection policy; deliberately contains no secret value."""
 
@@ -49,6 +54,7 @@ class ResolvedDevice:
     ssh_username: str
     host_key_reference: str
     credential_reference: SecretReference
+    profile_root: ProfileRootCapability
 
 
 @dataclass(frozen=True, slots=True)

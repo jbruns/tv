@@ -5,7 +5,10 @@ from enum import StrEnum
 from typing import Protocol
 
 from coreelec_reconciler.config.device import DeviceSessionParameters
-from coreelec_reconciler.domain.configuration import ResolvedDevice
+from coreelec_reconciler.domain.configuration import (
+    ProfileRootCapability,
+    ResolvedDevice,
+)
 from coreelec_reconciler.domain.identifiers import DeviceId
 
 
@@ -57,7 +60,7 @@ class DeviceIdentity:
 
 @dataclass(frozen=True, slots=True)
 class DeviceCapabilitySnapshot:
-    kodi_profile_root: str | None
+    kodi_profile_root: ProfileRootCapability | None
     atomic_replace_over_existing: bool
 
 

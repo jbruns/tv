@@ -11,7 +11,7 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
 def test_resolves_profile_address_while_preserving_logical_identity() -> None:
     result = resolve_special_profile_path(
         "special://profile/playlists/video/NewShows.xsp",
-        KodiProfileRootCapability(ManagedPath("/storage/.kodi/userdata")),
+        KodiProfileRootCapability("/storage/.kodi/userdata"),
     )
 
     assert result.logical_address == ("special://profile/playlists/video/NewShows.xsp")
@@ -23,9 +23,9 @@ def test_resolves_profile_address_while_preserving_logical_identity() -> None:
 @pytest.mark.parametrize(
     ("address", "capability"),
     [
-        ("file:///storage/example", KodiProfileRootCapability(ManagedPath("/storage"))),
-        ("special://profile/../secrets", KodiProfileRootCapability(ManagedPath("/x"))),
-        ("special://profile/a//b", KodiProfileRootCapability(ManagedPath("/x"))),
+        ("file:///storage/example", KodiProfileRootCapability("/storage")),
+        ("special://profile/../secrets", KodiProfileRootCapability("/x")),
+        ("special://profile/a//b", KodiProfileRootCapability("/x")),
         ("special://profile/a", None),
     ],
 )

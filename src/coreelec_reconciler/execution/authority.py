@@ -1,11 +1,14 @@
 """Durable remote Device ownership over a least-authority backend."""
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
 from coreelec_reconciler.domain.execution import (
+    ActiveDeviceRun,
+    DeviceLease,
     MutationReceipt,
     Presence,
     RemoteMarkerPhase,
@@ -13,7 +16,11 @@ from coreelec_reconciler.domain.execution import (
     RemoteOwnershipIdentity,
     RemoteOwnershipSnapshot,
     RemoteQuarantine,
+    RevisionLease,
+    WorkspaceId,
 )
+from coreelec_reconciler.domain.identifiers import DeviceId, RunId
+from coreelec_reconciler.execution.run_store import CorruptRunStore
 from coreelec_reconciler.reporting.canonical_json import (
     canonical_document_bytes,
     decode_json_object,
@@ -40,7 +47,7 @@ class RemoteAuthorityBackend(Protocol):
 
     def inspect_quarantine(self, device_key: str) -> RemoteObject: ...
 
-    def create_ownership(
+    def create_ownership_if_unowned_and_not_quarantined(
         self,
         device_key: str,
         payload: bytes,
@@ -59,6 +66,7 @@ class RemoteAuthorityBackend(Protocol):
         self,
         device_key: str,
         expected_digest: str,
+        terminal_receipt_digest: str,
     ) -> MutationReceipt: ...
 
     def convert_to_quarantine(
@@ -82,7 +90,222 @@ class AuthorityConflict(AuthorityError):
     pass
 
 
-class RemoteAuthority:
+class OwnershipTokenSource(Protocol):
+    def new_ownership_token(self) -> bytes: ...
+
+
+class AuthorityRunStore(Protocol):
+    def acquire_device(self, device_id: DeviceId) -> DeviceLease: ...
+
+    def release_device(self, lease: DeviceLease) -> None: ...
+
+    def find_active_by_device(
+        self, device_id: DeviceId
+    ) -> tuple[ActiveDeviceRun, ...]: ...
+
+    def rebuild_active_device_index(self) -> tuple[ActiveDeviceRun, ...]: ...
+
+    def create_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: RunId,
+        device_id: DeviceId,
+        ownership_token: bytes,
+        ownership_token_digest: str,
+        initial_payload: bytes,
+    ) -> tuple[RevisionLease, WorkspaceId]: ...
+
+    def release_run(self, lease: RevisionLease) -> None: ...
+
+    def load_ownership_token(self, lease: RevisionLease) -> bytes: ...
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorityAcquisitionRequest:
+    device_id: DeviceId
+    run_id: RunId
+    initial_revision: Callable[[str], bytes]
+    identity: Callable[[WorkspaceId], RemoteOwnershipIdentity]
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class AcquiredAuthority:
+    device_lease: DeviceLease
+    revision_lease: RevisionLease
+    workspace_id: WorkspaceId
+    ownership: RemoteOwnership
+
+
+class AuthorityCoordinator:
+    """Enforce local exclusion and durable token/index state before remote create."""
+
+    def __init__(
+        self,
+        run_store: AuthorityRunStore,
+        runtime: OwnershipTokenSource,
+        backend: RemoteAuthorityBackend,
+    ) -> None:
+        self._run_store = run_store
+        self._runtime = runtime
+        self._remote = _RemoteAuthority(backend)
+
+    def acquire(self, request: AuthorityAcquisitionRequest) -> AcquiredAuthority:
+        device_lease = self._run_store.acquire_device(request.device_id)
+        revision_lease: RevisionLease | None = None
+        try:
+            active = self._find_active_fail_closed(request.device_id)
+            if active:
+                raise AuthorityBlocked("another local authority Run is active")
+            token = self._runtime.new_ownership_token()
+            token_digest = _digest(token)
+            initial_payload = request.initial_revision(token_digest)
+            revision_lease, workspace_id = self._run_store.create_run(
+                device_lease,
+                request.run_id,
+                request.device_id,
+                token,
+                token_digest,
+                initial_payload,
+            )
+            identity = request.identity(workspace_id)
+            if (
+                identity.device_id != request.device_id
+                or identity.run_id != request.run_id
+                or identity.workspace_id != workspace_id
+            ):
+                raise AuthorityConflict("remote identity does not match local Run")
+            ownership = self._remote.acquire_exclusive(
+                identity, token, updated_at=request.updated_at
+            )
+            return AcquiredAuthority(
+                device_lease,
+                revision_lease,
+                workspace_id,
+                ownership,
+            )
+        except Exception:
+            if revision_lease is not None:
+                self._run_store.release_run(revision_lease)
+            self._run_store.release_device(device_lease)
+            raise
+
+    def _find_active_fail_closed(
+        self, device_id: DeviceId
+    ) -> tuple[ActiveDeviceRun, ...]:
+        try:
+            return self._run_store.find_active_by_device(device_id)
+        except CorruptRunStore:
+            self._run_store.rebuild_active_device_index()
+            return self._run_store.find_active_by_device(device_id)
+
+    def checkpoint(
+        self,
+        authority: AcquiredAuthority,
+        expected_phase: RemoteMarkerPhase,
+        next_phase: RemoteMarkerPhase,
+        evidence_digest: str | None,
+        *,
+        updated_at: str,
+    ) -> AcquiredAuthority:
+        token = self._run_store.load_ownership_token(authority.revision_lease)
+        ownership = self._remote.compare_and_update(
+            authority.ownership,
+            token,
+            expected_phase,
+            next_phase,
+            evidence_digest,
+            updated_at=updated_at,
+        )
+        return AcquiredAuthority(
+            authority.device_lease,
+            authority.revision_lease,
+            authority.workspace_id,
+            ownership,
+        )
+
+    def release(
+        self,
+        authority: AcquiredAuthority,
+        terminal_receipt_digest: str,
+    ) -> MutationReceipt:
+        token = self._run_store.load_ownership_token(authority.revision_lease)
+        return self._remote.release(authority.ownership, token, terminal_receipt_digest)
+
+    def quarantine(
+        self,
+        authority: AcquiredAuthority,
+        incident_receipt_digest: str,
+        *,
+        updated_at: str,
+    ) -> RemoteQuarantine:
+        token = self._run_store.load_ownership_token(authority.revision_lease)
+        return self._remote.quarantine(
+            authority.ownership,
+            token,
+            incident_receipt_digest,
+            updated_at=updated_at,
+        )
+
+
+_LEGAL_PHASE_TRANSITIONS: dict[RemoteMarkerPhase, frozenset[RemoteMarkerPhase]] = {
+    RemoteMarkerPhase.ACQUIRED: frozenset(
+        {
+            RemoteMarkerPhase.PREPARING,
+            RemoteMarkerPhase.TERMINAL_RELEASE_PENDING,
+            RemoteMarkerPhase.QUARANTINE_PENDING,
+        }
+    ),
+    RemoteMarkerPhase.PREPARING: frozenset(
+        {
+            RemoteMarkerPhase.PREPARED,
+            RemoteMarkerPhase.TERMINAL_RELEASE_PENDING,
+            RemoteMarkerPhase.QUARANTINE_PENDING,
+        }
+    ),
+    RemoteMarkerPhase.PREPARED: frozenset(
+        {
+            RemoteMarkerPhase.MUTATING,
+            RemoteMarkerPhase.TERMINAL_RELEASE_PENDING,
+            RemoteMarkerPhase.QUARANTINE_PENDING,
+        }
+    ),
+    RemoteMarkerPhase.MUTATING: frozenset(
+        {
+            RemoteMarkerPhase.VERIFYING,
+            RemoteMarkerPhase.EFFECT,
+            RemoteMarkerPhase.ROLLING_BACK,
+            RemoteMarkerPhase.QUARANTINE_PENDING,
+        }
+    ),
+    RemoteMarkerPhase.VERIFYING: frozenset(
+        {
+            RemoteMarkerPhase.EFFECT,
+            RemoteMarkerPhase.ROLLING_BACK,
+            RemoteMarkerPhase.TERMINAL_RELEASE_PENDING,
+            RemoteMarkerPhase.QUARANTINE_PENDING,
+        }
+    ),
+    RemoteMarkerPhase.EFFECT: frozenset(
+        {
+            RemoteMarkerPhase.VERIFYING,
+            RemoteMarkerPhase.ROLLING_BACK,
+            RemoteMarkerPhase.QUARANTINE_PENDING,
+        }
+    ),
+    RemoteMarkerPhase.ROLLING_BACK: frozenset(
+        {
+            RemoteMarkerPhase.VERIFYING,
+            RemoteMarkerPhase.TERMINAL_RELEASE_PENDING,
+            RemoteMarkerPhase.QUARANTINE_PENDING,
+        }
+    ),
+    RemoteMarkerPhase.TERMINAL_RELEASE_PENDING: frozenset(),
+    RemoteMarkerPhase.QUARANTINE_PENDING: frozenset(),
+}
+
+
+class _RemoteAuthority:
     def __init__(self, backend: RemoteAuthorityBackend) -> None:
         self._backend = backend
 
@@ -134,7 +357,7 @@ class RemoteAuthority:
         payload = canonical_document_bytes(marker)
         digest = _digest(payload)
         try:
-            self._backend.create_ownership(
+            self._backend.create_ownership_if_unowned_and_not_quarantined(
                 _device_key(identity.device_id.value), payload, digest
             )
         except AuthorityConflict:
@@ -163,6 +386,13 @@ class RemoteAuthority:
         self.verify_checkpoint(ownership, expected_phase)
         if _digest(ownership_token) != ownership.token_digest:
             raise AuthorityConflict("ownership token does not match")
+        if next_phase not in _LEGAL_PHASE_TRANSITIONS[expected_phase]:
+            raise AuthorityConflict("remote marker phase transition is illegal")
+        if (
+            next_phase is RemoteMarkerPhase.TERMINAL_RELEASE_PENDING
+            and not _is_evidence_digest(manifest_digest)
+        ):
+            raise AuthorityConflict("release requires durable terminal evidence")
         next_ownership = RemoteOwnership(
             ownership.identity,
             ownership.token_digest,
@@ -219,12 +449,20 @@ class RemoteAuthority:
         ownership_token: bytes,
         terminal_receipt_digest: str,
     ) -> MutationReceipt:
-        del terminal_receipt_digest
-        self.verify_checkpoint(ownership, RemoteMarkerPhase.TERMINAL_RELEASE_PENDING)
+        snapshot = self.verify_checkpoint(
+            ownership, RemoteMarkerPhase.TERMINAL_RELEASE_PENDING
+        )
         if _digest(ownership_token) != ownership.token_digest:
             raise AuthorityConflict("ownership token does not match")
+        if (
+            not _is_evidence_digest(terminal_receipt_digest)
+            or snapshot.manifest_digest != terminal_receipt_digest
+        ):
+            raise AuthorityConflict("terminal release evidence does not match")
         return self._backend.remove_ownership(
-            _device_key(ownership.identity.device_id.value), ownership.marker_digest
+            _device_key(ownership.identity.device_id.value),
+            ownership.marker_digest,
+            terminal_receipt_digest,
         )
 
     def quarantine(
@@ -365,3 +603,7 @@ def _device_key(device_id: str) -> str:
 
 def _digest(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _is_evidence_digest(value: str | None) -> bool:
+    return isinstance(value, str) and value.startswith("sha256:") and len(value) > 7

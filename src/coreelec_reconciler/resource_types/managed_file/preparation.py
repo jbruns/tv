@@ -36,14 +36,26 @@ class PreparationBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparationObject:
+    object_id: str
+    content_digest: str
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedManagedFile:
     address: ResolvedManagedAddress
     before: NormalizedResourceState
     desired: NormalizedResourceState
     allowed_intermediates: tuple[NormalizedResourceState, ...]
     rollback_attachment: AttachmentRef
+    desired_attachment: AttachmentRef | None
+    staged_metadata_attachment: AttachmentRef
+    cleanup_metadata_attachment: AttachmentRef
+    staged_object: PreparationObject
+    cleanup_object: PreparationObject
     manifest_bytes: bytes
     manifest_digest: str
+    rollback_capable: bool
 
 
 def prepare_managed_file(
@@ -54,26 +66,76 @@ def prepare_managed_file(
     binding: PreparationBinding,
     expected_before: NormalizedResourceState,
     desired: NormalizedResourceState,
+    desired_content: bytes | None,
     allowed_intermediates: tuple[NormalizedResourceState, ...],
+    staged_object: PreparationObject,
+    cleanup_object: PreparationObject,
     read_limit: int,
 ) -> PreparedManagedFile:
+    _validate_binding(binding)
+    _validate_object(staged_object, "staged object")
+    _validate_object(cleanup_object, "cleanup object")
+    expected_staged_digest = (
+        desired.content_digest
+        if desired.presence.value == "present"
+        else "sha256:absent"
+    )
+    if (
+        staged_object.content_digest != expected_staged_digest
+        or cleanup_object.object_id == staged_object.object_id
+    ):
+        raise PreparationError("staged and cleanup object bindings are inconsistent")
     before = observe_managed_file(reader, address, read_limit=read_limit)
     if not before.safe:
         raise PreparationError("before-state observation is unsafe or unreadable")
     if before.state != expected_before:
         raise StalePrecondition("managed-file precondition changed before preparation")
+    desired_attachment = _publish_desired_attachment(
+        attachments, desired, desired_content
+    )
     attachment_payload = _before_attachment(before, binding)
-    reference = attachments.attach(
+    reference = _publish_verified(
+        attachments,
         "managed-file-before-state",
         "managed-file-before-v1",
         attachment_payload,
     )
-    try:
-        loaded_attachment = attachments.read_attachment(reference)
-    except Exception as error:
-        raise PreparationError("rollback attachment verification failed") from error
-    if loaded_attachment != attachment_payload:
-        raise PreparationError("rollback attachment verification failed")
+    staged_metadata = canonical_document_bytes(
+        {
+            "binding_digest": binding.binding_digest,
+            "change_id": binding.change_id,
+            "content_digest": staged_object.content_digest,
+            "device_id": binding.device_id,
+            "object_id": staged_object.object_id,
+            "resource_id": binding.resource_id,
+            "run_id": binding.run_id,
+            "schema_version": 1,
+        }
+    )
+    staged_metadata_attachment = _publish_verified(
+        attachments,
+        "managed-file-staged-object",
+        "managed-file-object-v1",
+        staged_metadata,
+    )
+    cleanup_metadata = canonical_document_bytes(
+        {
+            "binding_digest": binding.binding_digest,
+            "change_id": binding.change_id,
+            "content_digest": cleanup_object.content_digest,
+            "device_id": binding.device_id,
+            "object_id": cleanup_object.object_id,
+            "resource_id": binding.resource_id,
+            "run_id": binding.run_id,
+            "schema_version": 1,
+        }
+    )
+    cleanup_metadata_attachment = _publish_verified(
+        attachments,
+        "managed-file-cleanup-object",
+        "managed-file-object-v1",
+        cleanup_metadata,
+    )
     rechecked = observe_managed_file(reader, address, read_limit=read_limit)
     if not rechecked.safe or rechecked.state != expected_before:
         raise StalePrecondition("managed-file precondition changed during preparation")
@@ -82,17 +144,27 @@ def prepare_managed_file(
             "allowed intermediate states must be complete and unique"
         )
     required_intermediates = _required_intermediates(expected_before, desired)
-    if not set(required_intermediates).issubset(allowed_intermediates):
-        raise PreparationError("preparation omits a reachable intermediate state")
+    if allowed_intermediates != required_intermediates:
+        raise PreparationError("preparation intermediate states are incomplete")
     manifest = canonical_document_bytes(
         {
             "address": address.logical_address,
-            "allowed_intermediate_digests": [
-                _state_digest(state) for state in allowed_intermediates
+            "allowed_intermediate_states": [
+                _state_value(state) for state in allowed_intermediates
             ],
+            "before_state": _state_value(expected_before),
             "before_state_digest": _state_digest(expected_before),
             "binding_digest": binding.binding_digest,
             "change_id": binding.change_id,
+            "cleanup_metadata_attachment_digest": (cleanup_metadata_attachment.digest),
+            "cleanup_object": {
+                "content_digest": cleanup_object.content_digest,
+                "object_id": cleanup_object.object_id,
+            },
+            "desired_attachment_digest": (
+                desired_attachment.digest if desired_attachment is not None else None
+            ),
+            "desired_state": _state_value(desired),
             "desired_state_digest": _state_digest(desired),
             "device_id": binding.device_id,
             "managed_path": address.device_path.value,
@@ -100,6 +172,11 @@ def prepare_managed_file(
             "rollback_attachment_digest": reference.digest,
             "run_id": binding.run_id,
             "schema_version": 1,
+            "staged_metadata_attachment_digest": staged_metadata_attachment.digest,
+            "staged_object": {
+                "content_digest": staged_object.content_digest,
+                "object_id": staged_object.object_id,
+            },
         }
     )
     return PreparedManagedFile(
@@ -108,8 +185,14 @@ def prepare_managed_file(
         desired,
         allowed_intermediates,
         reference,
+        desired_attachment,
+        staged_metadata_attachment,
+        cleanup_metadata_attachment,
+        staged_object,
+        cleanup_object,
         manifest,
         "sha256:" + hashlib.sha256(manifest).hexdigest(),
+        True,
     )
 
 
@@ -153,15 +236,17 @@ def _before_attachment(
 
 
 def _state_digest(state: NormalizedResourceState) -> str:
-    payload = canonical_document_bytes(
-        {
-            "content_digest": state.content_digest,
-            "entry_kind": state.entry_kind,
-            "managed_mode": state.managed_mode,
-            "presence": state.presence.value,
-        }
-    )
+    payload = canonical_document_bytes(_state_value(state))
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _state_value(state: NormalizedResourceState) -> dict[str, object]:
+    return {
+        "content_digest": state.content_digest,
+        "entry_kind": state.entry_kind,
+        "managed_mode": state.managed_mode,
+        "presence": state.presence.value,
+    }
 
 
 def _required_intermediates(
@@ -183,3 +268,67 @@ def _required_intermediates(
             ),
         )
     return ()
+
+
+def _publish_desired_attachment(
+    attachments: AttachmentStore,
+    desired: NormalizedResourceState,
+    desired_content: bytes | None,
+) -> AttachmentRef | None:
+    if desired.presence.value == "absent":
+        if desired_content is not None or desired.content_digest is not None:
+            raise PreparationError("absent desired state cannot carry content")
+        return None
+    if desired_content is None:
+        raise PreparationError("present desired state requires exact content")
+    digest = "sha256:" + hashlib.sha256(desired_content).hexdigest()
+    if digest != desired.content_digest:
+        raise PreparationError("desired content digest does not match")
+    return _publish_verified(
+        attachments,
+        "managed-file-desired-content",
+        "managed-file-content-v1",
+        desired_content,
+    )
+
+
+def _publish_verified(
+    attachments: AttachmentStore,
+    kind: str,
+    codec: str,
+    payload: bytes,
+) -> AttachmentRef:
+    try:
+        reference = attachments.attach(kind, codec, payload)
+        loaded = attachments.read_attachment(reference)
+    except Exception as error:
+        raise PreparationError(f"{kind} verification failed") from error
+    if loaded != payload:
+        raise PreparationError(f"{kind} verification failed")
+    return reference
+
+
+def _validate_binding(binding: PreparationBinding) -> None:
+    if not all(
+        (
+            binding.device_id,
+            binding.binding_digest,
+            binding.run_id,
+            binding.resource_id,
+            binding.change_id,
+        )
+    ):
+        raise PreparationError("preparation binding is incomplete")
+
+
+def _validate_object(value: PreparationObject, label: str) -> None:
+    if (
+        not value.object_id
+        or "/" in value.object_id
+        or not _is_digest(value.content_digest)
+    ):
+        raise PreparationError(f"{label} binding is invalid")
+
+
+def _is_digest(value: str) -> bool:
+    return value.startswith("sha256:") and len(value) > 7
