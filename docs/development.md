@@ -109,10 +109,21 @@ build on Linux x86_64 and macOS arm64. Its least-privilege token grants only
 read access to repository contents. Pull-request jobs explicitly check out the
 head `SOURCE_SHA`, verify `HEAD` matches it, and use that SHA in evidence
 artifact names. `workflow_sha` separately records GitHub's workflow context,
-which may be a synthetic pull-request merge commit. The existing shell tests
-remain visible as the separate macOS `Shell transition suite` job through M11,
-use the same frozen environment for their Python fixture dependencies, and are
-not charged to Python's budgets.
+which may be a synthetic pull-request merge commit.
+
+The legacy shell tests are retained as manual reference evidence. They are not
+part of routine CI, milestone acceptance, or Python's budgets. Run them only
+when investigating legacy shell behavior:
+
+```console
+export PATH="$PWD/.venv/bin:$PATH"
+for test_script in tests/test-*.sh; do
+  case "$test_script" in
+    *test-helper.sh) continue ;;
+  esac
+  bash "$test_script"
+done
+```
 
 The installed command is `coreelec-reconciler`. Its version and help paths are
 local metadata operations: they do not load Desired State, create a Device

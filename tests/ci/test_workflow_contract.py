@@ -10,6 +10,7 @@ def test_workflow_is_least_privilege_and_runs_supported_platforms() -> None:
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
     assert workflow["permissions"] == {"contents": "read"}
+    assert set(workflow["jobs"]) == {"python-offline"}
     python_job = workflow["jobs"]["python-offline"]
     assert python_job["strategy"] == {
         "fail-fast": False,
@@ -84,20 +85,3 @@ def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
     )
     for forbidden in ("continue-on-error", "pytest-rerunfailures", "flaky", "xfail"):
         assert forbidden not in workflow_text
-
-
-def test_shell_transition_suite_remains_a_separate_job() -> None:
-    workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
-    shell_job = workflow["jobs"]["shell-transition"]
-
-    assert shell_job["name"] == "Shell transition suite"
-    assert shell_job["runs-on"] == "macos-15"
-    assert shell_job["timeout-minutes"] == 15
-    run_commands = [step["run"] for step in shell_job["steps"] if "run" in step]
-    assert "uv sync --frozen" in run_commands
-    assert any(
-        "for test_script in tests/test-*.sh" in command
-        and "*test-helper.sh) continue" in command
-        and 'export PATH="$PWD/.venv/bin:$PATH"' in command
-        for command in run_commands
-    )

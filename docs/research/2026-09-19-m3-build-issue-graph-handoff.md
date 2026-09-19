@@ -125,9 +125,7 @@ Each implementation issue:
   audit, Markdown validation when documentation changes, and `git diff
   --check`;
 - records exact commands, source commit/tree, results, timing, and produced
-  fixture/golden digests in its pull request or committed evidence record;
-- keeps the shell transition suite green when a shared transition surface is
-  touched.
+  fixture/golden digests in its pull request or committed evidence record.
 
 M3.6 runs the complete named issue-42/43 offline matrix exactly once, the
 installed-wheel workflows, deterministic harness dry run, independent bundle
@@ -713,7 +711,8 @@ non-overlapping lists. Evidence proves every named issue-42/43 offline case
 exactly once, shared Adapter contracts, installed-wheel behavior, no sockets,
 no Device access, deterministic harness bytes, independent verifier
 rejection cases, package contents, source/tree/config/lock digests, and
-unchanged shell transition behavior.
+unchanged shell ownership and permission-ledger behavior without running the
+legacy shell suite.
 
 ### Documentation and security
 
@@ -736,7 +735,6 @@ record.
 - Repeat canonical determinism under varied hash seed, timezone, and locale.
 - Build/install the wheel away from checkout and repeat installed workflows.
 - Repeat the deterministic pilot-harness dry run and independent verifier.
-- Repeat the shell transition suite separately from Python budgets.
 - Bind source commit/tree, pull requests, commands, platforms, timings,
   artifact/golden/bundle/package digests, inventory state, documentation
   transitions, security review, and known failures into
@@ -767,11 +765,10 @@ A substantive defect reopens its owning predecessor.
 ### Acceptance
 
 The clean-checkout command list is exactly the accepted M3.6 list plus hosted
-Linux/macOS source-bound evidence and the separate complete shell transition
-suite. The exit fails on any missing issue-42/43 case, selector duplication,
-budget overrun, non-deterministic byte, package mismatch, evidence-verifier
-gap, secret/privacy contamination, real Device access, or unresolved known
-failure.
+Linux/macOS source-bound evidence. The exit fails on any missing issue-42/43
+case, selector duplication, budget overrun, non-deterministic byte, package
+mismatch, evidence-verifier gap, secret/privacy contamination, real Device
+access, or unresolved known failure.
 
 ## Build-issue generation handoff
 

@@ -210,8 +210,9 @@ Every implementation issue:
 `device: none` issues enforce the offline socket guard. `device: pilot` issues
 name the exact allowlisted Device and accepted predecessor evidence.
 
-Current shell tests run in a separate transition CI job until shell
-retirement. They are not included in Python's 10/60-second budgets.
+Legacy shell tests remain available as a manual reference command until shell
+retirement. They are not a CI, readiness, milestone-acceptance, or Python
+budget gate.
 
 ## Inventory and ownership
 

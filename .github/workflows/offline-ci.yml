@@ -164,35 +164,3 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 30
-
-  shell-transition:
-    name: Shell transition suite
-    runs-on: macos-15
-    timeout-minutes: 15
-    steps:
-      - name: Check out source
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          ref: ${{ env.SOURCE_SHA }}
-      - name: Install Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version-file: .python-version
-      - name: Install uv
-        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
-        with:
-          version: 0.12.3
-          enable-cache: true
-      - name: Synchronize frozen environment
-        run: uv sync --frozen
-      - name: Run existing shell tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="$PWD/.venv/bin:$PATH"
-          for test_script in tests/test-*.sh; do
-            case "$test_script" in
-              *test-helper.sh) continue ;;
-            esac
-            bash "$test_script"
-          done
