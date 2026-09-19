@@ -27,7 +27,11 @@ forward work. An already-restored before-state produces an empty rollback
 trace and is freshly verified without another Device mutation.
 
 Canonical terminal Device-state truth is persisted before cleanup. Cleanup
-failure remains visible but cannot rewrite convergence or failure truth.
+and its receipt are then persisted as a separate release prerequisite. Only
+definitively complete cleanup permits authority release, and the release-pending
+checkpoint and removal remain bound to the canonical terminal or abandonment
+revision digest—not the cleanup receipt digest. Cleanup failure remains visible
+but cannot rewrite convergence or failure truth.
 Progress events are deterministic presentation data; a failing sink adds only
 a sanitized presentation diagnostic and cannot affect canonical evidence,
 scheduling, or fake Device state.

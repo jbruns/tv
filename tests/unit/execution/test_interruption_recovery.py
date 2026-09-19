@@ -169,10 +169,11 @@ class _Persistence:
         self,
         resource: _RecoveryResource,
         evidence_value: RecoveryEvidence | None = None,
+        events: list[str] | None = None,
     ) -> None:
         self.resource_value = resource
         self.evidence_value = evidence_value or evidence()
-        self.events: list[str] = []
+        self.events = events if events is not None else []
         head = StoredRevision(1, "sha256:head", b"{}")
         self.chain = VerifiedRunChain((head,), head, False)
 
@@ -212,7 +213,7 @@ class _Persistence:
         return StoredRevision(2, "sha256:terminal", b"{}")
 
     def record_cleanup(self, run_id: RunId, trace: MutationTrace) -> str:
-        self.events.append("cleanup")
+        self.events.append("cleanup:sha256:cleanup")
         return "sha256:cleanup"
 
     def seal(self, run_id: RunId, intent: SealIntent) -> None:
@@ -220,8 +221,8 @@ class _Persistence:
 
 
 class _Authority:
-    def __init__(self) -> None:
-        self.events: list[str] = []
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events if events is not None else []
 
     def release(self, run_id: RunId, terminal_digest: str) -> MutationReceipt:
         self.events.append(f"release:{terminal_digest}")
@@ -254,9 +255,33 @@ class _Clock:
         return "2026-09-19T08:00:00Z"
 
 
+def _acquired_authority() -> AcquiredAuthority:
+    identity = RemoteOwnershipIdentity(
+        DeviceId("device"),
+        RunId("run.test"),
+        WorkspaceId("workspace:test"),
+        "plan",
+        "sha256:plan",
+        "sha256:binding",
+        "boot",
+    )
+    return AcquiredAuthority(
+        DeviceLease(DeviceId("device"), "device-lease"),
+        RevisionLease(RunId("run.test"), WorkspaceId("workspace:test"), "run-lease"),
+        WorkspaceId("workspace:test"),
+        RemoteOwnership(
+            identity,
+            "sha256:token",
+            1,
+            RemoteMarkerPhase.VERIFYING,
+            "sha256:marker",
+        ),
+    )
+
+
 class _M3Coordinator:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
+    def __init__(self, calls: list[str] | None = None) -> None:
+        self.calls = calls if calls is not None else []
 
     def checkpoint(
         self,
@@ -437,8 +462,9 @@ def test_cleanup_failure_does_not_rewrite_terminal_truth() -> None:
 
 def test_concrete_recovery_uses_persisted_evidence_and_verified_rollback() -> None:
     resource = _RecoveryResource()
-    persistence = _Persistence(resource)
-    authority = _Authority()
+    timeline: list[str] = []
+    persistence = _Persistence(resource, events=timeline)
+    authority = _Authority(timeline)
     coordinator = RecoveryCoordinator(persistence, authority)
     engine = ExecutionEngine(_Journal(), coordinator)
 
@@ -448,15 +474,15 @@ def test_concrete_recovery_uses_persisted_evidence_and_verified_rollback() -> No
 
     assert outcome.status is RunStatus.FAILED_ROLLED_BACK
     assert resource.calls == ["rollback", "cleanup"]
-    assert persistence.events == [
+    assert timeline == [
         "load",
         "load",
         "rollback",
         "terminal:failed_rolled_back",
-        "cleanup",
+        "cleanup:sha256:cleanup",
+        "release:sha256:terminal",
         "seal:True",
     ]
-    assert authority.events == ["release:sha256:cleanup"]
 
 
 def test_approved_reasoned_abandonment_terminalizes_then_quarantines() -> None:
@@ -520,14 +546,16 @@ def test_ambiguous_rollback_retains_authority_and_requires_recovery() -> None:
 
 def test_normal_finalize_preserves_existing_terminal_truth() -> None:
     resource = _RecoveryResource()
+    timeline: list[str] = []
     persistence = _Persistence(
         resource,
         evidence(
             canonical_status=RunStatus.FAILED_PARTIAL,
             terminal_revision_durable=True,
         ),
+        timeline,
     )
-    authority = _Authority()
+    authority = _Authority(timeline)
     engine = ExecutionEngine(_Journal(), RecoveryCoordinator(persistence, authority))
 
     outcome = engine.recover(
@@ -536,36 +564,19 @@ def test_normal_finalize_preserves_existing_terminal_truth() -> None:
     )
 
     assert outcome.status is RunStatus.FAILED_PARTIAL
-    assert not any(event.startswith("terminal:") for event in persistence.events)
-    assert authority.events == ["release:sha256:cleanup"]
+    assert not any(event.startswith("terminal:") for event in timeline)
+    assert timeline[-3:] == [
+        "cleanup:sha256:cleanup",
+        "release:sha256:head",
+        "seal:True",
+    ]
 
 
 def test_recovery_authority_checkpoints_m3_marker_before_release() -> None:
-    identity = RemoteOwnershipIdentity(
-        DeviceId("device"),
-        RunId("run.test"),
-        WorkspaceId("workspace:test"),
-        "plan",
-        "sha256:plan",
-        "sha256:binding",
-        "boot",
-    )
-    acquired = AcquiredAuthority(
-        DeviceLease(DeviceId("device"), "device-lease"),
-        RevisionLease(RunId("run.test"), WorkspaceId("workspace:test"), "run-lease"),
-        WorkspaceId("workspace:test"),
-        RemoteOwnership(
-            identity,
-            "sha256:token",
-            1,
-            RemoteMarkerPhase.VERIFYING,
-            "sha256:marker",
-        ),
-    )
     coordinator = _M3Coordinator()
     recovery = M3AuthorityRecovery(
         cast(AuthorityCoordinator, coordinator),
-        _BoundAuthorities(acquired),
+        _BoundAuthorities(_acquired_authority()),
         _Clock(),
     )
 
@@ -575,6 +586,30 @@ def test_recovery_authority_checkpoints_m3_marker_before_release() -> None:
     assert coordinator.calls == [
         "checkpoint:terminal_release_pending:sha256:terminal",
         "release:sha256:terminal",
+    ]
+
+
+def test_cleanup_receipt_precedes_terminal_authorized_m3_release() -> None:
+    timeline: list[str] = []
+    persistence = _Persistence(_RecoveryResource(), events=timeline)
+    authority = M3AuthorityRecovery(
+        cast(AuthorityCoordinator, _M3Coordinator(timeline)),
+        _BoundAuthorities(_acquired_authority()),
+        _Clock(),
+    )
+    engine = ExecutionEngine(_Journal(), RecoveryCoordinator(persistence, authority))
+
+    engine.recover(RunId("run.test"), RecoveryRequest(RecoveryActionCode.ROLLBACK))
+
+    assert timeline == [
+        "load",
+        "load",
+        "rollback",
+        "terminal:failed_rolled_back",
+        "cleanup:sha256:cleanup",
+        "checkpoint:terminal_release_pending:sha256:terminal",
+        "release:sha256:terminal",
+        "seal:True",
     ]
 
 

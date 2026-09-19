@@ -405,17 +405,16 @@ class RecoveryCoordinator:
             self._persistence.seal(run_id, SealIntent(terminal.revision, False))
             return ExecutionOutcome(run_id, status, (), False)
         if cleanup_already_complete:
-            cleanup_evidence_digest = terminal.digest
             cleanup_complete = True
         else:
             cleanup = resource.cleanup(terminal.digest)
-            cleanup_evidence_digest = self._persistence.record_cleanup(run_id, cleanup)
+            self._persistence.record_cleanup(run_id, cleanup)
             cleanup_complete = all(
                 receipt.disposition is MutationDisposition.APPLIED
                 for receipt in cleanup.receipts
             )
         release = (
-            self._authority.release(run_id, cleanup_evidence_digest)
+            self._authority.release(run_id, terminal.digest)
             if cleanup_complete
             else None
         )
