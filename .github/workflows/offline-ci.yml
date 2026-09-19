@@ -1,0 +1,190 @@
+name: Offline CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  python-offline:
+    name: Python offline (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.3
+          enable-cache: true
+      - name: Synchronize frozen environment
+        run: uv sync --frozen
+      - name: Record environment
+        run: |
+          mkdir -p .ci-evidence
+          checked_out_sha="$(git rev-parse HEAD)"
+          test "$checked_out_sha" = "$SOURCE_SHA"
+          {
+            echo "source_sha=${SOURCE_SHA}"
+            echo "checked_out_sha=${checked_out_sha}"
+            echo "workflow_sha=${GITHUB_SHA}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            uv --version
+            uv run python --version
+            uv run ruff --version
+            uv run mypy --version
+            uv run pytest --version
+            uname -a
+          } | tee .ci-evidence/environment.txt
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: >-
+          uv run ruff format --check
+          src scripts/run_test_budget.py tests/scaffold tests/ci
+          tests/conftest.py tests/support
+      - name: Strict mypy
+        run: uv run mypy
+      - name: Pure, unit, architecture, and CI helper budget
+        run: >-
+          uv run python scripts/run_test_budget.py
+          --label pure-unit-architecture
+          --budget-seconds 10
+          --timeout-seconds 300
+          --result .ci-evidence/pure.json
+          --
+          .venv/bin/python -m pytest -q
+          tests/scaffold/test_application.py
+          tests/scaffold/test_architecture.py tests/ci
+      - name: Complete offline budget
+        run: >-
+          uv run python scripts/run_test_budget.py
+          --label complete-offline
+          --budget-seconds 60
+          --timeout-seconds 300
+          --include-result .ci-evidence/pure.json
+          --result .ci-evidence/offline.json
+          --
+          .venv/bin/python -m pytest -q
+          tests/scaffold/test_cli.py
+      - name: Build package
+        run: uv build
+      - name: Inspect and smoke-test wheel
+        shell: bash
+        run: |
+          uv run python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheels = list(Path("dist").glob("*.whl"))
+          assert len(wheels) == 1, wheels
+          with ZipFile(wheels[0]) as archive:
+              names = archive.namelist()
+              entry_point_paths = [
+                  name for name in names if name.endswith(".dist-info/entry_points.txt")
+              ]
+              assert len(entry_point_paths) == 1, entry_point_paths
+              entry_points = archive.read(entry_point_paths[0]).decode()
+          assert all(
+              name.startswith(("coreelec_reconciler/", "coreelec_reconciler-"))
+              for name in names
+          ), names
+          assert (
+              "coreelec-reconciler = coreelec_reconciler.cli.main:main"
+              in entry_points
+          )
+          evidence_directory = Path(".ci-evidence")
+          evidence_directory.mkdir(exist_ok=True)
+          (evidence_directory / "wheel-contents.txt").write_text(
+              "\n".join(names) + "\n",
+              encoding="utf-8",
+          )
+          digests = []
+          artifacts = [
+              *Path("dist").glob("*.whl"),
+              *Path("dist").glob("*.tar.gz"),
+          ]
+          for artifact in sorted(artifacts):
+              with artifact.open("rb") as stream:
+                  digest = hashlib.file_digest(stream, "sha256").hexdigest()
+              digests.append(f"{digest}  {artifact}")
+          (evidence_directory / "artifacts.sha256").write_text(
+              "\n".join(digests) + "\n",
+              encoding="utf-8",
+          )
+          print(f"wheel inspection passed: {wheels[0]} ({len(names)} files)")
+          print("\n".join(digests))
+          PY
+          uv venv --python 3.14 --clear .wheel-venv
+          uv pip install \
+            --python .wheel-venv/bin/python --no-deps dist/*.whl
+          mkdir -p .wheel-smoke
+          (
+            cd .wheel-smoke
+            ../.wheel-venv/bin/coreelec-reconciler --version
+            ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null
+          )
+      - name: Upload source-bound CI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: offline-ci-${{ runner.os }}-${{ runner.arch }}-${{ env.SOURCE_SHA }}
+          path: .ci-evidence/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30
+
+  shell-transition:
+    name: Shell transition suite
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.3
+          enable-cache: true
+      - name: Synchronize frozen environment
+        run: uv sync --frozen
+      - name: Run existing shell tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          for test_script in tests/test-*.sh; do
+            case "$test_script" in
+              *test-helper.sh) continue ;;
+            esac
+            bash "$test_script"
+          done

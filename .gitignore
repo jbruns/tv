@@ -7,9 +7,13 @@ coreelec-lifecycle-reports/
 
 # Scratch trees left behind when a test run is interrupted before its trap fires.
 .coreelec-test.*/
+.ci-test.*/
 
 # Python development and build outputs.
 .venv/
+.wheel-venv/
+.wheel-smoke/
+.ci-evidence/
 dist/
 __pycache__/
 *.py[cod]
