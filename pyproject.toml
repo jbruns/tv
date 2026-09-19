@@ -28,12 +28,19 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
-testpaths = ["tests/scaffold"]
+testpaths = ["tests/scaffold", "tests/ci"]
 
 [tool.mypy]
 python_version = "3.14"
 strict = true
-files = ["src", "tests/scaffold"]
+files = [
+  "scripts/run_test_budget.py",
+  "src",
+  "tests/conftest.py",
+  "tests/scaffold",
+  "tests/ci",
+  "tests/support",
+]
 
 [tool.ruff]
 target-version = "py314"

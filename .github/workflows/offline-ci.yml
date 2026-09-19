@@ -1,0 +1,106 @@
+name: Offline CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-offline:
+    name: Python offline (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.3
+          enable-cache: true
+      - name: Synchronize frozen environment
+        run: uv sync --frozen
+      - name: Record environment
+        run: |
+          mkdir -p .ci-evidence
+          {
+            echo "source_sha=${GITHUB_SHA}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            uv --version
+            uv run python --version
+          } | tee .ci-evidence/environment.txt
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: >-
+          uv run ruff format --check
+          src scripts/run_test_budget.py tests/scaffold tests/ci
+          tests/conftest.py tests/support
+      - name: Strict mypy
+        run: uv run mypy
+      - name: Pure, unit, architecture, and CI helper budget
+        run: >-
+          uv run python scripts/run_test_budget.py
+          --label pure-unit-architecture
+          --budget-seconds 10
+          --timeout-seconds 300
+          --result .ci-evidence/pure.json
+          --
+          .venv/bin/python -m pytest -q
+          tests/scaffold/test_application.py
+          tests/scaffold/test_architecture.py tests/ci
+      - name: Complete offline budget
+        run: >-
+          uv run python scripts/run_test_budget.py
+          --label complete-offline
+          --budget-seconds 60
+          --timeout-seconds 300
+          --include-result .ci-evidence/pure.json
+          --result .ci-evidence/offline.json
+          --
+          .venv/bin/python -m pytest -q
+          tests/scaffold/test_cli.py
+      - name: Build package
+        run: uv build
+      - name: Upload source-bound CI evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: offline-ci-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: .ci-evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+  shell-transition:
+    name: Shell transition suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Run existing shell tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_script in tests/test-*.sh; do
+            case "$test_script" in
+              *test-helper.sh) continue ;;
+            esac
+            bash "$test_script"
+          done

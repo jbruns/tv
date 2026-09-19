@@ -10,6 +10,7 @@ coreelec-lifecycle-reports/
 
 # Python development and build outputs.
 .venv/
+.ci-evidence/
 dist/
 __pycache__/
 *.py[cod]
