@@ -3,9 +3,10 @@
 Date: 2026-09-18
 
 Status: Accepted candidate for merge through issue
-[#51](https://github.com/jbruns/tv/issues/51) and PR **PENDING**. The pull
-request must be merged with a merge commit. This record does not authorize
-deployment or Device access.
+[#51](https://github.com/jbruns/tv/issues/51) and PR
+[#62](https://github.com/jbruns/tv/pull/62). The pull request must be merged
+with a merge commit. This record does not authorize deployment or Device
+access.
 
 ## Bound merged inputs
 
@@ -16,7 +17,7 @@ worktree.
 | --- | --- | --- | --- |
 | Accepted untracked Reconciler foundation | PR [#60](https://github.com/jbruns/tv/pull/60) merge `d36f46f1138d8903d7391baa4675c75727f90fc1` | `666e390ec9e6e11c15d0f9ae9b17375f0554b6e4` | Issue [#49](https://github.com/jbruns/tv/issues/49), source hashes below |
 | Accepted decision and research integration | PR [#61](https://github.com/jbruns/tv/pull/61) merge `3a7147a96ba1e13a0725c7f8b36c9f6a45e9111a` | `c118dd6593670f10c02aa0e4d76f95d69e5f8833` | Issue [#50](https://github.com/jbruns/tv/issues/50), PR #61 provenance table |
-| M0 deletion, link repair, validator, and exit evidence | **PENDING** | **PENDING** | Issue #51 and its merge-commit-only PR |
+| M0 deletion, link repair, validator, and exit evidence | `422d06c4a8983b4083a42b46517aa812c363f7ac` | `41cd3581b3bcc17ed20ecd95106380f01d17a29a` | Issue #51 and merge-commit-only PR #62 |
 
 The six preservation hashes recorded by PR #60 still match the files in the
 PR #61 merged tree:
