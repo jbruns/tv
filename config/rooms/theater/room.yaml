@@ -1,0 +1,12 @@
+# Reconciler-owned Room Overlay for the theater Ugoos.
+#
+# The Device is identified by its hostname and nothing more. The Reconciler
+# dials that name and refuses to plan against a Device whose own hostname
+# disagrees with it.
+#
+# room.conf in this directory is the shell's Room Overlay and is left
+# untouched.
+
+room: theater
+hostname: ugoos-theater
+profile: ugoos-am6b-plus/coreelec-21.3

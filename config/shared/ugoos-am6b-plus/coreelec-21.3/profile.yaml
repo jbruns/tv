@@ -1,0 +1,32 @@
+# Reconciler-owned Desired State for the Ugoos AM6B+ / CoreELEC 21.3 Profile.
+#
+# This file is read by the Reconciler only. The shell entry points keep reading
+# provision.conf in this directory, which is left untouched as the Recovery
+# Baseline (ADR 0010).
+
+profile: ugoos-am6b-plus/coreelec-21.3
+
+# Controller-side SSH transport. The Reconciler shells out to ssh and reuses
+# the existing key-only administrator setup.
+transport:
+  user: root
+  port: 22
+  identity: ~/.ssh/coreelec_admin_ed25519
+
+# Kodi Smart Playlists. The directory is the physical path behind
+# special://profile/playlists/video on CoreELEC.
+smart_playlists:
+  directory: /storage/.kodi/userdata/playlists/video
+  playlists:
+    - file: NewShows.xsp
+      name: New Shows
+      type: tvshows
+      match: all
+      limit: 50
+      order:
+        field: dateadded
+        direction: descending
+      rules:
+        - field: playcount
+          operator: is
+          value: "0"
