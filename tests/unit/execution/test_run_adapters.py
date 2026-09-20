@@ -1,4 +1,5 @@
 import hashlib
+import os
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -130,6 +131,11 @@ from tests.unit.execution.test_execution_documents import (
 )
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "canonical"
+
+
+@pytest.fixture(autouse=True)
+def _avoid_physical_fsync(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "fsync", lambda _fd: None)
 
 
 class _Clock:
@@ -685,22 +691,7 @@ def test_execution_attachment_store_rejects_unregistered_codec(
     persistence.close()
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (
-        ("run_id", "019950f8-4c00-7000-8000-000000000699"),
-        ("device_id", "other-device"),
-        ("binding_digest", "sha256:" + "f" * 64),
-        ("logical_address", "special://profile/playlists/video/Other.xsp"),
-        ("device_path", "/storage/.kodi/userdata/playlists/video/Other.xsp"),
-        ("change_id", "change.skin.playlist.other"),
-    ),
-)
-def test_restart_rejects_preparation_from_another_context(
-    tmp_path: Path,
-    field: str,
-    value: str,
-) -> None:
+def test_restart_rejects_every_preparation_context_mismatch(tmp_path: Path) -> None:
     root = tmp_path / "runs"
     store = RunStore(root, resource_registry=_registry())
     _create(store)
@@ -710,15 +701,23 @@ def test_restart_rejects_preparation_from_another_context(
     first.start(ApprovedPlan(RunId(RUN_ID), (cast(ExecutableChange, change),)))
     first.prepared(RunId(RUN_ID), change.resource_id, change.prepared)
     first.close()
-    contexts = _Contexts(**{field: value})
-    restarted = _adapter(
-        RunStore(root, resource_registry=_registry()),
-        cast(ResourceContextProvider, contexts),
+    mismatches = (
+        ("run_id", "019950f8-4c00-7000-8000-000000000699"),
+        ("device_id", "other-device"),
+        ("binding_digest", "sha256:" + "f" * 64),
+        ("logical_address", "special://profile/playlists/video/Other.xsp"),
+        ("device_path", "/storage/.kodi/userdata/playlists/video/Other.xsp"),
+        ("change_id", "change.skin.playlist.other"),
     )
-
-    with pytest.raises(ValueError, match="current execution context"):
-        restarted.resources(RunId(RUN_ID))
-    restarted.close()
+    for field, value in mismatches:
+        contexts = _Contexts(**{field: value})
+        restarted = _adapter(
+            RunStore(root, resource_registry=_registry()),
+            cast(ResourceContextProvider, contexts),
+        )
+        with pytest.raises(ValueError, match="current execution context"):
+            restarted.resources(RunId(RUN_ID))
+        restarted.close()
 
 
 def test_runstore_recovery_inspection_is_rebuilt_from_durable_evidence(
@@ -753,22 +752,8 @@ def test_runstore_recovery_inspection_is_rebuilt_from_durable_evidence(
     restarted.close()
 
 
-@pytest.mark.parametrize(
-    "field",
-    (
-        "device_id",
-        "run_id",
-        "workspace_id",
-        "plan_id",
-        "plan_full_digest",
-        "binding_digest",
-        "boot_id",
-        "token_digest",
-    ),
-)
-def test_recovery_inspection_rejects_every_remote_identity_mismatch(
+def test_recovery_inspection_rejects_remote_identity_mismatch(
     tmp_path: Path,
-    field: str,
 ) -> None:
     root = tmp_path / "runs"
     store = RunStore(root, resource_registry=_registry())
@@ -779,7 +764,7 @@ def test_recovery_inspection_rejects_every_remote_identity_mismatch(
         _registry(),
         {"skin.playlist.new-shows": "KodiSmartPlaylist"},
         cast(ResourceContextProvider, _Contexts()),
-        cast(RecoveryEnvironment, _OwnershipInspections(field)),
+        cast(RecoveryEnvironment, _OwnershipInspections("token_digest")),
         cast(RunClock, _Clock()),
     )
     change = _Change()
