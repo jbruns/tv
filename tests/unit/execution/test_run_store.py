@@ -265,34 +265,29 @@ def test_session_close_recording_is_idempotent_and_conflicts_fail_closed(
         )
 
 
-@pytest.mark.parametrize(
-    ("suffix", "disposition"),
-    [
-        ("1", SessionCloseDisposition.COMPLETE),
-        ("2", SessionCloseDisposition.FAILED),
-        ("3", SessionCloseDisposition.UNKNOWN),
-    ],
-)
 def test_run_store_persists_each_session_close_disposition(
     tmp_path: Path,
-    suffix: str,
-    disposition: SessionCloseDisposition,
 ) -> None:
     run_store = store(tmp_path)
     _, lease, _ = create(run_store)
     terminalize(run_store, lease)
-    intent = close_intent(
-        record_id=f"019950f8-4c00-7000-8000-00000000070{suffix}",
-        session_id=f"session.close-{suffix}",
-        disposition=disposition,
-    )
+    for suffix, disposition in (
+        ("1", SessionCloseDisposition.COMPLETE),
+        ("2", SessionCloseDisposition.FAILED),
+        ("3", SessionCloseDisposition.UNKNOWN),
+    ):
+        intent = close_intent(
+            record_id=f"019950f8-4c00-7000-8000-00000000070{suffix}",
+            session_id=f"session.close-{suffix}",
+            disposition=disposition,
+        )
 
-    recorded = run_store.record_session_close(lease, intent)
-    inspection = run_store.inspect_session_close(lease.run_id, intent.session_id)
+        recorded = run_store.record_session_close(lease, intent)
+        inspection = run_store.inspect_session_close(lease.run_id, intent.session_id)
 
-    assert recorded.disposition is disposition
-    assert inspection.disposition is disposition
-    assert inspection.record == recorded
+        assert recorded.disposition is disposition
+        assert inspection.disposition is disposition
+        assert inspection.record == recorded
 
 
 def test_session_close_missing_and_corrupt_inspection_is_unknown(
@@ -343,6 +338,7 @@ def test_session_close_cross_run_replay_is_rejected(tmp_path: Path) -> None:
     )
     terminalize(second_store, second_lease)
     workspace = next((tmp_path / "second" / "runs").iterdir())
+    (workspace / "session-closes").mkdir()
     replay_path = (
         workspace
         / "session-closes"

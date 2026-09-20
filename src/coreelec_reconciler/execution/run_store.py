@@ -195,7 +195,7 @@ class RunStore:
         directory = self._root / "runs" / _opaque_key(workspace_id.value)
         directory.mkdir(mode=0o700)
         os.chmod(directory, 0o700)
-        for name in ("revisions", "attachments", "receipts", "session-closes"):
+        for name in ("revisions", "attachments", "receipts"):
             child = directory / name
             child.mkdir(mode=0o700)
             os.chmod(child, 0o700)
