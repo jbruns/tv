@@ -97,6 +97,26 @@ class CanonicalPlan:
     full_digest: str
     semantic_digest: str
     disposition: PlanDisposition
+    resource_dependencies: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PlanDependencyGraph:
+    requires_by_resource: tuple[tuple[str, tuple[str, ...]], ...]
+
+    @property
+    def execution_order(self) -> tuple[str, ...]:
+        return tuple(resource_id for resource_id, _ in self.requires_by_resource)
+
+    @property
+    def reverse_dependency_order(self) -> tuple[str, ...]:
+        return tuple(reversed(self.execution_order))
+
+    def requires(self, resource_id: str) -> tuple[str, ...]:
+        for candidate, requirements in self.requires_by_resource:
+            if candidate == resource_id:
+                return requirements
+        raise KeyError(resource_id)
 
 
 @dataclass(frozen=True, slots=True)

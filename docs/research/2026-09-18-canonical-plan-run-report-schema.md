@@ -8,6 +8,35 @@ Interactive evidence: [Throwaway Plan/Run state-model prototype](../../prototype
 
 Status: **Accepted contract-level decision**
 
+## 0.1 Issue 81 Plan dependency amendment (2026-09-19)
+
+Plan schema version 2 closes the restart-reconstruction gap for selected
+Resource dependencies. Each Plan Resource has a required `requires` array of
+sorted, unique Resource IDs. All referenced Resources must be present in the
+same Plan. Self-dependencies, duplicate edges, dangling references, cycles,
+duplicate Resource/evidence/Change IDs, and mismatched cross-references are
+invalid.
+
+Resources use a deterministic stable topological order. At each dependency
+layer, ready Resources are ordered by Resource ID. Evidence follows the same
+Resource order, and Changes remain nested under their owning Resource. The
+complete graph, all Resources, evidence, and Changes participate in both full
+and semantic digests. Consequently execution and recovery can reconstruct the
+approved dependency and reverse-dependency order solely from saved canonical
+Plan bytes.
+
+Version 2 normalized evidence is dispatched through the registered Resource
+Type's closed codec. Its normalized summary and state digest must exactly
+match each referencing Change's before-state. Resource management, desired
+relation, blockers, and Change presence must form an accepted assessment
+combination; for example, an observe-only divergence has its dedicated
+blocker and no Change, while an enforcing divergence has one Change and no
+blocker.
+
+Schema version 1 remains valid only for the original single-Resource shape and
+has an implicit empty `requires` set, preserving its accepted canonical bytes
+and digests.
+
 ## 0. Issue 43 recovery refinement (2026-09-18)
 
 [Issue 43](2026-09-18-run-workspace-recovery-effect-contracts.md) keeps the

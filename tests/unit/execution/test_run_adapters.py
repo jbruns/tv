@@ -92,6 +92,9 @@ from coreelec_reconciler.resource_types.kodi_smart_playlist.codecs import (
 from coreelec_reconciler.resource_types.kodi_smart_playlist.intent import (
     parse_intent,
 )
+from coreelec_reconciler.resource_types.kodi_smart_playlist.planning_codecs import (
+    decode_plan_evidence,
+)
 from coreelec_reconciler.resource_types.kodi_smart_playlist.resource_type import (
     state_addresses,
 )
@@ -444,6 +447,7 @@ def _registry() -> ResourceRegistry:
                 state_addresses,
                 encode_intent,
                 decode_intent,
+                decode_plan_evidence,
                 execution_factory=lambda context: cast(
                     ErasedResourceExecution, _Runtime()
                 ),
