@@ -59,3 +59,38 @@ scheduling, or fake Device state.
 Execution follows deterministic Plan order. A known Resource failure skips
 its dependents while safe independent, non-disruptive Changes continue.
 Ambiguity and disruptive failure stop further mutation.
+
+## Restart-safe production contracts
+
+`PlanStore` durably stores the exact canonical Plan beside its originating
+planning Run. Every load reruns the reporting decoders and verifies the Plan
+ID, full and semantic digests, Device and originating-Run binding, approval
+requirements, and input/source digests. A partial, changed, noncanonical, or
+unsafe saved entry fails closed.
+
+`RunStoreExecutionPersistence` is the concrete `ExecutionJournal`,
+`RecoveryPersistence`, and bound `AttachmentStore` adapter. Preparation
+documents are content-addressed attachments referenced by canonical Run
+evidence. Intent, primitive outcome, Verification, rollback, and terminal
+transitions append validated canonical revisions with RunStore CAS ordering.
+Cleanup receipts are operational evidence written only after terminal truth;
+they are digest-verified across restart and never become a successor to the
+terminal canonical revision. Sealing still follows verified cleanup and
+authority release or quarantine.
+
+Playlist preparation has a strict canonical codec. It reconstructs
+`PreparedPlaylistChange` and `PreparedManagedFile` from the manifest and
+verified content-addressed attachments, rejects altered bindings or missing
+attachments, and persists no controller-local path, lease, or ownership token.
+
+Built-in Resource Type descriptors expose a lazy execution factory instead of
+a process-bound execution instance. `ConfigurationResourceContexts` supplies
+the resolved Device capability, per-Run binding, attachment store, lifecycle,
+and clock without reversing the Resource Type dependency. Composition binds
+each lifecycle's intent and freshly observed primitive-outcome checkpoints to
+the same RunStore journal before reconstructing any prepared Resource.
+Recovery rebuilds
+all prepared Resources in persisted Plan/dependency order, observes each
+freshly, rolls back in reverse order, and performs terminal cleanup in Plan
+order. `ProductionExecutionFactory` binds these concrete stores and authority
+adapters for one Run without opening a Device session itself.

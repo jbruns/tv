@@ -12,16 +12,22 @@ from coreelec_reconciler.domain.configuration import (
     KodiSmartPlaylistIntent,
 )
 from coreelec_reconciler.domain.execution import (
+    AttachmentRef,
     MutationDisposition,
     MutationReceipt,
     MutationTrace,
 )
 
 if TYPE_CHECKING:
+    from coreelec_reconciler.domain.configuration import Resource
     from coreelec_reconciler.resource_types.managed_file.observation import (
         ManagedFileObservation,
     )
+    from coreelec_reconciler.resource_types.managed_file.paths import (
+        ResolvedManagedAddress,
+    )
     from coreelec_reconciler.resource_types.managed_file.preparation import (
+        PreparationBinding,
         PreparedManagedFile,
     )
     from coreelec_reconciler.transports.interfaces import ReadResult
@@ -59,6 +65,12 @@ class ErasedResourceExecution(Protocol):
     def rollback(self, prepared: object) -> object: ...
 
     def cleanup(self, prepared: object, terminal_evidence_ref: str) -> object: ...
+
+
+class AttachmentStore(Protocol):
+    def attach(self, kind: str, codec: str, payload: bytes) -> AttachmentRef: ...
+
+    def read_attachment(self, reference: AttachmentRef) -> bytes: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +218,27 @@ class ManagedFileLifecycle(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceExecutionContext:
+    """Capability-scoped inputs for one Device/Run Resource execution."""
+
+    resource: Resource
+    files: ManagedFileCapabilities
+    attachments: AttachmentStore
+    lifecycle: ManagedFileLifecycle
+    address: ResolvedManagedAddress
+    binding: PreparationBinding
+    observed_at: Callable[[], str]
+
+
+type ResourceExecutionFactory = Callable[
+    [ResourceExecutionContext],
+    ErasedResourceExecution,
+]
+type PreparedEncoder = Callable[[object], bytes]
+type PreparedDecoder = Callable[[bytes, AttachmentStore], object]
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceDescriptor:
     type_code: str
     parse_intent: IntentParser
@@ -213,3 +246,6 @@ class ResourceDescriptor:
     encode_intent: IntentEncoder
     decode_intent: IntentDecoder
     execution: ErasedResourceExecution | None = None
+    execution_factory: ResourceExecutionFactory | None = None
+    encode_prepared: PreparedEncoder | None = None
+    decode_prepared: PreparedDecoder | None = None

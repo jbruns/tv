@@ -5,6 +5,7 @@ import hashlib
 import os
 import secrets
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
 from coreelec_reconciler.domain.execution import (
@@ -55,6 +56,15 @@ class CompareConflict(RunStoreError):
 
 class CorruptRunStore(RunStoreError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalReceipt:
+    digest: str
+    kind: str
+    resource_id: str
+    attachment: AttachmentRef
+    payload: bytes
 
 
 _IDENTITY_FIELDS = {
@@ -171,7 +181,7 @@ class RunStore:
         directory = self._root / "runs" / _opaque_key(workspace_id.value)
         directory.mkdir(mode=0o700)
         os.chmod(directory, 0o700)
-        for name in ("revisions", "attachments"):
+        for name in ("revisions", "attachments", "receipts"):
             child = directory / name
             child.mkdir(mode=0o700)
             os.chmod(child, 0o700)
@@ -452,7 +462,14 @@ class RunStore:
         reference: AttachmentRef,
     ) -> LoadedAttachment:
         self._require_run_lease(lease)
-        workspace = self._workspace_for_run(lease.run_id)
+        return self._read_attachment(lease.run_id, reference)
+
+    def _read_attachment(
+        self,
+        run_id: RunId,
+        reference: AttachmentRef,
+    ) -> LoadedAttachment:
+        workspace = self._workspace_for_run(run_id)
         digest_hex = reference.digest.removeprefix("sha256:")
         path = workspace / "attachments" / digest_hex
         metadata = self._read_object(workspace / "attachments" / f"{digest_hex}.json")
@@ -465,6 +482,88 @@ class RunStore:
         if metadata != expected or _sha256(payload) != reference.digest:
             raise CorruptRunStore("attachment verification failed")
         return LoadedAttachment(reference, payload)
+
+    def record_operational_receipt(
+        self,
+        lease: RevisionLease,
+        kind: str,
+        resource_id: str,
+        payload: bytes,
+    ) -> str:
+        """Persist post-terminal operational evidence without revising truth."""
+        self._require_run_lease(lease)
+        _require_safe_code(kind, "receipt kind")
+        _require_safe_code(resource_id, "receipt Resource ID")
+        attachment = self.attach(lease, kind, f"{kind}-v1", payload)
+        receipt = canonical_document_bytes(
+            {
+                "attachment": {
+                    "codec": attachment.codec,
+                    "digest": attachment.digest,
+                    "kind": attachment.kind,
+                },
+                "kind": kind,
+                "resource_id": resource_id,
+                "schema_version": 1,
+            }
+        )
+        digest = _sha256(receipt)
+        directory = self._workspace_for_run(lease.run_id) / "receipts"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+        self._publish(
+            directory / f"{digest.removeprefix('sha256:')}.json",
+            receipt,
+            f"receipt:{digest}",
+        )
+        return digest
+
+    def load_operational_receipts(
+        self,
+        run_id: RunId,
+        kind: str,
+    ) -> tuple[OperationalReceipt, ...]:
+        _require_safe_code(kind, "receipt kind")
+        directory = self._workspace_for_run(run_id) / "receipts"
+        if not directory.exists():
+            return ()
+        receipts: list[OperationalReceipt] = []
+        for path in sorted(directory.iterdir()):
+            receipt_bytes = self._read_bytes(path)
+            if _sha256(receipt_bytes) != "sha256:" + path.stem:
+                raise CorruptRunStore("operational receipt digest mismatch")
+            try:
+                value = decode_json_object(receipt_bytes)
+            except ValueError as error:
+                raise CorruptRunStore("operational receipt is malformed") from error
+            if set(value) != {
+                "attachment",
+                "kind",
+                "resource_id",
+                "schema_version",
+            }:
+                raise CorruptRunStore("operational receipt is malformed")
+            if value["kind"] != kind or value["schema_version"] != 1:
+                continue
+            attachment = value["attachment"]
+            if not isinstance(attachment, dict):
+                raise CorruptRunStore("operational receipt attachment is malformed")
+            reference = AttachmentRef(
+                _required_string(attachment, "digest"),
+                _required_string(attachment, "kind"),
+                _required_string(attachment, "codec"),
+            )
+            loaded = self._read_attachment(run_id, reference)
+            receipts.append(
+                OperationalReceipt(
+                    "sha256:" + path.stem,
+                    kind,
+                    _required_string(value, "resource_id"),
+                    reference,
+                    loaded.payload,
+                )
+            )
+        return tuple(receipts)
 
     def load_ownership_token(self, lease: RevisionLease) -> bytes:
         self._require_run_lease(lease)

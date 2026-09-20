@@ -1,5 +1,6 @@
 """Typed Kodi Smart Playlist execution kept inside the Resource Type."""
 
+import base64
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,10 +20,22 @@ from coreelec_reconciler.domain.planning import (
     KodiSmartPlaylistObservation,
     PlaylistAssessment,
 )
+from coreelec_reconciler.reporting.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.resource_types.descriptor import (
+    AttachmentStore,
+    ErasedResourceExecution,
+    ErasedResourceExecutionAdapter,
     ManagedFileCapabilities,
     ManagedFileExecutionResult,
     ManagedFileLifecycle,
+    ResourceExecutionContext,
+)
+from coreelec_reconciler.resource_types.kodi_smart_playlist.codecs import (
+    decode_intent,
+    encode_intent,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning import (
     assess_playlist,
@@ -39,10 +52,11 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
     ResolvedManagedAddress,
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
-    AttachmentStore,
     PreparationBinding,
+    PreparationError,
     PreparationObject,
     PreparedManagedFile,
+    decode_prepared_managed_file,
     prepare_managed_file,
 )
 
@@ -61,6 +75,128 @@ class PlaylistChange:
 class PreparedPlaylistChange:
     change: PlaylistChange
     managed_file: PreparedManagedFile
+
+
+def execution_factory(context: ResourceExecutionContext) -> ErasedResourceExecution:
+    resource = context.resource
+    if not isinstance(resource.intent, KodiSmartPlaylistIntent):
+        raise TypeError("KodiSmartPlaylist execution requires playlist Intent")
+    runtime = KodiSmartPlaylistExecution(
+        context.files,
+        context.attachments,
+        context.lifecycle,
+        context.address,
+        context.binding,
+        resource.intent,
+        resource.desired,
+        context.observed_at,
+    )
+    return ErasedResourceExecutionAdapter(
+        ManagedFileObservation,
+        PlaylistChange,
+        PreparedPlaylistChange,
+        runtime.observe,
+        runtime.assess,
+        runtime.prepare,
+        runtime.apply,
+        runtime.rollback,
+        runtime.cleanup,
+    )
+
+
+def encode_prepared_playlist_change(prepared: PreparedPlaylistChange) -> bytes:
+    """Encode restart-safe typed preparation without controller-local state."""
+    return canonical_document_bytes(
+        {
+            "change": {
+                "change_id": prepared.change.change_id,
+                "desired_presence": prepared.change.desired_presence.value,
+                "intent": dict(encode_intent(prepared.change.intent)),
+                "resource_id": prepared.change.resource_id,
+                "rollback_approved": prepared.change.rollback_approved,
+            },
+            "kind": "KodiSmartPlaylistPreparation",
+            "managed_file_manifest_base64": base64.b64encode(
+                prepared.managed_file.manifest_bytes
+            ).decode("ascii"),
+            "managed_file_manifest_digest": prepared.managed_file.manifest_digest,
+            "schema_version": 1,
+        }
+    )
+
+
+def decode_prepared_playlist_change(
+    content: bytes,
+    attachments: AttachmentStore,
+) -> PreparedPlaylistChange:
+    try:
+        value = decode_json_object(content)
+        if set(value) != {
+            "change",
+            "kind",
+            "managed_file_manifest_base64",
+            "managed_file_manifest_digest",
+            "schema_version",
+        }:
+            raise ValueError("unknown or missing playlist preparation fields")
+        if (
+            value["kind"] != "KodiSmartPlaylistPreparation"
+            or value["schema_version"] != 1
+        ):
+            raise ValueError("unsupported playlist preparation")
+        encoded_manifest = value["managed_file_manifest_base64"]
+        if not isinstance(encoded_manifest, str):
+            raise ValueError("managed-file manifest must be base64 text")
+        manifest = base64.b64decode(encoded_manifest, validate=True)
+        digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+        if digest != value["managed_file_manifest_digest"]:
+            raise ValueError("managed-file manifest digest mismatch")
+        managed = decode_prepared_managed_file(manifest, attachments)
+        change_value = value["change"]
+        if not isinstance(change_value, dict) or set(change_value) != {
+            "change_id",
+            "desired_presence",
+            "intent",
+            "resource_id",
+            "rollback_approved",
+        }:
+            raise ValueError("playlist Change is malformed")
+        intent_value = change_value["intent"]
+        if not isinstance(intent_value, dict):
+            raise ValueError("playlist Intent is malformed")
+        rollback = change_value["rollback_approved"]
+        if type(rollback) is not bool:
+            raise ValueError("rollback approval must be boolean")
+        change = PlaylistChange(
+            _required_text(change_value["resource_id"]),
+            _required_text(change_value["change_id"]),
+            decode_intent(intent_value),
+            DesiredPresence(_required_text(change_value["desired_presence"])),
+            managed.before,
+            rollback,
+        )
+        manifest_value = decode_json_object(manifest)
+        if (
+            manifest_value.get("resource_id") != change.resource_id
+            or manifest_value.get("change_id") != change.change_id
+        ):
+            raise ValueError("playlist Change does not bind to managed-file evidence")
+        return PreparedPlaylistChange(change, managed)
+    except (KeyError, TypeError, ValueError) as error:
+        raise PreparationError("playlist preparation evidence is invalid") from error
+
+
+def encode_erased_prepared(value: object) -> bytes:
+    if not isinstance(value, PreparedPlaylistChange):
+        raise TypeError("prepared Resource type does not match descriptor")
+    return encode_prepared_playlist_change(value)
+
+
+def decode_erased_prepared(
+    content: bytes,
+    attachments: AttachmentStore,
+) -> object:
+    return decode_prepared_playlist_change(content, attachments)
 
 
 def desired_state(
@@ -240,3 +376,9 @@ def _assessment_match(assessment: PlaylistAssessment) -> bool | None:
     if assessment.relation.value == "unverifiable":
         return None
     return False
+
+
+def _required_text(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("expected non-empty text")
+    return value

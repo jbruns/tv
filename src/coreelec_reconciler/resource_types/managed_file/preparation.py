@@ -2,20 +2,21 @@
 
 import hashlib
 from dataclasses import dataclass
-from typing import Protocol
 
-from coreelec_reconciler.domain.execution import AttachmentRef, NormalizedResourceState
-from coreelec_reconciler.reporting.canonical_json import canonical_document_bytes
+from coreelec_reconciler.domain.execution import (
+    AttachmentRef,
+    NormalizedResourceState,
+    Presence,
+)
+from coreelec_reconciler.reporting.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
+from coreelec_reconciler.resource_types.descriptor import AttachmentStore
 from coreelec_reconciler.transports.interfaces import ManagedFileReader
 
 from .observation import ManagedFileObservation, observe_managed_file
-from .paths import ResolvedManagedAddress
-
-
-class AttachmentStore(Protocol):
-    def attach(self, kind: str, codec: str, payload: bytes) -> AttachmentRef: ...
-
-    def read_attachment(self, reference: AttachmentRef) -> bytes: ...
+from .paths import ManagedPath, ResolvedManagedAddress
 
 
 class StalePrecondition(RuntimeError):
@@ -56,6 +57,107 @@ class PreparedManagedFile:
     manifest_bytes: bytes
     manifest_digest: str
     rollback_capable: bool
+
+
+def decode_prepared_managed_file(
+    manifest_bytes: bytes,
+    attachments: AttachmentStore,
+) -> PreparedManagedFile:
+    """Reconstruct and verify a prepared managed file from durable evidence."""
+    try:
+        value = decode_json_object(manifest_bytes)
+        if set(value) != {
+            "address",
+            "allowed_intermediate_states",
+            "before_state",
+            "before_state_digest",
+            "binding_digest",
+            "change_id",
+            "cleanup_metadata_attachment_digest",
+            "cleanup_object",
+            "desired_attachment_digest",
+            "desired_state",
+            "desired_state_digest",
+            "device_id",
+            "managed_path",
+            "resource_id",
+            "rollback_attachment_digest",
+            "run_id",
+            "schema_version",
+            "staged_metadata_attachment_digest",
+            "staged_object",
+        }:
+            raise ValueError("unknown or missing preparation manifest fields")
+        if value["schema_version"] != 1:
+            raise ValueError("unsupported preparation manifest")
+        before = _decode_state(value["before_state"])
+        desired = _decode_state(value["desired_state"])
+        intermediates_value = value["allowed_intermediate_states"]
+        if not isinstance(intermediates_value, list):
+            raise ValueError("allowed intermediate states must be an array")
+        intermediates = tuple(_decode_state(item) for item in intermediates_value)
+        if value["before_state_digest"] != _state_digest(before):
+            raise ValueError("before state digest mismatch")
+        if value["desired_state_digest"] != _state_digest(desired):
+            raise ValueError("desired state digest mismatch")
+        rollback = AttachmentRef(
+            _string(value["rollback_attachment_digest"]),
+            "managed-file-before-state",
+            "managed-file-before-v1",
+        )
+        desired_digest = value["desired_attachment_digest"]
+        desired_attachment = (
+            None
+            if desired_digest is None
+            else AttachmentRef(
+                _string(desired_digest),
+                "managed-file-desired-content",
+                "managed-file-content-v1",
+            )
+        )
+        staged_metadata = AttachmentRef(
+            _string(value["staged_metadata_attachment_digest"]),
+            "managed-file-staged-object",
+            "managed-file-object-v1",
+        )
+        cleanup_metadata = AttachmentRef(
+            _string(value["cleanup_metadata_attachment_digest"]),
+            "managed-file-cleanup-object",
+            "managed-file-object-v1",
+        )
+        for reference in (
+            rollback,
+            desired_attachment,
+            staged_metadata,
+            cleanup_metadata,
+        ):
+            if reference is not None:
+                attachments.read_attachment(reference)
+        staged = _decode_object(value["staged_object"], "staged object")
+        cleanup = _decode_object(value["cleanup_object"], "cleanup object")
+        prepared = PreparedManagedFile(
+            ResolvedManagedAddress(
+                _string(value["address"]),
+                ManagedPath(_string(value["managed_path"])),
+            ),
+            before,
+            desired,
+            intermediates,
+            rollback,
+            desired_attachment,
+            staged_metadata,
+            cleanup_metadata,
+            staged,
+            cleanup,
+            manifest_bytes,
+            "sha256:" + hashlib.sha256(manifest_bytes).hexdigest(),
+            True,
+        )
+        if intermediates != _required_intermediates(before, desired):
+            raise ValueError("preparation intermediate states are incomplete")
+        return prepared
+    except (KeyError, TypeError, ValueError) as error:
+        raise PreparationError("prepared managed-file evidence is invalid") from error
 
 
 def prepare_managed_file(
@@ -247,6 +349,48 @@ def _state_value(state: NormalizedResourceState) -> dict[str, object]:
         "managed_mode": state.managed_mode,
         "presence": state.presence.value,
     }
+
+
+def _decode_state(value: object) -> NormalizedResourceState:
+    if not isinstance(value, dict) or set(value) != {
+        "content_digest",
+        "entry_kind",
+        "managed_mode",
+        "presence",
+    }:
+        raise ValueError("normalized Resource state is malformed")
+    content_digest = value["content_digest"]
+    entry_kind = value["entry_kind"]
+    managed_mode = value["managed_mode"]
+    if content_digest is not None and not isinstance(content_digest, str):
+        raise ValueError("state content digest is invalid")
+    if entry_kind is not None and not isinstance(entry_kind, str):
+        raise ValueError("state entry kind is invalid")
+    if managed_mode is not None and type(managed_mode) is not int:
+        raise ValueError("state mode is invalid")
+    return NormalizedResourceState(
+        Presence(_string(value["presence"])),
+        entry_kind,
+        content_digest,
+        managed_mode,
+    )
+
+
+def _decode_object(value: object, label: str) -> PreparationObject:
+    if not isinstance(value, dict) or set(value) != {"content_digest", "object_id"}:
+        raise ValueError(f"{label} is malformed")
+    result = PreparationObject(
+        _string(value["object_id"]),
+        _string(value["content_digest"]),
+    )
+    _validate_object(result, label)
+    return result
+
+
+def _string(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("expected non-empty string")
+    return value
 
 
 def _required_intermediates(
