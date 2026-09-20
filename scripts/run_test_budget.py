@@ -12,7 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-PROCESS_GROUP_GRACE_SECONDS = 0.25
+PROCESS_GROUP_GRACE_SECONDS = 0.1
 PROCESS_GROUP_POLL_SECONDS = 0.01
 
 

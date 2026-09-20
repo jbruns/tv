@@ -1,9 +1,11 @@
 import ast
+from functools import cache
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "coreelec_reconciler"
 
 
+@cache
 def imported_modules(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     modules: set[str] = set()
