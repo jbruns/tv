@@ -1,6 +1,9 @@
+import errno
 import os
+import pty
 import subprocess
 import sys
+import termios
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -8,6 +11,10 @@ import pytest
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 COMPOSITION_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "cli"
+VERIFY_DOCUMENT = (
+    b'{"kind":"CoreElecReconcilerRunReport","run_id":"verify-85",'
+    b'"status":"converged"}\n'
+)
 
 
 @pytest.fixture(scope="module")
@@ -62,7 +69,22 @@ def _run(
     scenario: str = "",
     extra_environment: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    environment = _environment(scenario, extra_environment)
+    return subprocess.run(
+        [str(executable), *arguments],
+        cwd=executable.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+
+
+def _environment(
+    scenario: str = "",
+    extra_environment: dict[str, str] | None = None,
+) -> dict[str, str]:
     environment = os.environ.copy()
+    environment.pop("NO_COLOR", None)
     environment.update(
         {
             "COREELEC_RECONCILER_TEST_COMPOSITION": "1",
@@ -77,12 +99,41 @@ def _run(
         environment["CLI_SCENARIO"] = scenario
     if extra_environment:
         environment.update(extra_environment)
-    return subprocess.run(
+    return environment
+
+
+def _run_with_stderr_pty(
+    executable: Path,
+    *arguments: str,
+    extra_environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    master, slave = pty.openpty()
+    attributes = termios.tcgetattr(slave)
+    attributes[1] &= ~termios.ONLCR
+    termios.tcsetattr(slave, termios.TCSANOW, attributes)
+    process = subprocess.Popen(
         [str(executable), *arguments],
         cwd=executable.parent,
-        env=environment,
-        check=False,
-        capture_output=True,
+        env=_environment(extra_environment=extra_environment),
+        stdout=subprocess.PIPE,
+        stderr=slave,
+    )
+    os.close(slave)
+    stderr_parts: list[bytes] = []
+    try:
+        while part := os.read(master, 4096):
+            stderr_parts.append(part)
+    except OSError as error:
+        if error.errno != errno.EIO:
+            raise
+    finally:
+        os.close(master)
+    stdout, _ = process.communicate()
+    return subprocess.CompletedProcess(
+        process.args,
+        process.returncode,
+        stdout,
+        b"".join(stderr_parts),
     )
 
 
@@ -243,19 +294,94 @@ def test_installed_output_is_environment_deterministic(installed_cli: Path) -> N
         "--quiet",
         "verify",
         "device",
-        extra_environment={"PYTHONHASHSEED": "1", "TZ": "UTC"},
+        extra_environment={
+            "LC_ALL": "C",
+            "PYTHONHASHSEED": "1",
+            "TZ": "UTC",
+        },
     )
     second = _run(
         installed_cli,
         "--quiet",
         "verify",
         "device",
-        extra_environment={"PYTHONHASHSEED": "991", "TZ": "Pacific/Honolulu"},
+        extra_environment={
+            "LC_ALL": "C.UTF-8",
+            "PYTHONHASHSEED": "991",
+            "TZ": "Pacific/Honolulu",
+        },
     )
 
     assert first.returncode == second.returncode == 0
-    assert first.stdout == second.stdout
+    assert first.stdout == second.stdout == VERIFY_DOCUMENT
     assert first.stderr == second.stderr == b""
+
+
+def test_installed_non_tty_disables_color_with_normal_term(
+    installed_cli: Path,
+) -> None:
+    result = _run(
+        installed_cli,
+        "verify",
+        "device",
+        extra_environment={"TERM": "xterm-256color"},
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == VERIFY_DOCUMENT
+    assert result.stderr == (
+        b"progress: observed caf\xc3\xa9 Resource\nstatus: converged\n"
+    )
+    assert b"\x1b[" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("extra_environment", "color_enabled"),
+    [
+        ({"TERM": "xterm-256color"}, True),
+        ({"TERM": "xterm-256color", "NO_COLOR": "1"}, False),
+        ({"TERM": "dumb"}, False),
+    ],
+)
+def test_installed_tty_color_contract(
+    installed_cli: Path,
+    extra_environment: dict[str, str],
+    color_enabled: bool,
+) -> None:
+    result = _run_with_stderr_pty(
+        installed_cli,
+        "verify",
+        "device",
+        extra_environment=extra_environment,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == VERIFY_DOCUMENT
+    assert result.stderr.startswith(b"progress: observed caf\xc3\xa9 Resource\n")
+    assert result.stderr.endswith(b"status: converged\x1b[0m\n") is color_enabled
+    assert (b"\x1b[" in result.stderr) is color_enabled
+
+
+def test_installed_modeled_blocked_outcome_is_exit_three_with_document(
+    installed_cli: Path,
+) -> None:
+    result = _run(
+        installed_cli,
+        "verify",
+        "device",
+        scenario="blocked",
+        extra_environment={"TERM": "xterm-256color"},
+    )
+
+    assert result.returncode == 3
+    assert result.stdout == (
+        b'{"kind":"CoreElecReconcilerRunReport","run_id":"verify-85",'
+        b'"status":"blocked"}\n'
+    )
+    assert result.stderr == (
+        b"progress: observed caf\xc3\xa9 Resource\nstatus: blocked\n"
+    )
+    assert b"\x1b[" not in result.stdout + result.stderr
 
 
 def test_installed_progress_and_status_are_utf8_stderr(

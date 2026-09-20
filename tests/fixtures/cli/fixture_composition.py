@@ -155,6 +155,7 @@ class _Workflows:
 
 def _scenario_status() -> RunStatus:
     return {
+        "blocked": RunStatus.BLOCKED,
         "known-failure": RunStatus.FAILED_PARTIAL,
         "recovery-required": RunStatus.FAILED_RECOVERY_REQUIRED,
         "rollback": RunStatus.FAILED_ROLLED_BACK,
