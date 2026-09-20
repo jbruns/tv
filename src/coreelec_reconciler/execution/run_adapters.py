@@ -1013,7 +1013,7 @@ class RunStoreExecutionPersistence:
         evidence = list(_list(value, "evidence"))
         evidence.append(record)
         value["evidence"] = evidence
-        return self._append(value, _status(chain.head), terminal=True)
+        return self._append(value, _status(chain.head), terminal=True, chain=chain)
 
     def _descriptor(self, resource_id: str) -> ResourceDescriptor:
         type_code = self._resource_types.get(resource_id)
@@ -1076,7 +1076,12 @@ class RunStoreExecutionPersistence:
                     item.update(resource_result)
                     break
             value["resource_results"] = results
-        return self._append(value, _status(chain.head), terminal=chain.terminal)
+        return self._append(
+            value,
+            _status(chain.head),
+            terminal=chain.terminal,
+            chain=chain,
+        )
 
     def _resource_evidence(
         self,
@@ -1319,7 +1324,7 @@ class RunStoreExecutionPersistence:
             RunStatus.FAILED_RECOVERY_REQUIRED,
         }
         value["ended_at"] = self._clock.utc_now() if terminal else None
-        return self._append(value, status, terminal=terminal)
+        return self._append(value, status, terminal=terminal, chain=chain)
 
     def _append(
         self,
@@ -1327,8 +1332,8 @@ class RunStoreExecutionPersistence:
         status: RunStatus,
         *,
         terminal: bool,
+        chain: VerifiedRunChain,
     ) -> StoredRevision:
-        chain = self._store.load_chain(self._run_id)
         value["revision"] = chain.head.revision + 1
         value["previous_revision_digest"] = chain.head.digest
         report = self._documents.build(value, self._registry)
