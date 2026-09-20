@@ -106,6 +106,7 @@ _SESSION_CLOSE_FIELDS = {
     "terminal_revision",
     "workspace_id",
 }
+_SESSION_CLOSE_V2_FIELDS = _SESSION_CLOSE_FIELDS | {"run_kind"}
 
 
 def build_execution_run_report(
@@ -132,14 +133,28 @@ def check_session_close_invariants(content: bytes) -> tuple[str, ...]:
         value = decode_json_object(content)
     except ValueError:
         return ("session close record is not a JSON object",)
-    if set(value) != _SESSION_CLOSE_FIELDS:
+    schema_version = value.get("schema_version")
+    expected_fields = (
+        _SESSION_CLOSE_V2_FIELDS if schema_version == 2 else _SESSION_CLOSE_FIELDS
+    )
+    if set(value) != expected_fields:
         return ("unknown or missing session close fields",)
     if canonical_document_bytes(value) != content:
         errors.append("session close bytes are not canonical")
     if value["kind"] != "CoreElecReconcilerSessionClose":
         errors.append("unsupported session close kind")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+    if type(schema_version) is not int or schema_version not in {1, 2}:
         errors.append("unsupported session close schema version")
+    run_kind = (
+        "CoreElecReconcilerRunReport" if schema_version == 1 else value.get("run_kind")
+    )
+    if not isinstance(run_kind, str) or run_kind not in {
+        "CoreElecReconcilerRunReport",
+        "CoreElecReconcilerObservationRun",
+    }:
+        errors.append("unsupported session close Run kind")
+    if schema_version == 2 and run_kind != "CoreElecReconcilerObservationRun":
+        errors.append("session close version 2 requires observation Run kind")
     if value["producer"] != _PRODUCER:
         errors.append("unsupported session close producer")
     try:
@@ -189,8 +204,20 @@ def check_session_close_invariants(content: bytes) -> tuple[str, ...]:
         "quarantined",
         "released",
         "unknown",
+        "not_applicable",
     }:
         errors.append("unknown session close authority state")
+    if run_kind == "CoreElecReconcilerObservationRun" and (
+        schema_version != 2
+        or authority_state != "not_applicable"
+        or value["seal_digest"] is not None
+    ):
+        errors.append("invalid observation session close authority binding")
+    if (
+        run_kind == "CoreElecReconcilerRunReport"
+        and authority_state == "not_applicable"
+    ):
+        errors.append("invalid execution session close authority binding")
     disposition_value = value["disposition"]
     try:
         disposition = (

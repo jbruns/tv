@@ -15,6 +15,15 @@ from coreelec_reconciler.resource_types.kodi_smart_playlist.codecs import (
 from coreelec_reconciler.resource_types.kodi_smart_playlist.intent import (
     parse_intent,
 )
+from coreelec_reconciler.resource_types.kodi_smart_playlist.observation_codecs import (
+    OBSERVATION_PAYLOAD_KIND,
+    OBSERVATION_PAYLOAD_VERSION,
+    OBSERVATION_POLICY_DIGEST,
+    check_observation_addresses,
+    check_observation_run_payload,
+    decode_observation_run_payload,
+    validate_observation_addresses,
+)
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning_codecs import (
     decode_plan_evidence,
 )
@@ -38,6 +47,13 @@ def built_in_resource_registry() -> ResourceRegistry:
                 encode_prepared=_encode_playlist_prepared,
                 decode_prepared=_decode_playlist_prepared,
                 decode_planned_change=_decode_playlist_planned_change,
+                observation_payload_kind=OBSERVATION_PAYLOAD_KIND,
+                observation_payload_version=OBSERVATION_PAYLOAD_VERSION,
+                observation_policy_digest=OBSERVATION_POLICY_DIGEST,
+                decode_observation_evidence=decode_observation_run_payload,
+                check_observation_evidence=check_observation_run_payload,
+                validate_observation_addresses=validate_observation_addresses,
+                check_observation_addresses=check_observation_addresses,
             ),
         )
     )

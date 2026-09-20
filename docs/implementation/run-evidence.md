@@ -169,8 +169,10 @@ authority release. A close result therefore never enters the Run revision
 chain and cannot change terminal status, cleanup truth, authority truth, the
 active index, or seal eligibility.
 
-`CoreElecReconcilerSessionClose` schema version 1 is a separate canonical,
-append-only workspace record. It binds:
+`CoreElecReconcilerSessionClose` is a separate canonical, append-only
+workspace record. Version 1 binds execution Runs; version 2 additionally binds
+the Run document kind and permits observation Runs to state that mutation
+authority is `not_applicable`. It binds:
 
 - one UUIDv7 record/idempotency identity and one safe session identity;
 - Device, Run, and opaque workspace identity;
@@ -188,36 +190,76 @@ for that identity, or a second identity for the same session, conflicts.
 
 RunStore may record close outcomes after terminal truth both before and after
 release/seal. Sealed bytes remain immutable. Strict loading verifies canonical
-bytes, digest, identity, terminal/head/authority binding, and optional seal
-binding. Inspection treats a missing or corrupt close record as `unknown`
-without invalidating an otherwise verified canonical Run result.
+bytes, digest, identity, Run kind, terminal/head/authority binding, and
+optional seal binding. Observation close records cannot carry a seal and
+cannot imply cleanup or release. Inspection treats a missing or corrupt close
+record as `unknown` without invalidating an otherwise verified canonical Run
+result.
 
-Version 1 automatically prunes nothing. Revisions, attachments, markers, and
-evidence are retained until a future explicit retention procedure is accepted.
+Session-close records automatically prune nothing. Revisions, attachments,
+markers, and evidence are retained until a future explicit retention
+procedure is accepted.
 Active, interrupted, unsealed, corrupt, ownership-bearing, or
 recovery-required Runs are never implicitly removable.
 
-## Standalone read-only Verification
+## Canonical observation-only Runs
 
-`CanonicalVerificationRuns` is the standalone Verification module. Its small
-interface creates a canonical Run, restarts an incomplete Run, or reports a
-durable result. It does not create or save a `CanonicalPlan`, acquire remote
-ownership, or receive preparation, mutation, rollback, cleanup, or Effect
-capabilities.
+`CoreElecReconcilerObservationRun` schema version 1 is separate from planning
+and execution reports. It never contains a Plan, Change, approval, Desired
+State, Verification, convergence, mutation, rollback, cleanup, or write
+authority field.
 
-The caller supplies only selected Resource observation/assessment
-implementations. The module validates the immutable Resource registry,
-requires every selected dependency to be present, computes dependency order,
-and observes each Resource once in that order. Existing typed Resource
-`observe` and `assess` behavior determines `converged`, `divergent`, or
-`unverifiable`; the module translates those facts into the existing canonical
-execution evidence and persists the revision chain in `RunStore`.
+The lifecycle is strictly `ready` to `observing`, then terminal `observed`
+when every selected Resource was observed or `observed_partial` when any
+selected Resource is unavailable or has an unknown result. A Run cannot move
+directly from `ready` to a terminal state, including for a one-Resource scope.
+A crash while work remains leaves the Run durably `observing`.
 
-Because execution schema version 1 requires an immutable Plan-reference-shaped
-binding, Verification stores a digest of the selected Resource scope and two
-opaque UUIDv7 correlation identities in those existing fields. No Plan
-document is constructed or persisted. Restart verifies that digest before
-resuming. Read-only workspaces never enter the active Device mutation index.
+The immutable scope binds the Run, workspace, Device, creation time, ordered
+selected Resources, Resource Types, State Addresses, dependency order, and
+configuration, Profile, artifact-set, capability, and selector-input digests.
+Each Resource also binds the exact registered observation payload kind,
+version, and policy digest. Dependencies must reference earlier selected
+Resources; duplicates, cycles, dangling references, and unstable ordering are
+rejected.
+
+Each successor adds at most one checkpoint in scope order. A checkpoint binds
+the Resource, Resource Type, State Addresses, observer identity, timestamp,
+closed Resource-Type-owned payload, disposition, and any content-addressed raw
+attachment. A completed prefix is immutable and is not observed again after
+restart. Terminal Runs contain the complete prefix and reject all successors.
+The independent persistence oracle separately checks envelopes, payloads,
+ordering, references, digests, and transitions. Resource-Type observation
+oracles implement their own algorithms rather than calling production decoder
+helpers. The persistence family requires both production decoding and oracle
+acceptance.
+
+Observation workspaces use Device and Run leases plus the existing CAS and
+durability machinery, but never enter the active mutation index and never
+persist an ownership token. Session-close schema version 2 can bind their
+terminal result using `authority_state: not_applicable`; this does not assert
+Resource cleanup, authority release, or sealing.
+
+RunStore receives document-family operations through its registry seam and
+stores canonical revisions opaquely. The family owns chain, transition,
+identity, terminality, attachment, and session-close interpretation. A bounded
+retry reconciles independently inspected revision, head, state, and
+no-active-index facts after acknowledgement loss; only the byte-identical
+candidate may complete publication.
+
+## Standalone read-only observation
+
+The observation document codec and RunStore API are the persistence seam for a
+later standalone observation workflow. They create, resume, and inspect
+canonical observation Runs without creating or saving a `CanonicalPlan`,
+acquiring remote ownership, or receiving preparation, mutation, rollback,
+cleanup, Verification, or Effect capabilities.
+
+The codec records measured presence, readability, entry type, safety,
+availability, unknown/unavailable failure code, content digest, mode, and raw
+attachment reference as applicable. It does not assess Desired State or
+translate an Observation into an execution result. Read-only workspaces never
+enter the active Device mutation index.
 
 ## Durable close uncertainty
 
@@ -241,6 +283,8 @@ Run result remains available through both close and inspection.
 Committed positive fixtures cover ready execution, converged execution,
 interrupted recovery, and a complete Resource/Effect execution sequence;
 parameterized codec tests cover every accepted execution-evidence v1 kind.
+The observation fixture covers a two-Resource dependency-ordered partial Run
+with one readable raw attachment and one unavailable result.
 Negative fixtures independently exercise digest, identity, terminal-time,
 cleanup-order, index-release, Resource-convergence, abandonment-approval,
 workspace-opacity, unknown evidence kinds/versions, and arbitrary evidence

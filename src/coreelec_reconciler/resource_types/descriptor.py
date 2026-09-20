@@ -53,6 +53,16 @@ type PlanEvidenceDecoder = Callable[
     [str, int, Mapping[str, object]],
     tuple[Mapping[str, object], str],
 ]
+type ObservationEvidenceDecoder = Callable[
+    [str, int, Mapping[str, object]],
+    Mapping[str, object],
+]
+type ObservationEvidenceChecker = Callable[
+    [object, object, object],
+    tuple[str, ...],
+]
+type ObservationAddressValidator = Callable[[tuple[str, ...]], None]
+type ObservationAddressChecker = Callable[[tuple[str, ...]], tuple[str, ...]]
 
 
 class ErasedResourceExecution(Protocol):
@@ -259,3 +269,10 @@ class ResourceDescriptor:
     encode_prepared: PreparedEncoder | None = None
     decode_prepared: PreparedDecoder | None = None
     decode_planned_change: PlannedChangeDecoder | None = None
+    observation_payload_kind: str | None = None
+    observation_payload_version: int | None = None
+    observation_policy_digest: str | None = None
+    decode_observation_evidence: ObservationEvidenceDecoder | None = None
+    check_observation_evidence: ObservationEvidenceChecker | None = None
+    validate_observation_addresses: ObservationAddressValidator | None = None
+    check_observation_addresses: ObservationAddressChecker | None = None
