@@ -38,7 +38,14 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     )
     environment_path = root / "environment"
     subprocess.run(
-        ["uv", "venv", "--python", sys.executable, str(environment_path)],
+        [
+            "uv",
+            "venv",
+            "--python",
+            sys.executable,
+            "--system-site-packages",
+            str(environment_path),
+        ],
         cwd=root,
         env=environment,
         check=True,
@@ -70,6 +77,32 @@ def _run(
     extra_environment: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     environment = _environment(scenario, extra_environment)
+    return subprocess.run(
+        [str(executable), *arguments],
+        cwd=executable.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+
+
+def _run_production(
+    executable: Path,
+    home: Path,
+    *arguments: str,
+) -> subprocess.CompletedProcess[bytes]:
+    environment = os.environ.copy()
+    environment.pop("COREELEC_RECONCILER_TEST_COMPOSITION", None)
+    environment.pop("CLI_SCENARIO", None)
+    environment.update(
+        {
+            "HOME": str(home),
+            "LC_ALL": "C",
+            "PYTHONHASHSEED": "73",
+            "TERM": "dumb",
+            "TZ": "UTC",
+        }
+    )
     return subprocess.run(
         [str(executable), *arguments],
         cwd=executable.parent,
@@ -315,6 +348,38 @@ def test_installed_output_is_environment_deterministic(installed_cli: Path) -> N
     assert first.returncode == second.returncode == 0
     assert first.stdout == second.stdout == VERIFY_DOCUMENT
     assert first.stderr == second.stderr == b""
+
+
+@pytest.mark.parametrize(
+    ("arguments", "diagnostic"),
+    [
+        (("observe", "living-room.ugoos-am6b-plus"), b"device-session-unavailable"),
+        (("apply", "plan.missing"), b"approved-plan-unavailable"),
+        (("reconcile", "living-room.ugoos-am6b-plus"), b"observation.missing"),
+        (("verify", "living-room.ugoos-am6b-plus"), b"device-session-unavailable"),
+        (("recover", "run.missing", "inspect"), b"run-not-found"),
+        (("report", "run.missing"), b"run-not-found"),
+    ],
+)
+def test_installed_wheel_uses_genuine_production_composition_offline(
+    installed_cli: Path,
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+    diagnostic: bytes,
+) -> None:
+    result = _run_production(
+        installed_cli,
+        tmp_path,
+        "--repository-root",
+        str(REPOSITORY_ROOT / "tests" / "fixtures" / "repository"),
+        *arguments,
+    )
+
+    assert result.returncode == 3
+    assert result.stdout == b""
+    assert diagnostic in result.stderr
+    assert b"not_implemented" not in result.stderr
+    assert not (tmp_path / ".local").exists()
 
 
 def test_installed_non_tty_disables_color_with_normal_term(

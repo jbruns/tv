@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -64,6 +65,31 @@ def _reseal(bundle: Path) -> None:
     )
 
 
+def _working_configuration_digest(root: Path) -> str:
+    paths = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "--",
+            "artifacts",
+            "inventory",
+            "profiles",
+            "secret-providers",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    digest = hashlib.sha256()
+    for relative in sorted(paths):
+        digest.update(relative.encode())
+        digest.update(b"\0")
+        digest.update((root / relative).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def test_dry_run_is_byte_deterministic_and_independently_valid(
     source_checkout: Path,
 ) -> None:
@@ -93,6 +119,27 @@ def test_dry_run_is_byte_deterministic_and_independently_valid(
     assert manifest["safety"]["skin_025_owner"] == "shell"
 
 
+@pytest.mark.parametrize("ignored", [False, True])
+def test_dry_run_rejects_untracked_effective_configuration(
+    source_checkout: Path, ignored: bool
+) -> None:
+    if ignored:
+        exclude = source_checkout / ".git" / "info" / "exclude"
+        exclude.write_text("profiles/untracked.yaml\n")
+    (source_checkout / "profiles" / "untracked.yaml").write_text("effective: true\n")
+
+    with pytest.raises(ValueError, match="untracked"):
+        HARNESS.generate_bundle(source_checkout, source_checkout / "bundle")
+
+
+def test_dry_run_allows_irrelevant_untracked_files(source_checkout: Path) -> None:
+    (source_checkout / "notes.txt").write_text("not effective configuration\n")
+
+    digest = HARNESS.generate_bundle(source_checkout, source_checkout / "bundle")
+
+    assert VERIFIER.verify_bundle(source_checkout / "bundle", source_checkout) == digest
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -103,6 +150,8 @@ def test_dry_run_is_byte_deterministic_and_independently_valid(
         "tree",
         "configuration",
         "lock",
+        "working-config-binding",
+        "working-lock-binding",
         "artifact-digest",
         "bundle-digest",
         "secret",
@@ -140,6 +189,23 @@ def test_independent_verifier_rejects_invalid_bundles(
         _reseal(bundle)
     elif case in {"configuration", "lock"}:
         manifest["bindings"][f"{case}_sha256"] = "0" * 64
+        _write_canonical(manifest_path, manifest)
+        _reseal(bundle)
+    elif case == "working-config-binding":
+        (source_checkout / "profiles" / "profile.yaml").write_text(
+            "synthetic: modified\n"
+        )
+        manifest["bindings"]["configuration_sha256"] = _working_configuration_digest(
+            source_checkout
+        )
+        _write_canonical(manifest_path, manifest)
+        _reseal(bundle)
+    elif case == "working-lock-binding":
+        lock = source_checkout / "uv.lock"
+        lock.write_text("version = 2\n")
+        manifest["bindings"]["lock_sha256"] = hashlib.sha256(
+            lock.read_bytes()
+        ).hexdigest()
         _write_canonical(manifest_path, manifest)
         _reseal(bundle)
     elif case == "artifact-digest":

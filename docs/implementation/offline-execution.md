@@ -8,10 +8,14 @@ software, change Effects, retire the shell implementation, or transfer
 ownership. `SKIN-025` remains shell-owned.
 
 The installed CLI calls the single production `bootstrap`. That composition
-root alone owns lazy production SSH/SFTP, host-key, secret, and filesystem
-RunStore construction. CLI and application modules depend on typed seams and
+root builds the real `ApplicationDependencies`,
+`ExecutionApplicationWorkflows`, and `ExecutionEngine` graph. It alone owns
+lazy production SSH/SFTP, host-key, secret, and filesystem RunStore
+construction. CLI and application modules depend on typed seams and
 instantiate no concrete adapter. Bootstrap construction itself has no socket,
-secret-resolution, or local-state side effect.
+secret-resolution, or local-state side effect. Missing approved Plans, Device
+sessions, and Runs produce typed capability-unavailable outcomes, not
+`not_implemented`.
 
 ## Exact offline partition
 

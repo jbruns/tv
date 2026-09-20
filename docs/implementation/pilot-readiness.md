@@ -14,8 +14,12 @@ uv run python scripts/verify_m3_evidence_bundle.py \
 The M3 harness is deliberately incapable of live operation. It opens no
 socket, resolves no secret, accepts no endpoint or credential, and performs no
 Device mutation. It binds the synthetic bundle to the exact Git commit, Git
-tree, authored configuration digest, and `uv.lock` digest. A dirty tracked
-checkout is rejected.
+tree, authored configuration digest, and `uv.lock` digest. Configuration and
+lock bytes are read from the committed Git object, not the working tree. A
+dirty tracked checkout or any untracked effective configuration beneath
+`artifacts/`, `inventory/`, `profiles/`, or `secret-providers/` is rejected.
+Untracked files outside that effective configuration boundary do not affect
+the bundle.
 
 The bundle describes, but does not execute, the issue-44 core sequence:
 absent/create, formatting no-op, semantic repair, mode-only repair, malformed
@@ -25,8 +29,9 @@ Device contact and secret resolution did not occur.
 
 ## Independent verification
 
-The verifier separately recomputes source, tree, configuration, lock, artifact,
-and bundle digests. It rejects:
+The verifier separately checks commit/tree correspondence and recomputes
+configuration and lock bytes from the claimed commit object, plus artifact and
+bundle digests. It rejects:
 
 - missing or unexpected files;
 - duplicate scenarios or ordinals;

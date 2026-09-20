@@ -297,6 +297,9 @@ def test_observe_verify_and_report_preserve_canonical_run_documents() -> None:
     verified = workflows.verify(VerifyCommand(".", DeviceId("device")))
     reported = workflows.report(ReportCommand(".", RunId("recover")))
 
+    assert isinstance(observed, ObservationOutcome)
+    assert isinstance(verified, VerifyOutcome)
+    assert isinstance(reported, ReportOutcome)
     assert observed.run_report is OBSERVE_REPORT
     assert observed.run_report.canonical_bytes == OBSERVE_REPORT.canonical_bytes
     assert observed.status is RunStatus.NOOP
@@ -320,6 +323,7 @@ def test_apply_returns_canonical_terminal_report_and_separate_cleanup_truth() ->
 
     outcome = workflows.apply(ApplyCommand(".", PlanId("plan"), ()))
 
+    assert isinstance(outcome, ApplyOutcome)
     assert outcome.run_report is EXECUTION_REPORT
     assert outcome.run_report.canonical_bytes == EXECUTION_REPORT.canonical_bytes
     assert outcome.status is RunStatus.CONVERGED

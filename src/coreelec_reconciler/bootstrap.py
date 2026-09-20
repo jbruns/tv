@@ -3,22 +3,61 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
-from coreelec_reconciler.application.commands import PlanCommand, ValidateCommand
-from coreelec_reconciler.application.outcomes import PlanOutcome, ValidationOutcome
+from coreelec_reconciler.application.commands import (
+    ObserveCommand,
+    PlanCommand,
+    ReportCommand,
+    ValidateCommand,
+    VerifyCommand,
+)
+from coreelec_reconciler.application.outcomes import (
+    ApprovalResolution,
+    ObservationOutcome,
+    PlanOutcome,
+    ReportOutcome,
+    UnsupportedOutcome,
+    UnsupportedReason,
+    ValidationOutcome,
+    VerifyOutcome,
+)
 from coreelec_reconciler.application.reconciler import (
+    ApplicationDependencies,
     ApplicationReconciler,
+    CapabilityUnavailableError,
+    ExecutionApplicationWorkflows,
     Reconciler,
 )
-from coreelec_reconciler.domain.identifiers import PlanId, RunId, SelectorId
+from coreelec_reconciler.domain.execution import (
+    FinalizeMode,
+    RunStatus,
+    StoredRevision,
+)
+from coreelec_reconciler.domain.identifiers import (
+    PlanId,
+    RunId,
+    SelectorId,
+)
+from coreelec_reconciler.domain.planning import CanonicalPlan
+from coreelec_reconciler.execution.engine import (
+    ApprovedPlan,
+    ExecutionEngine,
+    ExecutionOutcome,
+)
 from coreelec_reconciler.inventory.ledger import validate_ledger
+from coreelec_reconciler.reporting.canonical_json import decode_json_object
 
 if TYPE_CHECKING:
     from coreelec_reconciler.domain.configuration import ResolvedDevice
+    from coreelec_reconciler.execution.recovery import RecoveryInspection
+    from coreelec_reconciler.execution.run_store import RunStore
+    from coreelec_reconciler.resource_types.descriptor import (
+        ManagedFileExecutionResult,
+    )
     from coreelec_reconciler.transports.interfaces import DeviceSession
 
 
@@ -30,12 +69,13 @@ class BootstrapSettings:
     pinned_host_keys: tuple[tuple[str, str], ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ProductionServices:
     """Lazy production Adapter access owned exclusively by the composition root."""
 
     settings: BootstrapSettings
     environment: Mapping[str, str]
+    _store: RunStore | None = None
 
     def open_device_session(
         self,
@@ -62,16 +102,179 @@ class ProductionServices:
         )
         return sessions.open(parameters, required_capabilities)
 
-    def run_store(self) -> object:
+    def run_store(self) -> RunStore:
         from coreelec_reconciler.execution.run_store import RunStore
 
+        if self._store is not None:
+            return self._store
         configured = self.settings.state_root
         root = (
             Path(configured)
             if configured is not None
             else Path.home() / ".local" / "state" / "coreelec-reconciler"
         )
-        return RunStore(root)
+        self._store = RunStore(root)
+        return self._store
+
+    def state_root_exists(self) -> bool:
+        configured = self.settings.state_root
+        root = (
+            Path(configured)
+            if configured is not None
+            else Path.home() / ".local" / "state" / "coreelec-reconciler"
+        )
+        return root.is_dir()
+
+
+class _ProductionApplicationData:
+    def __init__(
+        self,
+        services: ProductionServices,
+        plan_repository: Callable[[PlanCommand], PlanOutcome],
+    ) -> None:
+        self._services = services
+        self._plan_repository = plan_repository
+
+    def observe(
+        self, command: ObserveCommand
+    ) -> ObservationOutcome | UnsupportedOutcome:
+        del command
+        return _unavailable("observe", "production.device-session-unavailable")
+
+    def plan(self, command: PlanCommand) -> PlanOutcome:
+        return self._plan_repository(command)
+
+    def approved_plan(
+        self, plan_id: PlanId, approval_scopes: tuple[str, ...]
+    ) -> ApprovedPlan | UnsupportedOutcome:
+        del plan_id, approval_scopes
+        return _unavailable("apply", "production.approved-plan-unavailable")
+
+    def resolve_approval(
+        self,
+        plan: CanonicalPlan,
+        approval_scopes: tuple[str, ...],
+    ) -> ApprovalResolution:
+        value = decode_json_object(plan.canonical_bytes)
+        requirements = value.get("approval_requirements")
+        required = (
+            tuple(
+                str(item["scope"])
+                for item in requirements
+                if isinstance(item, dict) and isinstance(item.get("scope"), str)
+            )
+            if isinstance(requirements, list)
+            else ()
+        )
+        granted = tuple(scope for scope in approval_scopes if scope in required)
+        return ApprovalResolution(
+            required,
+            granted,
+            tuple(scope for scope in required if scope not in granted),
+        )
+
+    def verify(self, command: VerifyCommand) -> VerifyOutcome | UnsupportedOutcome:
+        del command
+        return _unavailable("verify", "production.device-session-unavailable")
+
+    def report(self, command: ReportCommand) -> ReportOutcome | UnsupportedOutcome:
+        if not self._services.state_root_exists():
+            return _unavailable("report", "production.run-not-found")
+        from coreelec_reconciler.execution.run_store import RunStoreError
+        from coreelec_reconciler.reporting.execution_documents import (
+            decode_execution_run_report,
+        )
+
+        try:
+            chain = self._services.run_store().load_chain(command.run_id)
+            return ReportOutcome(decode_execution_run_report(chain.head.payload))
+        except FileNotFoundError, RunStoreError, ValueError:
+            return _unavailable("report", "production.run-unavailable")
+
+
+class _ProductionExecutionJournal:
+    def __init__(self, services: ProductionServices) -> None:
+        self._services = services
+
+    def start(self, plan: ApprovedPlan) -> None:
+        del plan
+        raise CapabilityUnavailableError(
+            "apply", "production.execution-journal-unavailable"
+        )
+
+    def prepared(self, run_id: RunId, resource_id: str, prepared: object) -> None:
+        del run_id, resource_id, prepared
+        self._unavailable()
+
+    def result(
+        self,
+        run_id: RunId,
+        resource_id: str,
+        result: ManagedFileExecutionResult,
+    ) -> None:
+        del run_id, resource_id, result
+        self._unavailable()
+
+    def terminal(self, run_id: RunId, status: RunStatus) -> StoredRevision:
+        del run_id, status
+        self._unavailable()
+
+    def cleanup(self, run_id: RunId, resource_id: str, result: object) -> None:
+        del run_id, resource_id, result
+        self._unavailable()
+
+    def skipped(
+        self, run_id: RunId, resource_id: str, dependency_ids: tuple[str, ...]
+    ) -> None:
+        del run_id, resource_id, dependency_ids
+        self._unavailable()
+
+    @staticmethod
+    def _unavailable() -> NoReturn:
+        raise CapabilityUnavailableError(
+            "apply", "production.execution-journal-unavailable"
+        )
+
+
+class _ProductionRecoveryDriver:
+    def __init__(self, services: ProductionServices) -> None:
+        self._services = services
+
+    def inspect(self, run_id: RunId) -> RecoveryInspection:
+        if not self._services.state_root_exists():
+            raise CapabilityUnavailableError("recover", "production.run-not-found")
+        try:
+            self._services.run_store().load_chain(run_id)
+        except FileNotFoundError:
+            raise CapabilityUnavailableError(
+                "recover", "production.run-not-found"
+            ) from None
+        raise CapabilityUnavailableError(
+            "recover", "production.recovery-binding-unavailable"
+        )
+
+    def resume_verification(self, run_id: RunId) -> ExecutionOutcome:
+        del run_id
+        raise CapabilityUnavailableError("recover", "production.run-unavailable")
+
+    def rollback(self, run_id: RunId) -> ExecutionOutcome:
+        del run_id
+        raise CapabilityUnavailableError("recover", "production.run-unavailable")
+
+    def finalize(
+        self,
+        run_id: RunId,
+        mode: FinalizeMode,
+        *,
+        approval: str | None,
+        reason: str | None,
+    ) -> ExecutionOutcome:
+        del run_id, mode, approval, reason
+        raise CapabilityUnavailableError("recover", "production.run-unavailable")
+
+
+def _unavailable(command: str, code: str) -> UnsupportedOutcome:
+    return UnsupportedOutcome(command, UnsupportedReason.CAPABILITY_UNAVAILABLE, code)
 
 
 def bootstrap(settings: BootstrapSettings) -> Reconciler:
@@ -215,8 +418,15 @@ def bootstrap(settings: BootstrapSettings) -> Reconciler:
         )
 
     services = ProductionServices(settings, os.environ)
+    data = _ProductionApplicationData(services, plan_repository)
+    engine = ExecutionEngine(
+        _ProductionExecutionJournal(services),
+        _ProductionRecoveryDriver(services),
+    )
     return ApplicationReconciler(
-        validate_repository,
-        plan_repository,
-        production_services=services,
+        dependencies=ApplicationDependencies(
+            ExecutionApplicationWorkflows(data, engine),
+            validate_repository,
+            plan_repository,
+        ),
     )

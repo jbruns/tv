@@ -61,13 +61,23 @@ def _git(root: Path, *arguments: str) -> str:
     ).stdout.strip()
 
 
-def _configuration_digest(root: Path) -> str:
-    paths = _git(root, "ls-files", "--", *CONFIGURATION_PATHS).splitlines()
+def _git_bytes(root: Path, *arguments: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        check=True,
+        capture_output=True,
+    ).stdout
+
+
+def _configuration_digest(root: Path, revision: str) -> str:
+    paths = _git(
+        root, "ls-tree", "-r", "--name-only", revision, "--", *CONFIGURATION_PATHS
+    ).splitlines()
     digest = hashlib.sha256()
     for relative in sorted(filter(None, paths)):
         digest.update(relative.encode())
         digest.update(b"\0")
-        digest.update((root / relative).read_bytes())
+        digest.update(_git_bytes(root, "show", f"{revision}:{relative}"))
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -151,9 +161,12 @@ def verify_bundle(bundle: Path, root: Path) -> str:
     }
     if source != expected_source:
         raise VerificationError("source commit or tree mismatch")
+    claimed_commit = source["commit"]
+    if _git(root, "rev-parse", f"{claimed_commit}^{{tree}}") != source["tree"]:
+        raise VerificationError("claimed commit and tree do not correspond")
     if bindings != {
-        "configuration_sha256": _configuration_digest(root),
-        "lock_sha256": _sha256((root / "uv.lock").read_bytes()),
+        "configuration_sha256": _configuration_digest(root, claimed_commit),
+        "lock_sha256": _sha256(_git_bytes(root, "show", f"{claimed_commit}:uv.lock")),
     }:
         raise VerificationError("configuration or lock mismatch")
 

@@ -2,6 +2,7 @@ import ast
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "coreelec_reconciler"
+NETWORK_MODULES = {"socket", "urllib", "httpx", "requests", "paramiko"}
 
 
 def imported_modules(path: Path) -> set[str]:
@@ -95,22 +96,38 @@ def test_application_and_cli_do_not_instantiate_concrete_adapters() -> None:
     assert violations == {}
 
 
-def test_network_modules_are_limited_to_approved_boundaries() -> None:
-    prohibited_modules = {"socket", "urllib", "httpx", "requests", "paramiko"}
-    violations = {
-        path.relative_to(PACKAGE_ROOT): modules & prohibited_modules
-        for path in PACKAGE_ROOT.rglob("*.py")
+def network_import_violations(package_root: Path) -> dict[Path, set[str]]:
+    return {
+        path.relative_to(package_root): modules & NETWORK_MODULES
+        for path in package_root.rglob("*.py")
         if (
             modules := {
                 module.split(".", maxsplit=1)[0] for module in imported_modules(path)
             }
-            & prohibited_modules
+            & NETWORK_MODULES
         )
         and "adapters" not in path.parts
-        and "cli" not in path.parts
+        and path != package_root / "bootstrap.py"
     }
 
-    assert violations == {}
+
+def test_network_modules_are_limited_to_approved_boundaries() -> None:
+    assert network_import_violations(PACKAGE_ROOT) == {}
+
+
+def test_network_guard_rejects_cli_and_allows_adapter_and_bootstrap(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "coreelec_reconciler"
+    (package / "cli").mkdir(parents=True)
+    (package / "adapters").mkdir()
+    (package / "cli" / "bad.py").write_text("import socket\nimport paramiko\n")
+    (package / "adapters" / "allowed.py").write_text("import socket\n")
+    (package / "bootstrap.py").write_text("import paramiko\n")
+
+    assert network_import_violations(package) == {
+        Path("cli/bad.py"): {"socket", "paramiko"}
+    }
 
 
 def test_yaml_and_pydantic_are_confined_to_config_boundary() -> None:

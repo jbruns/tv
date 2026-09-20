@@ -162,17 +162,20 @@ authored configuration and supplied observations only and never write files
 or create network connections.
 
 The installed command enters through the one production `bootstrap`. That
-composition root owns lazy construction of the Paramiko session, secret,
-pinned-host-key, and filesystem RunStore adapters; CLI and application modules
-do not instantiate them. Merely constructing the application performs no
-secret resolution, filesystem creation, socket operation, or Device access.
+composition root builds `ApplicationDependencies`,
+`ExecutionApplicationWorkflows`, and `ExecutionEngine`, and owns lazy
+construction of the Paramiko session, secret, pinned-host-key, and filesystem
+RunStore adapters. CLI and application modules do not instantiate concrete
+adapters. Merely constructing the application performs no secret resolution,
+filesystem creation, socket operation, or Device access.
 
 `validate` performs the
 deterministic offline inventory-ledger gate and can additionally validate the
 first playlist planning input. `plan` implements the pure
-`skin.playlist.new-shows` slice. Other operational commands return an explicit
-`not_implemented` diagnostic until invoked with a complete production Run
-binding; they never silently fall back to a test composition.
+`skin.playlist.new-shows` slice. Execution and recovery commands enter the real
+production workflow graph. When an approved Plan, Device session, or local Run
+is unavailable, they return a typed `capability_unavailable` result rather than
+`not_implemented`; they never silently fall back to a test composition.
 
 `provision` is command-line sugar for `reconcile`; it is not a separate
 application command. Building with `uv build` packages only

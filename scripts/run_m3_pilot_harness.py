@@ -78,6 +78,14 @@ def _git(root: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
+def _git_bytes(root: Path, *arguments: str) -> bytes:
+    return subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        check=True,
+        capture_output=True,
+    ).stdout
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -88,14 +96,15 @@ def _canonical(value: object) -> bytes:
     ).encode()
 
 
-def _configuration_digest(root: Path) -> str:
-    tracked = _git(root, "ls-files", "--", *CONFIGURATION_PATHS).splitlines()
+def _configuration_digest(root: Path, revision: str) -> str:
+    tracked = _git(
+        root, "ls-tree", "-r", "--name-only", revision, "--", *CONFIGURATION_PATHS
+    ).splitlines()
     digest = hashlib.sha256()
     for relative in sorted(filter(None, tracked)):
-        path = root / relative
         digest.update(relative.encode())
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update(_git_bytes(root, "show", f"{revision}:{relative}"))
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -103,9 +112,19 @@ def _configuration_digest(root: Path) -> str:
 def generate_bundle(root: Path, output: Path) -> str:
     if _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("source checkout must be clean")
-    lock = root / "uv.lock"
-    if not lock.is_file():
-        raise ValueError("uv.lock is missing")
+    relevant_untracked = _git(
+        root,
+        "ls-files",
+        "--others",
+        "--",
+        *CONFIGURATION_PATHS,
+    )
+    if relevant_untracked:
+        raise ValueError("effective configuration contains untracked files")
+    try:
+        lock_bytes = _git_bytes(root, "show", "HEAD:uv.lock")
+    except subprocess.CalledProcessError:
+        raise ValueError("uv.lock is missing") from None
 
     if output.exists():
         shutil.rmtree(output)
@@ -132,8 +151,8 @@ def generate_bundle(root: Path, output: Path) -> str:
         "components": ["core"],
         "source": source,
         "bindings": {
-            "configuration_sha256": _configuration_digest(root),
-            "lock_sha256": _sha256(lock.read_bytes()),
+            "configuration_sha256": _configuration_digest(root, "HEAD"),
+            "lock_sha256": _sha256(lock_bytes),
         },
         "identity": {
             "device_id": SYNTHETIC_DEVICE_ID,
