@@ -21,6 +21,7 @@ from coreelec_reconciler.domain.observation import (
     ObservationAppendIntent,
     ObservationRunStatus,
 )
+from coreelec_reconciler.execution.local_durability import PosixLocalDurability
 from coreelec_reconciler.execution.run_store import (
     CompareConflict,
     CorruptRunStore,
@@ -264,9 +265,20 @@ def lifecycle(*, partial: bool = True) -> tuple[bytes, ...]:
 
 
 def create_store(tmp_path: Path) -> tuple[RunStore, DeviceLease]:
-    store = RunStore(tmp_path / "store")
+    store = RunStore(tmp_path / "store", FastTestDurability())
     lease = store.acquire_device(DeviceId(DEVICE_ID))
     return store, lease
+
+
+class FastTestDurability(PosixLocalDurability):
+    def full_sync_file(self, object_id: str) -> None:
+        del object_id
+
+    def sync_directory(self, directory_id: str) -> None:
+        del directory_id
+
+    def acknowledge(self, operation_id: str) -> None:
+        del operation_id
 
 
 def test_observation_document_round_trip_golden_and_independent_oracle() -> None:
@@ -548,7 +560,7 @@ def test_run_store_observation_restart_boundaries_and_terminal_session_close(
     assert attachment.digest == RAW_DIGEST
     store.release_run(run_lease)
     for stop_after in range(1, len(revisions) + 1):
-        reopened = RunStore(tmp_path / "store")
+        reopened = RunStore(tmp_path / "store", FastTestDurability())
         loaded = reopened.load_observation_run(RunId(RUN_ID))
         workspace = next((tmp_path / "store" / "runs").iterdir())
         assert not (workspace / "ownership-token.bin").exists()
