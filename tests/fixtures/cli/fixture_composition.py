@@ -4,7 +4,6 @@ import sys
 
 from coreelec_reconciler.application.commands import (
     ApplyCommand,
-    ObserveCommand,
     ReconcileCommand,
     RecoverCommand,
     ReportCommand,
@@ -59,9 +58,6 @@ PLAN = CanonicalPlan(
 
 
 class _Workflows:
-    def observe(self, command: ObserveCommand) -> ObservationOutcome:
-        return ObservationOutcome(_report("observe-85", RunStatus.NOOP))
-
     def apply(self, command: ApplyCommand) -> ApplyOutcome:
         return ApplyOutcome(_report("apply-85", _scenario_status()), True)
 
@@ -174,5 +170,8 @@ def application_factory(settings: BootstrapSettings) -> ApplicationReconciler:
                 PLAN,
                 _report("planning-85", RunStatus.AWAITING_APPROVAL),
             ),
-        )
+        ),
+        observe_repository=lambda command: ObservationOutcome(
+            _report("observe-85", RunStatus.NOOP)
+        ),
     )

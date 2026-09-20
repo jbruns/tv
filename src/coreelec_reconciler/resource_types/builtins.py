@@ -5,8 +5,11 @@ from typing import cast
 
 from coreelec_reconciler.resource_types.descriptor import (
     ErasedResourceExecution,
+    ErasedResourceObserver,
+    ErasedResourceObserverAdapter,
     ResourceDescriptor,
     ResourceExecutionContext,
+    ResourceObservationContext,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.codecs import (
     decode_intent,
@@ -22,6 +25,7 @@ from coreelec_reconciler.resource_types.kodi_smart_playlist.observation_codecs i
     check_observation_addresses,
     check_observation_run_payload,
     decode_observation_run_payload,
+    encode_observation_run_payload,
     validate_observation_addresses,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning_codecs import (
@@ -50,12 +54,39 @@ def built_in_resource_registry() -> ResourceRegistry:
                 observation_payload_kind=OBSERVATION_PAYLOAD_KIND,
                 observation_payload_version=OBSERVATION_PAYLOAD_VERSION,
                 observation_policy_digest=OBSERVATION_POLICY_DIGEST,
+                encode_observation_evidence=encode_observation_run_payload,
                 decode_observation_evidence=decode_observation_run_payload,
                 check_observation_evidence=check_observation_run_payload,
                 validate_observation_addresses=validate_observation_addresses,
                 check_observation_addresses=check_observation_addresses,
+                _observation_factory=_playlist_observer,
             ),
         )
+    )
+
+
+def _playlist_observer(
+    context: ResourceObservationContext,
+) -> ErasedResourceObserver:
+    from coreelec_reconciler.resource_types.managed_file.observation import (
+        ManagedFileObservation,
+        observe_managed_file,
+    )
+    from coreelec_reconciler.resource_types.managed_file.paths import (
+        resolve_special_profile_path,
+    )
+
+    if context.resource_type != "KodiSmartPlaylist":
+        raise ValueError("observation context Resource Type does not match descriptor")
+    if len(context.state_addresses) != 1:
+        raise ValueError("KodiSmartPlaylist observation requires one State Address")
+    address = resolve_special_profile_path(
+        context.state_addresses[0],
+        context.profile_root,
+    )
+    return ErasedResourceObserverAdapter(
+        ManagedFileObservation,
+        lambda: observe_managed_file(context, address, read_limit=1_048_576),
     )
 
 
