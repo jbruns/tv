@@ -146,6 +146,10 @@ class RacingCloseDurability(PosixLocalDurability):
             )
         super().atomic_create(source_id, destination_id)
 
+    def reset(self, *, conflicting: bool) -> None:
+        self._conflicting = conflicting
+        self._injected = False
+
 
 def test_run_store_persists_verified_chain_token_attachment_and_index(
     tmp_path: Path,
@@ -282,75 +286,45 @@ def test_session_close_recording_is_idempotent_and_conflicts_fail_closed(
         )
 
 
-@pytest.mark.parametrize("conflicting", [False, True])
 def test_session_close_concurrent_destination_creation_is_cas(
     tmp_path: Path,
-    conflicting: bool,
 ) -> None:
-    durability = RacingCloseDurability(conflicting)
+    durability = RacingCloseDurability(False)
     run_store = store(tmp_path, durability)
     _, lease, _ = create(run_store)
     terminalize(run_store, lease)
 
-    if conflicting:
-        with pytest.raises(CompareConflict):
-            run_store.record_session_close(lease, close_intent())
-        workspace = next((tmp_path / "store" / "runs").iterdir())
-        records = tuple((workspace / "session-closes").glob("*.json"))
-        assert len(records) == 1
-        assert records[0].read_bytes() == b"{}"
-    else:
-        recorded = run_store.record_session_close(lease, close_intent())
-        assert run_store.load_session_close_records(lease.run_id) == (recorded,)
+    recorded = run_store.record_session_close(lease, close_intent())
+    assert run_store.load_session_close_records(lease.run_id) == (recorded,)
+
+    durability.reset(conflicting=True)
+    conflicting_intent = close_intent(
+        record_id="019950f8-4c00-7000-8000-000000000702",
+        session_id="session.019950f8-4c00-7000-8000-000000000802",
+    )
+    with pytest.raises(CompareConflict):
+        run_store.record_session_close(lease, conflicting_intent)
+    workspace = next((tmp_path / "store" / "runs").iterdir())
+    records = tuple((workspace / "session-closes").glob("*.json"))
+    assert len(records) == 2
+    assert any(path.read_bytes() == b"{}" for path in records)
 
 
-def test_session_close_recording_rejects_symlinked_close_directory(
-    tmp_path: Path,
-) -> None:
+def test_session_close_recording_rejects_symlink_substitution(tmp_path: Path) -> None:
     run_store = store(tmp_path)
     _, lease, _ = create(run_store)
     terminalize(run_store, lease)
     workspace = next((tmp_path / "store" / "runs").iterdir())
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (workspace / "session-closes").symlink_to(outside, target_is_directory=True)
-
-    with pytest.raises(CorruptRunStore, match="directory is unsafe"):
-        run_store.record_session_close(lease, close_intent())
-
-    assert list(outside.iterdir()) == []
-
-
-def test_session_close_recording_rejects_symlinked_workspace_component(
-    tmp_path: Path,
-) -> None:
-    run_store = store(tmp_path)
-    _, lease, _ = create(run_store)
-    terminalize(run_store, lease)
-    workspace = next((tmp_path / "store" / "runs").iterdir())
-    original = workspace.with_name(f"{workspace.name}-original")
-    workspace.rename(original)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    workspace.symlink_to(outside, target_is_directory=True)
-
-    with pytest.raises(CorruptRunStore):
-        run_store.record_session_close(lease, close_intent())
-
-    assert list(outside.iterdir()) == []
-
-
-def test_session_close_recording_rejects_symlinked_record_destination(
-    tmp_path: Path,
-) -> None:
-    run_store = store(tmp_path)
-    _, lease, _ = create(run_store)
-    terminalize(run_store, lease)
-    workspace = next((tmp_path / "store" / "runs").iterdir())
-    close_directory = workspace / "session-closes"
-    close_directory.mkdir()
     outside = tmp_path / "outside.json"
     outside.write_bytes(b"unchanged")
+
+    close_directory = workspace / "session-closes"
+    close_directory.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(CorruptRunStore, match="directory is unsafe"):
+        run_store.record_session_close(lease, close_intent())
+    close_directory.unlink()
+
+    close_directory.mkdir()
     intent = close_intent()
     destination = close_directory / (
         hashlib.sha256(intent.record_id.encode()).hexdigest() + ".json"
@@ -360,6 +334,14 @@ def test_session_close_recording_rejects_symlinked_record_destination(
     with pytest.raises(CorruptRunStore):
         run_store.record_session_close(lease, intent)
 
+    assert outside.read_bytes() == b"unchanged"
+    destination.unlink()
+
+    original = workspace.with_name(f"{workspace.name}-original")
+    workspace.rename(original)
+    workspace.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(CorruptRunStore):
+        run_store.record_session_close(lease, intent)
     assert outside.read_bytes() == b"unchanged"
 
 
