@@ -1,5 +1,6 @@
 """Closed execution, persistence, and recovery vocabulary."""
 
+import hashlib
 import re
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -7,10 +8,15 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.domain.validation import (
     parse_rfc3339_utc,
     require_logical_id,
+    require_rfc3339_utc,
     require_sha256,
     require_uuid7,
 )
@@ -101,6 +107,20 @@ class EffectDisposition(StrEnum):
     DEFINITELY_SUCCEEDED = "definitely_succeeded"
     DEFINITELY_FAILED = "definitely_failed"
     AMBIGUOUS = "ambiguous"
+
+
+class SessionCloseDisposition(StrEnum):
+    COMPLETE = "complete"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
+class SessionCloseFailureCategory(StrEnum):
+    LOCAL_RUNTIME = "local_runtime"
+    PROTOCOL = "protocol"
+    TIMEOUT = "timeout"
+    TRANSPORT = "transport"
+    UNKNOWN = "unknown"
 
 
 class StateRelation(StrEnum):
@@ -273,6 +293,44 @@ class StoredRevision:
     revision: int
     digest: str
     payload: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCloseIntent:
+    record_id: str
+    session_id: str
+    observed_at: str
+    disposition: SessionCloseDisposition
+    failure_category: SessionCloseFailureCategory | None = None
+    failure_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCloseRecord:
+    record_id: str
+    session_id: str
+    run_id: str
+    workspace_id: str
+    device_id: str
+    terminal_revision: int
+    terminal_digest: str
+    observed_head_revision: int
+    observed_head_digest: str
+    authority_state: str
+    seal_digest: str | None
+    observed_at: str
+    disposition: SessionCloseDisposition
+    failure_category: SessionCloseFailureCategory | None
+    failure_code: str | None
+    digest: str
+    canonical_bytes: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCloseInspection:
+    disposition: SessionCloseDisposition
+    record: SessionCloseRecord | None
+    issue_code: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,6 +608,163 @@ EXECUTION_EVIDENCE_SCHEMA_VERSION = 1
 _EVIDENCE_CODE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _RESOURCE_TYPE_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,127}$")
 _WORKSPACE_ID = re.compile(r"^workspace:[a-zA-Z0-9_-]{8,128}$")
+_SESSION_CLOSE_FIELDS = {
+    "authority_state",
+    "current_digest",
+    "device_id",
+    "disposition",
+    "failure",
+    "kind",
+    "observed_at",
+    "observed_head_digest",
+    "observed_head_revision",
+    "producer",
+    "record_id",
+    "run_id",
+    "schema_version",
+    "seal_digest",
+    "session_id",
+    "terminal_digest",
+    "terminal_revision",
+    "workspace_id",
+}
+
+
+def build_session_close_record(value: dict[str, object]) -> SessionCloseRecord:
+    candidate = dict(value)
+    candidate["current_digest"] = ""
+    without_digest = {
+        key: item for key, item in candidate.items() if key != "current_digest"
+    }
+    candidate["current_digest"] = _execution_sha256(
+        canonical_document_bytes(without_digest)
+    )
+    return decode_session_close_record(canonical_document_bytes(candidate))
+
+
+def decode_session_close_record(content: bytes) -> SessionCloseRecord:
+    value = decode_json_object(content)
+    if set(value) != _SESSION_CLOSE_FIELDS:
+        raise ValueError("unknown or missing session close fields")
+    if canonical_document_bytes(value) != content:
+        raise ValueError("session close bytes are not canonical")
+    if (
+        value["kind"] != "CoreElecReconcilerSessionClose"
+        or type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+        or value["producer"] != {"name": "coreelec-reconciler", "version": "0.1.0"}
+    ):
+        raise ValueError("unsupported session close record")
+    record_id = require_uuid7(value["record_id"], "session close record_id")
+    session_id = _session_close_code(value["session_id"], "session_id")
+    run_id = require_uuid7(value["run_id"], "session close run_id")
+    workspace_id = _evidence_workspace(value["workspace_id"])
+    device_id = require_logical_id(value["device_id"], "session close device_id")
+    terminal_revision = _session_close_positive_int(
+        value["terminal_revision"], "terminal_revision"
+    )
+    terminal_digest = require_sha256(
+        value["terminal_digest"], "session close terminal_digest"
+    )
+    observed_head_revision = _session_close_positive_int(
+        value["observed_head_revision"], "observed_head_revision"
+    )
+    observed_head_digest = require_sha256(
+        value["observed_head_digest"], "session close observed_head_digest"
+    )
+    if observed_head_revision < terminal_revision:
+        raise ValueError("session close head precedes terminal truth")
+    authority_state = _session_close_code(value["authority_state"], "authority_state")
+    if authority_state not in {
+        "acquisition_pending",
+        "owned",
+        "quarantined",
+        "released",
+        "unknown",
+    }:
+        raise ValueError("unknown session close authority state")
+    seal_digest_value = value["seal_digest"]
+    seal_digest = (
+        None
+        if seal_digest_value is None
+        else require_sha256(seal_digest_value, "session close seal_digest")
+    )
+    observed_at = require_rfc3339_utc(value["observed_at"], "observed_at")
+    try:
+        disposition = SessionCloseDisposition(
+            _session_close_string(value["disposition"], "disposition")
+        )
+    except ValueError as error:
+        raise ValueError("unknown session close disposition") from error
+    failure_value = value["failure"]
+    failure_category: SessionCloseFailureCategory | None = None
+    failure_code: str | None = None
+    if disposition is SessionCloseDisposition.COMPLETE:
+        if failure_value is not None:
+            raise ValueError("complete session close cannot contain failure")
+    else:
+        if not isinstance(failure_value, dict) or set(failure_value) != {
+            "category",
+            "code",
+        }:
+            raise ValueError("failed or unknown session close requires failure")
+        try:
+            failure_category = SessionCloseFailureCategory(
+                _session_close_string(failure_value["category"], "failure category")
+            )
+        except ValueError as error:
+            raise ValueError("unknown session close failure category") from error
+        failure_code = _session_close_code(failure_value["code"], "failure code")
+    digest = require_sha256(value["current_digest"], "session close current_digest")
+    without_digest = {
+        key: item for key, item in value.items() if key != "current_digest"
+    }
+    if _execution_sha256(canonical_document_bytes(without_digest)) != digest:
+        raise ValueError("session close digest mismatch")
+    return SessionCloseRecord(
+        record_id=record_id,
+        session_id=session_id,
+        run_id=run_id,
+        workspace_id=workspace_id,
+        device_id=device_id,
+        terminal_revision=terminal_revision,
+        terminal_digest=terminal_digest,
+        observed_head_revision=observed_head_revision,
+        observed_head_digest=observed_head_digest,
+        authority_state=authority_state,
+        seal_digest=seal_digest,
+        observed_at=observed_at,
+        disposition=disposition,
+        failure_category=failure_category,
+        failure_code=failure_code,
+        digest=digest,
+        canonical_bytes=content,
+    )
+
+
+def _session_close_string(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"session close {label} must be a string")
+    return value
+
+
+def _session_close_code(value: object, label: str) -> str:
+    code = _session_close_string(value, label)
+    if _EVIDENCE_CODE.fullmatch(code) is None:
+        raise ValueError(f"invalid session close {label}")
+    return code
+
+
+def _session_close_positive_int(value: object, label: str) -> int:
+    if type(value) is not int or value < 1:
+        raise ValueError(f"invalid session close {label}")
+    return value
+
+
+def _execution_sha256(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
 EXECUTION_RESOURCE_EVIDENCE_KINDS = frozenset(
     {
         ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION,

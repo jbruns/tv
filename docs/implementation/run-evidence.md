@@ -162,6 +162,36 @@ same fact:
 - abandonment records `failed_recovery_required` and remains blocking through
   quarantine.
 
+## Session and transport close outcomes
+
+Session/transport teardown is neither managed-Resource cleanup nor Device
+authority release. A close result therefore never enters the Run revision
+chain and cannot change terminal status, cleanup truth, authority truth, the
+active index, or seal eligibility.
+
+`CoreElecReconcilerSessionClose` schema version 1 is a separate canonical,
+append-only workspace record. It binds:
+
+- one UUIDv7 record/idempotency identity and one safe session identity;
+- Device, Run, and opaque workspace identity;
+- the first immutable terminal revision/digest;
+- the terminal head revision/digest and authority state observed at recording;
+- the exact seal digest when recorded after sealing, or explicit `null` when
+  recorded before sealing;
+- an RFC 3339 UTC observation time; and
+- `complete`, `failed`, or `unknown` disposition.
+
+`failed` and `unknown` require a closed failure category plus a sanitized safe
+code. Raw exceptions, transport text, credentials, and secrets are forbidden.
+Repeating the same record identity and values is idempotent. A differing value
+for that identity, or a second identity for the same session, conflicts.
+
+RunStore may record close outcomes after terminal truth both before and after
+release/seal. Sealed bytes remain immutable. Strict loading verifies canonical
+bytes, digest, identity, terminal/head/authority binding, and optional seal
+binding. Inspection treats a missing or corrupt close record as `unknown`
+without invalidating an otherwise verified canonical Run result.
+
 Version 1 automatically prunes nothing. Revisions, attachments, markers, and
 evidence are retained until a future explicit retention procedure is accepted.
 Active, interrupted, unsealed, corrupt, ownership-bearing, or

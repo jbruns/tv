@@ -20,6 +20,8 @@ from coreelec_reconciler.domain.execution import (
     PostEffectVerification,
     RollbackOutcome,
     RunStatus,
+    SessionCloseDisposition,
+    SessionCloseFailureCategory,
     VerificationOutcome,
     execution_run_identity,
     is_post_terminal_cleanup_successor,
@@ -84,6 +86,26 @@ _LIFECYCLE_TRANSITIONS = {
 _SAFE_CODE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _RESOURCE_TYPE_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,127}$")
 _WORKSPACE = re.compile(r"^workspace:[a-zA-Z0-9_-]{8,128}$")
+_SESSION_CLOSE_FIELDS = {
+    "authority_state",
+    "current_digest",
+    "device_id",
+    "disposition",
+    "failure",
+    "kind",
+    "observed_at",
+    "observed_head_digest",
+    "observed_head_revision",
+    "producer",
+    "record_id",
+    "run_id",
+    "schema_version",
+    "seal_digest",
+    "session_id",
+    "terminal_digest",
+    "terminal_revision",
+    "workspace_id",
+}
 
 
 def build_execution_run_report(
@@ -101,6 +123,101 @@ def build_execution_run_report(
         canonical_document_bytes(candidate),
         resource_registry=resource_registry,
     )
+
+
+def check_session_close_invariants(content: bytes) -> tuple[str, ...]:
+    """Independently validate one canonical session-close record."""
+    errors: list[str] = []
+    try:
+        value = decode_json_object(content)
+    except ValueError:
+        return ("session close record is not a JSON object",)
+    if set(value) != _SESSION_CLOSE_FIELDS:
+        return ("unknown or missing session close fields",)
+    if canonical_document_bytes(value) != content:
+        errors.append("session close bytes are not canonical")
+    if value["kind"] != "CoreElecReconcilerSessionClose":
+        errors.append("unsupported session close kind")
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        errors.append("unsupported session close schema version")
+    if value["producer"] != _PRODUCER:
+        errors.append("unsupported session close producer")
+    try:
+        require_uuid7(value["record_id"], "session close record_id")
+        require_uuid7(value["run_id"], "session close run_id")
+        require_logical_id(value["device_id"], "session close device_id")
+        parse_rfc3339_utc(value["observed_at"], "session close observed_at")
+    except (TypeError, ValueError) as error:
+        errors.append(str(error))
+    session_id = value["session_id"]
+    if not isinstance(session_id, str) or _SAFE_CODE.fullmatch(session_id) is None:
+        errors.append("invalid session close session_id")
+    workspace_id = value["workspace_id"]
+    if not isinstance(workspace_id, str) or _WORKSPACE.fullmatch(workspace_id) is None:
+        errors.append("invalid session close workspace_id")
+    terminal_revision = value["terminal_revision"]
+    head_revision = value["observed_head_revision"]
+    if type(terminal_revision) is not int or terminal_revision < 1:
+        errors.append("invalid session close terminal_revision")
+    if type(head_revision) is not int or head_revision < 1:
+        errors.append("invalid session close observed_head_revision")
+    if (
+        type(terminal_revision) is int
+        and type(head_revision) is int
+        and head_revision < terminal_revision
+    ):
+        errors.append("session close head precedes terminal truth")
+    for field in (
+        "terminal_digest",
+        "observed_head_digest",
+        "current_digest",
+    ):
+        try:
+            require_sha256(value[field], f"session close {field}")
+        except (TypeError, ValueError) as error:
+            errors.append(str(error))
+    seal_digest = value["seal_digest"]
+    if seal_digest is not None:
+        try:
+            require_sha256(seal_digest, "session close seal_digest")
+        except (TypeError, ValueError) as error:
+            errors.append(str(error))
+    if value["authority_state"] not in {
+        "acquisition_pending",
+        "owned",
+        "quarantined",
+        "released",
+        "unknown",
+    }:
+        errors.append("unknown session close authority state")
+    try:
+        disposition = SessionCloseDisposition(str(value["disposition"]))
+    except ValueError:
+        disposition = None
+        errors.append("unknown session close disposition")
+    failure = value["failure"]
+    if disposition is SessionCloseDisposition.COMPLETE:
+        if failure is not None:
+            errors.append("complete session close contains failure")
+    elif disposition is not None:
+        if not isinstance(failure, dict) or set(failure) != {"category", "code"}:
+            errors.append("failed or unknown session close lacks failure")
+        else:
+            try:
+                SessionCloseFailureCategory(str(failure["category"]))
+            except ValueError:
+                errors.append("unknown session close failure category")
+            code = failure["code"]
+            if not isinstance(code, str) or _SAFE_CODE.fullmatch(code) is None:
+                errors.append("invalid session close failure code")
+    digest = value["current_digest"]
+    if isinstance(digest, str):
+        without_digest = {
+            key: item for key, item in value.items() if key != "current_digest"
+        }
+        if _sha256(canonical_document_bytes(without_digest)) != digest:
+            errors.append("session close digest mismatch")
+    return tuple(errors)
 
 
 def decode_execution_run_report(
