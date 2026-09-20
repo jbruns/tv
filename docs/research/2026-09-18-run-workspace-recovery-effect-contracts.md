@@ -6,6 +6,28 @@ Ticket: [Define Run workspace, recovery, and Effect contracts](https://github.co
 
 Status: **Accepted autonomous implementation contract**
 
+## 0. Issue 81 session-close amendment (2026-09-19)
+
+A production session or transport may fail to close after canonical terminal
+Device truth is durable, including after authority release and workspace
+sealing. This teardown outcome is not Resource cleanup and is not authority
+evidence. It cannot revise terminal status, authorize release, satisfy cleanup,
+or mutate seal bytes.
+
+The Run workspace therefore permits separate canonical append-only
+`CoreElecReconcilerSessionClose` version 1 records. Each record binds its
+idempotency/occurrence identity and session identity to Device, Run, workspace,
+first terminal revision/digest, observed terminal head/digest, observed
+authority state, and the exact seal digest when already sealed. Dispositions
+are `complete`, `failed`, and `unknown`; non-complete outcomes carry only a
+closed category and sanitized code.
+
+Identical repeated publication is idempotent. Conflicting values for one
+record identity or multiple identities for one session fail closed. Strict
+loading verifies every binding. Inspection maps a missing or corrupt close
+record to `unknown` while preserving an independently valid canonical Run
+result.
+
 ## 1. Decision
 
 The Reconciler uses three distinct ownership mechanisms:
