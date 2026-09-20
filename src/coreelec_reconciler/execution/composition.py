@@ -4,7 +4,9 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from threading import Lock
 from typing import Protocol, cast
+from weakref import WeakKeyDictionary
 
 from coreelec_reconciler.domain.canonical_json import (
     canonical_document_bytes,
@@ -119,7 +121,7 @@ class SavedPlanExecutionRequest:
 class SavedPlanExecutionPreflight:
     """Opaque capability issued by one ProductionExecutionFactory."""
 
-    __slots__ = ()
+    __slots__ = ("__weakref__",)
 
     def __new__(cls) -> SavedPlanExecutionPreflight:
         raise TypeError("Saved Plan execution preflights are factory-issued")
@@ -281,10 +283,11 @@ class ProductionExecutionFactory:
         self._clock = clock
         self._documents = documents or CanonicalExecutionDocumentCodec()
         self._progress = progress
-        self._saved_plan_preflights: dict[
+        self._saved_plan_preflights: WeakKeyDictionary[
             SavedPlanExecutionPreflight,
             _SavedPlanExecutionPreflightState,
-        ] = {}
+        ] = WeakKeyDictionary()
+        self._saved_plan_preflights_lock = Lock()
 
     def save_plan(
         self,
@@ -366,7 +369,8 @@ class ProductionExecutionFactory:
             dependency_graph,
         )
         preflight = object.__new__(SavedPlanExecutionPreflight)
-        self._saved_plan_preflights[preflight] = state
+        with self._saved_plan_preflights_lock:
+            self._saved_plan_preflights[preflight] = state
         return preflight
 
     def prepare_saved_plan(
@@ -374,10 +378,12 @@ class ProductionExecutionFactory:
         preflight: SavedPlanExecutionPreflight,
     ) -> PreparedExecution:
         try:
-            state = self._saved_plan_preflights[preflight]
+            with self._saved_plan_preflights_lock:
+                state = self._saved_plan_preflights.pop(preflight)
         except KeyError, TypeError:
             raise ValueError(
-                "saved Plan preflight was not issued by this factory"
+                "saved Plan preflight was not issued by this factory "
+                "or was already used"
             ) from None
         trusted_now = self._clock.utc_now()
         trusted_instant = _timestamp(trusted_now)

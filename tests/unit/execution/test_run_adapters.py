@@ -1,8 +1,10 @@
 import hashlib
 import os
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import Event
 from typing import cast
 
 import pytest
@@ -1530,6 +1532,9 @@ def test_saved_plan_preparation_rejects_stale_preflight_before_live_observation(
     assert authority.calls == 0
     with pytest.raises(FileNotFoundError):
         store.load_chain(request.execution_run_id)
+    with pytest.raises(ValueError, match="already used"):
+        factory.prepare_saved_plan(preflight)
+    assert device_authority.calls == 0
 
 
 def test_saved_plan_preflight_cannot_be_forged_or_tampered(
@@ -1649,6 +1654,60 @@ def test_saved_plan_preparation_uses_fresh_internal_device_observation(
         store.load_chain(request.execution_run_id).head.payload
     )
     assert cast(dict[str, object], initial["authority"])["boot_id"] == "boot.fresh"
+    with pytest.raises(ValueError, match="already used"):
+        factory.prepare_saved_plan(preflight)
+    assert device_authority.calls == 2
+    prepared.services.close()
+
+
+def test_saved_plan_preflight_allows_only_one_concurrent_phase_b(
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
+) -> None:
+    request, _, _ = _saved_plan_request()
+    request = replace(
+        request,
+        execution_run_id=RunId("019950f8-4c00-7000-8000-000000000609"),
+    )
+    store, plans, registry = saved_plan_environment
+    device = cast(dict[str, object], request.expected_device)
+    entered = Event()
+    release = Event()
+
+    class BlockingProbe(_DeviceAuthority):
+        def observe_authority(self, device_id: DeviceId) -> DeviceAuthorityObservation:
+            entered.set()
+            assert release.wait(timeout=5)
+            return super().observe_authority(device_id)
+
+    probe = BlockingProbe(device)
+    factory = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
+        cast(RecoveryEnvironment, _Inspections()),
+        probe,
+        cast(AuthorityCoordinator, _AcquiringAuthority(store)),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+    preflight = factory.preflight_saved_plan(request)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(factory.prepare_saved_plan, preflight)
+        assert entered.wait(timeout=5)
+        second = executor.submit(factory.prepare_saved_plan, preflight)
+        with pytest.raises(ValueError, match="already used"):
+            second.result(timeout=5)
+        assert probe.calls == 0
+        release.set()
+        prepared = first.result(timeout=5)
+
+    assert probe.calls == 2
     prepared.services.close()
 
 
