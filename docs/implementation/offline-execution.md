@@ -35,6 +35,7 @@ tests/scaffold/test_architecture.py
 tests/inventory
 tests/ci
 tests/unit
+--ignore=tests/unit/execution/test_run_adapters.py
 ```
 
 The remaining selection, whose elapsed time is added to the first and must
@@ -47,6 +48,7 @@ tests/scaffold/test_cli.py
 tests/scaffold/test_cli_planning.py
 tests/scaffold/test_cli_execution.py
 tests/integration
+tests/unit/execution/test_run_adapters.py
 ```
 
 The selector contract enumerates every Python `test_*.py` file, proves these

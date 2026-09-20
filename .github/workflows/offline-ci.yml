@@ -91,6 +91,7 @@ jobs:
           tests/scaffold/test_application.py
           tests/scaffold/test_architecture.py tests/inventory tests/ci
           tests/unit
+          --ignore=tests/unit/execution/test_run_adapters.py
       - name: Complete offline budget
         run: >-
           uv run python scripts/run_test_budget.py
@@ -104,6 +105,7 @@ jobs:
           tests/adapters tests/contracts
           tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py
           tests/scaffold/test_cli_execution.py tests/integration
+          tests/unit/execution/test_run_adapters.py
       - name: Build package
         run: uv build
       - name: Inspect and smoke-test wheel

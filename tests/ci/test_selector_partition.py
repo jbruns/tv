@@ -10,6 +10,7 @@ PURE_SELECTORS = (
     "tests/ci",
     "tests/unit",
 )
+PURE_EXCLUSIONS = ("tests/unit/execution/test_run_adapters.py",)
 OFFLINE_SELECTORS = (
     "tests/adapters",
     "tests/contracts",
@@ -17,6 +18,7 @@ OFFLINE_SELECTORS = (
     "tests/scaffold/test_cli_planning.py",
     "tests/scaffold/test_cli_execution.py",
     "tests/integration",
+    "tests/unit/execution/test_run_adapters.py",
 )
 
 
@@ -29,7 +31,7 @@ def _selected(selectors: tuple[str, ...]) -> set[Path]:
 
 
 def test_offline_selectors_are_complete_exact_and_non_overlapping() -> None:
-    pure = _selected(PURE_SELECTORS)
+    pure = _selected(PURE_SELECTORS) - _selected(PURE_EXCLUSIONS)
     remaining = _selected(OFFLINE_SELECTORS)
     all_python_tests = {
         path
