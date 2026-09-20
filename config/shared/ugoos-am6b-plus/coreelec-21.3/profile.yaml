@@ -30,3 +30,16 @@ smart_playlists:
         - field: playcount
           operator: is
           value: "0"
+
+# Kodi settings inside guisettings.xml. That document is shared: everything
+# not declared here is Unmanaged State and is preserved. Each value matches
+# what provision-coreelec.sh writes, so the Recovery Baseline and Desired
+# State do not diverge and a shell run remains a no-op (ADR 0010).
+#
+# Applying any of these restarts Kodi, because Kodi rewrites guisettings.xml
+# from memory when it exits and would otherwise discard the write.
+kodi_settings:
+  document: /storage/.kodi/userdata/guisettings.xml
+  settings:
+    - setting: videolibrary.flattentvshows
+      value: "1"

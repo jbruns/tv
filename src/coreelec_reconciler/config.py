@@ -46,12 +46,29 @@ class SmartPlaylist:
 
 
 @dataclass(frozen=True)
+class KodiSetting:
+    """One Kodi setting. Its State Address is the ID inside the document."""
+
+    setting: str
+    value: str
+
+
+@dataclass(frozen=True)
+class KodiSettings:
+    """A shared settings document and the State Addresses owned inside it."""
+
+    document: str
+    settings: tuple[KodiSetting, ...]
+
+
+@dataclass(frozen=True)
 class DesiredState:
     room: str
     hostname: str
     profile: str
     transport: Transport
     playlists: tuple[SmartPlaylist, ...]
+    kodi_settings: KodiSettings
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -152,6 +169,19 @@ def _playlist(source: Path, directory: str, raw: Any) -> SmartPlaylist:
     )
 
 
+def _kodi_setting(source: Path, raw: Any) -> KodiSetting:
+    mapping = _fields(
+        source,
+        "a Kodi setting",
+        _mapping(source, "a Kodi setting", raw),
+        required=("setting", "value"),
+    )
+    return KodiSetting(
+        setting=_text(source, "a Kodi setting id", mapping["setting"]),
+        value=_text(source, "a Kodi setting value", mapping["value"]),
+    )
+
+
 def load(config_root: Path, room: str) -> DesiredState:
     """Resolves the Room Overlay for `room` against the Profile it names."""
 
@@ -177,7 +207,7 @@ def load(config_root: Path, room: str) -> DesiredState:
         profile_file,
         "the Profile",
         _read(profile_file),
-        required=("profile", "transport", "smart_playlists"),
+        required=("profile", "transport", "smart_playlists", "kodi_settings"),
     )
     if _text(profile_file, "profile", profile["profile"]) != declared_profile:
         raise ConfigError(
@@ -205,6 +235,21 @@ def load(config_root: Path, room: str) -> DesiredState:
     if not isinstance(declared, list) or not declared:
         raise ConfigError(f"{profile_file}: smart_playlists declares no playlists")
 
+    kodi = _fields(
+        profile_file,
+        "kodi_settings",
+        _mapping(profile_file, "kodi_settings", profile["kodi_settings"]),
+        required=("document", "settings"),
+    )
+    document = _text(profile_file, "the Kodi settings document", kodi["document"])
+    if not document.startswith("/"):
+        raise ConfigError(
+            f"{profile_file}: the Kodi settings document must be absolute: {document}"
+        )
+    declared_settings = kodi["settings"]
+    if not isinstance(declared_settings, list) or not declared_settings:
+        raise ConfigError(f"{profile_file}: kodi_settings declares no settings")
+
     return DesiredState(
         room=_text(room_file, "room", overlay["room"]),
         hostname=hostname,
@@ -217,4 +262,10 @@ def load(config_root: Path, room: str) -> DesiredState:
             ).expanduser(),
         ),
         playlists=tuple(_playlist(profile_file, directory, raw) for raw in declared),
+        kodi_settings=KodiSettings(
+            document=document,
+            settings=tuple(
+                _kodi_setting(profile_file, raw) for raw in declared_settings
+            ),
+        ),
     )

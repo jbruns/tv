@@ -7,7 +7,7 @@ from the working tree. See
 [ADR 0008](adr/0008-restart-from-a-walking-skeleton.md) for what went wrong and
 [ADR 0007](adr/0007-trusted-home-appliance-bar.md) for the bar that replaces
 it. Today it manages one Resource on one Device: see
-[reconciling theater Smart Playlists](operations/reconcile-theater-playlists.md).
+[reconciling the theater Ugoos](operations/reconcile-theater.md).
 
 The rest of Device provisioning is still the shell provisioner. See
 [the Ugoos provisioning operations guide](operations/provision-ugoos.md).
