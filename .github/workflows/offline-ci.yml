@@ -65,8 +65,9 @@ jobs:
           uv run ruff format --check
           src scripts/run_test_budget.py scripts/check_inventory_milestones.py
           scripts/check_shell_permissions.py
+          scripts/run_m3_pilot_harness.py scripts/verify_m3_evidence_bundle.py
           tests/scaffold tests/inventory tests/ci
-          tests/unit
+          tests/unit tests/adapters tests/contracts tests/integration
           tests/conftest.py tests/support
       - name: Strict mypy
         run: uv run mypy
@@ -74,6 +75,10 @@ jobs:
         run: >-
           uv run python scripts/check_inventory_milestones.py
           > .ci-evidence/inventory-ledger.txt
+      - name: Audit shell permissions
+        run: >-
+          python3 scripts/check_shell_permissions.py --audit
+          > .ci-evidence/shell-permissions.txt
       - name: Pure, unit, architecture, and CI helper budget
         run: >-
           uv run python scripts/run_test_budget.py
@@ -86,6 +91,7 @@ jobs:
           tests/scaffold/test_application.py
           tests/scaffold/test_architecture.py tests/inventory tests/ci
           tests/unit
+          --ignore=tests/unit/execution/test_run_adapters.py
       - name: Complete offline budget
         run: >-
           uv run python scripts/run_test_budget.py
@@ -96,7 +102,10 @@ jobs:
           --result .ci-evidence/offline.json
           --
           .venv/bin/python -m pytest -q
+          tests/adapters tests/contracts
           tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py
+          tests/scaffold/test_cli_execution.py tests/integration
+          tests/unit/execution/test_run_adapters.py
       - name: Build package
         run: uv build
       - name: Inspect and smoke-test wheel
@@ -120,6 +129,27 @@ jobs:
               name.startswith(("coreelec_reconciler/", "coreelec_reconciler-"))
               for name in names
           ), names
+          required = {
+              "coreelec_reconciler/bootstrap.py",
+              "coreelec_reconciler/adapters/paramiko_session.py",
+              "coreelec_reconciler/adapters/paramiko_managed_file.py",
+              "coreelec_reconciler/cli/main.py",
+              "coreelec_reconciler/execution/composition.py",
+              "coreelec_reconciler/execution/engine.py",
+              "coreelec_reconciler/execution/observation.py",
+              "coreelec_reconciler/execution/plan_store.py",
+              "coreelec_reconciler/execution/recovery_access.py",
+              "coreelec_reconciler/execution/run_adapters.py",
+              "coreelec_reconciler/execution/run_store.py",
+              "coreelec_reconciler/execution/session_close.py",
+              "coreelec_reconciler/execution/verification.py",
+              "coreelec_reconciler/persistence/observation_documents.py",
+              "coreelec_reconciler/transports/remote_ownership.py",
+          }
+          assert required <= set(names), required - set(names)
+          assert not any(
+              name.startswith(("tests/", "scripts/", ".github/")) for name in names
+          )
           assert (
               "coreelec-reconciler = coreelec_reconciler.cli.main:main"
               in entry_points
@@ -150,11 +180,46 @@ jobs:
           uv pip install \
             --python .wheel-venv/bin/python --no-deps dist/*.whl
           mkdir -p .wheel-smoke
+          DEPENDENCY_SITE_PACKAGES="$(
+            .venv/bin/python -c 'import site; print(site.getsitepackages()[0])'
+          )"
           (
             cd .wheel-smoke
+            export PYTHONPATH="$DEPENDENCY_SITE_PACKAGES"
+            export HOME="$PWD/home"
             ../.wheel-venv/bin/coreelec-reconciler --version
             ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null
+            ../.wheel-venv/bin/coreelec-reconciler \
+              --repository-root .. validate >/dev/null
+            set +e
+            output="$(
+              ../.wheel-venv/bin/coreelec-reconciler \
+                --repository-root .. apply \
+                019950f8-4c00-7000-8000-000000999999 2>&1
+            )"
+            status=$?
+            set -e
+            test "$status" -eq 3
+            grep -q \
+              "apply: capability_unavailable (production.saved-plan-rejected)" \
+              <<<"$output"
           )
+      - name: Generate and verify deterministic pilot dry run
+        shell: bash
+        run: |
+          uv run python scripts/run_m3_pilot_harness.py \
+            --dry-run \
+            --output .ci-evidence/m3-pilot-dry-run
+          uv run python scripts/run_m3_pilot_harness.py \
+            --dry-run \
+            --output .ci-evidence/m3-pilot-dry-run-repeat
+          diff -r \
+            .ci-evidence/m3-pilot-dry-run \
+            .ci-evidence/m3-pilot-dry-run-repeat
+          uv run python scripts/verify_m3_evidence_bundle.py \
+            .ci-evidence/m3-pilot-dry-run
+          git rev-parse HEAD^{tree} > .ci-evidence/source-tree.txt
+          shasum -a 256 uv.lock > .ci-evidence/lock.sha256
       - name: Upload source-bound CI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

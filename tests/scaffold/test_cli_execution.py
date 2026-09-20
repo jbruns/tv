@@ -7,10 +7,12 @@ import termios
 from collections.abc import Iterator
 from pathlib import Path
 
+import pydantic
 import pytest
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 COMPOSITION_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "cli"
+DEPENDENCY_SITE_PACKAGES = Path(pydantic.__file__).parents[1]
 VERIFY_DOCUMENT = (
     b'{"kind":"CoreElecReconcilerRunReport","run_id":"verify-85",'
     b'"status":"converged"}\n'
@@ -79,6 +81,41 @@ def _run(
     )
 
 
+def _run_production(
+    executable: Path,
+    home: Path,
+    *arguments: str,
+) -> subprocess.CompletedProcess[bytes]:
+    environment = os.environ.copy()
+    environment.pop("COREELEC_RECONCILER_TEST_COMPOSITION", None)
+    environment.pop("CLI_SCENARIO", None)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            (
+                environment.get("PYTHONPATH"),
+                str(DEPENDENCY_SITE_PACKAGES),
+            ),
+        )
+    )
+    environment.update(
+        {
+            "HOME": str(home),
+            "LC_ALL": "C",
+            "PYTHONHASHSEED": "73",
+            "TERM": "dumb",
+            "TZ": "UTC",
+        }
+    )
+    return subprocess.run(
+        [str(executable), *arguments],
+        cwd=executable.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+
+
 def _environment(
     scenario: str = "",
     extra_environment: dict[str, str] | None = None,
@@ -90,7 +127,9 @@ def _environment(
             "COREELEC_RECONCILER_TEST_COMPOSITION": "1",
             "LC_ALL": "C",
             "PYTHONHASHSEED": "73",
-            "PYTHONPATH": str(COMPOSITION_ROOT),
+            "PYTHONPATH": os.pathsep.join(
+                (str(COMPOSITION_ROOT), str(DEPENDENCY_SITE_PACKAGES))
+            ),
             "TERM": "dumb",
             "TZ": "Pacific/Honolulu",
         }
@@ -317,6 +356,89 @@ def test_installed_output_is_environment_deterministic(installed_cli: Path) -> N
     assert first.stderr == second.stderr == b""
 
 
+@pytest.mark.parametrize(
+    ("arguments", "diagnostic"),
+    [
+        (("observe", "living-room.ugoos-am6b-plus"), b"observation-unavailable"),
+        (("apply", "plan.missing"), b"saved-plan-rejected"),
+        (("reconcile", "living-room.ugoos-am6b-plus"), b"device.session-unavailable"),
+        (("verify", "living-room.ugoos-am6b-plus"), b"verification-unavailable"),
+        (("recover", "run.missing", "inspect"), b"inspect-unavailable"),
+        (("report", "run.missing"), b"run-not-found"),
+    ],
+)
+def test_installed_wheel_uses_genuine_production_composition_offline(
+    installed_cli: Path,
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+    diagnostic: bytes,
+) -> None:
+    result = _run_production(
+        installed_cli,
+        tmp_path,
+        "--repository-root",
+        str(REPOSITORY_ROOT / "tests" / "fixtures" / "repository"),
+        *arguments,
+    )
+
+    assert result.returncode == 3
+    assert result.stdout == b""
+    assert diagnostic in result.stderr
+    assert b"not_implemented" not in result.stderr
+
+
+def test_installed_wheel_runs_real_production_graph_with_adapter_seams(
+    installed_cli: Path,
+    tmp_path: Path,
+) -> None:
+    environment = os.environ.copy()
+    environment.pop("COREELEC_RECONCILER_TEST_COMPOSITION", None)
+    environment["PYTHONPATH"] = str(DEPENDENCY_SITE_PACKAGES)
+    script = """
+import socket
+import sys
+from pathlib import Path
+
+import coreelec_reconciler
+
+installed = Path(coreelec_reconciler.__file__).resolve()
+assert "site-packages" in str(installed), installed
+sys.path.insert(0, sys.argv[1])
+from tests.integration.test_production_composition import (
+    test_bootstrap_composes_all_workflows_and_restart_recovery,
+    test_observation_partial_and_close_failure_preserve_canonical_outcome,
+)
+
+def forbidden_socket(*args, **kwargs):
+    raise AssertionError("installed production scenario attempted a socket")
+
+socket.socket = forbidden_socket
+test_bootstrap_composes_all_workflows_and_restart_recovery(Path(sys.argv[2]))
+test_observation_partial_and_close_failure_preserve_canonical_outcome(
+    Path(sys.argv[2]) / "observation-partial"
+)
+print("installed production composition: passed")
+"""
+
+    result = subprocess.run(
+        [
+            str(installed_cli.parent / "python"),
+            "-c",
+            script,
+            str(REPOSITORY_ROOT),
+            str(tmp_path / "scenario"),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == b"installed production composition: passed\n"
+    assert b"Traceback" not in result.stderr
+
+
 def test_installed_non_tty_disables_color_with_normal_term(
     installed_cli: Path,
 ) -> None:
@@ -401,7 +523,9 @@ def test_installed_broken_pipe_has_no_traceback(installed_cli: Path) -> None:
     environment.update(
         {
             "COREELEC_RECONCILER_TEST_COMPOSITION": "1",
-            "PYTHONPATH": str(COMPOSITION_ROOT),
+            "PYTHONPATH": os.pathsep.join(
+                (str(COMPOSITION_ROOT), str(DEPENDENCY_SITE_PACKAGES))
+            ),
             "TERM": "dumb",
         }
     )

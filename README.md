@@ -9,6 +9,8 @@ integrations.
 
 - [Shared room setup runbook](docs/runbook.md)
 - [Python development and packaging](docs/development.md)
+- [M3 offline execution and recovery](docs/implementation/offline-execution.md)
+- [M3 pilot readiness](docs/implementation/pilot-readiness.md)
 - [Inventory ownership ledger contract](docs/implementation/inventory-ownership-ledger.md)
 - [Authored configuration implementation](docs/implementation/authored-configuration.md)
 - [Pure Kodi Smart Playlist planning](docs/implementation/pure-playlist-planning.md)
@@ -66,3 +68,6 @@ lib/                          Reusable shell libraries
 tests/                        Existing validation coverage
 src/coreelec_reconciler/     Python 3.14 Reconciler package
 ```
+
+M3 Python acceptance is strictly offline. It authorizes no deployment or live
+Device use, and `SKIN-025` remains owned by the legacy shell implementation.

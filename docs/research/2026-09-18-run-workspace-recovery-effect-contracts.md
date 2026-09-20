@@ -1383,8 +1383,7 @@ class AllowedRecoveryAction:
 
 def compute_recovery_actions(
     evidence: RecoveryEvidence,
-) -> tuple[AllowedRecoveryAction, ...]:
-    ...
+) -> tuple[AllowedRecoveryAction, ...]: ...
 ```
 
 `compute_recovery_actions` is pure and total over validated evidence. It

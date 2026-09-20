@@ -1,9 +1,10 @@
 # Installed execution and recovery CLI
 
 The installed `coreelec-reconciler` command presents the canonical application
-outcomes implemented through `Reconciler.execute`. The CLI does not construct
-production transports, contact a Device by itself, or change Python's
-ownership of managed Device state.
+outcomes implemented through `Reconciler.execute`. It always enters through
+the single production bootstrap. The CLI and application do not construct
+production transports; the bootstrap owns their lazy composition. Constructing
+the command never resolves a secret or contacts a Device.
 
 ## Commands
 
@@ -80,3 +81,7 @@ Abandonment is noninteractive and cannot use a generic confirmation flag. It
 requires both the exact `recover.abandon` approval and a non-empty operator
 reason. Abandonment preserves `failed_recovery_required` truth and durable
 quarantine even though the requested recovery command itself completed.
+
+M3 acceptance is offline only. These command spellings are not authorization
+for live use, deployment, or an ownership handoff. `SKIN-025` remains
+shell-owned.

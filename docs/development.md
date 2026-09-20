@@ -14,8 +14,10 @@ Run the scaffold quality checks and build the source distribution and wheel:
 uv run ruff check .
 uv run ruff format --check \
   src scripts/run_test_budget.py scripts/check_inventory_milestones.py \
-  scripts/check_shell_permissions.py \
-  tests/scaffold tests/inventory tests/ci tests/unit \
+  scripts/check_shell_permissions.py scripts/run_m3_pilot_harness.py \
+  scripts/verify_m3_evidence_bundle.py \
+  tests/scaffold tests/inventory tests/ci tests/unit tests/adapters \
+  tests/contracts tests/integration \
   tests/conftest.py tests/support
 uv run mypy
 uv run python scripts/check_inventory_milestones.py
@@ -28,7 +30,8 @@ uv run python scripts/run_test_budget.py \
   -- \
   .venv/bin/python -m pytest -q \
   tests/scaffold/test_application.py \
-  tests/scaffold/test_architecture.py tests/inventory tests/ci tests/unit
+  tests/scaffold/test_architecture.py tests/inventory tests/ci tests/unit \
+  --ignore=tests/unit/execution/test_run_adapters.py
 uv run python scripts/run_test_budget.py \
   --label complete-offline \
   --budget-seconds 60 \
@@ -37,7 +40,10 @@ uv run python scripts/run_test_budget.py \
   --result .ci-evidence/offline.json \
   -- \
   .venv/bin/python -m pytest -q \
-  tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py
+  tests/adapters tests/contracts \
+  tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py \
+  tests/scaffold/test_cli_execution.py tests/integration \
+  tests/unit/execution/test_run_adapters.py
 uv build
 uv run python - <<'PY'
 import hashlib
@@ -83,9 +89,33 @@ PY
 uv venv --python 3.14 --clear .wheel-venv
 uv pip install --python .wheel-venv/bin/python --no-deps dist/*.whl
 mkdir -p .wheel-smoke
-(cd .wheel-smoke && \
-  ../.wheel-venv/bin/coreelec-reconciler --version && \
-  ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null)
+DEPENDENCY_SITE_PACKAGES="$(
+  .venv/bin/python -c 'import site; print(site.getsitepackages()[0])'
+)"
+(
+  cd .wheel-smoke
+  export PYTHONPATH="$DEPENDENCY_SITE_PACKAGES"
+  export HOME="$PWD/home"
+  ../.wheel-venv/bin/coreelec-reconciler --version
+  ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null
+  ../.wheel-venv/bin/coreelec-reconciler --repository-root .. validate >/dev/null
+  set +e
+  output="$(
+    ../.wheel-venv/bin/coreelec-reconciler \
+      --repository-root .. apply \
+      019950f8-4c00-7000-8000-000000999999 2>&1
+  )"
+  status=$?
+  set -e
+  test "$status" -eq 3
+  grep -q \
+    "apply: capability_unavailable (production.saved-plan-rejected)" \
+    <<<"$output"
+)
+uv run python scripts/run_m3_pilot_harness.py \
+  --dry-run --output .ci-evidence/m3-pilot-dry-run
+uv run python scripts/verify_m3_evidence_bundle.py \
+  .ci-evidence/m3-pilot-dry-run
 ```
 
 The first selection contains pure, unit, architecture, and CI-helper tests and
@@ -153,12 +183,21 @@ digest contain no newline. The same input document can be checked with
 authored configuration and supplied observations only and never write files
 or create network connections.
 
-The command surface is present so later vertical slices can implement behavior
-through the typed `Reconciler.execute` boundary. `validate` performs the
+The installed command enters through the one production `bootstrap`. That
+composition root builds `ApplicationDependencies`,
+`ExecutionApplicationWorkflows`, and `ExecutionEngine`, and owns lazy
+construction of the Paramiko session, secret, pinned-host-key, and filesystem
+RunStore adapters. CLI and application modules do not instantiate concrete
+adapters. Merely constructing the application performs no secret resolution,
+filesystem creation, socket operation, or Device access.
+
+`validate` performs the
 deterministic offline inventory-ledger gate and can additionally validate the
 first playlist planning input. `plan` implements the pure
-`skin.playlist.new-shows` slice. Other operational commands return an explicit
-`not_implemented` diagnostic and exit with status 2.
+`skin.playlist.new-shows` slice. Execution and recovery commands enter the real
+production workflow graph. When an approved Plan, Device session, or local Run
+is unavailable, they return a typed `capability_unavailable` result rather than
+`not_implemented`; they never silently fall back to a test composition.
 
 `provision` is command-line sugar for `reconcile`; it is not a separate
 application command. Building with `uv build` packages only

@@ -63,13 +63,6 @@ def test_validate_checks_the_inventory_ledger() -> None:
     ("arguments", "command_name"),
     [
         (("inventory",), "inventory"),
-        (("observe", "device-1"), "observe"),
-        (("apply", "plan-1"), "apply"),
-        (("reconcile", "device-1"), "reconcile"),
-        (("provision", "device-1"), "reconcile"),
-        (("verify", "device-1"), "verify"),
-        (("recover", "run-1", "resume-verification"), "recover"),
-        (("report", "run-1"), "report"),
         (("action", "example"), "action"),
     ],
 )

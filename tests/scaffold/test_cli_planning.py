@@ -7,11 +7,15 @@ from pathlib import Path
 from tests.unit.planning_support import FIXTURE_ROOT, desired_xml, supplied_document
 
 
-def _run(*arguments: str) -> subprocess.CompletedProcess[bytes]:
+def _run(
+    *arguments: str, home: Path | None = None
+) -> subprocess.CompletedProcess[bytes]:
     environment = os.environ.copy()
     environment["PYTHONHASHSEED"] = "37"
     environment["TZ"] = "Pacific/Honolulu"
     environment["LC_ALL"] = "C"
+    if home is not None:
+        environment["HOME"] = str(home)
     return subprocess.run(
         [sys.executable, "-m", "coreelec_reconciler.cli.main", *arguments],
         cwd=Path(__file__).parent,
@@ -34,6 +38,7 @@ def test_plan_cli_emits_canonical_json_plus_exactly_one_newline(
         "living-room.ugoos-am6b-plus",
         "--observations",
         str(supplied),
+        home=tmp_path,
     )
 
     assert result.returncode == 0
@@ -59,6 +64,7 @@ def test_validate_cli_accepts_the_same_offline_observation(tmp_path: Path) -> No
         "living-room.ugoos-am6b-plus",
         "--observations",
         str(supplied),
+        home=tmp_path,
     )
 
     assert result.returncode == 0
@@ -80,6 +86,7 @@ def test_plan_cli_can_emit_the_nonmutating_run_report(tmp_path: Path) -> None:
         str(supplied),
         "--document",
         "run",
+        home=tmp_path,
     )
 
     assert result.returncode == 0
@@ -99,6 +106,7 @@ def test_blocked_plan_cli_emits_document_and_returns_three(tmp_path: Path) -> No
         "living-room.ugoos-am6b-plus",
         "--observations",
         str(supplied),
+        home=tmp_path,
     )
 
     assert result.returncode == 3
