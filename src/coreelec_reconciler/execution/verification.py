@@ -17,6 +17,7 @@ from coreelec_reconciler.domain.execution import (
     EvidenceObserver,
     ExecutionEvidenceBindings,
     ExecutionEvidenceKind,
+    Presence,
     RunStatus,
     VerifiedRunChain,
     build_execution_evidence,
@@ -530,6 +531,7 @@ def _checkpoint_report(
         VerificationRelation.UNVERIFIABLE: "unknown",
     }[result.relation]
     state = observation.state
+    state_present = state.presence is Presence.PRESENT
     evidence = list(_objects(value, "evidence"))
     evidence.append(
         build_execution_evidence(
@@ -545,9 +547,9 @@ def _checkpoint_report(
             attempt=1,
             kind=ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION,
             payload={
-                "content_digest": state.content_digest,
-                "entry_kind": state.entry_kind,
-                "managed_mode": state.managed_mode,
+                "content_digest": state.content_digest if state_present else None,
+                "entry_kind": state.entry_kind if state_present else None,
+                "managed_mode": state.managed_mode if state_present else None,
                 "normalized_state_digest": normalized_state_digest(state),
                 "presence": state.presence.value,
                 "relation": relation,

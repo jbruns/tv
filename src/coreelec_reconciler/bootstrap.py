@@ -6,10 +6,10 @@ import base64
 import hashlib
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from coreelec_reconciler.application.commands import (
     ObserveCommand,
@@ -48,6 +48,7 @@ from coreelec_reconciler.domain.execution import (
     RemoteMarkerPhase,
     RemoteOwnership,
     RemoteOwnershipSnapshot,
+    SessionCloseDisposition,
 )
 from coreelec_reconciler.domain.identifiers import (
     DeviceId,
@@ -57,12 +58,12 @@ from coreelec_reconciler.domain.identifiers import (
 )
 from coreelec_reconciler.domain.planning import (
     CanonicalPlan,
+    DesiredRelation,
     PlanningRuntime,
     SuppliedPlanningInput,
 )
 from coreelec_reconciler.execution.authority import (
     AuthorityCoordinator,
-    RemoteAuthorityBackend,
 )
 from coreelec_reconciler.execution.composition import (
     ApprovalGrant,
@@ -70,6 +71,7 @@ from coreelec_reconciler.execution.composition import (
     DeviceAuthorityObservation,
     PreparedExecution,
     ProductionExecutionFactory,
+    SavedPlanExecutionPreflight,
     SavedPlanExecutionRequest,
 )
 from coreelec_reconciler.execution.engine import (
@@ -80,8 +82,25 @@ from coreelec_reconciler.execution.engine import (
 )
 from coreelec_reconciler.execution.plan_store import PlanStore, PlanStoreError
 from coreelec_reconciler.execution.recovery import RecoveryInspection
+from coreelec_reconciler.execution.recovery_access import (
+    RecoveryAccess,
+    RecoveryActionRequest,
+    RecoveryHandoff,
+    TrustedRecoveryIdentity,
+)
 from coreelec_reconciler.execution.run_adapters import ManagedFileLifecycleFactory
 from coreelec_reconciler.execution.runtime import RuntimeValues, SystemRuntimeValues
+from coreelec_reconciler.execution.session_close import (
+    DurableSessionClose,
+    SessionCloseRequest,
+)
+from coreelec_reconciler.execution.verification import (
+    CanonicalVerificationBinding,
+    CanonicalVerificationRuns,
+    VerificationRequest,
+    VerificationResource,
+    VerificationRunResult,
+)
 from coreelec_reconciler.inventory.ledger import validate_ledger
 from coreelec_reconciler.reporting.canonical_json import decode_json_object
 from coreelec_reconciler.resource_types.descriptor import (
@@ -95,6 +114,7 @@ from coreelec_reconciler.resource_types.managed_file.observation import (
     ManagedFileObservation,
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
+    PreparationBinding,
     PreparedManagedFile,
 )
 from coreelec_reconciler.transports.interfaces import (
@@ -103,6 +123,7 @@ from coreelec_reconciler.transports.interfaces import (
     DeviceSession,
     ManagedFileReader,
 )
+from coreelec_reconciler.transports.remote_ownership import RemoteAuthorityBackend
 
 if TYPE_CHECKING:
     from coreelec_reconciler.execution.run_store import RunStore
@@ -304,6 +325,74 @@ class _RunBindings:
         self._services.pop(run_id.value, None)
 
 
+class _DeferredLiveDependency:
+    def __init__(self) -> None:
+        self._target: object | None = None
+
+    def activate(self, target: object) -> None:
+        if self._target is not None:
+            raise RuntimeError("live dependency is already bound")
+        self._target = target
+
+    def __getattr__(self, name: str) -> Any:
+        if self._target is None:
+            raise RuntimeError("live Device dependency used before local preflight")
+        return getattr(self._target, name)
+
+
+class _VerificationAttachments:
+    def attach(self, kind: str, codec: str, payload: bytes) -> object:
+        del kind, codec, payload
+        raise AssertionError("verification cannot attach mutable execution evidence")
+
+    def read_attachment(self, reference: object) -> bytes:
+        del reference
+        raise AssertionError("verification cannot read execution attachments")
+
+
+class _VerificationLifecycle:
+    def apply(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("verification cannot apply")
+
+    def rollback(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("verification cannot rollback")
+
+    def cleanup(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("verification cannot cleanup")
+
+
+@dataclass(frozen=True, slots=True)
+class _UnverifiableAssessment:
+    relation: DesiredRelation = DesiredRelation.UNVERIFIABLE
+
+
+class _SafeVerificationExecution:
+    def __init__(self, execution: object) -> None:
+        self._execution = execution
+
+    def observe(self) -> object:
+        return cast(Any, self._execution).observe()
+
+    def assess(self, observation: object) -> object:
+        try:
+            return cast(Any, self._execution).assess(observation)
+        except TypeError, ValueError, RuntimeError:
+            return _UnverifiableAssessment()
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionDependencies:
+    contexts: object
+    recovery_environment: object
+    device_authority: object
+    authority: AuthorityCoordinator
+    ownership: object
+    bindings: _RunBindings
+
+
 class _ProductionMarkerController:
     def __init__(
         self,
@@ -476,13 +565,45 @@ class _BoundRun:
     prepared: PreparedExecution
     session: DeviceSession
     bindings: _RunBindings
+    services: ProductionServices
 
-    def close(self) -> None:
-        self.bindings.remove(self.prepared.approved_plan.run_id)
+    def close(self, outcome: ExecutionOutcome) -> ExecutionOutcome:
+        from coreelec_reconciler.reporting.execution_documents import (
+            decode_execution_run_report,
+        )
+
+        run_id = self.prepared.approved_plan.run_id
+        report = decode_execution_run_report(
+            self.services.run_store().load_chain(run_id).head.payload
+        )
+        try:
+            guidance = self.prepared.services.engine.inspect(run_id).actions
+        except ValueError, RuntimeError:
+            guidance = ()
+        preserved = DurableSessionClose(
+            self.services.run_store(), self.services.runtime
+        ).close(
+            SessionCloseRequest(
+                self.services.runtime.new_uuid7(),
+                f"session.{self.services.runtime.new_uuid7()}",
+            ),
+            report,
+            guidance,
+            self._close_session,
+            lease=self.prepared.services.persistence.revision_lease,
+        )
+        self.bindings.remove(run_id)
         try:
             self.prepared.services.close()
-        finally:
-            self.session.close()
+        except OSError, RuntimeError, ValueError:
+            return replace(outcome, cleanup_complete=False)
+        if preserved.close.disposition is not SessionCloseDisposition.COMPLETE:
+            return replace(outcome, cleanup_complete=False)
+        return outcome
+
+    def _close_session(self) -> SessionCloseDisposition:
+        self.session.close()
+        return SessionCloseDisposition.COMPLETE
 
 
 class _ProductionExecutionRouter:
@@ -497,7 +618,9 @@ class _ProductionExecutionRouter:
         bindings: _RunBindings,
     ) -> None:
         run_id = prepared.approved_plan.run_id
-        self._prepared[run_id.value] = _BoundRun(prepared, session, bindings)
+        self._prepared[run_id.value] = _BoundRun(
+            prepared, session, bindings, self._services
+        )
 
     def start(self, approved_plan: ApprovedPlan) -> ExecutionOutcome:
         try:
@@ -507,9 +630,15 @@ class _ProductionExecutionRouter:
                 "apply", "production.execution-binding-unavailable"
             ) from None
         try:
-            return bound.prepared.services.engine.start(approved_plan)
-        finally:
-            bound.close()
+            outcome = bound.prepared.services.engine.start(approved_plan)
+        except Exception:
+            bound.bindings.remove(approved_plan.run_id)
+            try:
+                bound.prepared.services.close()
+            finally:
+                bound.session.close()
+            raise
+        return bound.close(outcome)
 
     def inspect(self, run_id: RunId) -> RecoveryInspection:
         return cast(RecoveryInspection, self._with_recovery(run_id, "inspect", None))
@@ -523,26 +652,139 @@ class _ProductionExecutionRouter:
         command: str,
         request: RecoveryRequest | None,
     ) -> object:
+        inspection_bound: BoundExecutionServices | None = None
+        inspection_session: DeviceSession | None = None
+        inspection_bindings: _RunBindings | None = None
         try:
             factory, session, bindings = _execution_factory_for_run(
-                self._services, run_id
+                self._services, run_id, inspection_only=True
             )
             bound = factory.bind(run_id)
             bindings.put(run_id, bound)
+            inspection_bound = bound
+            inspection_session = session
+            inspection_bindings = bindings
         except (FileNotFoundError, PlanStoreError, ValueError, RuntimeError) as error:
             raise CapabilityUnavailableError(
                 "recover", f"production.{command}-unavailable"
             ) from error
         try:
+            identity_value = self._services.run_store().load_identity(run_id)
+            identity = TrustedRecoveryIdentity(
+                run_id,
+                DeviceId(cast(str, identity_value["device_id"])),
+                PlanId(cast(str, identity_value["plan_id"])),
+                cast(str, identity_value["plan_full_digest"]),
+                RunId(cast(str, identity_value["originating_planning_run_id"])),
+            )
+            production_session = cast(_ProductionDeviceSession, session)
+            remote = _RemoteViews(
+                _remote_backend(production_session), self._services.run_store()
+            )
+            access = RecoveryAccess(
+                self._services.run_store(), remote, remote, bound.engine
+            )
+            inspected = access.inspect(identity)
             if request is None:
-                return bound.engine.inspect(run_id)
-            return bound.engine.recover(run_id, request)
-        finally:
-            bindings.remove(run_id)
-            try:
+                return RecoveryInspection(inspected.evidence, inspected.actions)
+            action = RecoveryActionRequest(
+                request.action,
+                request.finalize_mode,
+                request.approval,
+                request.reason,
+            )
+            handoff = access.authorize(inspected, action)
+
+            def mutation_executor(
+                authorized: RecoveryHandoff,
+            ) -> _RecoveryMutationExecutor:
+                nonlocal inspection_bound, inspection_session, inspection_bindings
+                if authorized.identity.run_id != run_id:
+                    raise ValueError("recovery handoff Run binding changed")
+                bindings.remove(run_id)
                 bound.close()
-            finally:
                 session.close()
+                inspection_bound = None
+                inspection_session = None
+                inspection_bindings = None
+                mutation_factory, mutation_session, mutation_bindings = (
+                    _execution_factory_for_run(self._services, run_id)
+                )
+                mutation_bound = mutation_factory.bind(run_id)
+                mutation_bindings.put(run_id, mutation_bound)
+                return _RecoveryMutationExecutor(
+                    mutation_bound,
+                    mutation_session,
+                    mutation_bindings,
+                    request,
+                    self._services,
+                )
+
+            return access.execute_mutation(handoff, action, mutation_executor)
+        finally:
+            if inspection_bindings is not None:
+                inspection_bindings.remove(run_id)
+            if inspection_bound is not None:
+                inspection_bound.close()
+            if inspection_session is not None:
+                inspection_session.close()
+
+
+@dataclass(slots=True)
+class _RecoveryMutationExecutor:
+    services: BoundExecutionServices
+    session: DeviceSession
+    bindings: _RunBindings
+    request: RecoveryRequest
+    production: ProductionServices
+
+    def execute_recovery(self, handoff: RecoveryHandoff) -> ExecutionOutcome:
+        try:
+            outcome = self.services.engine.recover(
+                handoff.identity.run_id, self.request
+            )
+        except Exception:
+            self.bindings.remove(handoff.identity.run_id)
+            try:
+                self.services.close()
+            finally:
+                self.session.close()
+            raise
+        from coreelec_reconciler.reporting.execution_documents import (
+            decode_execution_run_report,
+        )
+
+        report = decode_execution_run_report(
+            self.production.run_store().load_chain(handoff.identity.run_id).head.payload
+        )
+        try:
+            guidance = self.services.engine.inspect(handoff.identity.run_id).actions
+        except ValueError, RuntimeError:
+            guidance = ()
+        preserved = DurableSessionClose(
+            self.production.run_store(), self.production.runtime
+        ).close(
+            SessionCloseRequest(
+                self.production.runtime.new_uuid7(),
+                f"session.{self.production.runtime.new_uuid7()}",
+            ),
+            report,
+            guidance,
+            self._close_session,
+            lease=self.services.persistence.revision_lease,
+        )
+        self.bindings.remove(handoff.identity.run_id)
+        try:
+            self.services.close()
+        except OSError, RuntimeError, ValueError:
+            return replace(outcome, cleanup_complete=False)
+        if preserved.close.disposition is not SessionCloseDisposition.COMPLETE:
+            return replace(outcome, cleanup_complete=False)
+        return outcome
+
+    def _close_session(self) -> SessionCloseDisposition:
+        self.session.close()
+        return SessionCloseDisposition.COMPLETE
 
 
 class _ProductionApplicationData:
@@ -605,12 +847,27 @@ class _ProductionApplicationData:
         )
 
     def verify(self, command: VerifyCommand) -> VerifyOutcome | UnsupportedOutcome:
-        planned = self._plan_repository(
-            PlanCommand(command.repository_root, command.device_id)
-        )
-        if planned.run_report is None:
+        try:
+            configuration = _configuration(
+                self._services,
+                command.repository_root or self._services.settings.repository_root,
+                command.device_id,
+            )
+            device = configuration.device
+            if device is None:
+                raise ValueError("resolved Device capabilities are unavailable")
+            session = self._services.open_device_session(
+                device, frozenset({"managed_file.read"})
+            )
+        except FileNotFoundError, ValueError, RuntimeError:
             return _unavailable("verify", "production.verification-unavailable")
-        return VerifyOutcome(planned.run_report)
+        try:
+            result = _verify_configuration(self._services, configuration, session)
+            return VerifyOutcome(result.run_report)
+        except FileNotFoundError, ValueError, RuntimeError:
+            return _unavailable("verify", "production.verification-unavailable")
+        finally:
+            session.close()
 
     def report(self, command: ReportCommand) -> ReportOutcome | UnsupportedOutcome:
         if not self._services.state_root_exists():
@@ -721,11 +978,23 @@ def _execution_factory(
     expected_device: Mapping[str, object],
     change_ids: Mapping[str, str],
 ) -> tuple[ProductionExecutionFactory, _RunBindings]:
+    dependencies = _execution_dependencies(
+        services, configuration, session, expected_device, change_ids
+    )
+    return _production_execution_factory(
+        services, configuration, dependencies
+    ), dependencies.bindings
+
+
+def _execution_dependencies(
+    services: ProductionServices,
+    configuration: ResolvedConfiguration,
+    session: DeviceSession,
+    expected_device: Mapping[str, object],
+    change_ids: Mapping[str, str],
+) -> _ExecutionDependencies:
     from coreelec_reconciler.execution.run_adapters import (
         ConfigurationResourceContexts,
-    )
-    from coreelec_reconciler.resource_types.builtins import (
-        built_in_resource_registry,
     )
 
     production_session = cast(_ProductionDeviceSession, session)
@@ -756,11 +1025,7 @@ def _execution_factory(
     device = configuration.device
     if device is None:
         raise ValueError("resolved Device capabilities are unavailable")
-    factory = ProductionExecutionFactory(
-        services.plan_store(),
-        services.run_store(),
-        built_in_resource_registry(),
-        {resource.id.value: resource.type for resource in configuration.resources},
+    return _ExecutionDependencies(
         contexts,
         remote,
         _DeviceAuthorityProbe(
@@ -771,9 +1036,31 @@ def _execution_factory(
         ),
         authority,
         remote,
+        bindings,
+    )
+
+
+def _production_execution_factory(
+    services: ProductionServices,
+    configuration: ResolvedConfiguration,
+    dependencies: _ExecutionDependencies,
+) -> ProductionExecutionFactory:
+    from coreelec_reconciler.resource_types.builtins import (
+        built_in_resource_registry,
+    )
+
+    return ProductionExecutionFactory(
+        services.plan_store(),
+        services.run_store(),
+        built_in_resource_registry(),
+        {resource.id.value: resource.type for resource in configuration.resources},
+        cast(Any, dependencies.contexts),
+        cast(Any, dependencies.recovery_environment),
+        cast(Any, dependencies.device_authority),
+        dependencies.authority,
+        cast(Any, dependencies.ownership),
         services.runtime,
     )
-    return factory, bindings
 
 
 def _prepare_execution(
@@ -794,6 +1081,38 @@ def _prepare_execution(
     device = configuration.device
     if device is None:
         raise ValueError("resolved Device capabilities are unavailable")
+    deferred = tuple(_DeferredLiveDependency() for _ in range(5))
+    deferred_dependencies = _ExecutionDependencies(
+        deferred[0],
+        deferred[1],
+        deferred[2],
+        cast(AuthorityCoordinator, deferred[3]),
+        deferred[4],
+        _RunBindings(),
+    )
+    factory = _production_execution_factory(
+        services, configuration, deferred_dependencies
+    )
+    now = services.runtime.utc_now()
+    request = SavedPlanExecutionRequest(
+        plan_id,
+        RunId(services.runtime.new_uuid7()),
+        saved.device_id,
+        saved.originating_run_id,
+        device_value,
+        dict(saved.input_digests),
+        tuple(
+            ApprovalGrant(
+                scope,
+                "actor.local-admin",
+                "noninteractive_cli",
+                now,
+            )
+            for scope in approval_scopes
+        ),
+        now,
+    )
+    preflight: SavedPlanExecutionPreflight = factory.preflight_saved_plan(request)
     session = services.open_device_session(
         device,
         frozenset(
@@ -807,31 +1126,24 @@ def _prepare_execution(
     )
     try:
         change_ids = _change_ids(value)
-        factory, bindings = _execution_factory(
+        live = _execution_dependencies(
             services, configuration, session, device_value, change_ids
         )
-        now = services.runtime.utc_now()
-        request = SavedPlanExecutionRequest(
-            plan_id,
-            RunId(services.runtime.new_uuid7()),
-            saved.device_id,
-            saved.originating_run_id,
-            device_value,
-            dict(saved.input_digests),
-            tuple(
-                ApprovalGrant(
-                    scope,
-                    "actor.local-admin",
-                    "noninteractive_cli",
-                    now,
-                )
-                for scope in approval_scopes
+        for proxy, target in zip(
+            deferred,
+            (
+                live.contexts,
+                live.recovery_environment,
+                live.device_authority,
+                live.authority,
+                live.ownership,
             ),
-            now,
-        )
-        prepared = factory.approve_saved_plan(request)
-        bindings.put(prepared.approved_plan.run_id, prepared.services)
-        return prepared, session, bindings
+            strict=True,
+        ):
+            proxy.activate(target)
+        prepared = factory.prepare_saved_plan(preflight)
+        live.bindings.put(prepared.approved_plan.run_id, prepared.services)
+        return prepared, session, live.bindings
     except Exception:
         session.close()
         raise
@@ -840,6 +1152,8 @@ def _prepare_execution(
 def _execution_factory_for_run(
     services: ProductionServices,
     run_id: RunId,
+    *,
+    inspection_only: bool = False,
 ) -> tuple[ProductionExecutionFactory, DeviceSession, _RunBindings]:
     identity = services.run_store().load_identity(run_id)
     device_id = DeviceId(cast(str, identity["device_id"]))
@@ -859,13 +1173,17 @@ def _execution_factory_for_run(
         raise ValueError("resolved Device capabilities are unavailable")
     session = services.open_device_session(
         device,
-        frozenset(
-            {
-                "managed_file.read",
-                "managed_file.write",
-                "atomic_replace_over_existing",
-                "remote_run_ownership",
-            }
+        (
+            frozenset({"remote_run_ownership"})
+            if inspection_only
+            else frozenset(
+                {
+                    "managed_file.read",
+                    "managed_file.write",
+                    "atomic_replace_over_existing",
+                    "remote_run_ownership",
+                }
+            )
         ),
     )
     try:
@@ -902,6 +1220,97 @@ def _change_ids(plan: Mapping[str, object]) -> dict[str, str]:
                 raise ValueError("saved Plan Change binding is malformed")
             result[resource_id] = cast(str, change["change_id"])
     return result
+
+
+def _verify_configuration(
+    services: ProductionServices,
+    configuration: ResolvedConfiguration,
+    session: DeviceSession,
+) -> VerificationRunResult:
+    from coreelec_reconciler.domain.canonical_json import canonical_document_bytes
+    from coreelec_reconciler.resource_types.builtins import (
+        built_in_resource_registry,
+    )
+    from coreelec_reconciler.resource_types.descriptor import (
+        ResourceExecutionContext,
+    )
+    from coreelec_reconciler.resource_types.managed_file.paths import (
+        resolve_special_profile_path,
+    )
+
+    device = configuration.device
+    if device is None:
+        raise ValueError("resolved Device capabilities are unavailable")
+    production_session = cast(_ProductionDeviceSession, session)
+    registry = built_in_resource_registry()
+    resources: list[VerificationResource] = []
+    for resource in configuration.resources:
+        descriptor = registry.descriptor(resource.type)
+        if descriptor is None:
+            raise ValueError("Resource verification capability is unavailable")
+        if descriptor.execution_factory is None or len(resource.state_addresses) != 1:
+            raise ValueError("Resource verification capability is unavailable")
+        context = ResourceExecutionContext(
+            resource,
+            production_session.managed_file_mutations,
+            cast(AttachmentStore, _VerificationAttachments()),
+            cast(ManagedFileLifecycle, _VerificationLifecycle()),
+            resolve_special_profile_path(
+                resource.state_addresses[0], device.profile_root
+            ),
+            PreparationBinding(
+                configuration.device_id.value,
+                production_session.identity.binding_digest,
+                "verification",
+                resource.id.value,
+                "verification",
+            ),
+            services.runtime.utc_now,
+        )
+        desired = canonical_document_bytes(
+            {
+                "kind": f"{resource.type}DesiredState",
+                "resource_id": resource.id.value,
+                "desired": descriptor.encode_intent(resource.intent),
+                "schema_version": 1,
+            }
+        )
+        policy = canonical_document_bytes(
+            {
+                "assessor": resource.type,
+                "management": resource.management.value,
+                "schema_version": 1,
+            }
+        )
+        resources.append(
+            VerificationResource(
+                resource.id.value,
+                resource.type,
+                resource.state_addresses,
+                tuple(item.value for item in resource.requires),
+                CanonicalVerificationBinding.create(
+                    desired_state_codec=(
+                        "application/vnd.coreelec.resource-desired-state+json;v=1"
+                    ),
+                    desired_state=desired,
+                    verification_policy_codec=(
+                        "application/vnd.coreelec.resource-verification+json;v=1"
+                    ),
+                    verification_policy=policy,
+                ),
+                _SafeVerificationExecution(descriptor.execution_factory(context)),
+            )
+        )
+    return CanonicalVerificationRuns(
+        services.run_store(), registry, services.runtime
+    ).verify(
+        VerificationRequest(
+            configuration.device_id,
+            tuple(resources),
+            production_session.identity.binding_digest,
+            production_session.identity.boot_id,
+        )
+    )
 
 
 def bootstrap(settings: BootstrapSettings) -> Reconciler:

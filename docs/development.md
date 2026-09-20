@@ -30,7 +30,8 @@ uv run python scripts/run_test_budget.py \
   -- \
   .venv/bin/python -m pytest -q \
   tests/scaffold/test_application.py \
-  tests/scaffold/test_architecture.py tests/inventory tests/ci tests/unit
+  tests/scaffold/test_architecture.py tests/inventory tests/ci tests/unit \
+  --ignore=tests/unit/execution/test_run_adapters.py
 uv run python scripts/run_test_budget.py \
   --label complete-offline \
   --budget-seconds 60 \
@@ -41,7 +42,8 @@ uv run python scripts/run_test_budget.py \
   .venv/bin/python -m pytest -q \
   tests/adapters tests/contracts \
   tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py \
-  tests/scaffold/test_cli_execution.py tests/integration
+  tests/scaffold/test_cli_execution.py tests/integration \
+  tests/unit/execution/test_run_adapters.py
 uv build
 uv run python - <<'PY'
 import hashlib
@@ -87,9 +89,29 @@ PY
 uv venv --python 3.14 --clear .wheel-venv
 uv pip install --python .wheel-venv/bin/python --no-deps dist/*.whl
 mkdir -p .wheel-smoke
-(cd .wheel-smoke && \
-  ../.wheel-venv/bin/coreelec-reconciler --version && \
-  ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null)
+DEPENDENCY_SITE_PACKAGES="$(
+  .venv/bin/python -c 'import site; print(site.getsitepackages()[0])'
+)"
+(
+  cd .wheel-smoke
+  export PYTHONPATH="$DEPENDENCY_SITE_PACKAGES"
+  export HOME="$PWD/home"
+  ../.wheel-venv/bin/coreelec-reconciler --version
+  ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null
+  ../.wheel-venv/bin/coreelec-reconciler --repository-root .. validate >/dev/null
+  set +e
+  output="$(
+    ../.wheel-venv/bin/coreelec-reconciler \
+      --repository-root .. apply \
+      019950f8-4c00-7000-8000-000000999999 2>&1
+  )"
+  status=$?
+  set -e
+  test "$status" -eq 3
+  grep -q \
+    "apply: capability_unavailable (production.saved-plan-rejected)" \
+    <<<"$output"
+)
 uv run python scripts/run_m3_pilot_harness.py \
   --dry-run --output .ci-evidence/m3-pilot-dry-run
 uv run python scripts/verify_m3_evidence_bundle.py \

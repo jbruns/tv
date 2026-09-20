@@ -137,8 +137,12 @@ jobs:
               "coreelec_reconciler/execution/composition.py",
               "coreelec_reconciler/execution/engine.py",
               "coreelec_reconciler/execution/plan_store.py",
+              "coreelec_reconciler/execution/recovery_access.py",
               "coreelec_reconciler/execution/run_adapters.py",
               "coreelec_reconciler/execution/run_store.py",
+              "coreelec_reconciler/execution/session_close.py",
+              "coreelec_reconciler/execution/verification.py",
+              "coreelec_reconciler/transports/remote_ownership.py",
           }
           assert required <= set(names), required - set(names)
           assert not any(
@@ -180,8 +184,23 @@ jobs:
           (
             cd .wheel-smoke
             export PYTHONPATH="$DEPENDENCY_SITE_PACKAGES"
+            export HOME="$PWD/home"
             ../.wheel-venv/bin/coreelec-reconciler --version
             ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null
+            ../.wheel-venv/bin/coreelec-reconciler \
+              --repository-root .. validate >/dev/null
+            set +e
+            output="$(
+              ../.wheel-venv/bin/coreelec-reconciler \
+                --repository-root .. apply \
+                019950f8-4c00-7000-8000-000000999999 2>&1
+            )"
+            status=$?
+            set -e
+            test "$status" -eq 3
+            grep -q \
+              "apply: capability_unavailable (production.saved-plan-rejected)" \
+              <<<"$output"
           )
       - name: Generate and verify deterministic pilot dry run
         shell: bash
