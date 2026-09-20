@@ -1,5 +1,20 @@
 # Shared Ugoos configuration
 
+Two configuration surfaces live in this tree and never overlap. The `.conf`
+files below belong to the shell entry points and are described by the rest of
+this document. The `.yaml` files beside them belong to the Reconciler:
+
+```text
+config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml   Profile
+config/rooms/theater/room.yaml                             Room Overlay
+```
+
+Neither reader looks at the other's files. The Reconciler's surface is
+documented in
+[reconciling theater Smart Playlists](../docs/operations/reconcile-theater-playlists.md).
+
+## Shell configuration
+
 This repository ships one non-secret configuration file for the locked Ugoos
 AM6B+ / CoreELEC 21.3 baseline:
 

@@ -15,12 +15,9 @@ run() {
 
 if command -v uv >/dev/null 2>&1 && [[ -f pyproject.toml ]]; then
   run uv run ruff check .
-  run uv run ruff format --check scripts
+  run uv run ruff format --check src tests/unit scripts
   run uv run mypy
-  # Once the Reconciler exists, its tests run here too.
-  if uv run python -c "import pytest" 2>/dev/null && [[ -d tests/unit ]]; then
-    run uv run pytest -q
-  fi
+  run uv run pytest -q
 else
   printf 'pre-commit: uv or pyproject.toml missing, skipping Python checks\n' >&2
 fi

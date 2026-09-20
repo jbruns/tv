@@ -1,19 +1,20 @@
 # Python development
 
-The Reconciler does not exist yet. Milestones M0 through M3 built an
-implementation that never contacted a Device; it is archived at the
-`m3-archive` tag and removed from the working tree. See
+The Reconciler is `coreelec-reconciler`, a `src/` package imported as
+`coreelec_reconciler`. Milestones M0 through M3 built an implementation that
+never contacted a Device; it is archived at the `m3-archive` tag and removed
+from the working tree. See
 [ADR 0008](adr/0008-restart-from-a-walking-skeleton.md) for what went wrong and
 [ADR 0007](adr/0007-trusted-home-appliance-bar.md) for the bar that replaces
-it. The first slice rebuilds it as a walking skeleton that changes one real
-setting on the real Device.
+it. Today it manages one Resource on one Device: see
+[reconciling theater Smart Playlists](operations/reconcile-theater-playlists.md).
 
-Device provisioning today is the shell provisioner. See
+The rest of Device provisioning is still the shell provisioner. See
 [the Ugoos provisioning operations guide](operations/provision-ugoos.md).
 
-## What Python remains
+## What else remains
 
-Two helpers, both standard library only:
+Two standard-library helpers outside the package:
 
 - `scripts/check_shell_permissions.py` and `scripts/shell_permissions.py` —
   the fail-closed write-set permission guard the shell provisioner calls
@@ -35,8 +36,9 @@ These are exactly what CI runs:
 
 ```console
 uv run ruff check .
-uv run ruff format --check scripts
+uv run ruff format --check src tests/unit scripts
 uv run mypy
+uv run pytest -q
 python3 scripts/check_shell_permissions.py --audit
 python3 scripts/check_markdown.py
 git diff --check
@@ -60,9 +62,9 @@ Bypass it with `git commit --no-verify` when you need to.
 - **No mechanism before a slice needs it.** No upfront design documents
   specifying machinery, and no infrastructure for failures that have not
   happened.
-- **Test at the boundary.** Tests may not import from the package except
-  through its public entry point. Tests that reach inside modules weld the
-  implementation in place.
+- **Test at the boundary.** Tests live in `tests/unit/` and may not import
+  from the package except through its public entry point, `main`. Tests that
+  reach inside modules weld the implementation in place.
 - **No platform-specific code.** Where behaviour differs, choose the option
   that works everywhere and accept the weaker guarantee.
 

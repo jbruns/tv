@@ -9,6 +9,7 @@ integrations.
 
 - [Shared room setup runbook](docs/runbook.md)
 - [Python development](docs/development.md)
+- [Reconciling theater Smart Playlists](docs/operations/reconcile-theater-playlists.md)
 - [Shell write-set audit evidence](docs/implementation/shell-write-set-audit.md)
 - [Legacy shell write-set permissions](docs/operations/shell-write-set-permissions.md)
 - [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)
@@ -58,9 +59,11 @@ rooms/
   master/                     Master room template and device-guide index
 code/                         Reusable automation documentation
 config/                       Shared non-secret provisioning contract
+src/coreelec_reconciler/      The Reconciler
 home-assistant/               Deployed Home Assistant assets
 lib/                          Reusable shell libraries
-tests/                        Existing validation coverage
+tests/unit/                   Reconciler boundary tests
+tests/                        Legacy shell validation coverage
 scripts/                      Repository and shell write-set guards
 inventory/                    Shell write-set map and ownership ledger
 ```
