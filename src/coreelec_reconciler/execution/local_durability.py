@@ -5,6 +5,7 @@ import os
 import stat
 from collections import defaultdict
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -15,6 +16,9 @@ class DurabilityOperation(StrEnum):
     WRITE_PRIVATE = "write_private"
     FULL_SYNC_FILE = "full_sync_file"
     ATOMIC_REPLACE = "atomic_replace"
+    ATOMIC_CREATE = "atomic_create"
+    CREATE_PRIVATE_DIRECTORY = "create_private_directory"
+    REMOVE_FILE = "remove_file"
     SYNC_DIRECTORY = "sync_directory"
     ACKNOWLEDGE = "acknowledge"
 
@@ -27,12 +31,22 @@ class AcknowledgementLost(DurabilityError):
     pass
 
 
+class DestinationExists(DurabilityError):
+    pass
+
+
 class LocalDurability(Protocol):
     def write_private(self, object_id: str, payload: bytes) -> None: ...
 
     def full_sync_file(self, object_id: str) -> None: ...
 
     def atomic_replace(self, source_id: str, destination_id: str) -> None: ...
+
+    def atomic_create(self, source_id: str, destination_id: str) -> None: ...
+
+    def create_private_directory(self, directory_id: str) -> None: ...
+
+    def remove_file(self, object_id: str) -> None: ...
 
     def sync_directory(self, directory_id: str) -> None: ...
 
@@ -119,6 +133,83 @@ class PosixLocalDurability:
         finally:
             os.close(parent_descriptor)
 
+    def atomic_create(self, source_id: str, destination_id: str) -> None:
+        source = Path(source_id)
+        destination = Path(destination_id)
+        if source.parent != destination.parent:
+            raise DurabilityError("atomic creation must stay in one directory")
+        parent_descriptor = _open_directory(source.parent)
+        try:
+            source_stat = os.stat(
+                source.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if not stat.S_ISREG(source_stat.st_mode):
+                raise DurabilityError("atomic creation source is unsafe")
+            try:
+                os.link(
+                    source.name,
+                    destination.name,
+                    src_dir_fd=parent_descriptor,
+                    dst_dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileExistsError as error:
+                raise DestinationExists("atomic creation destination exists") from error
+        except DestinationExists:
+            raise
+        except OSError as error:
+            raise DurabilityError("atomic creation failed safely") from error
+        finally:
+            os.close(parent_descriptor)
+
+    def create_private_directory(self, directory_id: str) -> None:
+        path = Path(directory_id)
+        parent_descriptor = _open_directory(path.parent)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            with suppress(FileExistsError):
+                os.mkdir(path.name, 0o700, dir_fd=parent_descriptor)
+            descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISDIR(metadata.st_mode):
+                    raise DurabilityError("local object is not a directory")
+                os.fchmod(descriptor, 0o700)
+            finally:
+                os.close(descriptor)
+        except DurabilityError:
+            raise
+        except OSError as error:
+            raise DurabilityError("private directory creation failed safely") from error
+        finally:
+            os.close(parent_descriptor)
+
+    def remove_file(self, object_id: str) -> None:
+        path = Path(object_id)
+        parent_descriptor = _open_directory(path.parent)
+        try:
+            try:
+                metadata = os.stat(
+                    path.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return
+            if not stat.S_ISREG(metadata.st_mode):
+                raise DurabilityError("file removal target is unsafe")
+            os.unlink(path.name, dir_fd=parent_descriptor)
+        except DurabilityError:
+            raise
+        except OSError as error:
+            raise DurabilityError("file removal failed safely") from error
+        finally:
+            os.close(parent_descriptor)
+
     def sync_directory(self, directory_id: str) -> None:
         descriptor = _open_directory(Path(directory_id))
         try:
@@ -197,6 +288,28 @@ class ScriptedLocalDurability:
             self._delegate.atomic_replace,
             source_id,
             destination_id,
+        )
+
+    def atomic_create(self, source_id: str, destination_id: str) -> None:
+        self._perform(
+            DurabilityOperation.ATOMIC_CREATE,
+            self._delegate.atomic_create,
+            source_id,
+            destination_id,
+        )
+
+    def create_private_directory(self, directory_id: str) -> None:
+        self._perform(
+            DurabilityOperation.CREATE_PRIVATE_DIRECTORY,
+            self._delegate.create_private_directory,
+            directory_id,
+        )
+
+    def remove_file(self, object_id: str) -> None:
+        self._perform(
+            DurabilityOperation.REMOVE_FILE,
+            self._delegate.remove_file,
+            object_id,
         )
 
     def sync_directory(self, directory_id: str) -> None:

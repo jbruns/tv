@@ -182,7 +182,8 @@ def check_session_close_invariants(content: bytes) -> tuple[str, ...]:
             require_sha256(seal_digest, "session close seal_digest")
         except (TypeError, ValueError) as error:
             errors.append(str(error))
-    if value["authority_state"] not in {
+    authority_state = value["authority_state"]
+    if not isinstance(authority_state, str) or authority_state not in {
         "acquisition_pending",
         "owned",
         "quarantined",
@@ -190,10 +191,16 @@ def check_session_close_invariants(content: bytes) -> tuple[str, ...]:
         "unknown",
     }:
         errors.append("unknown session close authority state")
+    disposition_value = value["disposition"]
     try:
-        disposition = SessionCloseDisposition(str(value["disposition"]))
+        disposition = (
+            SessionCloseDisposition(disposition_value)
+            if isinstance(disposition_value, str)
+            else None
+        )
     except ValueError:
         disposition = None
+    if disposition is None:
         errors.append("unknown session close disposition")
     failure = value["failure"]
     if disposition is SessionCloseDisposition.COMPLETE:
@@ -203,9 +210,16 @@ def check_session_close_invariants(content: bytes) -> tuple[str, ...]:
         if not isinstance(failure, dict) or set(failure) != {"category", "code"}:
             errors.append("failed or unknown session close lacks failure")
         else:
+            category = failure["category"]
             try:
-                SessionCloseFailureCategory(str(failure["category"]))
+                valid_category = (
+                    SessionCloseFailureCategory(category)
+                    if isinstance(category, str)
+                    else None
+                )
             except ValueError:
+                valid_category = None
+            if valid_category is None:
                 errors.append("unknown session close failure category")
             code = failure["code"]
             if not isinstance(code, str) or _SAFE_CODE.fullmatch(code) is None:

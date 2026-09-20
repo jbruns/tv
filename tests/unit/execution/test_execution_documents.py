@@ -1453,3 +1453,39 @@ def test_session_close_positive_fixture_is_canonical_and_independently_valid() -
 
     assert record.disposition is SessionCloseDisposition.FAILED
     assert check_session_close_invariants(content) == ()
+
+
+@pytest.mark.parametrize(
+    ("path", "invalid"),
+    [
+        (("authority_state",), []),
+        (("authority_state",), {}),
+        (("disposition",), []),
+        (("disposition",), {}),
+        (("failure", "category"), []),
+        (("failure", "category"), {}),
+    ],
+)
+def test_session_close_oracle_is_total_for_non_string_enum_fields(
+    path: tuple[str, ...],
+    invalid: object,
+) -> None:
+    value = session_close_value("failed")
+    target = value
+    for component in path[:-1]:
+        nested = target[component]
+        assert isinstance(nested, dict)
+        target = nested
+    target[path[-1]] = invalid
+    candidate = dict(value)
+    candidate["current_digest"] = ""
+    without_digest = {
+        key: item for key, item in candidate.items() if key != "current_digest"
+    }
+    candidate["current_digest"] = (
+        "sha256:" + hashlib.sha256(canonical_document_bytes(without_digest)).hexdigest()
+    )
+
+    errors = check_session_close_invariants(canonical_document_bytes(candidate))
+
+    assert errors

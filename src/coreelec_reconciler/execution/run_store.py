@@ -47,6 +47,7 @@ from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
 from .local_durability import (
     AcknowledgementLost,
+    DestinationExists,
     DurabilityError,
     LocalDurability,
     PosixLocalDurability,
@@ -733,13 +734,11 @@ class RunStore:
             raise RunStoreError("session close requires durable terminal Run truth")
         workspace = self._workspace_for_run(lease.run_id)
         directory = workspace / "session-closes"
-        if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
-            raise CorruptRunStore("session close directory is unsafe")
-        created_directory = not directory.exists()
-        directory.mkdir(mode=0o700, exist_ok=True)
-        os.chmod(directory, 0o700)
-        if created_directory:
+        try:
+            self._durability.create_private_directory(str(directory))
             self._durability.sync_directory(str(workspace))
+        except DurabilityError as error:
+            raise CorruptRunStore("session close directory is unsafe") from error
         path = directory / f"{_opaque_key(intent.record_id)}.json"
         try:
             existing_bytes = self._read_bytes(path)
@@ -803,7 +802,11 @@ class RunStore:
             }
         )
         self._validate_session_close_binding(record, chain, workspace)
-        self._publish(path, record.canonical_bytes, f"session-close:{record.record_id}")
+        self._publish_new(
+            path,
+            record.canonical_bytes,
+            f"session-close:{record.record_id}",
+        )
         loaded = decode_session_close_record(self._read_bytes(path))
         self._validate_session_close_binding(loaded, chain, workspace)
         return loaded
@@ -1308,6 +1311,43 @@ class RunStore:
         finally:
             if temporary.exists():
                 temporary.unlink()
+
+    def _publish_new(self, path: Path, payload: bytes, operation_id: str) -> None:
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        try:
+            try:
+                self._durability.write_private(str(temporary), payload)
+            except AcknowledgementLost:
+                if not self._matches_payload(temporary, payload):
+                    raise
+            try:
+                self._durability.full_sync_file(str(temporary))
+            except AcknowledgementLost:
+                if not self._matches_payload(temporary, payload):
+                    raise
+            try:
+                self._durability.atomic_create(str(temporary), str(path))
+            except DestinationExists, AcknowledgementLost:
+                try:
+                    existing = self._read_bytes(path)
+                except CorruptRunStore, FileNotFoundError:
+                    raise CompareConflict(
+                        "append-only record publication conflict"
+                    ) from None
+                if existing != payload:
+                    raise CompareConflict(
+                        "append-only record publication conflict"
+                    ) from None
+            try:
+                self._durability.sync_directory(str(path.parent))
+            except AcknowledgementLost:
+                if not self._matches_payload(path, payload):
+                    raise
+            if self._read_bytes(path) != payload:
+                raise CompareConflict("append-only record publication conflict")
+            self._durability.acknowledge(operation_id)
+        finally:
+            self._durability.remove_file(str(temporary))
 
     def _read_object(self, path: Path) -> dict[str, object]:
         try:
