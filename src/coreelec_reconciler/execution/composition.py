@@ -1,11 +1,15 @@
 """Production-composition-ready execution services without Device access."""
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
+from typing import Protocol, cast
 
-from coreelec_reconciler.domain.canonical_json import decode_json_object
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.execution import (
     AttachmentRef,
     MutationDisposition,
@@ -14,9 +18,14 @@ from coreelec_reconciler.domain.execution import (
     RemoteOwnershipIdentity,
     SealIntent,
     StoredRevision,
+    execution_run_identity,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
-from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
+from coreelec_reconciler.domain.planning import (
+    CanonicalPlan,
+    CanonicalRunReport,
+    PlanDependencyGraph,
+)
 from coreelec_reconciler.execution.authority import (
     AcquiredAuthority,
     AuthorityAcquisitionRequest,
@@ -45,9 +54,12 @@ from coreelec_reconciler.execution.run_adapters import (
     RunStoreBoundAuthorityState,
     RunStoreExecutionPersistence,
 )
-from coreelec_reconciler.execution.run_store import RunStore
+from coreelec_reconciler.execution.run_store import RunStore, RunStoreError
 from coreelec_reconciler.persistence.document_codecs import (
     CanonicalExecutionDocumentCodec,
+)
+from coreelec_reconciler.persistence.planning_documents import (
+    reconstruct_plan_dependency_graph,
 )
 from coreelec_reconciler.resource_types.descriptor import (
     AttachmentStore,
@@ -80,6 +92,19 @@ class ApprovalGrant:
 
 
 @dataclass(frozen=True, slots=True)
+class DeviceAuthorityObservation:
+    device_id: DeviceId
+    binding_digest: str
+    boot_id: str
+    platform_identity_fingerprint: str
+    ssh_host_key_fingerprint: str
+
+
+class DeviceAuthorityProbe(Protocol):
+    def observe_authority(self, device_id: DeviceId) -> DeviceAuthorityObservation: ...
+
+
+@dataclass(frozen=True, slots=True)
 class SavedPlanExecutionRequest:
     plan_id: PlanId
     execution_run_id: RunId
@@ -89,8 +114,6 @@ class SavedPlanExecutionRequest:
     input_digests: Mapping[str, str]
     approval_grants: tuple[ApprovalGrant, ...]
     now: str
-    boot_id: str
-    binding_digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +234,7 @@ class ProductionExecutionFactory:
         resource_types: dict[str, str],
         contexts: ResourceContextProviderFactory,
         recovery_environment: RecoveryEnvironment,
+        device_authority: DeviceAuthorityProbe,
         authority: AuthorityCoordinator,
         ownership: RemoteOwnershipReader,
         clock: RunClock,
@@ -223,6 +247,7 @@ class ProductionExecutionFactory:
         self._resource_types = dict(resource_types)
         self._contexts = contexts
         self._recovery_environment = recovery_environment
+        self._device_authority = device_authority
         self._authority = authority
         self._ownership = ownership
         self._clock = clock
@@ -240,7 +265,18 @@ class ProductionExecutionFactory:
         return self._plan_store.load(plan_id)
 
     def bind(self, run_id: RunId) -> BoundExecutionServices:
-        return self._bind(run_id)
+        try:
+            chain = self._run_store.load_chain(run_id)
+            value = decode_json_object(chain.head.payload)
+            identity = execution_run_identity(value)
+        except RunStoreError:
+            identity = self._run_store.load_identity(run_id)
+        saved = self.load_plan(PlanId(_required_text(identity, "plan_id")))
+        graph = reconstruct_plan_dependency_graph(
+            saved.plan.canonical_bytes,
+            resource_registry=self._registry,
+        )
+        return self._bind(run_id, dependency_graph=graph)
 
     def approve_saved_plan(
         self,
@@ -257,6 +293,20 @@ class ProductionExecutionFactory:
         device = value.get("device")
         if not isinstance(device, dict) or device != dict(request.expected_device):
             raise ValueError("saved Plan Device identity changed")
+        observed_device = self._device_authority.observe_authority(request.device_id)
+        reobserved_device = self._device_authority.observe_authority(request.device_id)
+        binding_digest = _device_binding_digest(device)
+        if (
+            reobserved_device != observed_device
+            or observed_device.device_id != request.device_id
+            or observed_device.binding_digest != binding_digest
+            or observed_device.platform_identity_fingerprint
+            != _required_text(device, "observed_platform_identity_fingerprint")
+            or observed_device.ssh_host_key_fingerprint
+            != _required_text(device, "ssh_host_key_fingerprint")
+            or not observed_device.boot_id
+        ):
+            raise ValueError("observed Device authority identity changed")
         expires_at = value.get("expires_at")
         if not isinstance(expires_at, str) or _timestamp(request.now) > _timestamp(
             expires_at
@@ -289,12 +339,19 @@ class ProductionExecutionFactory:
         ):
             raise ValueError("approval grant is not required by saved Plan")
         resources = _objects(value, "resources")
+        dependency_graph = reconstruct_plan_dependency_graph(
+            saved.plan.canonical_bytes,
+            resource_registry=self._registry,
+        )
+        resources_by_id = {
+            _required_text(resource, "resource_id"): resource for resource in resources
+        }
         deferred_journal = _DeferredJournal()
         deferred_attachments = _DeferredAttachmentStore()
         execution_contexts = self._contexts.bind(deferred_journal)
         changes: list[ExecutableChange] = []
-        for resource in resources:
-            resource_id = _required_text(resource, "resource_id")
+        for resource_id in dependency_graph.execution_order:
+            resource = resources_by_id[resource_id]
             type_code = _required_text(resource, "resource_type")
             descriptor = self._registry.descriptor(type_code)
             if (
@@ -309,12 +366,17 @@ class ProductionExecutionFactory:
                 type_code,
                 deferred_attachments,
             )
+            if (
+                context.binding.device_id != request.device_id.value
+                or context.binding.binding_digest != binding_digest
+            ):
+                raise ValueError("Resource context Device binding changed")
             runtime = descriptor.execution_factory(context)
             for change in _objects(resource, "changes"):
                 changes.append(
                     BoundExecutableChange(
                         resource_id,
-                        (),
+                        dependency_graph.requires(resource_id),
                         "service_disruption" in _strings(change, "impact_codes"),
                         runtime,
                         descriptor.decode_planned_change(
@@ -331,6 +393,8 @@ class ProductionExecutionFactory:
                     saved,
                     request,
                     token_digest,
+                    binding_digest,
+                    observed_device.boot_id,
                     resources,
                 ),
                 self._registry,
@@ -348,8 +412,8 @@ class ProductionExecutionFactory:
                     workspace_id,
                     saved.plan.plan_id,
                     saved.plan.full_digest,
-                    request.binding_digest,
-                    request.boot_id,
+                    binding_digest,
+                    observed_device.boot_id,
                 ),
                 request.now,
             )
@@ -360,6 +424,7 @@ class ProductionExecutionFactory:
             execution_contexts,
             deferred_journal,
             deferred_attachments,
+            dependency_graph,
         )
         return PreparedExecution(
             ApprovedPlan(request.execution_run_id, tuple(changes)),
@@ -373,6 +438,7 @@ class ProductionExecutionFactory:
         execution_contexts: ResourceContextProvider | None = None,
         deferred_journal: _DeferredJournal | None = None,
         deferred_attachments: _DeferredAttachmentStore | None = None,
+        dependency_graph: PlanDependencyGraph | None = None,
     ) -> BoundExecutionServices:
         contexts = _DeferredContexts()
         persistence = RunStoreExecutionPersistence(
@@ -385,6 +451,7 @@ class ProductionExecutionFactory:
             self._clock,
             self._documents,
             acquired.revision_lease if acquired is not None else None,
+            dependency_graph,
         )
         provider = execution_contexts or self._contexts.bind(persistence)
         contexts.bind(provider)
@@ -425,6 +492,8 @@ def _initial_execution_run(
     saved: SavedPlan,
     request: SavedPlanExecutionRequest,
     token_digest: str,
+    binding_digest: str,
+    boot_id: str,
     resources: list[dict[str, object]],
 ) -> dict[str, object]:
     return {
@@ -442,8 +511,8 @@ def _initial_execution_run(
         "attachments": [],
         "attempts": [],
         "authority": {
-            "binding_digest": request.binding_digest,
-            "boot_id": request.boot_id,
+            "binding_digest": binding_digest,
+            "boot_id": boot_id,
             "cleanup_state": "not_started",
             "device_index_intent": "add_or_retain_active",
             "marker_digest": None,
@@ -547,6 +616,10 @@ def _desired_disposition(resource: Mapping[str, object]) -> str:
     }:
         raise ValueError("saved Plan desired disposition is malformed")
     return cast(str, summary["presence"])
+
+
+def _device_binding_digest(device: Mapping[str, object]) -> str:
+    return "sha256:" + hashlib.sha256(canonical_document_bytes(device)).hexdigest()
 
 
 def _timestamp(value: str) -> datetime:

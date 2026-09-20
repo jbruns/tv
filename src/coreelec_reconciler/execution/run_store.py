@@ -20,6 +20,7 @@ from coreelec_reconciler.domain.execution import (
     AuthorityPhase,
     DeviceIndexIntent,
     DeviceLease,
+    ExecutionEvidenceKind,
     LoadedAttachment,
     RevisionLease,
     RunStatus,
@@ -27,6 +28,7 @@ from coreelec_reconciler.domain.execution import (
     StoredRevision,
     VerifiedRunChain,
     WorkspaceId,
+    decode_execution_evidence,
     evidence_proves_terminal_cleanup,
     execution_run_identity,
     is_post_terminal_cleanup_successor,
@@ -321,6 +323,21 @@ class RunStore:
             raise CorruptRunStore("Run terminal state does not match canonical head")
         return VerifiedRunChain(tuple(revisions), revisions[-1], terminal)
 
+    def load_identity(self, run_id: RunId) -> dict[str, object]:
+        workspace = self._workspace_for_run(run_id)
+        identity = self._read_object(workspace / "identity.json")
+        if set(identity) != _IDENTITY_FIELDS:
+            raise CorruptRunStore("workspace identity fields are incomplete")
+        if _required_string(identity, "run_id") != run_id.value:
+            raise CorruptRunStore("workspace identity does not match Run")
+        try:
+            token = self._read_bytes(workspace / "ownership-token.bin")
+        except FileNotFoundError as error:
+            raise CorruptRunStore("ownership token is absent") from error
+        if _sha256(token) != identity.get("ownership_token_digest"):
+            raise CorruptRunStore("ownership token verification failed")
+        return identity
+
     def compare_and_append(
         self,
         lease: RevisionLease,
@@ -557,6 +574,98 @@ class RunStore:
             f"receipt:{digest}",
         )
         return digest
+
+    def record_corrupt_recovery_evidence(
+        self,
+        lease: RevisionLease,
+        value: dict[str, object],
+    ) -> StoredRevision:
+        """Persist a closed abandonment/quarantine record beside a corrupt chain."""
+        self._require_run_lease(lease)
+        try:
+            record = decode_execution_evidence(
+                value,
+                resource_registry=self._resource_registry,
+            )
+        except ValueError as error:
+            raise RunStoreError("corrupt recovery evidence is invalid") from error
+        if record.kind not in {
+            ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL,
+            ExecutionEvidenceKind.AUTHORITY_EVIDENCE,
+        }:
+            raise RunStoreError("corrupt recovery evidence kind is not allowed")
+        identity = self.load_identity(lease.run_id)
+        if (
+            record.bindings.run_id != lease.run_id.value
+            or record.bindings.workspace_id != lease.workspace_id.value
+            or record.bindings.device_id != identity["device_id"]
+            or record.bindings.plan_id != identity["plan_id"]
+            or record.bindings.plan_full_digest != identity["plan_full_digest"]
+            or record.bindings.binding_digest != identity["binding_digest"]
+        ):
+            raise RunStoreError("corrupt recovery evidence binding changed")
+        payload = canonical_document_bytes(value)
+        digest = _sha256(payload)
+        directory = self._workspace_for_run(lease.run_id) / "receipts"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+        path = directory / f"{record.kind.value}.{digest.removeprefix('sha256:')}.json"
+        self._publish(path, payload, f"corrupt-recovery:{record.kind.value}")
+        return StoredRevision(0, digest, payload)
+
+    def seal_corrupt_quarantine(
+        self,
+        lease: RevisionLease,
+        abandonment_digest: str,
+        quarantine_digest: str,
+    ) -> None:
+        """Seal a corrupt Run only after typed abandonment and quarantine receipts."""
+        self._require_run_lease(lease)
+        workspace = self._workspace_for_run(lease.run_id)
+        receipts = workspace / "receipts"
+        expected = {
+            ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL: abandonment_digest,
+            ExecutionEvidenceKind.AUTHORITY_EVIDENCE: quarantine_digest,
+        }
+        for kind, digest in expected.items():
+            path = receipts / f"{kind.value}.{digest.removeprefix('sha256:')}.json"
+            value = decode_json_object(self._read_bytes(path))
+            record = decode_execution_evidence(
+                value,
+                resource_registry=self._resource_registry,
+            )
+            if (
+                record.kind is not kind
+                or _sha256(canonical_document_bytes(value)) != digest
+            ):
+                raise RunStoreError("corrupt recovery receipt verification failed")
+        identity = self.load_identity(lease.run_id)
+        self._publish(
+            workspace / "seal.json",
+            canonical_document_bytes(
+                {
+                    "ownership_released_or_quarantined": True,
+                    "terminal_digest": abandonment_digest,
+                    "terminal_revision": 0,
+                }
+            ),
+            "seal-corrupt-quarantine",
+        )
+        self._publish(
+            workspace / "state.json",
+            canonical_document_bytes(
+                {
+                    "authority_phase": AuthorityPhase.RELEASE_PENDING.value,
+                    "status": RunStatus.FAILED_RECOVERY_REQUIRED.value,
+                    "terminal": True,
+                }
+            ),
+            "state-corrupt-quarantine",
+        )
+        self._remove_index_entry(
+            DeviceId(_required_string(identity, "device_id")),
+            lease.run_id,
+        )
 
     def load_operational_receipts(
         self,

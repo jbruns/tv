@@ -72,6 +72,7 @@ from tests.unit.execution.test_recovery_actions import Inspector, evidence, snap
 class _Journal:
     def __init__(self) -> None:
         self.events: list[str] = []
+        self.skips: list[tuple[str, tuple[str, ...]]] = []
 
     def start(self, plan: object) -> None:
         self.events.append("start")
@@ -98,6 +99,7 @@ class _Journal:
         self, run_id: RunId, resource_id: str, dependency_ids: tuple[str, ...]
     ) -> None:
         self.events.append("skipped")
+        self.skips.append((resource_id, dependency_ids))
 
 
 class _SuccessfulResult:
@@ -558,11 +560,12 @@ def test_approved_reasoned_abandonment_terminalizes_then_quarantines() -> None:
 
     assert outcome.status is RunStatus.FAILED_RECOVERY_REQUIRED
     assert persistence.events[-4:] == [
-        "abandon:approval.operator:evidence is corrupt",
-        "cleanup:sha256:cleanup",
         "load",
+        "load",
+        "abandon:approval.operator:evidence is corrupt",
         "seal:True",
     ]
+    assert resource.calls == []
     assert authority.events == ["quarantine:approval.operator:evidence is corrupt"]
 
 
@@ -583,7 +586,11 @@ def test_abandonment_seals_quarantine_when_cleanup_is_ambiguous() -> None:
     )
 
     assert not outcome.cleanup_complete
-    assert persistence.events[-2:] == ["load", "seal:True"]
+    assert persistence.events[-2:] == [
+        "abandon:approval.operator:evidence is corrupt",
+        "seal:True",
+    ]
+    assert resource.calls == []
     assert authority.events == ["quarantine:approval.operator:evidence is corrupt"]
 
 
@@ -789,6 +796,7 @@ def test_known_resource_failure_skips_dependents_and_continues_independent_work(
     assert outcome.status is RunStatus.FAILED_PARTIAL
     assert journal.events.count("result") == 2
     assert journal.events.count("skipped") == 1
+    assert journal.skips == [("dependent", ("failed",))]
 
 
 def test_disruptive_failure_stops_all_later_mutation() -> None:

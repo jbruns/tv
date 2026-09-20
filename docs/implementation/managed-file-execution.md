@@ -78,6 +78,19 @@ execution Run. The returned `ApprovedPlan` is already bound to the acquired
 RunStore lease and concrete execution services; production composition cannot
 substitute unrelated hand-built Changes.
 
+Plan schema v2 owns the Resource dependency graph. Composition reconstructs
+and validates that graph from the immutable saved canonical Plan bytes, uses
+its deterministic execution order, and binds each executable Change to its
+encoded prerequisites. Restart loads the same saved graph rather than current
+configuration, so a changed configuration cannot alter dependent skipping or
+reverse-dependency rollback order.
+
+The Device authority probe supplies fresh boot, platform, and pinned host-key
+identity. Composition performs two equal observations, derives the binding
+digest from the canonical accepted Device object, and requires every observed
+and Resource-context identity to match before remote authority acquisition.
+Callers cannot assert a binding digest or boot identity.
+
 `RunStoreExecutionPersistence` is the concrete `ExecutionJournal`,
 `RecoveryPersistence`, and bound `AttachmentStore` adapter. Preparation
 documents are content-addressed attachments referenced by canonical Run
@@ -89,9 +102,12 @@ sequence transitions are rejected. Cleanup intent, marker, and receipt records
 are terminal cleanup-only successors written after terminal truth. Authority
 release, quarantine, and abandonment evidence are likewise canonical
 successors. Normal sealing requires verified cleanup and release. Separately
-approved abandonment attempts and records cleanup, then permits a quarantined
-seal even when cleanup remains ambiguous so the active authority index can be
-closed without claiming release or cleanup success. Remote release remains
+approved abandonment attempts and records cleanup when local evidence remains
+valid. Corrupt revision, codec, manifest, or attachment evidence instead
+produces an inspect-only result and persists closed typed abandonment and
+quarantine records without attempting unsafe managed-state cleanup. A
+quarantined seal may close the active authority index while cleanup remains
+unknown; it never claims release or cleanup success. Remote release remains
 authorized by the original terminal digest rather than a cleanup successor
 digest.
 
@@ -107,7 +123,10 @@ Bound authority restart reconstructs the expected remote ownership identity
 from verified local Run, Plan, workspace, and token state. It requires exact
 Device, Run, workspace, Plan ID, Plan full digest, binding digest, boot ID, and
 ownership-token digest equality before returning mutating authority; any
-mismatch leaves only inspection available.
+mismatch leaves only inspection available. A mismatch releases a Run revision
+lease acquired locally by the authority loader, but never releases an injected
+shared lease that still protects inspection, attachments, and orderly service
+shutdown.
 
 Built-in Resource Type descriptors expose a lazy execution factory instead of
 a process-bound execution instance. `ConfigurationResourceContexts` supplies
@@ -115,8 +134,8 @@ the resolved Device capability, per-Run binding, attachment store, lifecycle,
 and clock without reversing the Resource Type dependency. Composition binds
 each lifecycle's intent and freshly observed primitive-outcome checkpoints to
 the same RunStore journal before reconstructing any prepared Resource.
-Recovery rebuilds
-all prepared Resources in persisted Plan/dependency order, observes each
+Recovery rebuilds all prepared Resources in saved Plan dependency order,
+observes each
 freshly, rolls back in reverse order, and performs terminal cleanup in Plan
 order. `ProductionExecutionFactory` binds these concrete stores and authority
 adapters for one Run without opening a Device session itself.

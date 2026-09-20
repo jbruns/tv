@@ -271,6 +271,10 @@ class AuthorityEvidenceJournal(Protocol):
         ownership_state: str,
         *,
         quarantine_receipt_digest: str | None = None,
+        generation: int | None = None,
+        marker_digest: str | None = None,
+        marker_phase: RemoteMarkerPhase | None = None,
+        token_digest: str | None = None,
     ) -> StoredRevision: ...
 
 
@@ -337,6 +341,10 @@ class M3AuthorityRecovery:
                 run_id,
                 "quarantined",
                 quarantine_receipt_digest=quarantine.incident_receipt_digest,
+                generation=authority.ownership.generation,
+                marker_digest=quarantine.marker_digest,
+                marker_phase=RemoteMarkerPhase.QUARANTINE_PENDING,
+                token_digest=authority.ownership.token_digest,
             )
 
 
@@ -428,25 +436,41 @@ class RecoveryCoordinator:
             terminal = self._persistence.record_abandonment(
                 run_id, approval=approval, reason=reason
             )
-            cleanup_complete = True
-            for resource in self._persistence.resources(run_id):
-                cleanup = resource.cleanup(terminal.digest)
-                self._persistence.record_cleanup(run_id, resource.resource_id, cleanup)
-                cleanup_complete = cleanup_complete and all(
-                    receipt.disposition
-                    in {
-                        MutationDisposition.APPLIED,
-                        MutationDisposition.DEFINITELY_NOT_APPLIED,
-                    }
-                    for receipt in cleanup.receipts
+            corrupt = not all(
+                (
+                    inspection.evidence.chain_valid,
+                    inspection.evidence.chain_complete,
+                    inspection.evidence.attachments_valid,
+                    inspection.evidence.codecs_valid,
+                    inspection.evidence.preparation_complete,
                 )
+            )
+            cleanup_complete = not corrupt
+            if not corrupt:
+                for resource in self._persistence.resources(run_id):
+                    cleanup = resource.cleanup(terminal.digest)
+                    self._persistence.record_cleanup(
+                        run_id, resource.resource_id, cleanup
+                    )
+                    cleanup_complete = cleanup_complete and all(
+                        receipt.disposition
+                        in {
+                            MutationDisposition.APPLIED,
+                            MutationDisposition.DEFINITELY_NOT_APPLIED,
+                        }
+                        for receipt in cleanup.receipts
+                    )
             self._authority.quarantine(
                 run_id,
                 terminal.digest,
                 approval=approval,
                 reason=reason,
             )
-            seal_revision = self._persistence.load_chain(run_id).head.revision
+            seal_revision = (
+                terminal.revision
+                if corrupt
+                else self._persistence.load_chain(run_id).head.revision
+            )
             self._persistence.seal(run_id, SealIntent(seal_revision, True))
             return ExecutionOutcome(
                 run_id,

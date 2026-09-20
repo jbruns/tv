@@ -30,6 +30,7 @@ from coreelec_reconciler.domain.execution import (
     NormalizedResourceState,
     Presence,
     RecoveryEvidence,
+    RemoteMarkerPhase,
     RemoteOwnership,
     RemoteOwnershipIdentity,
     RemoteOwnershipSnapshot,
@@ -46,7 +47,7 @@ from coreelec_reconciler.domain.execution import (
     execution_run_identity,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
-from coreelec_reconciler.domain.planning import CanonicalRunReport
+from coreelec_reconciler.domain.planning import CanonicalRunReport, PlanDependencyGraph
 from coreelec_reconciler.execution.authority import AcquiredAuthority
 from coreelec_reconciler.execution.engine import (
     ApprovedPlan,
@@ -55,7 +56,7 @@ from coreelec_reconciler.execution.engine import (
     RecoveryResource,
 )
 from coreelec_reconciler.execution.recovery import RecoveryInspectorPort
-from coreelec_reconciler.execution.run_store import RunStore
+from coreelec_reconciler.execution.run_store import RunStore, RunStoreError
 from coreelec_reconciler.persistence.document_codecs import (
     CanonicalExecutionDocumentCodec,
 )
@@ -77,6 +78,7 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
     PreparationBinding,
+    PreparationError,
     PreparedManagedFile,
     normalized_state_digest,
 )
@@ -297,9 +299,7 @@ class RunStoreBoundAuthorityState:
         existing = self._bound.get(run_id)
         if existing is not None:
             return existing
-        chain = self._store.load_chain(run_id)
-        run_value = decode_json_object(chain.head.payload)
-        local_identity = execution_run_identity(run_value)
+        local_identity = self._store.load_identity(run_id)
         device_id = DeviceId(_text(local_identity, "device_id"))
         device_lease = self._store.acquire_device(device_id)
         try:
@@ -322,7 +322,8 @@ class RunStoreBoundAuthorityState:
             ownership.identity != expected_identity
             or ownership.token_digest != expected_token_digest
         ):
-            self._store.release_run(revision_lease)
+            if self._owns_revision_lease:
+                self._store.release_run(revision_lease)
             self._store.release_device(device_lease)
             raise ValueError("remote ownership does not bind to the local Run")
         acquired = AcquiredAuthority(
@@ -371,6 +372,7 @@ class RunStoreExecutionPersistence:
         clock: RunClock,
         documents: ExecutionDocumentCodec | None = None,
         revision_lease: RevisionLease | None = None,
+        dependency_graph: PlanDependencyGraph | None = None,
     ) -> None:
         self._store = store
         self._run_id = run_id
@@ -386,9 +388,13 @@ class RunStoreExecutionPersistence:
         self._recovery_environment = recovery_environment
         self._clock = clock
         self._documents = documents or CanonicalExecutionDocumentCodec()
+        self._dependency_graph = dependency_graph
         self._resource_metadata: dict[str, _ResourceMetadata] = {}
         self._prepared: dict[str, PreparedManagedFile] = {}
         self._last_operation: dict[str, tuple[str, str]] = {}
+        self._corrupt_recovery = False
+        self._corrupt_abandonment_digest: str | None = None
+        self._corrupt_quarantine_digest: str | None = None
 
     def close(self) -> None:
         self._store.release_run(self._lease)
@@ -742,6 +748,14 @@ class RunStoreExecutionPersistence:
             self._store.load_chain(run_id).head.payload,
             self._registry,
         )
+        if self._dependency_graph is not None:
+            by_resource = {record.resource_id: record for record in records}
+            if set(by_resource) != set(self._dependency_graph.execution_order):
+                raise ValueError("prepared Resources do not match saved Plan graph")
+            records = tuple(
+                by_resource[resource_id]
+                for resource_id in self._dependency_graph.execution_order
+            )
         resources: list[RecoveryResource] = []
         for record in records:
             descriptor = self._registry.descriptor(record.type_code)
@@ -778,7 +792,11 @@ class RunStoreExecutionPersistence:
             self._resource_metadata[record.resource_id] = _ResourceMetadata(
                 record.type_code,
                 record.change_id,
-                (),
+                (
+                    self._dependency_graph.requires(record.resource_id)
+                    if self._dependency_graph is not None
+                    else ()
+                ),
                 False,
                 record.state_addresses,
             )
@@ -860,6 +878,23 @@ class RunStoreExecutionPersistence:
         approval: str,
         reason: str,
     ) -> StoredRevision:
+        if self._corrupt_recovery:
+            record = self._trusted_run_evidence(
+                ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL,
+                "evidence.run.abandonment",
+                {
+                    "actor": approval,
+                    "approved_at": self._clock.utc_now(),
+                    "mechanism": "noninteractive-cli",
+                    "reason": reason,
+                },
+            )
+            stored = self._store.record_corrupt_recovery_evidence(
+                self._lease,
+                record,
+            )
+            self._corrupt_abandonment_digest = stored.digest
+            return stored
         self._append_records(
             [
                 self._run_evidence(
@@ -892,6 +927,18 @@ class RunStoreExecutionPersistence:
 
     def seal(self, run_id: RunId, intent: SealIntent) -> None:
         self._require_run(run_id)
+        if self._corrupt_recovery:
+            if (
+                self._corrupt_abandonment_digest is None
+                or self._corrupt_quarantine_digest is None
+            ):
+                raise ValueError("corrupt Run lacks abandonment or quarantine truth")
+            self._store.seal_corrupt_quarantine(
+                self._lease,
+                self._corrupt_abandonment_digest,
+                self._corrupt_quarantine_digest,
+            )
+            return
         self._store.finalize_and_seal(self._lease, intent)
 
     def record_authority_state(
@@ -900,8 +947,47 @@ class RunStoreExecutionPersistence:
         ownership_state: str,
         *,
         quarantine_receipt_digest: str | None = None,
+        generation: int | None = None,
+        marker_digest: str | None = None,
+        marker_phase: RemoteMarkerPhase | None = None,
+        token_digest: str | None = None,
     ) -> StoredRevision:
         self._require_run(run_id)
+        if self._corrupt_recovery:
+            if ownership_state != "quarantined" or quarantine_receipt_digest is None:
+                raise ValueError("corrupt Run may only record quarantine authority")
+            identity = self._store.load_identity(run_id)
+            record = build_execution_evidence(
+                evidence_id="evidence.authority.quarantined.corrupt",
+                observed_at=self._clock.utc_now(),
+                observer=EvidenceObserver(
+                    _observer_code(ExecutionEvidenceKind.AUTHORITY_EVIDENCE), 1
+                ),
+                subject_kind="device",
+                subject_id=_text(identity, "device_id"),
+                resource_type=None,
+                bindings=self._trusted_evidence_bindings(),
+                state_addresses=(),
+                attachment_refs=(),
+                attempt=None,
+                kind=ExecutionEvidenceKind.AUTHORITY_EVIDENCE,
+                payload={
+                    "generation": generation,
+                    "manifest_digest": None,
+                    "marker_digest": marker_digest,
+                    "ownership_state": "quarantined",
+                    "phase": (marker_phase.value if marker_phase is not None else None),
+                    "quarantine_receipt_digest": quarantine_receipt_digest,
+                    "token_digest": token_digest,
+                },
+                resource_registry=self._registry,
+            )
+            stored = self._store.record_corrupt_recovery_evidence(
+                self._lease,
+                record,
+            )
+            self._corrupt_quarantine_digest = stored.digest
+            return stored
         chain = self.load_chain(run_id)
         value = decode_json_object(chain.head.payload)
         authority = value.get("authority")
@@ -1043,6 +1129,29 @@ class RunStoreExecutionPersistence:
             resource_registry=self._registry,
         )
 
+    def _trusted_run_evidence(
+        self,
+        kind: ExecutionEvidenceKind,
+        evidence_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        bindings = self._trusted_evidence_bindings()
+        return build_execution_evidence(
+            evidence_id=evidence_id,
+            observed_at=self._clock.utc_now(),
+            observer=EvidenceObserver(_observer_code(kind), 1),
+            subject_kind="run",
+            subject_id=bindings.run_id,
+            resource_type=None,
+            bindings=bindings,
+            state_addresses=(),
+            attachment_refs=(),
+            attempt=None,
+            kind=kind,
+            payload=payload,
+            resource_registry=self._registry,
+        )
+
     def _authority_evidence(
         self,
         evidence_id: str,
@@ -1080,6 +1189,19 @@ class RunStoreExecutionPersistence:
             _text(identity, "binding_digest"),
             resource_id,
             metadata.change_id if metadata is not None else None,
+        )
+
+    def _trusted_evidence_bindings(self) -> ExecutionEvidenceBindings:
+        identity = self._store.load_identity(self._run_id)
+        return ExecutionEvidenceBindings(
+            _text(identity, "device_id"),
+            _text(identity, "run_id"),
+            _text(identity, "workspace_id"),
+            _text(identity, "plan_id"),
+            _text(identity, "plan_full_digest"),
+            _text(identity, "binding_digest"),
+            None,
+            None,
         )
 
     def _metadata(self, resource_id: str) -> _ResourceMetadata:
@@ -1240,6 +1362,16 @@ class _RunStoreInspectionPort:
         self,
         first: RemoteOwnershipSnapshot,
     ) -> RecoveryEvidence:
+        try:
+            return self._validate_complete_evidence(first)
+        except RunStoreError, PreparationError, TypeError, ValueError:
+            self._persistence._corrupt_recovery = True
+            return self._corrupt_evidence(first)
+
+    def _validate_complete_evidence(
+        self,
+        first: RemoteOwnershipSnapshot,
+    ) -> RecoveryEvidence:
         run_id = self._persistence._run_id
         chain = self._persistence.load_chain(run_id)
         value = decode_json_object(chain.head.payload)
@@ -1354,6 +1486,65 @@ class _RunStoreInspectionPort:
                 and isinstance(authority, dict)
                 and authority.get("ownership_state") in {"released", "quarantined"}
             ),
+            facts=(),
+        )
+
+    def _corrupt_evidence(
+        self,
+        first: RemoteOwnershipSnapshot,
+    ) -> RecoveryEvidence:
+        run_id = self._persistence._run_id
+        identity = self._persistence._store.load_identity(run_id)
+        expected = RemoteOwnershipIdentity(
+            DeviceId(_text(identity, "device_id")),
+            run_id,
+            self._persistence._lease.workspace_id,
+            _text(identity, "plan_id"),
+            _text(identity, "plan_full_digest"),
+            _text(identity, "binding_digest"),
+            _text(identity, "boot_id"),
+        )
+        binding_matches = first.identity == expected and first.token_digest == _text(
+            identity, "ownership_token_digest"
+        )
+        return RecoveryEvidence(
+            run_id=run_id,
+            workspace_id=self._persistence._lease.workspace_id,
+            stable_snapshot=True,
+            remote_ownership_presence=first.presence,
+            remote_generation=first.generation,
+            remote_phase=first.phase,
+            remote_marker_digest=first.marker_digest,
+            remote_integrity_valid=(
+                first.marker_digest is not None and binding_matches
+                if first.presence is Presence.PRESENT
+                else None
+            ),
+            remote_quarantine_presence=self._environment.read_remote_quarantine(run_id),
+            binding_matches=binding_matches,
+            chain_valid=False,
+            chain_complete=False,
+            attachments_valid=False,
+            codecs_valid=False,
+            preparation_complete=False,
+            rollback_declared=False,
+            rollback_approved=False,
+            live_helper=self._environment.live_helper(run_id),
+            forward_work_unperformed=False,
+            current_relation=StateRelation.UNKNOWN,
+            before_state=None,
+            post_state=None,
+            allowed_intermediate_states=(),
+            effect_disposition=EffectDisposition.NOT_STARTED,
+            effect_readiness_positive=None,
+            post_effect_evidence_complete=False,
+            rollback_complete_and_verified=False,
+            restore_effect_preplanned=False,
+            restore_effect_approved=False,
+            canonical_status=RunStatus.FAILED_RECOVERY_REQUIRED,
+            terminal_revision_durable=False,
+            cleanup_complete=False,
+            ownership_release_or_quarantine_durable=False,
             facts=(),
         )
 

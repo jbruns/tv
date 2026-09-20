@@ -15,6 +15,7 @@ from coreelec_reconciler.application.reconciler import (
 from coreelec_reconciler.domain.configuration import Resource
 from coreelec_reconciler.domain.execution import (
     CleanupMutationIntent,
+    FinalizeMode,
     MarkerCheckpoint,
     MutationDisposition,
     MutationReceipt,
@@ -27,17 +28,23 @@ from coreelec_reconciler.domain.execution import (
     RemoteOwnership,
     RemoteOwnershipIdentity,
     RemoteOwnershipSnapshot,
+    RemoteQuarantine,
     RunStatus,
     WorkspaceId,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
-from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
+from coreelec_reconciler.domain.planning import (
+    CanonicalPlan,
+    CanonicalRunReport,
+    PlanDependencyGraph,
+)
 from coreelec_reconciler.execution.authority import (
     AcquiredAuthority,
     AuthorityCoordinator,
 )
 from coreelec_reconciler.execution.composition import (
     ApprovalGrant,
+    DeviceAuthorityObservation,
     ProductionExecutionFactory,
     RunStoreExecutionFinalizer,
     SavedPlanExecutionRequest,
@@ -46,12 +53,13 @@ from coreelec_reconciler.execution.engine import (
     ApprovedPlan,
     ExecutableChange,
     ExecutionEngine,
+    M3AuthorityRecovery,
     RecoveryAuthority,
+    RecoveryCoordinator,
     RecoveryDriver,
 )
 from coreelec_reconciler.execution.local_durability import DurabilityError
 from coreelec_reconciler.execution.plan_store import PlanStore
-from coreelec_reconciler.execution.progress import Progress
 from coreelec_reconciler.execution.recovery import inspect_recovery
 from coreelec_reconciler.execution.run_adapters import (
     RecoveryEnvironment,
@@ -64,6 +72,7 @@ from coreelec_reconciler.execution.run_adapters import (
 )
 from coreelec_reconciler.execution.run_store import RunStore
 from coreelec_reconciler.reporting.canonical_json import (
+    canonical_document_bytes,
     decode_json_object,
 )
 from coreelec_reconciler.reporting.execution_documents import (
@@ -114,7 +123,11 @@ from coreelec_reconciler.resource_types.managed_file.preparation import (
 )
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
 from tests.fakes.runtime import FakeManagedFiles
-from tests.unit.execution.test_execution_documents import RUN_ID, run_value
+from tests.unit.execution.test_execution_documents import (
+    RUN_ID,
+    run_value,
+    unchecked_run_bytes,
+)
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "canonical"
 
@@ -122,6 +135,38 @@ FIXTURES = Path(__file__).parents[2] / "fixtures" / "canonical"
 class _Clock:
     def utc_now(self) -> str:
         return "2026-09-19T08:02:00Z"
+
+
+class _DeviceAuthority:
+    def __init__(
+        self,
+        device: dict[str, object],
+        *,
+        binding_digest: str | None = None,
+        boot_id: str = "boot.opaque",
+        platform_identity: str | None = None,
+        host_key: str | None = None,
+        second: DeviceAuthorityObservation | None = None,
+    ) -> None:
+        self.observation = DeviceAuthorityObservation(
+            DeviceId(cast(str, device["logical_id"])),
+            binding_digest
+            or (
+                "sha256:" + hashlib.sha256(canonical_document_bytes(device)).hexdigest()
+            ),
+            boot_id,
+            platform_identity
+            or cast(str, device["observed_platform_identity_fingerprint"]),
+            host_key or cast(str, device["ssh_host_key_fingerprint"]),
+        )
+        self.second = second
+        self.calls = 0
+
+    def observe_authority(self, device_id: DeviceId) -> DeviceAuthorityObservation:
+        self.calls += 1
+        if self.calls == 2 and self.second is not None:
+            return self.second
+        return self.observation
 
 
 class _FinalizerAuthority:
@@ -169,6 +214,40 @@ class _AcquiringAuthority:
                 RemoteMarkerPhase.ACQUIRED,
                 "sha256:" + "6" * 64,
             ),
+        )
+
+
+class _QuarantiningCoordinator:
+    def checkpoint(
+        self,
+        authority: AcquiredAuthority,
+        expected_phase: RemoteMarkerPhase,
+        next_phase: RemoteMarkerPhase,
+        evidence_digest: str | None,
+        *,
+        updated_at: str,
+    ) -> AcquiredAuthority:
+        return replace(
+            authority,
+            ownership=replace(
+                authority.ownership,
+                generation=authority.ownership.generation + 1,
+                phase=next_phase,
+                marker_digest="sha256:" + "7" * 64,
+            ),
+        )
+
+    def quarantine(
+        self,
+        authority: AcquiredAuthority,
+        incident_receipt_digest: str,
+        *,
+        updated_at: str,
+    ) -> RemoteQuarantine:
+        return RemoteQuarantine(
+            authority.ownership.identity,
+            "sha256:" + "8" * 64,
+            "sha256:" + "9" * 64,
         )
 
 
@@ -258,6 +337,11 @@ class _CleanupFailureChange(_Change):
 
 
 class _Runtime:
+    rollback_events: list[str] | None = None
+
+    def __init__(self, resource_id: str = "") -> None:
+        self.resource_id = resource_id
+
     def observe(self) -> object:
         return object()
 
@@ -271,10 +355,19 @@ class _Runtime:
         return object()
 
     def rollback(self, prepared: object) -> object:
-        return object()
+        managed = cast(PreparedManagedFile, prepared)
+        if self.rollback_events is not None:
+            self.rollback_events.append(self.resource_id)
+        return (
+            MutationTrace(()),
+            ManagedFileVerification(
+                ManagedFileVerificationStatus.MATCHED,
+                ManagedFileObservation(managed.address, managed.before, None),
+            ),
+        )
 
     def cleanup(self, prepared: object, terminal_evidence_ref: str) -> object:
-        return object()
+        return MutationTrace(())
 
 
 class _Contexts:
@@ -449,7 +542,8 @@ def _registry() -> ResourceRegistry:
                 decode_intent,
                 decode_plan_evidence,
                 execution_factory=lambda context: cast(
-                    ErasedResourceExecution, _Runtime()
+                    ErasedResourceExecution,
+                    _Runtime(context.binding.resource_id),
                 ),
                 encode_prepared=lambda value: (
                     cast(PreparedManagedFile, value).manifest_bytes
@@ -504,6 +598,7 @@ def _create(
 def _adapter(
     store: RunStore,
     contexts: ResourceContextProvider | None = None,
+    environment: RecoveryEnvironment | None = None,
 ) -> RunStoreExecutionPersistence:
     return RunStoreExecutionPersistence(
         store,
@@ -511,7 +606,7 @@ def _adapter(
         _registry(),
         {"skin.playlist.new-shows": "KodiSmartPlaylist"},
         contexts or cast(ResourceContextProvider, _Contexts()),
-        cast(RecoveryEnvironment, _Inspections()),
+        environment or cast(RecoveryEnvironment, _Inspections()),
         cast(RunClock, _Clock()),
     )
 
@@ -703,6 +798,127 @@ def test_recovery_inspection_rejects_every_remote_identity_mismatch(
     persistence.close()
 
 
+@pytest.mark.parametrize("corruption", ("revision", "codec", "manifest", "attachment"))
+def test_corrupt_recovery_allows_only_inspect_and_approved_abandonment(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    root = tmp_path / "runs"
+    store = RunStore(root, resource_registry=_registry())
+    _create(store)
+    first = _adapter(store)
+    change = _Change()
+    change.prepared = _prepared(first)
+    first.start(ApprovedPlan(RunId(RUN_ID), (cast(ExecutableChange, change),)))
+    first.prepared(RunId(RUN_ID), change.resource_id, change.prepared)
+    head = first.load_chain(RunId(RUN_ID)).head
+    first.close()
+    workspace = (
+        root / "runs" / hashlib.sha256(f"workspace:{RUN_ID}".encode()).hexdigest()
+    )
+    revision_path = workspace / "revisions" / f"{head.revision:08d}.json"
+    if corruption == "revision":
+        revision_path.write_bytes(b"{}")
+    elif corruption == "attachment":
+        value = decode_json_object(head.payload)
+        preparation = next(
+            item
+            for item in cast(list[dict[str, object]], value["evidence"])
+            if item["payload_kind"] == "ResourcePreparationCompleted"
+        )
+        references = cast(list[dict[str, object]], preparation["attachment_refs"])
+        reference = next(
+            item for item in references if item["kind"] == "resource-preparation"
+        )
+        attachment_path = (
+            workspace
+            / "attachments"
+            / cast(str, reference["digest"]).removeprefix("sha256:")
+        )
+        attachment_path.write_bytes(b"corrupt")
+    else:
+        value = decode_json_object(head.payload)
+        preparation = next(
+            item
+            for item in cast(list[dict[str, object]], value["evidence"])
+            if item["payload_kind"] == "ResourcePreparationCompleted"
+        )
+        if corruption == "codec":
+            references = cast(list[dict[str, object]], preparation["attachment_refs"])
+            reference = next(
+                item for item in references if item["kind"] == "resource-preparation"
+            )
+            reference["codec"] = "unknown-preparation-v1"
+        else:
+            payload = cast(dict[str, object], preparation["payload"])
+            payload["manifest_digest"] = "sha256:" + "f" * 64
+        changed = unchecked_run_bytes(value)
+        changed_value = decode_json_object(changed)
+        revision_path.write_bytes(changed)
+        (workspace / "head.json").write_bytes(
+            canonical_document_bytes(
+                {
+                    "digest": changed_value["current_digest"],
+                    "revision": head.revision,
+                }
+            )
+        )
+    restarted_store = RunStore(root, resource_registry=_registry())
+    persistence = _adapter(
+        restarted_store,
+        environment=cast(RecoveryEnvironment, _OwnershipInspections()),
+    )
+    authorities = RunStoreBoundAuthorityState(
+        restarted_store,
+        _Remote(),
+        persistence.revision_lease,
+    )
+    recovery_authority = M3AuthorityRecovery(
+        cast(AuthorityCoordinator, _QuarantiningCoordinator()),
+        authorities,
+        _Clock(),
+        persistence,
+    )
+    coordinator = RecoveryCoordinator(persistence, recovery_authority)
+
+    inspection = coordinator.inspect(RunId(RUN_ID))
+
+    assert [action.code for action in inspection.actions if action.allowed] == [
+        RecoveryActionCode.INSPECT,
+        RecoveryActionCode.FINALIZE,
+    ]
+    abandon = next(
+        action
+        for action in inspection.actions
+        if action.code is RecoveryActionCode.FINALIZE and action.allowed
+    )
+    assert abandon.finalize_mode is FinalizeMode.ABANDON
+
+    outcome = coordinator.finalize(
+        RunId(RUN_ID),
+        FinalizeMode.ABANDON,
+        approval="approval.operator",
+        reason=f"{corruption} evidence is corrupt",
+    )
+
+    assert outcome.status is RunStatus.FAILED_RECOVERY_REQUIRED
+    assert not outcome.cleanup_complete
+    assert (
+        restarted_store.find_active_by_device(DeviceId("living-room.ugoos-am6b-plus"))
+        == ()
+    )
+    seal = decode_json_object((workspace / "seal.json").read_bytes())
+    state = decode_json_object((workspace / "state.json").read_bytes())
+    receipts = tuple((workspace / "receipts").glob("*.json"))
+    assert seal["ownership_released_or_quarantined"] is True
+    assert seal["terminal_revision"] == 0
+    assert state["status"] == RunStatus.FAILED_RECOVERY_REQUIRED.value
+    assert state["terminal"] is True
+    assert len(receipts) == 2
+    authorities.close(RunId(RUN_ID))
+    persistence.close()
+
+
 def test_ambiguous_cleanup_receipt_is_not_classified_complete_after_restart(
     tmp_path: Path,
 ) -> None:
@@ -736,6 +952,7 @@ def test_persisted_resources_reconstruct_in_dependency_order_after_restart(
     root = tmp_path / "runs"
     first_store = RunStore(root, resource_registry=_registry())
     _create(first_store, ("first", "second"))
+    graph = PlanDependencyGraph((("first", ()), ("second", ("first",))))
     first = RunStoreExecutionPersistence(
         first_store,
         RunId(RUN_ID),
@@ -744,6 +961,7 @@ def test_persisted_resources_reconstruct_in_dependency_order_after_restart(
         cast(ResourceContextProvider, _Contexts()),
         cast(RecoveryEnvironment, _Inspections()),
         cast(RunClock, _Clock()),
+        dependency_graph=graph,
     )
     changes = (
         cast(ExecutableChange, _Change("first")),
@@ -762,37 +980,23 @@ def test_persisted_resources_reconstruct_in_dependency_order_after_restart(
         cast(ResourceContextProvider, _Contexts()),
         cast(RecoveryEnvironment, _Inspections()),
         cast(RunClock, _Clock()),
+        dependency_graph=graph,
     )
 
-    assert [item.resource_id for item in restarted.resources(RunId(RUN_ID))] == [
+    resources = restarted.resources(RunId(RUN_ID))
+    assert [item.resource_id for item in resources] == [
         "first",
         "second",
     ]
+    rollback_events: list[str] = []
+    _Runtime.rollback_events = rollback_events
+    try:
+        for resource in reversed(resources):
+            resource.rollback()
+    finally:
+        _Runtime.rollback_events = None
+    assert rollback_events == ["second", "first"]
     restarted.close()
-
-
-def test_production_factory_binds_concrete_services_without_device_access(
-    tmp_path: Path,
-) -> None:
-    store = RunStore(tmp_path / "runs", resource_registry=_registry())
-    _create(store)
-    factory = ProductionExecutionFactory(
-        PlanStore(tmp_path / "plans"),
-        store,
-        _registry(),
-        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
-        cast(ResourceContextProviderFactory, _Contexts()),
-        cast(RecoveryEnvironment, _Inspections()),
-        cast(AuthorityCoordinator, object()),
-        cast(RemoteOwnershipReader, object()),
-        cast(RunClock, _Clock()),
-        progress=Progress(),
-    )
-
-    services = factory.bind(RunId(RUN_ID))
-
-    assert services.persistence.load_chain(RunId(RUN_ID)).head.revision == 1
-    services.close()
 
 
 def _saved_plan_request() -> tuple[
@@ -824,10 +1028,46 @@ def _saved_plan_request() -> tuple[
             ),
         ),
         "2026-09-19T08:01:00Z",
-        "boot.opaque",
-        "sha256:" + "a" * 64,
     )
     return request, plan, planning_run
+
+
+def _device_binding(device: dict[str, object]) -> str:
+    return "sha256:" + hashlib.sha256(canonical_document_bytes(device)).hexdigest()
+
+
+def _saved_multi_plan_request() -> tuple[
+    SavedPlanExecutionRequest, CanonicalPlan, CanonicalRunReport
+]:
+    plan = decode_plan((FIXTURES / "plan-actionable-multi.json").read_bytes())
+    planning_run = decode_run_report(
+        (FIXTURES / "run-awaiting-approval-multi.json").read_bytes(),
+        plan,
+    )
+    value = decode_json_object(plan.canonical_bytes)
+    device = cast(dict[str, object], value["device"])
+    digests = cast(dict[str, str], value["input_digests"])
+    return (
+        SavedPlanExecutionRequest(
+            PlanId(plan.plan_id),
+            RunId(RUN_ID),
+            DeviceId(cast(str, device["logical_id"])),
+            RunId(planning_run.run_id),
+            device,
+            digests,
+            (
+                ApprovalGrant(
+                    "apply",
+                    "actor.local-admin",
+                    "noninteractive_cli",
+                    "2026-09-19T08:01:00Z",
+                ),
+            ),
+            "2026-09-19T08:01:00Z",
+        ),
+        plan,
+        planning_run,
+    )
 
 
 def test_saved_plan_approval_creates_bound_run_and_only_encoded_changes(
@@ -839,13 +1079,19 @@ def test_saved_plan_approval_creates_bound_run_and_only_encoded_changes(
     plans = PlanStore(tmp_path / "plans")
     plans.save(plan, planning_run)
     authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
+    device_authority = _DeviceAuthority(device)
     factory = ProductionExecutionFactory(
         plans,
         store,
         registry,
         {"skin.playlist.new-shows": "KodiSmartPlaylist"},
-        cast(ResourceContextProviderFactory, _Contexts()),
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
         cast(RecoveryEnvironment, _Inspections()),
+        device_authority,
         cast(AuthorityCoordinator, authority),
         cast(RemoteOwnershipReader, object()),
         cast(RunClock, _Clock()),
@@ -864,7 +1110,53 @@ def test_saved_plan_approval_creates_bound_run_and_only_encoded_changes(
         ]
         == RunStatus.READY.value
     )
+    run = decode_json_object(store.load_chain(request.execution_run_id).head.payload)
+    run_authority = cast(dict[str, object], run["authority"])
+    assert run_authority["binding_digest"] == _device_binding(device)
+    assert run_authority["boot_id"] == "boot.opaque"
+    assert device_authority.calls == 2
     approved.services.close()
+
+
+def test_saved_plan_v2_preserves_dependency_graph_from_canonical_bytes(
+    tmp_path: Path,
+) -> None:
+    request, plan, planning_run = _saved_multi_plan_request()
+    device = cast(dict[str, object], request.expected_device)
+    registry = _registry()
+    store = RunStore(tmp_path / "runs", resource_registry=registry)
+    plans = PlanStore(tmp_path / "plans")
+    plans.save(plan, planning_run)
+    authority = _AcquiringAuthority(store)
+    factory = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {
+            "skin.playlist.alpha": "KodiSmartPlaylist",
+            "skin.playlist.beta": "KodiSmartPlaylist",
+        },
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
+        cast(RecoveryEnvironment, _Inspections()),
+        _DeviceAuthority(device),
+        cast(AuthorityCoordinator, authority),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+
+    prepared = factory.approve_saved_plan(request)
+
+    assert [
+        (change.resource_id, change.requires)
+        for change in prepared.approved_plan.changes
+    ] == [
+        ("skin.playlist.alpha", ()),
+        ("skin.playlist.beta", ("skin.playlist.alpha",)),
+    ]
+    prepared.services.close()
 
 
 @pytest.mark.parametrize(
@@ -973,13 +1265,18 @@ def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
     plans = PlanStore(tmp_path / "plans")
     plans.save(plan, planning_run)
     authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
     factory = ProductionExecutionFactory(
         plans,
         store,
         registry,
         {"skin.playlist.new-shows": "KodiSmartPlaylist"},
-        cast(ResourceContextProviderFactory, _Contexts()),
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
         cast(RecoveryEnvironment, _Inspections()),
+        _DeviceAuthority(device),
         cast(AuthorityCoordinator, authority),
         cast(RemoteOwnershipReader, object()),
         cast(RunClock, _Clock()),
@@ -998,13 +1295,18 @@ def test_saved_plan_approval_rejects_unknown_plan_before_authority(
     registry = _registry()
     store = RunStore(tmp_path / "runs", resource_registry=registry)
     authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
     factory = ProductionExecutionFactory(
         PlanStore(tmp_path / "plans"),
         store,
         registry,
         {"skin.playlist.new-shows": "KodiSmartPlaylist"},
-        cast(ResourceContextProviderFactory, _Contexts()),
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
         cast(RecoveryEnvironment, _Inspections()),
+        _DeviceAuthority(device),
         cast(AuthorityCoordinator, authority),
         cast(RemoteOwnershipReader, object()),
         cast(RunClock, _Clock()),
@@ -1029,19 +1331,73 @@ def test_saved_plan_decoding_failure_precedes_authority_acquisition(
     plans = PlanStore(tmp_path / "plans")
     plans.save(plan, planning_run)
     authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
     factory = ProductionExecutionFactory(
         plans,
         store,
         registry,
         {"skin.playlist.new-shows": "KodiSmartPlaylist"},
-        cast(ResourceContextProviderFactory, _Contexts()),
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
         cast(RecoveryEnvironment, _Inspections()),
+        _DeviceAuthority(device),
         cast(AuthorityCoordinator, authority),
         cast(RemoteOwnershipReader, object()),
         cast(RunClock, _Clock()),
     )
 
     with pytest.raises(ValueError, match="differs from approved Plan"):
+        factory.approve_saved_plan(request)
+
+    assert authority.calls == 0
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ("binding_digest", "boot_id", "platform_identity", "host_key"),
+)
+def test_saved_plan_rejects_spoofed_or_changed_device_authority(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    request, plan, planning_run = _saved_plan_request()
+    device = cast(dict[str, object], request.expected_device)
+    expected_probe = _DeviceAuthority(device)
+    if mismatch == "binding_digest":
+        probe = _DeviceAuthority(device, binding_digest="sha256:" + "f" * 64)
+    elif mismatch == "platform_identity":
+        probe = _DeviceAuthority(device, platform_identity="sha256:" + "f" * 64)
+    elif mismatch == "host_key":
+        probe = _DeviceAuthority(device, host_key="SHA256:other")
+    else:
+        probe = _DeviceAuthority(
+            device,
+            second=replace(expected_probe.observation, boot_id="boot.changed"),
+        )
+    registry = _registry()
+    store = RunStore(tmp_path / "runs", resource_registry=registry)
+    plans = PlanStore(tmp_path / "plans")
+    plans.save(plan, planning_run)
+    authority = _AcquiringAuthority(store)
+    factory = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
+        cast(RecoveryEnvironment, _Inspections()),
+        probe,
+        cast(AuthorityCoordinator, authority),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+
+    with pytest.raises(ValueError, match="Device authority identity"):
         factory.approve_saved_plan(request)
 
     assert authority.calls == 0
@@ -1147,6 +1503,39 @@ def test_bound_authority_rejects_every_remote_identity_mismatch(
 
     with pytest.raises(ValueError, match="does not bind"):
         state.load(RunId(RUN_ID))
+
+
+def test_bound_authority_mismatch_preserves_injected_revision_lease(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs", resource_registry=_registry())
+    _create(store)
+    persistence = _adapter(store)
+    state = RunStoreBoundAuthorityState(
+        store,
+        _MismatchedRemote("token_digest"),
+        persistence.revision_lease,
+    )
+
+    with pytest.raises(ValueError, match="does not bind"):
+        state.load(RunId(RUN_ID))
+
+    assert persistence.load_chain(RunId(RUN_ID)).head.revision == 1
+    persistence.close()
+
+
+def test_bound_authority_mismatch_releases_locally_acquired_revision_lease(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs", resource_registry=_registry())
+    _create(store)
+    state = RunStoreBoundAuthorityState(store, _MismatchedRemote("token_digest"))
+
+    with pytest.raises(ValueError, match="does not bind"):
+        state.load(RunId(RUN_ID))
+
+    lease = store.acquire_run(RunId(RUN_ID))
+    store.release_run(lease)
 
 
 def test_public_apply_uses_concrete_runstore_journal_across_restart(
