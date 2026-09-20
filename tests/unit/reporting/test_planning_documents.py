@@ -21,6 +21,7 @@ from coreelec_reconciler.reporting.planning_documents import (
     check_plan_invariants,
     decode_plan,
     decode_run_report,
+    reconstruct_plan_dependency_graph,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning import (
     assess_playlist,
@@ -318,6 +319,148 @@ def test_plan_dependency_tampering_changes_full_and_semantic_digests(
     value["full_digest"] = _sha256(without_full)
     with pytest.raises(ValueError, match="semantic digest mismatch"):
         decode_plan(canonical_document_bytes(value))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "payload-value",
+        "payload-digest",
+        "payload-unknown-field",
+        "payload-kind",
+        "payload-version",
+        "change-before-mismatch",
+    ],
+)
+def test_multi_resource_plan_rejects_evidence_before_state_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    value = json.loads(plan.canonical_bytes)
+    evidence = cast(list[dict[str, object]], value["evidence"])
+    resources = cast(list[dict[str, object]], value["resources"])
+    payload = cast(dict[str, object], evidence[1]["payload"])
+    summary = cast(dict[str, object], payload["summary"])
+    if mutation == "payload-value":
+        playlist = cast(dict[str, object], summary["playlist"])
+        playlist["limit"] = 999
+    elif mutation == "payload-digest":
+        payload["normalized_state_digest"] = "sha256:" + "0" * 64
+    elif mutation == "payload-unknown-field":
+        payload["invented"] = True
+    elif mutation == "payload-kind":
+        evidence[1]["payload_kind"] = "InventedObservation"
+    elif mutation == "payload-version":
+        evidence[1]["payload_schema_version"] = 999
+    else:
+        changes = cast(list[dict[str, object]], resources[1]["changes"])
+        before = cast(dict[str, object], changes[0]["before"])
+        before_summary = cast(dict[str, object], before["summary"])
+        playlist = cast(dict[str, object], before_summary["playlist"])
+        playlist["limit"] = 999
+    content = _canonical_plan(value)
+
+    with pytest.raises(ValueError):
+        decode_plan(content)
+    assert check_plan_invariants(content)
+
+
+@pytest.mark.parametrize(
+    ("management", "relation", "blocker_code", "with_change", "valid"),
+    [
+        ("enforce", "divergent", None, True, True),
+        ("enforce", "divergent", None, False, False),
+        ("enforce", "divergent", "resource.observe-only-divergence", True, False),
+        ("observe_only", "divergent", "resource.observe-only-divergence", False, True),
+        ("observe_only", "divergent", None, False, False),
+        ("observe_only", "divergent", "resource.observe-only-divergence", True, False),
+        ("enforce", "satisfied", None, False, True),
+        ("enforce", "satisfied", None, True, False),
+        ("observe_only", "satisfied", None, False, True),
+        ("observe_only", "satisfied", "resource.observe-only-divergence", False, False),
+        ("enforce", "unverifiable", "resource.unsafe-symlink", False, True),
+        ("observe_only", "unverifiable", "resource.unsafe-symlink", False, True),
+        ("enforce", "unverifiable", "resource.observe-only-divergence", False, False),
+        ("enforce", "unverifiable", "resource.unsafe-symlink", True, False),
+        ("enforce", "not_applicable", None, False, True),
+        ("observe_only", "not_applicable", None, False, True),
+        ("unmanaged", "divergent", None, True, False),
+    ],
+)
+def test_multi_resource_plan_enforces_per_resource_assessment_matrix(
+    tmp_path: Path,
+    management: str,
+    relation: str,
+    blocker_code: str | None,
+    with_change: bool,
+    valid: bool,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    value = json.loads(plan.canonical_bytes)
+    resources = cast(list[dict[str, object]], value["resources"])
+    resource = resources[1]
+    resource["management"] = management
+    resource["desired_relation"] = relation
+    original_changes = cast(list[dict[str, object]], resource["changes"])
+    resource["changes"] = original_changes if with_change else []
+    blockers: list[dict[str, object]] = []
+    if blocker_code is not None:
+        blockers.append(
+            {
+                "code": blocker_code,
+                "evidence_refs": ["evidence.skin.playlist.beta.before"],
+                "subject": {"id": "skin.playlist.beta", "kind": "resource"},
+            }
+        )
+    resource["blockers"] = blockers
+    value["blockers"] = blockers
+    if blockers:
+        value["disposition"] = "blocked"
+        value["approval_requirements"] = []
+        value.pop("expires_at")
+        value.pop("valid_from")
+    content = _canonical_plan(value)
+
+    if valid:
+        assert decode_plan(content).canonical_bytes == content
+        assert check_plan_invariants(content) == ()
+    else:
+        with pytest.raises(ValueError):
+            decode_plan(content)
+        assert check_plan_invariants(content)
+
+
+def test_dependency_graph_reconstructs_from_saved_plan_not_current_config(
+    tmp_path: Path,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    current = load_configuration(
+        FIXTURE_ROOT,
+        DeviceId("living-room.ugoos-am6b-plus"),
+        (SelectorId("selector.skin"),),
+    )
+    assert current.configuration is not None
+    current_configuration_requires = tuple(
+        (
+            resource.id.value,
+            tuple(required.value for required in resource.requires),
+        )
+        for resource in current.configuration.resources
+    )
+
+    graph = reconstruct_plan_dependency_graph(plan.canonical_bytes)
+
+    assert graph.requires_by_resource != current_configuration_requires
+    assert graph.requires("skin.playlist.beta") == ("skin.playlist.alpha",)
+    assert graph.execution_order == (
+        "skin.playlist.alpha",
+        "skin.playlist.beta",
+    )
+    assert graph.reverse_dependency_order == (
+        "skin.playlist.beta",
+        "skin.playlist.alpha",
+    )
 
 
 def test_identical_inputs_produce_identical_documents_and_digests(

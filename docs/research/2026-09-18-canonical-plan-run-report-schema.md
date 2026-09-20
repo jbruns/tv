@@ -25,6 +25,14 @@ and semantic digests. Consequently execution and recovery can reconstruct the
 approved dependency and reverse-dependency order solely from saved canonical
 Plan bytes.
 
+Version 2 normalized evidence is dispatched through the registered Resource
+Type's closed codec. Its normalized summary and state digest must exactly
+match each referencing Change's before-state. Resource management, desired
+relation, blockers, and Change presence must form an accepted assessment
+combination; for example, an observe-only divergence has its dedicated
+blocker and no Change, while an enforcing divergence has one Change and no
+blocker.
+
 Schema version 1 remains valid only for the original single-Resource shape and
 has an implicit empty `requires` set, preserving its accepted canonical bytes
 and digests.

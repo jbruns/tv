@@ -12,6 +12,7 @@ from coreelec_reconciler.domain.configuration import (
 from coreelec_reconciler.domain.planning import (
     CanonicalPlan,
     CanonicalRunReport,
+    PlanDependencyGraph,
     PlanDisposition,
     PlaylistAssessment,
     RunStatus,
@@ -202,15 +203,25 @@ def _evidence(
     resource: Resource,
     inputs: SuppliedPlanningInput,
     assessment: PlaylistAssessment,
+    *,
+    plan_schema_version: int,
 ) -> dict[str, object]:
-    payload = _as_dict(assessment.before_summary)
+    summary = _as_dict(assessment.before_summary)
+    payload: dict[str, object] = summary
+    payload_schema_version = 1
+    if plan_schema_version == 2:
+        payload = {
+            "normalized_state_digest": assessment.before_digest,
+            "summary": summary,
+        }
+        payload_schema_version = 2
     return {
         "evidence_id": f"evidence.{resource.id.value}.before",
         "observed_at": inputs.observation.observed_at,
         "observer": {"code": "supplied-kodi-smart-playlist", "version": 1},
         "payload": payload,
         "payload_kind": "KodiSmartPlaylistObservation",
-        "payload_schema_version": 1,
+        "payload_schema_version": payload_schema_version,
         "raw_attachment_digest": None,
         "state_addresses": list(resource.state_addresses),
         "subject": {"id": resource.id.value, "kind": "resource"},
@@ -384,7 +395,12 @@ def build_multi_resource_plan_and_run(
         "schema_version": schema_version,
         "warnings": [],
         "evidence": [
-            _evidence(resource, inputs, assessment)
+            _evidence(
+                resource,
+                inputs,
+                assessment,
+                plan_schema_version=schema_version,
+            )
             for resource, inputs, assessment in ordered_entries
         ],
     }
@@ -774,6 +790,7 @@ def check_plan_invariants(
 
     evidence_ids: set[str] = set()
     evidence_resource_order: list[str] = []
+    oracle_evidence_state: dict[str, tuple[dict[str, object], str]] = {}
     for raw in raw_evidence:
         expected = {
             "evidence_id",
@@ -808,10 +825,17 @@ def check_plan_invariants(
         resource = resources[typed_ids.index(str(subject_id))]
         if raw.get("state_addresses") != resource.get("state_addresses"):
             errors.append("oracle: evidence State Addresses do not match Resource")
-        if (
-            raw.get("observer")
-            != {"code": "supplied-kodi-smart-playlist", "version": 1}
-            or raw.get("payload_kind") != "KodiSmartPlaylistObservation"
+        if raw.get("observer") != {
+            "code": "supplied-kodi-smart-playlist",
+            "version": 1,
+        }:
+            errors.append("oracle: unsupported evidence codec")
+        if schema_version == 2:
+            decoded_state = _oracle_decode_kodi_plan_evidence(raw, errors)
+            if decoded_state is not None:
+                oracle_evidence_state[str(subject_id)] = decoded_state
+        elif (
+            raw.get("payload_kind") != "KodiSmartPlaylistObservation"
             or raw.get("payload_schema_version") != 1
             or not isinstance(raw.get("payload"), dict)
         ):
@@ -827,8 +851,28 @@ def check_plan_invariants(
         if resource.get("evidence_refs") != [evidence_ref]:
             errors.append("oracle: Resource evidence references do not agree")
         blockers = resource.get("blockers")
+        oracle_blocker_codes: list[str] = []
         if isinstance(blockers, list):
             flattened_blockers.extend(blockers)
+            for blocker in blockers:
+                if not isinstance(blocker, dict) or set(blocker) != {
+                    "code",
+                    "evidence_refs",
+                    "subject",
+                }:
+                    errors.append("oracle: invalid Resource blocker")
+                    continue
+                code = blocker.get("code")
+                if not isinstance(code, str) or code not in ASSESSMENT_BLOCKER_CODES:
+                    errors.append("oracle: unknown Resource blocker")
+                else:
+                    oracle_blocker_codes.append(code)
+                if blocker.get("evidence_refs") != [evidence_ref] or blocker.get(
+                    "subject"
+                ) != {"id": resource_id, "kind": "resource"}:
+                    errors.append("oracle: blocker binding does not match Resource")
+            if len(set(oracle_blocker_codes)) != len(oracle_blocker_codes):
+                errors.append("oracle: duplicate Resource blocker")
         else:
             errors.append("oracle: Resource blockers must be an array")
         changes = resource.get("changes")
@@ -872,6 +916,13 @@ def check_plan_invariants(
                 evidence_ref
             ]:
                 errors.append("oracle: Change evidence reference does not agree")
+            elif schema_version == 2:
+                evidence_state = oracle_evidence_state.get(resource_id)
+                if evidence_state is None or (
+                    before.get("summary") != evidence_state[0]
+                    or before.get("normalized_state_digest") != evidence_state[1]
+                ):
+                    errors.append("oracle: Change before state does not match evidence")
             rollback = change.get("rollback")
             if (
                 not isinstance(rollback, dict)
@@ -886,6 +937,37 @@ def check_plan_invariants(
                 or preconditions[0].get("evidence_ref") != evidence_ref
             ):
                 errors.append("oracle: precondition evidence reference does not agree")
+        management = resource.get("management")
+        relation = resource.get("desired_relation")
+        if management not in _MANAGEMENT_MODES:
+            errors.append("oracle: unknown Resource management")
+        elif relation == "satisfied":
+            if oracle_blocker_codes or changes:
+                errors.append("oracle: satisfied Resource is contradictory")
+        elif relation == "not_applicable":
+            if oracle_blocker_codes or changes:
+                errors.append("oracle: not-applicable Resource is contradictory")
+        elif relation == "divergent":
+            if management == "enforce":
+                if oracle_blocker_codes or len(changes) != 1:
+                    errors.append(
+                        "oracle: enforcing divergent Resource is contradictory"
+                    )
+            elif len(changes) != 0 or oracle_blocker_codes != [
+                "resource.observe-only-divergence"
+            ]:
+                errors.append(
+                    "oracle: observe-only divergent Resource is contradictory"
+                )
+        elif relation == "unverifiable":
+            if (
+                changes
+                or len(oracle_blocker_codes) != 1
+                or oracle_blocker_codes[0] == "resource.observe-only-divergence"
+            ):
+                errors.append("oracle: unverifiable Resource is contradictory")
+        else:
+            errors.append("oracle: unknown desired relation")
     if value.get("blockers") != flattened_blockers:
         errors.append("oracle: Plan blockers do not match Resources")
     disposition = value.get("disposition")
@@ -896,6 +978,116 @@ def check_plan_invariants(
     if disposition == "blocked" and not flattened_blockers:
         errors.append("oracle: blocked Plan lacks blockers")
     return tuple(errors)
+
+
+def reconstruct_plan_dependency_graph(
+    content: bytes,
+    *,
+    resource_registry: ResourceRegistry | None = None,
+) -> PlanDependencyGraph:
+    """Reconstruct approved execution ordering solely from canonical Plan bytes."""
+    plan = decode_plan(content, resource_registry=resource_registry)
+    if plan.resource_dependencies:
+        return PlanDependencyGraph(plan.resource_dependencies)
+    value = decode_json_object(plan.canonical_bytes)
+    resources = _array(value["resources"], "Plan Resources")
+    resource = _mapping(resources[0], _plan_resource_fields(1), "Plan Resource")
+    resource_id = _string(resource["resource_id"], "Resource ID")
+    return PlanDependencyGraph(((resource_id, ()),))
+
+
+def _oracle_decode_kodi_plan_evidence(
+    evidence: dict[str, object],
+    errors: list[str],
+) -> tuple[dict[str, object], str] | None:
+    if (
+        evidence.get("payload_kind") != "KodiSmartPlaylistObservation"
+        or evidence.get("payload_schema_version") != 2
+    ):
+        errors.append("oracle: unsupported evidence payload version")
+        return None
+    payload = evidence.get("payload")
+    if not isinstance(payload, dict) or set(payload) != {
+        "normalized_state_digest",
+        "summary",
+    }:
+        errors.append("oracle: unknown or missing evidence payload fields")
+        return None
+    digest = payload.get("normalized_state_digest")
+    if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
+        errors.append("oracle: invalid evidence normalized-state digest")
+        return None
+    summary = payload.get("summary")
+    if not isinstance(summary, dict) or not _oracle_kodi_summary_is_closed(summary):
+        errors.append("oracle: invalid closed evidence summary")
+        return None
+    return summary, digest
+
+
+def _oracle_kodi_summary_is_closed(summary: dict[str, object]) -> bool:
+    presence = summary.get("presence")
+    if presence == "absent":
+        return set(summary) == {"presence"}
+    if presence != "present":
+        return False
+    if set(summary) == {"kind", "presence"}:
+        return summary["kind"] in {"directory", "other", "symlink"}
+    if set(summary) == {"presence", "readable"}:
+        return summary["readable"] is False
+    mode = summary.get("mode")
+    if type(mode) is not int or not 0 <= mode <= 0o7777:
+        return False
+    if set(summary) == {"mode", "presence"}:
+        return True
+    playlist = summary.get("playlist")
+    if not isinstance(playlist, dict):
+        return False
+    if set(summary) == {"content_digest", "mode", "playlist", "presence"}:
+        digest = summary.get("content_digest")
+        return (
+            playlist == {"parse_status": "malformed"}
+            and isinstance(digest, str)
+            and _DIGEST.fullmatch(digest) is not None
+        )
+    if set(summary) != {"mode", "playlist", "presence"}:
+        return False
+    if set(playlist) != {
+        "display_name",
+        "limit",
+        "match",
+        "media_type",
+        "order",
+        "rules",
+    }:
+        return False
+    order = playlist.get("order")
+    rules = playlist.get("rules")
+    return (
+        isinstance(playlist.get("display_name"), str)
+        and bool(playlist["display_name"])
+        and type(playlist.get("limit")) is int
+        and int(playlist["limit"]) >= 0
+        and playlist.get("match") in {"all", "one"}
+        and isinstance(playlist.get("media_type"), str)
+        and bool(playlist["media_type"])
+        and isinstance(order, dict)
+        and set(order) == {"by", "direction"}
+        and isinstance(order.get("by"), str)
+        and bool(order["by"])
+        and order.get("direction") in {"ascending", "descending"}
+        and isinstance(rules, list)
+        and all(
+            isinstance(rule, dict)
+            and set(rule) == {"field", "operator", "value"}
+            and isinstance(rule.get("field"), str)
+            and bool(rule["field"])
+            and isinstance(rule.get("operator"), str)
+            and bool(rule["operator"])
+            and isinstance(rule.get("value"), (str, int))
+            and not isinstance(rule.get("value"), bool)
+            for rule in rules
+        )
+    )
 
 
 def decode_run_report(
@@ -1446,6 +1638,10 @@ def _validate_plan_shape_v2(
 
     evidence_ids: set[str] = set()
     evidence_by_resource: dict[str, dict[str, object]] = {}
+    evidence_state_by_resource: dict[
+        str,
+        tuple[dict[str, object], str],
+    ] = {}
     for evidence_value in evidence_values:
         evidence = _mapping(
             evidence_value,
@@ -1474,13 +1670,20 @@ def _validate_plan_shape_v2(
             "version": 1,
         }:
             raise ValueError("unsupported evidence observer")
-        if (
-            resource["resource_type"] != _RESOURCE_TYPE
-            or evidence["payload_kind"] != "KodiSmartPlaylistObservation"
-            or evidence["payload_schema_version"] != 1
-            or not isinstance(evidence["payload"], dict)
-        ):
+        descriptor = resource_registry.descriptor(
+            _string(resource["resource_type"], "Resource Type")
+        )
+        if descriptor is None or not isinstance(evidence["payload"], dict):
             raise ValueError("unsupported evidence payload")
+        payload_kind = _string(evidence["payload_kind"], "evidence payload kind")
+        payload_schema_version = evidence["payload_schema_version"]
+        if type(payload_schema_version) is not int:
+            raise ValueError("invalid evidence payload schema version")
+        summary, normalized_state_digest = descriptor.decode_plan_evidence(
+            payload_kind,
+            payload_schema_version,
+            evidence["payload"],
+        )
         if evidence["state_addresses"] != resource["state_addresses"]:
             raise ValueError("evidence State Addresses do not match Resource")
         if parse_rfc3339_utc(evidence["observed_at"], "observed_at") > created_at:
@@ -1495,6 +1698,10 @@ def _validate_plan_shape_v2(
             raise ValueError("duplicate evidence ID")
         evidence_ids.add(evidence_id)
         evidence_by_resource[resource_id] = evidence
+        evidence_state_by_resource[resource_id] = (
+            dict(summary),
+            normalized_state_digest,
+        )
     if list(evidence_by_resource) != resource_ids:
         raise ValueError("evidence is not in Resource order")
 
@@ -1584,6 +1791,12 @@ def _validate_plan_shape_v2(
             before_digest = require_sha256(
                 before["normalized_state_digest"], "before normalized state digest"
             )
+            evidence_summary, evidence_digest = evidence_state_by_resource[resource_id]
+            if (
+                before["summary"] != evidence_summary
+                or before_digest != evidence_digest
+            ):
+                raise ValueError("Change before state does not match evidence")
             desired = _mapping(
                 change["desired"],
                 {"normalized_state_digest", "summary"},
@@ -1622,10 +1835,12 @@ def _validate_plan_shape_v2(
                 raise ValueError("KodiSmartPlaylist Change cannot declare Effects")
             _validate_change_combination(change, operation)
             all_changes.append(change)
-        if changes and (relation != "divergent" or management != "enforce"):
-            raise ValueError("changed Resource must be divergent and enforcing")
-        if not changes and not resource_blockers and relation != "satisfied":
-            raise ValueError("unchanged unblocked Resource must be satisfied")
+        _validate_resource_assessment_semantics(
+            management=management,
+            relation=relation,
+            blocker_codes=blocker_codes,
+            change_count=len(changes),
+        )
 
     if value["blockers"] != all_blockers:
         raise ValueError("Plan blockers do not match Resource blockers")
@@ -1662,6 +1877,44 @@ def _validate_plan_shape_v2(
             raise ValueError("no-op Plan cannot contain blockers or Changes")
     elif not all_blockers:
         raise ValueError("blocked Plan requires a blocker")
+
+
+def _validate_resource_assessment_semantics(
+    *,
+    management: str,
+    relation: str,
+    blocker_codes: list[str],
+    change_count: int,
+) -> None:
+    if relation == "satisfied":
+        if blocker_codes or change_count:
+            raise ValueError("satisfied Resource is contradictory")
+        return
+    if relation == "not_applicable":
+        if blocker_codes or change_count:
+            raise ValueError("not-applicable Resource is contradictory")
+        return
+    if relation == "divergent":
+        if management == "enforce":
+            if blocker_codes or change_count != 1:
+                raise ValueError("enforcing divergent Resource requires one Change")
+            return
+        if (
+            management == "observe_only"
+            and change_count == 0
+            and blocker_codes == ["resource.observe-only-divergence"]
+        ):
+            return
+        raise ValueError("observe-only divergent Resource is contradictory")
+    if relation == "unverifiable":
+        if (
+            change_count
+            or len(blocker_codes) != 1
+            or blocker_codes[0] == "resource.observe-only-divergence"
+        ):
+            raise ValueError("unverifiable Resource is contradictory")
+        return
+    raise ValueError("unknown desired relation")
 
 
 def _validate_change_combination(

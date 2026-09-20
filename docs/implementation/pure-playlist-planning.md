@@ -86,10 +86,20 @@ Dependencies, every Resource, every evidence record, and every Change are
 covered by both the full and semantic Plan digests. A decoded
 `CanonicalPlan.resource_dependencies` therefore reconstructs the exact
 `requires` graph from saved canonical Plan bytes without consulting mutable
-authored or resolved configuration. The reporting-side
-`check_plan_invariants()` oracle independently checks canonical bytes, digests,
-graph ordering, and cross-record references rather than calling the production
-Plan validator.
+authored or resolved configuration.
+`reconstruct_plan_dependency_graph()` is the persistence-boundary API for
+execution consumers; it exposes deterministic execution and reverse-dependency
+orders without accepting current configuration as input.
+
+Version 2 evidence uses the owning Resource Type's closed observation codec.
+The Kodi Smart Playlist payload carries exactly `summary` and
+`normalized_state_digest`; both must match every Change before-state that
+references the evidence. Unknown payload fields, kinds, and versions fail
+closed. Per-Resource management, desired relation, blockers, and Changes must
+also form one accepted assessment state. The reporting-side
+`check_plan_invariants()` oracle independently checks these rules, canonical
+bytes, digests, graph ordering, and cross-record references rather than calling
+the production Plan validator or Resource Type evidence decoder.
 
 Schema version 1 remains accepted only for its original single Resource and
 single evidence shape, with an implicit empty dependency set. Its existing
