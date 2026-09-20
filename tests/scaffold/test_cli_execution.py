@@ -7,10 +7,12 @@ import termios
 from collections.abc import Iterator
 from pathlib import Path
 
+import pydantic
 import pytest
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 COMPOSITION_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "cli"
+DEPENDENCY_SITE_PACKAGES = Path(pydantic.__file__).parents[1]
 VERIFY_DOCUMENT = (
     b'{"kind":"CoreElecReconcilerRunReport","run_id":"verify-85",'
     b'"status":"converged"}\n'
@@ -63,34 +65,6 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     yield environment_path / "bin" / "coreelec-reconciler"
 
 
-@pytest.fixture(scope="module")
-def installed_production_cli(installed_cli: Path) -> Path:
-    root = installed_cli.parents[2]
-    environment_path = root / "production-environment"
-    wheel = next((root / "dist").glob("*.whl"))
-    subprocess.run(
-        ["uv", "venv", "--python", sys.executable, str(environment_path)],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--python",
-            str(environment_path / "bin" / "python"),
-            "--offline",
-            str(wheel),
-        ],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    )
-    return environment_path / "bin" / "coreelec-reconciler"
-
-
 def _run(
     executable: Path,
     *arguments: str,
@@ -115,6 +89,15 @@ def _run_production(
     environment = os.environ.copy()
     environment.pop("COREELEC_RECONCILER_TEST_COMPOSITION", None)
     environment.pop("CLI_SCENARIO", None)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            (
+                environment.get("PYTHONPATH"),
+                str(DEPENDENCY_SITE_PACKAGES),
+            ),
+        )
+    )
     environment.update(
         {
             "HOME": str(home),
@@ -383,13 +366,13 @@ def test_installed_output_is_environment_deterministic(installed_cli: Path) -> N
     ],
 )
 def test_installed_wheel_uses_genuine_production_composition_offline(
-    installed_production_cli: Path,
+    installed_cli: Path,
     tmp_path: Path,
     arguments: tuple[str, ...],
     diagnostic: bytes,
 ) -> None:
     result = _run_production(
-        installed_production_cli,
+        installed_cli,
         tmp_path,
         "--repository-root",
         str(REPOSITORY_ROOT / "tests" / "fixtures" / "repository"),
