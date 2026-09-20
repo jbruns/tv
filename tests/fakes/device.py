@@ -5,18 +5,18 @@ import json
 from dataclasses import dataclass
 
 from coreelec_reconciler.domain.execution import MutationDisposition, MutationReceipt
-from coreelec_reconciler.execution.authority import (
-    AuthorityConflict,
-    RemoteAuthorityBackend,
-    RemoteObject,
-    RemoteObjectKind,
-)
 from coreelec_reconciler.transports.interfaces import (
     EntryKind,
     FileMetadata,
     ReadFailure,
     ReadFailureCode,
     ReadResult,
+)
+from coreelec_reconciler.transports.remote_ownership import (
+    AuthorityConflict,
+    RemoteAuthorityBackend,
+    RemoteObject,
+    RemoteObjectKind,
 )
 
 
