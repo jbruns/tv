@@ -181,7 +181,7 @@ def test_concurrent_close_for_same_session_attempts_teardown_once(
         second_future = executor.submit(second_close)
         assert second_call_started.wait(timeout=5)
         second_attempted_while_first_was_blocked = second_attempt_entered.wait(
-            timeout=1
+            timeout=0.05
         )
         allow_first_attempt.set()
         first = first_future.result(timeout=5)
