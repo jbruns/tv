@@ -4,7 +4,7 @@ Date: 2026-09-18
 
 Ticket: [Prototype the Profile, inventory, and Artifact schemas](https://github.com/jbruns/tv/issues/38)
 
-Interactive evidence: [Throwaway authored-schema prototype](../../prototypes/coreelec-reconciler-schema-prototype.html)
+Interactive evidence: a throwaway authored-schema prototype, deleted with the superseded design (ADR 0008).
 
 Status: **Accepted contract-level decision**
 

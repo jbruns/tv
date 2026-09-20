@@ -4,7 +4,7 @@ Date: 2026-09-18
 
 Ticket: [Prototype canonical Plan and Run report schemas](https://github.com/jbruns/tv/issues/39)
 
-Interactive evidence: [Throwaway Plan/Run state-model prototype](../../prototypes/coreelec-reconciler-plan-run-schema-prototype.html)
+Interactive evidence: a throwaway Plan/Run state-model prototype, deleted with the superseded design (ADR 0008).
 
 Status: **Accepted contract-level decision**
 
