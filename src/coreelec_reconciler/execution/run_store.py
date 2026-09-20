@@ -5,8 +5,10 @@ import hashlib
 import os
 import secrets
 import stat
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, cast
 
 from coreelec_reconciler.domain.canonical_json import (
     canonical_document_bytes,
@@ -41,23 +43,16 @@ from coreelec_reconciler.domain.execution import (
     validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
-from coreelec_reconciler.domain.observation import (
-    TERMINAL_OBSERVATION_STATUSES,
-    CanonicalObservationRun,
-    ObservationAppendIntent,
-    ObservationRunStatus,
-)
 from coreelec_reconciler.domain.validation import parse_rfc3339_utc
-from coreelec_reconciler.persistence.observation_documents import (
-    OBSERVATION_RUN_KIND,
-    decode_observation_run,
-    observation_attachment_refs,
-    observation_run_identity,
-    verify_observation_revision_chain,
-)
 from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
+from .document_family import (
+    DocumentAppendIntent,
+    DocumentRevision,
+    RunDocumentFamily,
+    SessionCloseBinding,
+)
 from .local_durability import (
     AcknowledgementLost,
     DestinationExists,
@@ -108,16 +103,17 @@ _EXECUTION_IDENTITY_FIELDS = {
     "schema_version",
     "workspace_id",
 }
-_OBSERVATION_IDENTITY_FIELDS = {
-    "created_at",
-    "device_id",
-    "kind",
-    "producer",
-    "run_id",
-    "schema_version",
-    "scope",
-    "workspace_id",
-}
+
+
+class LoadedDocumentRun(Protocol):
+    run_id: str
+    workspace_id: str
+    device_id: str
+    current_digest: str
+    revision: int
+    status: object
+    scope: object
+    checkpoints: tuple[object, ...]
 
 
 class RunStore:
@@ -128,10 +124,15 @@ class RunStore:
         root: Path,
         durability: LocalDurability | None = None,
         resource_registry: ResourceRegistry | None = None,
+        document_families: Iterable[RunDocumentFamily] = (),
     ) -> None:
         self._root = root
         self._durability = durability or PosixLocalDurability()
         self._resource_registry = resource_registry or built_in_resource_registry()
+        families = tuple(document_families)
+        self._document_families = {family.kind: family for family in families}
+        if len(self._document_families) != len(families):
+            raise ValueError("duplicate Run document family")
         self._device_descriptors: dict[str, int] = {}
         self._run_descriptors: dict[str, int] = {}
         self._initialize()
@@ -219,24 +220,40 @@ class RunStore:
         device_id: DeviceId,
         initial_payload: bytes,
     ) -> tuple[RevisionLease, WorkspaceId]:
-        """Create a read-only canonical observation Run workspace."""
+        """Compatibility name for creating a registered read-only Run."""
+        return self.create_document_run(
+            device_lease,
+            run_id,
+            device_id,
+            initial_payload,
+        )
+
+    def create_document_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: RunId,
+        device_id: DeviceId,
+        initial_payload: bytes,
+    ) -> tuple[RevisionLease, WorkspaceId]:
+        """Create a registered read-only canonical document-family workspace."""
         self._require_device_lease(device_lease, device_id)
+        family = self._family_for_payload(initial_payload)
+        if (
+            family is None
+            or family.requires_ownership_token
+            or family.uses_active_index
+        ):
+            raise RunStoreError("initial Run document family is not registered")
+        workspace_id = WorkspaceId(f"workspace:{run_id.value}")
         try:
-            initial_run = decode_observation_run(
+            initial = family.validate_initial(
                 initial_payload,
-                resource_registry=self._resource_registry,
+                run_id=run_id.value,
+                workspace_id=workspace_id.value,
+                device_id=device_id.value,
             )
         except ValueError as error:
-            raise RunStoreError("initial observation Run is invalid") from error
-        workspace_id = WorkspaceId(f"workspace:{run_id.value}")
-        if (
-            initial_run.run_id != run_id.value
-            or initial_run.device_id != device_id.value
-            or initial_run.workspace_id != workspace_id.value
-            or initial_run.revision != 1
-            or initial_run.status is not ObservationRunStatus.READY
-        ):
-            raise RunStoreError("initial observation Run bindings are inconsistent")
+            raise RunStoreError("initial registered Run is invalid") from error
         try:
             self._workspace_for_run(run_id)
         except FileNotFoundError:
@@ -250,12 +267,8 @@ class RunStore:
             child = directory / name
             child.mkdir(mode=0o700)
             os.chmod(child, 0o700)
-        identity = observation_run_identity(decode_json_object(initial_payload))
-        stored = StoredRevision(
-            initial_run.revision,
-            initial_run.current_digest,
-            initial_payload,
-        )
+        identity = dict(initial.identity)
+        stored = initial.stored
         try:
             self._publish(
                 directory / "identity.json",
@@ -276,8 +289,8 @@ class RunStore:
                 directory / "state.json",
                 canonical_document_bytes(
                     {
-                        "authority_phase": None,
-                        "status": initial_run.status.value,
+                        "authority_phase": initial.authority_phase,
+                        "status": initial.status,
                         "terminal": False,
                     }
                 ),
@@ -401,8 +414,9 @@ class RunStore:
     def load_chain(self, run_id: RunId) -> VerifiedRunChain:
         workspace = self._workspace_for_run(run_id)
         identity = self._read_object(workspace / "identity.json")
-        if identity.get("kind") == OBSERVATION_RUN_KIND:
-            return self._load_observation_chain(run_id, workspace, identity)
+        family = self._family_for_identity(identity)
+        if family is not None:
+            return self._load_registered_chain(run_id, workspace, identity, family)
         if set(identity) != _EXECUTION_IDENTITY_FIELDS:
             raise CorruptRunStore("workspace identity fields are incomplete")
         if _required_string(identity, "run_id") != run_id.value:
@@ -476,18 +490,17 @@ class RunStore:
             raise CorruptRunStore("Run terminal state does not match canonical head")
         return VerifiedRunChain(tuple(revisions), revisions[-1], terminal)
 
-    def _load_observation_chain(
+    def _load_registered_chain(
         self,
         run_id: RunId,
         workspace: Path,
         identity: dict[str, object],
+        family: RunDocumentFamily,
     ) -> VerifiedRunChain:
-        if set(identity) != _OBSERVATION_IDENTITY_FIELDS:
-            raise CorruptRunStore(
-                "observation workspace identity fields are incomplete"
-            )
+        if set(identity) != family.identity_fields:
+            raise CorruptRunStore("registered workspace identity fields are incomplete")
         if _required_string(identity, "run_id") != run_id.value:
-            raise CorruptRunStore("observation workspace identity does not match Run")
+            raise CorruptRunStore("registered workspace identity does not match Run")
         head = self._read_object(workspace / "head.json")
         head_revision = _required_int(head, "revision")
         contents: list[bytes] = []
@@ -499,51 +512,42 @@ class RunStore:
             except FileNotFoundError as error:
                 raise CorruptRunStore("observation revision chain has a gap") from error
         try:
-            reports = verify_observation_revision_chain(
-                contents,
-                resource_registry=self._resource_registry,
-            )
+            revisions = family.verify_chain(tuple(contents))
         except ValueError as error:
-            raise CorruptRunStore("observation Run chain is invalid") from error
-        if observation_run_identity(decode_json_object(contents[0])) != identity:
-            raise CorruptRunStore("observation immutable scope binding changed")
-        stored = tuple(
-            StoredRevision(
-                report.revision, report.current_digest, report.canonical_bytes
-            )
-            for report in reports
-        )
+            raise CorruptRunStore("registered Run chain is invalid") from error
+        if dict(revisions[0].identity) != identity:
+            raise CorruptRunStore("registered Run immutable identity changed")
+        stored = tuple(revision.stored for revision in revisions)
         if (
             not stored
             or head.get("revision") != stored[-1].revision
             or head.get("digest") != stored[-1].digest
         ):
-            raise CorruptRunStore("observation Run head does not match revision chain")
-        for reference in observation_attachment_refs(reports[-1]):
+            raise CorruptRunStore("registered Run head does not match revision chain")
+        for reference in revisions[-1].attachments:
             try:
                 self._read_attachment(run_id, reference)
             except (CorruptRunStore, FileNotFoundError) as error:
                 raise CorruptRunStore(
-                    "observation raw attachment is unavailable"
+                    "registered Run attachment is unavailable"
                 ) from error
-        terminal = reports[-1].status in TERMINAL_OBSERVATION_STATUSES
+        terminal = revisions[-1].terminal
         state = self._read_object(workspace / "state.json")
         if (
-            state.get("authority_phase") is not None
-            or state.get("status") != reports[-1].status.value
+            state.get("authority_phase") != revisions[-1].authority_phase
+            or state.get("status") != revisions[-1].status
             or state.get("terminal") is not terminal
         ):
-            raise CorruptRunStore("observation Run state does not match canonical head")
+            raise CorruptRunStore("registered Run state does not match canonical head")
         return VerifiedRunChain(stored, stored[-1], terminal)
 
     def inspect_head(self, run_id: RunId) -> StoredRevision:
         """Read the exact canonical head without trusting the evidence chain."""
         workspace = self._workspace_for_run(run_id)
         identity = self._read_object(workspace / "identity.json")
+        family = self._family_for_identity(identity)
         identity_fields = (
-            _OBSERVATION_IDENTITY_FIELDS
-            if identity.get("kind") == OBSERVATION_RUN_KIND
-            else _EXECUTION_IDENTITY_FIELDS
+            family.identity_fields if family is not None else _EXECUTION_IDENTITY_FIELDS
         )
         if set(identity) != identity_fields:
             raise CorruptRunStore("workspace identity fields are incomplete")
@@ -560,7 +564,11 @@ class RunStore:
         if _required_string(value, "run_id") != run_id.value:
             raise CorruptRunStore("Run revision identity mismatch")
         try:
-            revision_identity = _run_identity(value)
+            revision_identity = (
+                dict(family.decode_revision(stored.payload).identity)
+                if family is not None
+                else execution_run_identity(value)
+            )
         except ValueError as error:
             raise CorruptRunStore(
                 "Run immutable identity bindings are malformed"
@@ -572,16 +580,15 @@ class RunStore:
     def load_identity(self, run_id: RunId) -> dict[str, object]:
         workspace = self._workspace_for_run(run_id)
         identity = self._read_object(workspace / "identity.json")
+        family = self._family_for_identity(identity)
         identity_fields = (
-            _OBSERVATION_IDENTITY_FIELDS
-            if identity.get("kind") == OBSERVATION_RUN_KIND
-            else _EXECUTION_IDENTITY_FIELDS
+            family.identity_fields if family is not None else _EXECUTION_IDENTITY_FIELDS
         )
         if set(identity) != identity_fields:
             raise CorruptRunStore("workspace identity fields are incomplete")
         if _required_string(identity, "run_id") != run_id.value:
             raise CorruptRunStore("workspace identity does not match Run")
-        if identity.get("kind") == OBSERVATION_RUN_KIND:
+        if family is not None and not family.requires_ownership_token:
             return identity
         try:
             token = self._read_bytes(workspace / "ownership-token.bin")
@@ -660,60 +667,83 @@ class RunStore:
         expected_revision: int,
         expected_digest: str,
         payload: bytes,
-        intent: ObservationAppendIntent,
+        intent: DocumentAppendIntent,
     ) -> StoredRevision:
-        """CAS-append one observation checkpoint or lifecycle boundary."""
+        """Compatibility name for appending a registered read-only Run."""
+        return self.compare_and_append_document(
+            lease,
+            expected_revision,
+            expected_digest,
+            payload,
+            intent,
+        )
+
+    def compare_and_append_document(
+        self,
+        lease: RevisionLease,
+        expected_revision: int,
+        expected_digest: str,
+        payload: bytes,
+        intent: DocumentAppendIntent,
+    ) -> StoredRevision:
+        """CAS-append one revision for a registered read-only document family."""
         self._require_run_lease(lease)
-        chain = self.load_chain(lease.run_id)
-        if (
-            chain.head.revision != expected_revision
-            or chain.head.digest != expected_digest
-        ):
-            raise CompareConflict("Run head changed")
-        if chain.terminal:
-            raise CompareConflict("terminal observation Run is immutable")
+        workspace = self._workspace_for_run(lease.run_id)
+        identity = self._read_object(workspace / "identity.json")
+        family = self._family_for_identity(identity)
+        if family is None or family.requires_ownership_token:
+            raise RunStoreError("Run document family is not registered as read-only")
         try:
-            proposed_report = decode_observation_run(
-                payload,
-                resource_registry=self._resource_registry,
-            )
-            verify_observation_revision_chain(
-                (*tuple(item.payload for item in chain.revisions), payload),
-                resource_registry=self._resource_registry,
+            current_revisions = family.verify_chain(
+                self._read_revision_prefix(workspace, expected_revision)
             )
         except ValueError as error:
-            raise RunStoreError("proposed observation revision is invalid") from error
+            raise CorruptRunStore("registered Run chain is invalid") from error
+        current = current_revisions[-1]
         if (
-            proposed_report.revision != expected_revision + 1
-            or proposed_report.run_id != lease.run_id.value
-            or intent.next_status is not proposed_report.status
-            or intent.terminal
-            != (proposed_report.status in TERMINAL_OBSERVATION_STATUSES)
-            or observation_run_identity(decode_json_object(payload))
-            != observation_run_identity(decode_json_object(chain.head.payload))
+            current.stored.revision != expected_revision
+            or current.stored.digest != expected_digest
         ):
-            raise RunStoreError("proposed observation revision bindings are invalid")
-        proposed = StoredRevision(
-            proposed_report.revision,
-            proposed_report.current_digest,
-            payload,
-        )
+            raise CompareConflict("Run head changed")
+        if current.terminal:
+            raise CompareConflict("terminal registered Run is immutable")
+        next_status = _intent_status(intent)
         try:
-            return self._complete_observation_append(
+            proposed = family.validate_append(
+                tuple(item.stored.payload for item in current_revisions),
+                payload,
+                next_status=next_status,
+                terminal=intent.terminal,
+            )
+        except ValueError as error:
+            raise RunStoreError("proposed registered revision is invalid") from error
+        if (
+            proposed.stored.revision != expected_revision + 1
+            or proposed.run_id != lease.run_id.value
+            or dict(proposed.identity) != identity
+        ):
+            raise RunStoreError("proposed registered revision bindings are invalid")
+        for reference in proposed.attachments:
+            try:
+                self._read_attachment(lease.run_id, reference)
+            except (CorruptRunStore, FileNotFoundError) as error:
+                raise RunStoreError("proposed Run attachment is unavailable") from error
+        try:
+            return self._complete_registered_append(
                 lease,
                 expected_revision,
                 expected_digest,
                 proposed,
-                intent,
+                family,
             )
         except AcknowledgementLost:
             try:
-                return self._complete_observation_append(
+                return self._complete_registered_append(
                     lease,
                     expected_revision,
                     expected_digest,
                     proposed,
-                    intent,
+                    family,
                 )
             except AcknowledgementLost as retry_error:
                 raise CompareConflict(
@@ -724,72 +754,123 @@ class RunStore:
                     "observation append acknowledgement reconciliation failed"
                 ) from retry_error
 
-    def _complete_observation_append(
+    def _complete_registered_append(
         self,
         lease: RevisionLease,
         expected_revision: int,
         expected_digest: str,
-        proposed: StoredRevision,
-        intent: ObservationAppendIntent,
+        proposed: DocumentRevision,
+        family: RunDocumentFamily,
     ) -> StoredRevision:
         workspace = self._workspace_for_run(lease.run_id)
-        chain = self.load_chain(lease.run_id)
-        if chain.head.payload == proposed.payload:
-            pass
-        elif (
-            chain.head.revision == expected_revision
-            and chain.head.digest == expected_digest
+        head = self._read_object(workspace / "head.json")
+        durable_revision = _required_int(head, "revision")
+        durable_digest = _required_string(head, "digest")
+        if (durable_revision, durable_digest) == (
+            expected_revision,
+            expected_digest,
         ):
-            revision_path = workspace / "revisions" / f"{proposed.revision:08d}.json"
+            current = self.load_chain(lease.run_id)
+            if current.head.revision != expected_revision:
+                raise CompareConflict("Run head changed during registered append")
+            revision_path = (
+                workspace / "revisions" / f"{proposed.stored.revision:08d}.json"
+            )
             try:
                 existing = self._read_bytes(revision_path)
             except FileNotFoundError:
                 self._publish(
                     revision_path,
-                    proposed.payload,
-                    f"append-observation-revision-{proposed.revision}",
+                    proposed.stored.payload,
+                    f"append-observation-revision-{proposed.stored.revision}",
                 )
             else:
-                if existing != proposed.payload:
+                if existing != proposed.stored.payload:
                     raise CompareConflict("different successor revision already exists")
             self._publish(
                 workspace / "head.json",
-                _head_bytes(proposed),
-                f"append-observation-head-{proposed.revision}",
+                _head_bytes(proposed.stored),
+                f"append-observation-head-{proposed.stored.revision}",
             )
+        elif (durable_revision, durable_digest) == (
+            proposed.stored.revision,
+            proposed.stored.digest,
+        ):
+            payloads = self._read_revision_prefix(
+                workspace,
+                proposed.stored.revision,
+            )
+            try:
+                reconciled = family.verify_chain(payloads)
+            except ValueError as error:
+                raise CorruptRunStore(
+                    "published registered Run candidate is invalid"
+                ) from error
+            if (
+                reconciled[-1].stored != proposed.stored
+                or reconciled[-2].stored.revision != expected_revision
+                or reconciled[-2].stored.digest != expected_digest
+            ):
+                raise CompareConflict("published registered Run candidate conflicts")
         else:
-            raise CompareConflict("Run head changed during observation append")
-        self._publish(
-            workspace / "state.json",
-            canonical_document_bytes(
-                {
-                    "authority_phase": None,
-                    "status": intent.next_status.value,
-                    "terminal": intent.terminal,
-                }
-            ),
-            f"append-observation-state-{proposed.revision}",
-        )
+            raise CompareConflict("Run head changed during registered append")
+
+        proposed_state = {
+            "authority_phase": proposed.authority_phase,
+            "status": proposed.status,
+            "terminal": proposed.terminal,
+        }
+        state = self._read_object(workspace / "state.json")
+        if state != proposed_state:
+            old_revision = family.decode_revision(
+                self._read_bytes(
+                    workspace / "revisions" / f"{expected_revision:08d}.json"
+                )
+            )
+            old_state = {
+                "authority_phase": old_revision.authority_phase,
+                "status": old_revision.status,
+                "terminal": old_revision.terminal,
+            }
+            if state != old_state:
+                raise CorruptRunStore("registered Run state conflicts with append")
+            self._publish(
+                workspace / "state.json",
+                canonical_document_bytes(proposed_state),
+                f"append-observation-state-{proposed.stored.revision}",
+            )
+        identity = self._read_object(workspace / "identity.json")
+        device_id = DeviceId(_required_string(identity, "device_id"))
+        if not family.uses_active_index and any(
+            entry.run_id == lease.run_id for entry in self._read_index(device_id)
+        ):
+            raise CorruptRunStore("read-only Run entered the active Device index")
         self._durability.acknowledge(
-            f"compare-and-append-observation:{lease.run_id.value}:{proposed.revision}"
+            "compare-and-append-observation:"
+            f"{lease.run_id.value}:{proposed.stored.revision}"
         )
         completed = self.load_chain(lease.run_id)
-        if completed.head != proposed:
+        if completed.head != proposed.stored:
             raise CorruptRunStore(
-                "observation append did not durably advance the Run head"
+                "registered append did not durably advance the Run head"
             )
-        return proposed
+        return proposed.stored
 
-    def load_observation_run(self, run_id: RunId) -> CanonicalObservationRun:
-        """Decode the verified canonical observation Run head."""
+    def load_observation_run(self, run_id: RunId) -> LoadedDocumentRun:
+        """Compatibility name for loading a registered read-only Run."""
+        return self.load_document_run(run_id)
+
+    def load_document_run(self, run_id: RunId) -> LoadedDocumentRun:
+        """Decode the verified head through its registered document family."""
         chain = self.load_chain(run_id)
+        family = self._family_for_payload(chain.head.payload)
+        if family is None:
+            raise CorruptRunStore("Run document family is not registered")
         try:
-            return decode_observation_run(
-                chain.head.payload,
-                resource_registry=self._resource_registry,
-            )
+            decoded = family.decode_revision(chain.head.payload).decoded
         except ValueError as error:
-            raise CorruptRunStore("Run is not a valid observation Run") from error
+            raise CorruptRunStore("Run is not a valid registered document") from error
+        return cast(LoadedDocumentRun, decoded)
 
     def _complete_append(
         self,
@@ -1143,20 +1224,28 @@ class RunStore:
         if any(item.session_id == intent.session_id for item in existing_records):
             raise CompareConflict("session already has a close outcome")
         identity = self._read_object(workspace / "identity.json")
-        terminal = _first_terminal_revision(chain)
+        terminal = self._first_terminal_revision(chain)
         head_value = decode_json_object(chain.head.payload)
-        run_kind = _required_string(identity, "kind")
-        if run_kind == OBSERVATION_RUN_KIND:
-            authority_state = "not_applicable"
-            seal_digest = None
-            close_schema_version = 2
+        family = self._family_for_identity(identity)
+        if family is not None:
+            try:
+                close_binding = family.session_close_binding(
+                    family.decode_revision(chain.head.payload)
+                )
+            except ValueError as error:
+                raise CorruptRunStore(
+                    "registered Run session close binding is invalid"
+                ) from error
         else:
             authority = head_value.get("authority")
             if not isinstance(authority, dict):
                 raise CorruptRunStore("terminal Run authority is malformed")
-            authority_state = _required_string(authority, "ownership_state")
-            seal_digest = self._current_seal_digest(workspace, chain)
-            close_schema_version = 1
+            close_binding = SessionCloseBinding(
+                1,
+                _required_string(authority, "ownership_state"),
+                self._current_seal_digest(workspace, chain),
+                None,
+            )
         failure: dict[str, str] | None = None
         if intent.disposition is not SessionCloseDisposition.COMPLETE:
             if intent.failure_category is None or intent.failure_code is None:
@@ -1170,7 +1259,7 @@ class RunStore:
         elif intent.failure_category is not None or intent.failure_code is not None:
             raise RunStoreError("complete session close cannot contain failure")
         record_value: dict[str, object] = {
-            "authority_state": authority_state,
+            "authority_state": close_binding.authority_state,
             "device_id": _required_string(identity, "device_id"),
             "disposition": intent.disposition.value,
             "failure": failure,
@@ -1181,15 +1270,15 @@ class RunStore:
             "producer": {"name": "coreelec-reconciler", "version": "0.1.0"},
             "record_id": intent.record_id,
             "run_id": lease.run_id.value,
-            "schema_version": close_schema_version,
-            "seal_digest": seal_digest,
+            "schema_version": close_binding.schema_version,
+            "seal_digest": close_binding.seal_digest,
             "session_id": intent.session_id,
             "terminal_digest": terminal.digest,
             "terminal_revision": terminal.revision,
             "workspace_id": lease.workspace_id.value,
         }
-        if close_schema_version == 2:
-            record_value["run_kind"] = run_kind
+        if close_binding.run_kind is not None:
+            record_value["run_kind"] = close_binding.run_kind
         record = build_session_close_record(record_value)
         self._validate_session_close_binding(record, chain, workspace)
         self._publish_new(
@@ -1287,7 +1376,7 @@ class RunStore:
         workspace: Path,
     ) -> None:
         identity = self._read_object(workspace / "identity.json")
-        terminal = _first_terminal_revision(chain)
+        terminal = self._first_terminal_revision(chain)
         if (
             record.run_id != _required_string(identity, "run_id")
             or record.workspace_id != _required_string(identity, "workspace_id")
@@ -1300,19 +1389,34 @@ class RunStore:
         observed = chain.revisions[record.observed_head_revision - 1]
         observed_value = decode_json_object(observed.payload)
         run_kind = _required_string(identity, "kind")
+        family = self._family_for_identity(identity)
         if (
             observed.digest != record.observed_head_digest
             or record.run_kind != run_kind
-            or not _run_value_is_terminal(observed_value)
+            or not self._run_value_is_terminal(observed_value)
         ):
             raise CorruptRunStore("session close head binding is invalid")
-        if run_kind == OBSERVATION_RUN_KIND:
+        if family is not None:
+            try:
+                expected = family.session_close_binding(
+                    family.decode_revision(observed.payload)
+                )
+            except ValueError as error:
+                raise CorruptRunStore(
+                    "registered session close binding is invalid"
+                ) from error
             if (
-                record.schema_version != 2
-                or record.authority_state != "not_applicable"
-                or record.seal_digest is not None
+                record.schema_version,
+                record.authority_state,
+                record.seal_digest,
+                record.run_kind,
+            ) != (
+                expected.schema_version,
+                expected.authority_state,
+                expected.seal_digest,
+                expected.run_kind,
             ):
-                raise CorruptRunStore("observation session close binding is invalid")
+                raise CorruptRunStore("registered session close binding is invalid")
         else:
             authority = observed_value.get("authority")
             if (
@@ -1665,15 +1769,13 @@ class RunStore:
         without_digest.pop("current_digest", None)
         if digest != _sha256(canonical_document_bytes(without_digest)):
             raise CorruptRunStore("Run revision digest mismatch")
-        if value.get("kind") == OBSERVATION_RUN_KIND:
+        family = self._family_for_value(value)
+        if family is not None:
             try:
-                report = decode_observation_run(
-                    payload,
-                    resource_registry=self._resource_registry,
-                )
+                registered = family.decode_revision(payload)
             except ValueError as error:
-                raise CorruptRunStore("observation Run revision is invalid") from error
-            return StoredRevision(report.revision, report.current_digest, payload)
+                raise CorruptRunStore("registered Run revision is invalid") from error
+            return registered.stored
         try:
             status = RunStatus(_required_string(value, "status"))
             evidence = value.get("evidence")
@@ -1692,6 +1794,63 @@ class RunStore:
         except (TypeError, ValueError) as error:
             raise CorruptRunStore("Run evidence is invalid") from error
         return StoredRevision(revision, digest, payload)
+
+    def _family_for_payload(self, payload: bytes) -> RunDocumentFamily | None:
+        try:
+            value = decode_json_object(payload)
+        except ValueError:
+            return None
+        return self._family_for_value(value)
+
+    def _family_for_value(
+        self,
+        value: dict[str, object],
+    ) -> RunDocumentFamily | None:
+        kind = value.get("kind")
+        return self._document_families.get(kind) if isinstance(kind, str) else None
+
+    def _family_for_identity(
+        self,
+        identity: dict[str, object],
+    ) -> RunDocumentFamily | None:
+        return self._family_for_value(identity)
+
+    def _read_revision_prefix(
+        self,
+        workspace: Path,
+        revision: int,
+    ) -> tuple[bytes, ...]:
+        contents: list[bytes] = []
+        for number in range(1, revision + 1):
+            try:
+                contents.append(
+                    self._read_bytes(workspace / "revisions" / f"{number:08d}.json")
+                )
+            except FileNotFoundError as error:
+                raise CorruptRunStore("Run revision chain has a gap") from error
+        return tuple(contents)
+
+    def _run_value_is_terminal(self, value: dict[str, object]) -> bool:
+        family = self._family_for_value(value)
+        if family is not None:
+            try:
+                return family.decode_revision(canonical_document_bytes(value)).terminal
+            except ValueError as error:
+                raise CorruptRunStore("registered Run status is invalid") from error
+        try:
+            return RunStatus(_required_string(value, "status")) in TERMINAL_RUN_STATUSES
+        except ValueError as error:
+            raise CorruptRunStore("execution Run status is invalid") from error
+
+    def _first_terminal_revision(
+        self,
+        chain: VerifiedRunChain,
+    ) -> StoredRevision:
+        for revision in chain.revisions:
+            value = decode_json_object(revision.payload)
+            if self._run_value_is_terminal(value):
+                return revision
+        raise CorruptRunStore("terminal Run has no terminal revision")
 
     def _publish(self, path: Path, payload: bytes, operation_id: str) -> None:
         temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
@@ -1839,35 +1998,6 @@ def _sha256(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
-def _first_terminal_revision(chain: VerifiedRunChain) -> StoredRevision:
-    for revision in chain.revisions:
-        value = decode_json_object(revision.payload)
-        if _run_value_is_terminal(value):
-            return revision
-    raise CorruptRunStore("terminal Run has no terminal revision")
-
-
-def _run_value_is_terminal(value: dict[str, object]) -> bool:
-    if value.get("kind") == OBSERVATION_RUN_KIND:
-        try:
-            return (
-                ObservationRunStatus(_required_string(value, "status"))
-                in TERMINAL_OBSERVATION_STATUSES
-            )
-        except ValueError as error:
-            raise CorruptRunStore("observation Run status is invalid") from error
-    try:
-        return RunStatus(_required_string(value, "status")) in TERMINAL_RUN_STATUSES
-    except ValueError as error:
-        raise CorruptRunStore("execution Run status is invalid") from error
-
-
-def _run_identity(value: dict[str, object]) -> dict[str, object]:
-    if value.get("kind") == OBSERVATION_RUN_KIND:
-        return observation_run_identity(value)
-    return execution_run_identity(value)
-
-
 def _session_close_matches_intent(
     record: SessionCloseRecord,
     intent: SessionCloseIntent,
@@ -1880,6 +2010,14 @@ def _session_close_matches_intent(
         and record.failure_category is intent.failure_category
         and record.failure_code == intent.failure_code
     )
+
+
+def _intent_status(intent: DocumentAppendIntent) -> str:
+    value = intent.next_status
+    status = getattr(value, "value", value)
+    if not isinstance(status, str) or not status:
+        raise RunStoreError("append status intent is invalid")
+    return status
 
 
 def _opaque_key(value: str) -> str:

@@ -209,10 +209,11 @@ and execution reports. It never contains a Plan, Change, approval, Desired
 State, Verification, convergence, mutation, rollback, cleanup, or write
 authority field.
 
-The lifecycle is `ready` to `observing`, then terminal `observed` when every
-selected Resource was observed or `observed_partial` when any selected
-Resource is unavailable or has an unknown result. A crash while work remains
-leaves the Run durably `observing`.
+The lifecycle is strictly `ready` to `observing`, then terminal `observed`
+when every selected Resource was observed or `observed_partial` when any
+selected Resource is unavailable or has an unknown result. A Run cannot move
+directly from `ready` to a terminal state, including for a one-Resource scope.
+A crash while work remains leaves the Run durably `observing`.
 
 The immutable scope binds the Run, workspace, Device, creation time, ordered
 selected Resources, Resource Types, State Addresses, dependency order, and
@@ -228,13 +229,23 @@ closed Resource-Type-owned payload, disposition, and any content-addressed raw
 attachment. A completed prefix is immutable and is not observed again after
 restart. Terminal Runs contain the complete prefix and reject all successors.
 The independent persistence oracle separately checks envelopes, payloads,
-ordering, references, digests, and transitions.
+ordering, references, digests, and transitions. Resource-Type observation
+oracles implement their own algorithms rather than calling production decoder
+helpers. The persistence family requires both production decoding and oracle
+acceptance.
 
 Observation workspaces use Device and Run leases plus the existing CAS and
 durability machinery, but never enter the active mutation index and never
 persist an ownership token. Session-close schema version 2 can bind their
 terminal result using `authority_state: not_applicable`; this does not assert
 Resource cleanup, authority release, or sealing.
+
+RunStore receives document-family operations through its registry seam and
+stores canonical revisions opaquely. The family owns chain, transition,
+identity, terminality, attachment, and session-close interpretation. A bounded
+retry reconciles independently inspected revision, head, state, and
+no-active-index facts after acknowledgement loss; only the byte-identical
+candidate may complete publication.
 
 ## Standalone read-only observation
 

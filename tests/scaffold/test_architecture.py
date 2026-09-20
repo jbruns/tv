@@ -134,6 +134,14 @@ def test_domain_imports_only_standard_library_and_domain_modules() -> None:
     assert violations == {}
 
 
+def test_run_store_does_not_import_concrete_document_codecs() -> None:
+    modules = imported_modules(PACKAGE_ROOT / "execution" / "run_store.py")
+
+    assert "coreelec_reconciler.domain.observation" not in modules
+    assert "coreelec_reconciler.persistence.execution_documents" not in modules
+    assert "coreelec_reconciler.persistence.observation_documents" not in modules
+
+
 def test_adapters_never_import_execution_modules() -> None:
     assert adapter_execution_import_violations(PACKAGE_ROOT / "adapters") == {}
 

@@ -92,7 +92,7 @@ def check_observation_run_payload(
         or payload["availability"] not in _AVAILABILITY
     ):
         errors.append("oracle: invalid observation availability")
-    _check_shape(payload, errors, "oracle: ")
+    _check_oracle_payload_relationships(payload, errors)
     return tuple(errors)
 
 
@@ -122,6 +122,92 @@ def _validate_payload(payload: Mapping[str, object]) -> None:
     _check_shape(payload, errors, "")
     if errors:
         raise ValueError(errors[0])
+
+
+def _check_oracle_payload_relationships(
+    payload: dict[str, object],
+    errors: list[str],
+) -> None:
+    content_digest = payload["content_digest"]
+    mode = payload["mode"]
+    failure_code = payload["failure_code"]
+    if content_digest is not None and (
+        not isinstance(content_digest, str)
+        or not content_digest.startswith("sha256:")
+        or len(content_digest) != 71
+        or any(character not in "0123456789abcdef" for character in content_digest[7:])
+    ):
+        errors.append("oracle: invalid observation content digest")
+    if mode is not None and (type(mode) is not int or not 0 <= mode <= 0o7777):
+        errors.append("oracle: invalid observation mode")
+    if failure_code is not None and (
+        not isinstance(failure_code, str)
+        or not 1 <= len(failure_code) <= 128
+        or any(
+            character not in "abcdefghijklmnopqrstuvwxyz0123456789._-"
+            for character in failure_code
+        )
+    ):
+        errors.append("oracle: invalid observation failure code")
+
+    availability = payload["availability"]
+    presence = payload["presence"]
+    readability = payload["readability"]
+    entry_type = payload["entry_type"]
+    safety = payload["safety"]
+    if not all(
+        isinstance(value, str)
+        for value in (availability, presence, readability, safety)
+    ) or (entry_type is not None and not isinstance(entry_type, str)):
+        return
+    if availability == "available":
+        if presence == "absent":
+            if (
+                readability != "not_applicable"
+                or entry_type is not None
+                or safety != "safe"
+                or content_digest is not None
+                or mode is not None
+                or failure_code is not None
+            ):
+                errors.append("oracle: absent observation is contradictory")
+        elif presence == "present":
+            if entry_type == "regular":
+                readable = (
+                    readability == "readable"
+                    and safety == "safe"
+                    and content_digest is not None
+                    and mode is not None
+                    and failure_code is None
+                )
+                unreadable = (
+                    readability == "unreadable"
+                    and safety == "safe"
+                    and content_digest is None
+                    and failure_code is not None
+                )
+                if not (readable or unreadable):
+                    errors.append("oracle: regular observation is incomplete")
+            elif (
+                entry_type not in {"directory", "other", "symlink"}
+                or readability != "not_applicable"
+                or safety != "unsafe"
+                or content_digest is not None
+                or mode is not None
+            ):
+                errors.append("oracle: unsafe observation is contradictory")
+        else:
+            errors.append("oracle: available observation has unknown presence")
+    elif availability in {"unavailable", "unknown"} and (
+        presence != "unknown"
+        or readability != "unknown"
+        or entry_type != "unknown"
+        or safety != "unknown"
+        or content_digest is not None
+        or mode is not None
+        or failure_code is None
+    ):
+        errors.append("oracle: incomplete observation is contradictory")
 
 
 def _check_shape(

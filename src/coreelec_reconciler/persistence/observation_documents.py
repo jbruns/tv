@@ -9,7 +9,7 @@ from coreelec_reconciler.domain.canonical_json import (
     canonical_document_bytes,
     decode_json_object,
 )
-from coreelec_reconciler.domain.execution import AttachmentRef
+from coreelec_reconciler.domain.execution import AttachmentRef, StoredRevision
 from coreelec_reconciler.domain.observation import (
     TERMINAL_OBSERVATION_STATUSES,
     CanonicalObservationRun,
@@ -25,6 +25,11 @@ from coreelec_reconciler.domain.validation import (
     require_logical_id,
     require_sha256,
     require_uuid7,
+)
+from coreelec_reconciler.execution.document_family import (
+    DocumentRevision,
+    RunDocumentFamily,
+    SessionCloseBinding,
 )
 from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
@@ -231,6 +236,118 @@ def observation_attachment_refs(
         for checkpoint in run.checkpoints
         for reference in checkpoint.raw_attachments
     )
+
+
+class ObservationRunDocumentFamily:
+    """Closed observation codec exposed through the opaque RunStore seam."""
+
+    kind = OBSERVATION_RUN_KIND
+    identity_fields = frozenset(
+        {
+            "created_at",
+            "device_id",
+            "kind",
+            "producer",
+            "run_id",
+            "schema_version",
+            "scope",
+            "workspace_id",
+        }
+    )
+    requires_ownership_token = False
+    uses_active_index = False
+
+    def __init__(self, resource_registry: ResourceRegistry | None = None) -> None:
+        self._resource_registry = resource_registry or built_in_resource_registry()
+
+    def decode_revision(self, payload: bytes) -> DocumentRevision:
+        report = decode_observation_run(
+            payload,
+            resource_registry=self._resource_registry,
+        )
+        errors = check_observation_run_invariants(
+            payload,
+            resource_registry=self._resource_registry,
+        )
+        if errors:
+            raise ValueError(errors[0])
+        return DocumentRevision(
+            StoredRevision(
+                report.revision,
+                report.current_digest,
+                report.canonical_bytes,
+            ),
+            report.run_id,
+            report.workspace_id,
+            report.device_id,
+            report.status.value,
+            report.status in TERMINAL_OBSERVATION_STATUSES,
+            None,
+            observation_run_identity(decode_json_object(payload)),
+            observation_attachment_refs(report),
+            report,
+        )
+
+    def verify_chain(self, payloads: tuple[bytes, ...]) -> tuple[DocumentRevision, ...]:
+        reports = verify_observation_revision_chain(
+            payloads,
+            resource_registry=self._resource_registry,
+        )
+        errors = check_observation_chain_invariants(
+            payloads,
+            resource_registry=self._resource_registry,
+        )
+        if errors:
+            raise ValueError(errors[0])
+        return tuple(self.decode_revision(report.canonical_bytes) for report in reports)
+
+    def validate_initial(
+        self,
+        payload: bytes,
+        *,
+        run_id: str,
+        workspace_id: str,
+        device_id: str,
+    ) -> DocumentRevision:
+        revision = self.decode_revision(payload)
+        if (
+            revision.run_id != run_id
+            or revision.workspace_id != workspace_id
+            or revision.device_id != device_id
+            or revision.stored.revision != 1
+            or revision.status != ObservationRunStatus.READY.value
+            or revision.terminal
+        ):
+            raise ValueError("initial observation Run bindings are inconsistent")
+        return revision
+
+    def validate_append(
+        self,
+        current_payloads: tuple[bytes, ...],
+        proposed_payload: bytes,
+        *,
+        next_status: str,
+        terminal: bool,
+    ) -> DocumentRevision:
+        revisions = self.verify_chain((*current_payloads, proposed_payload))
+        proposed = revisions[-1]
+        if proposed.status != next_status or proposed.terminal is not terminal:
+            raise ValueError("observation append intent does not match payload")
+        return proposed
+
+    def session_close_binding(
+        self,
+        revision: DocumentRevision,
+    ) -> SessionCloseBinding:
+        if not revision.terminal:
+            raise ValueError("session close requires terminal observation truth")
+        return SessionCloseBinding(2, "not_applicable", None, self.kind)
+
+
+def observation_run_document_family(
+    resource_registry: ResourceRegistry | None = None,
+) -> RunDocumentFamily:
+    return ObservationRunDocumentFamily(resource_registry)
 
 
 def check_observation_run_invariants(
@@ -632,6 +749,8 @@ def _validate_summary(
         if len(checkpoints) >= len(scope.resources) or ended_at is not None:
             raise ValueError("observing Run checkpoint summary is contradictory")
         return
+    if revision < 3:
+        raise ValueError("terminal observation Run skipped observing lifecycle")
     if len(checkpoints) != len(scope.resources) or ended_at is None:
         raise ValueError("terminal observation Run is incomplete")
     all_observed = all(
@@ -658,11 +777,10 @@ def _validate_transition(
         and current.status is ObservationRunStatus.OBSERVING
     ):
         raise ValueError("observation Run successor made no progress")
-    if previous.status is ObservationRunStatus.READY and current.status not in {
-        ObservationRunStatus.OBSERVING,
-        ObservationRunStatus.OBSERVED,
-        ObservationRunStatus.OBSERVED_PARTIAL,
-    }:
+    if (
+        previous.status is ObservationRunStatus.READY
+        and current.status is not ObservationRunStatus.OBSERVING
+    ):
         raise ValueError("invalid observation lifecycle transition")
     if previous.status is ObservationRunStatus.OBSERVING and current.status not in {
         ObservationRunStatus.OBSERVING,
@@ -890,6 +1008,8 @@ def _oracle_summary(
         if len(checkpoints) >= resource_count or ended_at is not None:
             errors.append("oracle: contradictory observing Run")
     else:
+        if revision < 3:
+            errors.append("oracle: terminal Run skipped observing lifecycle")
         if len(checkpoints) != resource_count or ended_at is None:
             errors.append("oracle: incomplete terminal observation Run")
         all_observed = all(item[1] == "observed" for item in checkpoints)
@@ -917,6 +1037,8 @@ def _oracle_transition(
         previous.get("status") == "ready" and current.get("status") == "observing"
     ):
         errors.append("oracle: observation successor made no progress")
+    if previous.get("status") == "ready" and current.get("status") != "observing":
+        errors.append("oracle: invalid observation lifecycle transition")
 
 
 def _oracle_identity(value: dict[str, object]) -> tuple[object, ...]:

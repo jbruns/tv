@@ -1,10 +1,12 @@
 import hashlib
+import inspect
 from copy import deepcopy
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+import coreelec_reconciler.persistence.observation_documents as observation_documents
 from coreelec_reconciler.domain.canonical_json import (
     canonical_document_bytes,
     decode_json_object,
@@ -21,7 +23,11 @@ from coreelec_reconciler.domain.observation import (
     ObservationAppendIntent,
     ObservationRunStatus,
 )
-from coreelec_reconciler.execution.local_durability import PosixLocalDurability
+from coreelec_reconciler.execution.local_durability import (
+    AcknowledgementLost,
+    DurabilityError,
+    PosixLocalDurability,
+)
 from coreelec_reconciler.execution.run_store import (
     CompareConflict,
     CorruptRunStore,
@@ -36,12 +42,14 @@ from coreelec_reconciler.persistence.observation_documents import (
     check_observation_chain_invariants,
     check_observation_run_invariants,
     decode_observation_run,
+    observation_run_document_family,
     verify_observation_revision_chain,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.observation_codecs import (
     OBSERVATION_PAYLOAD_KIND,
     OBSERVATION_PAYLOAD_VERSION,
     OBSERVATION_POLICY_DIGEST,
+    check_observation_run_payload,
 )
 
 RUN_ID = "019950f8-4c00-7000-8000-000000000901"
@@ -265,9 +273,20 @@ def lifecycle(*, partial: bool = True) -> tuple[bytes, ...]:
 
 
 def create_store(tmp_path: Path) -> tuple[RunStore, DeviceLease]:
-    store = RunStore(tmp_path / "store", FastTestDurability())
+    store = observation_store(tmp_path / "store")
     lease = store.acquire_device(DeviceId(DEVICE_ID))
     return store, lease
+
+
+def observation_store(
+    root: Path,
+    durability: PosixLocalDurability | None = None,
+) -> RunStore:
+    return RunStore(
+        root,
+        durability or FastTestDurability(),
+        document_families=(observation_run_document_family(),),
+    )
 
 
 class FastTestDurability(PosixLocalDurability):
@@ -279,6 +298,48 @@ class FastTestDurability(PosixLocalDurability):
 
     def acknowledge(self, operation_id: str) -> None:
         del operation_id
+
+
+class LoseNamedAcknowledgement(FastTestDurability):
+    def __init__(self, operation_id: str) -> None:
+        self._operation_id = operation_id
+        self._lost = False
+
+    def acknowledge(self, operation_id: str) -> None:
+        if operation_id == self._operation_id and not self._lost:
+            self._lost = True
+            raise AcknowledgementLost(f"lost {operation_id}")
+
+
+class LoseHeadAndCorruptState(FastTestDurability):
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._lost = False
+
+    def acknowledge(self, operation_id: str) -> None:
+        if operation_id == "append-observation-head-2" and not self._lost:
+            self._lost = True
+            workspace = next((self._root / "runs").iterdir())
+            (workspace / "state.json").write_bytes(
+                canonical_document_bytes(
+                    {
+                        "authority_phase": None,
+                        "status": "invented",
+                        "terminal": False,
+                    }
+                )
+            )
+            raise AcknowledgementLost("lost head acknowledgement")
+
+
+class StopAfterHeadPublication(FastTestDurability):
+    def __init__(self) -> None:
+        self._stopped = False
+
+    def acknowledge(self, operation_id: str) -> None:
+        if operation_id == "append-observation-head-2" and not self._stopped:
+            self._stopped = True
+            raise DurabilityError("simulated process stop after head publication")
 
 
 def test_observation_document_round_trip_golden_and_independent_oracle() -> None:
@@ -348,6 +409,10 @@ def test_observation_document_rejects_closed_schema_and_scope_mutations() -> Non
 def test_observation_payload_rejects_unknown_tampered_and_contradictory_states() -> (
     None
 ):
+    oracle_source = inspect.getsource(check_observation_run_payload)
+    assert "_check_shape" not in oracle_source
+    assert "decode_observation_run_payload" not in oracle_source
+
     invalid_payloads = []
     unknown = regular_payload()
     unknown["invented"] = True
@@ -538,6 +603,227 @@ def test_observation_chain_rejects_invalid_history() -> None:
         build_observation_run(out_of_order)
     assert first.checkpoints[0].payload == regular_payload()
 
+    one_resource_scope = scope_value()
+    cast(list[dict[str, object]], one_resource_scope["resources"]).pop()
+    ready = build_observation_run(run_value(1, "ready", [], scope=one_resource_scope))
+    terminal_value = run_value(
+        2,
+        "observed",
+        [checkpoint(0)],
+        previous=ready.current_digest,
+        scope=one_resource_scope,
+    )
+    with pytest.raises(ValueError, match="lifecycle"):
+        build_observation_run(terminal_value)
+    terminal_value["current_digest"] = ""
+    without_digest = {
+        key: item for key, item in terminal_value.items() if key != "current_digest"
+    }
+    terminal_value["current_digest"] = (
+        "sha256:" + hashlib.sha256(canonical_document_bytes(without_digest)).hexdigest()
+    )
+    terminal_bytes = canonical_document_bytes(terminal_value)
+    with pytest.raises(ValueError, match="lifecycle"):
+        verify_observation_revision_chain((ready.canonical_bytes, terminal_bytes))
+    assert check_observation_chain_invariants((ready.canonical_bytes, terminal_bytes))
+
+
+def test_observation_append_reconciles_every_lost_ack_boundary(
+    tmp_path: Path,
+) -> None:
+    for index, operation_id in enumerate(
+        (
+            "append-observation-revision-2",
+            "append-observation-head-2",
+            "append-observation-state-2",
+            f"compare-and-append-observation:{RUN_ID}:2",
+        )
+    ):
+        revisions = lifecycle()
+        durability = LoseNamedAcknowledgement(operation_id)
+        store = observation_store(tmp_path / str(index), durability)
+        device_lease = store.acquire_device(DeviceId(DEVICE_ID))
+        lease, _ = store.create_observation_run(
+            device_lease,
+            RunId(RUN_ID),
+            DeviceId(DEVICE_ID),
+            revisions[0],
+        )
+
+        proposed = decode_observation_run(revisions[1])
+        result = store.compare_and_append_observation(
+            lease,
+            1,
+            decode_observation_run(revisions[0]).current_digest,
+            revisions[1],
+            ObservationAppendIntent(ObservationRunStatus.OBSERVING, False),
+        )
+
+        assert result.digest == proposed.current_digest
+        assert store.load_chain(RunId(RUN_ID)).head == result
+        assert store.load_observation_run(RunId(RUN_ID)).status is (
+            ObservationRunStatus.OBSERVING
+        )
+        assert store.find_active_by_device(DeviceId(DEVICE_ID)) == ()
+
+
+def test_run_store_requires_production_and_independent_family_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid = decode_observation_run(lifecycle()[0])
+    invalid = decode_json_object(valid.canonical_bytes)
+    invalid_scope = cast(dict[str, object], invalid["scope"])
+    invalid_resources = cast(list[dict[str, object]], invalid_scope["resources"])
+    invalid_resources[0]["state_addresses"] = ["../../etc/passwd"]
+    without_digest = {
+        key: item for key, item in invalid.items() if key != "current_digest"
+    }
+    invalid["current_digest"] = (
+        "sha256:" + hashlib.sha256(canonical_document_bytes(without_digest)).hexdigest()
+    )
+    invalid_bytes = canonical_document_bytes(invalid)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            observation_documents,
+            "decode_observation_run",
+            lambda content, **kwargs: valid,
+        )
+        store = observation_store(tmp_path / "oracle-rejects")
+        lease = store.acquire_device(DeviceId(DEVICE_ID))
+        with pytest.raises(RunStoreError, match="initial registered Run"):
+            store.create_observation_run(
+                lease,
+                RunId(RUN_ID),
+                DeviceId(DEVICE_ID),
+                invalid_bytes,
+            )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            observation_documents,
+            "check_observation_run_invariants",
+            lambda content, **kwargs: (),
+        )
+        store = observation_store(tmp_path / "production-rejects")
+        lease = store.acquire_device(DeviceId(DEVICE_ID))
+        with pytest.raises(RunStoreError, match="initial registered Run"):
+            store.create_observation_run(
+                lease,
+                RunId(RUN_ID),
+                DeviceId(DEVICE_ID),
+                invalid_bytes,
+            )
+
+    store, device_lease = create_store(tmp_path / "load")
+    run_lease, _ = store.create_observation_run(
+        device_lease,
+        RunId(RUN_ID),
+        DeviceId(DEVICE_ID),
+        valid.canonical_bytes,
+    )
+    store.release_run(run_lease)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            observation_documents,
+            "check_observation_chain_invariants",
+            lambda revisions, **kwargs: ("oracle: injected rejection",),
+        )
+        with pytest.raises(CorruptRunStore, match="registered Run chain"):
+            store.load_chain(RunId(RUN_ID))
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            observation_documents,
+            "verify_observation_revision_chain",
+            lambda revisions, **kwargs: (_ for _ in ()).throw(
+                ValueError("production injected rejection")
+            ),
+        )
+        with pytest.raises(CorruptRunStore, match="registered Run chain"):
+            store.load_chain(RunId(RUN_ID))
+
+
+def test_observation_append_reconciliation_rejects_artifact_conflicts(
+    tmp_path: Path,
+) -> None:
+    revisions = lifecycle()
+    store, device_lease = create_store(tmp_path)
+    lease, _ = store.create_observation_run(
+        device_lease,
+        RunId(RUN_ID),
+        DeviceId(DEVICE_ID),
+        revisions[0],
+    )
+    workspace = next((tmp_path / "store" / "runs").iterdir())
+    (workspace / "revisions" / "00000002.json").write_bytes(b"conflict")
+
+    with pytest.raises(CompareConflict, match="different successor"):
+        store.compare_and_append_observation(
+            lease,
+            1,
+            decode_observation_run(revisions[0]).current_digest,
+            revisions[1],
+            ObservationAppendIntent(ObservationRunStatus.OBSERVING, False),
+        )
+
+    conflicting_root = tmp_path / "state-conflict"
+    conflicting_store = observation_store(
+        conflicting_root,
+        LoseHeadAndCorruptState(conflicting_root),
+    )
+    conflicting_device_lease = conflicting_store.acquire_device(DeviceId(DEVICE_ID))
+    conflicting_lease, _ = conflicting_store.create_observation_run(
+        conflicting_device_lease,
+        RunId(RUN_ID),
+        DeviceId(DEVICE_ID),
+        revisions[0],
+    )
+    with pytest.raises(CompareConflict, match="reconciliation failed"):
+        conflicting_store.compare_and_append_observation(
+            conflicting_lease,
+            1,
+            decode_observation_run(revisions[0]).current_digest,
+            revisions[1],
+            ObservationAppendIntent(ObservationRunStatus.OBSERVING, False),
+        )
+
+
+def test_observation_append_resumes_after_restart_with_new_head_and_old_state(
+    tmp_path: Path,
+) -> None:
+    revisions = lifecycle()
+    durability = StopAfterHeadPublication()
+    store = observation_store(tmp_path / "store", durability)
+    device_lease = store.acquire_device(DeviceId(DEVICE_ID))
+    lease, _ = store.create_observation_run(
+        device_lease,
+        RunId(RUN_ID),
+        DeviceId(DEVICE_ID),
+        revisions[0],
+    )
+    expected_digest = decode_observation_run(revisions[0]).current_digest
+    intent = ObservationAppendIntent(ObservationRunStatus.OBSERVING, False)
+    with pytest.raises(DurabilityError, match="process stop"):
+        store.compare_and_append_observation(
+            lease,
+            1,
+            expected_digest,
+            revisions[1],
+            intent,
+        )
+
+    result = store.compare_and_append_observation(
+        lease,
+        1,
+        expected_digest,
+        revisions[1],
+        intent,
+    )
+
+    assert store.load_chain(RunId(RUN_ID)).head == result
+    assert store.find_active_by_device(DeviceId(DEVICE_ID)) == ()
+
 
 def test_run_store_observation_restart_boundaries_and_terminal_session_close(
     tmp_path: Path,
@@ -560,7 +846,7 @@ def test_run_store_observation_restart_boundaries_and_terminal_session_close(
     assert attachment.digest == RAW_DIGEST
     store.release_run(run_lease)
     for stop_after in range(1, len(revisions) + 1):
-        reopened = RunStore(tmp_path / "store", FastTestDurability())
+        reopened = observation_store(tmp_path / "store")
         loaded = reopened.load_observation_run(RunId(RUN_ID))
         workspace = next((tmp_path / "store" / "runs").iterdir())
         assert not (workspace / "ownership-token.bin").exists()
@@ -662,6 +948,28 @@ def test_run_store_rejects_cross_run_and_post_terminal_observation_appends(
             SHA_A,
             revisions[1],
             ObservationAppendIntent(ObservationRunStatus.OBSERVING, False),
+        )
+    shortcut = run_value(
+        2,
+        "observed",
+        [checkpoint(0), checkpoint(1)],
+        previous=decode_observation_run(revisions[0]).current_digest,
+    )
+    shortcut["current_digest"] = ""
+    shortcut_without_digest = {
+        key: item for key, item in shortcut.items() if key != "current_digest"
+    }
+    shortcut["current_digest"] = (
+        "sha256:"
+        + hashlib.sha256(canonical_document_bytes(shortcut_without_digest)).hexdigest()
+    )
+    with pytest.raises(RunStoreError, match="proposed registered revision"):
+        store.compare_and_append_observation(
+            lease,
+            1,
+            decode_observation_run(revisions[0]).current_digest,
+            canonical_document_bytes(shortcut),
+            ObservationAppendIntent(ObservationRunStatus.OBSERVED, True),
         )
     for payload in revisions[1:]:
         current = store.load_chain(RunId(RUN_ID)).head

@@ -7,6 +7,8 @@ execution. `CoreElecReconcilerObservationRun` version 1 has only
 `ready -> observing -> observed|observed_partial`. The two final states are
 terminal; `observed` means every selected Resource produced an available
 Observation, while `observed_partial` preserves unavailable or unknown facts.
+The `observing` boundary is mandatory even for a one-Resource scope; direct
+`ready` to terminal transitions are invalid.
 
 Its immutable identity includes Run/workspace/Device/creation bindings and the
 complete ordered scope: Resource IDs and Types, logical State Addresses,
@@ -29,6 +31,13 @@ durability protocol, but never enter the active mutation index or persist an
 ownership token. Session-close version 2 binds the observation Run kind and
 uses `authority_state: not_applicable` with no seal. Transport close remains
 distinct from Resource cleanup and authority release.
+
+RunStore stores registered document-family bytes without importing their
+concrete codecs. Injected family operations validate chain, transition,
+identity, terminality, attachments, and close bindings using both production
+decoding and an independently implemented oracle. After acknowledgement loss,
+the bounded retry inspects revision, head, state, and index artifacts directly,
+completes only a byte-identical durable candidate, and rejects any conflict.
 
 Date: 2026-09-18
 
