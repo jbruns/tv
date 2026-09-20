@@ -249,17 +249,36 @@ candidate may complete publication.
 
 ## Standalone read-only observation
 
-The observation document codec and RunStore API are the persistence seam for a
-later standalone observation workflow. They create, resume, and inspect
-canonical observation Runs without creating or saving a `CanonicalPlan`,
-acquiring remote ownership, or receiving preparation, mutation, rollback,
-cleanup, Verification, or Effect capabilities.
+`execution.observation.CanonicalObservationRuns` is the standalone execution
+service. `ObservationRunRequest` binds the caller-provided Run and Device IDs,
+the configuration, Profile, artifact-set, capability, and selector digests,
+and the exact ordered Resource identities, Types, dependencies, and State
+Addresses. Each Resource supplies only a `ReadOnlyResourceObserver`; the
+service has no Plan repository, approval, Desired-State assessment,
+preparation, mutation, rollback, cleanup, Effect, or authority dependency.
+
+The service creates, restarts, reports, and inspects canonical observation
+Runs. It validates the complete immutable scope before restart, verifies the
+stored chain through `RunStore`, resumes only after the exact durable
+checkpoint prefix, and never invokes an observer for a completed Resource.
+The registered Resource descriptor owns both encoding and decoding of its
+closed observation payload. Raw bytes are stored as content-addressed
+attachments before the corresponding checkpoint is appended.
 
 The codec records measured presence, readability, entry type, safety,
 availability, unknown/unavailable failure code, content digest, mode, and raw
 attachment reference as applicable. It does not assess Desired State or
 translate an Observation into an execution result. Read-only workspaces never
-enter the active Device mutation index.
+enter the active Device mutation index. The final status is derived solely
+from the persisted availability/disposition facts: all available observations
+produce `observed`; any unavailable or unknown observation produces
+`observed_partial`.
+
+`application.observation.ObservationApplication` is the adapter-free
+application boundary intended for bootstrap composition. In addition to the
+four Run operations, it integrates `DurableSessionClose`; a close failure or
+unknown result is recorded separately and the exact terminal observation Run
+is returned unchanged.
 
 ## Durable close uncertainty
 

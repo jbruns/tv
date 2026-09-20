@@ -4,7 +4,10 @@ import hashlib
 import re
 from collections.abc import Mapping
 
+from coreelec_reconciler.domain.execution import Presence
+from coreelec_reconciler.domain.observation import ObservationDisposition
 from coreelec_reconciler.domain.validation import require_sha256
+from coreelec_reconciler.resource_types.descriptor import EncodedObservationEvidence
 
 OBSERVATION_PAYLOAD_KIND = "KodiSmartPlaylistObservationResult"
 OBSERVATION_PAYLOAD_VERSION = 1
@@ -29,6 +32,103 @@ _ENTRY_TYPES = {"directory", "other", "regular", "symlink", "unknown"}
 _SAFETY = {"safe", "unsafe", "unknown"}
 _AVAILABILITY = {"available", "unavailable", "unknown"}
 _STATE_ADDRESS = re.compile(r"special://profile/playlists/video/[A-Za-z0-9._-]+\.xsp")
+
+
+def encode_observation_run_payload(value: object) -> EncodedObservationEvidence:
+    """Encode a fresh playlist Observation into the closed Run payload."""
+    from coreelec_reconciler.resource_types.managed_file.observation import (
+        ManagedFileObservation,
+    )
+    from coreelec_reconciler.transports.interfaces import ReadFailureCode
+
+    if not isinstance(value, ManagedFileObservation):
+        raise TypeError("Kodi Smart Playlist produced an unsupported Observation")
+    state = value.state
+    failure = value.failure
+    if failure is None:
+        if state.presence is Presence.ABSENT:
+            payload: dict[str, object] = {
+                "availability": "available",
+                "content_digest": None,
+                "entry_type": None,
+                "failure_code": None,
+                "mode": None,
+                "presence": "absent",
+                "readability": "not_applicable",
+                "safety": "safe",
+            }
+        elif (
+            state.presence is Presence.PRESENT
+            and state.entry_kind == "regular"
+            and state.content_digest is not None
+            and state.managed_mode is not None
+            and value.content is not None
+        ):
+            payload = {
+                "availability": "available",
+                "content_digest": state.content_digest,
+                "entry_type": "regular",
+                "failure_code": None,
+                "mode": state.managed_mode,
+                "presence": "present",
+                "readability": "readable",
+                "safety": "safe",
+            }
+        else:
+            raise ValueError("playlist Observation is internally inconsistent")
+        disposition = ObservationDisposition.OBSERVED
+    elif failure.code is ReadFailureCode.UNSAFE:
+        payload = {
+            "availability": "available",
+            "content_digest": None,
+            "entry_type": state.entry_kind or "unknown",
+            "failure_code": None,
+            "mode": None,
+            "presence": "present",
+            "readability": "not_applicable",
+            "safety": "unsafe",
+        }
+        disposition = ObservationDisposition.OBSERVED
+    elif failure.code in {ReadFailureCode.UNREADABLE, ReadFailureCode.TOO_LARGE}:
+        payload = {
+            "availability": "available",
+            "content_digest": None,
+            "entry_type": state.entry_kind or "regular",
+            "failure_code": f"resource.{failure.code.value}",
+            "mode": state.managed_mode,
+            "presence": "present",
+            "readability": "unreadable",
+            "safety": "safe",
+        }
+        disposition = ObservationDisposition.OBSERVED
+    else:
+        availability = (
+            "unknown" if failure.code is ReadFailureCode.INCOMPLETE else "unavailable"
+        )
+        payload = {
+            "availability": availability,
+            "content_digest": None,
+            "entry_type": "unknown",
+            "failure_code": f"transport.{failure.code.value}",
+            "mode": None,
+            "presence": "unknown",
+            "readability": "unknown",
+            "safety": "unknown",
+        }
+        disposition = (
+            ObservationDisposition.UNKNOWN
+            if availability == "unknown"
+            else ObservationDisposition.UNAVAILABLE
+        )
+    _validate_payload(payload)
+    return EncodedObservationEvidence(
+        payload,
+        disposition,
+        value.content if payload["content_digest"] is not None else None,
+        (value.address.logical_address,),
+        "managed-file-observer",
+        1,
+    )
 
 
 def validate_observation_addresses(addresses: tuple[str, ...]) -> None:

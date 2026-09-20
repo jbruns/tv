@@ -17,6 +17,7 @@ from coreelec_reconciler.domain.execution import (
     MutationReceipt,
     MutationTrace,
 )
+from coreelec_reconciler.domain.observation import ObservationDisposition
 
 if TYPE_CHECKING:
     from coreelec_reconciler.domain.configuration import Resource
@@ -57,6 +58,19 @@ type ObservationEvidenceDecoder = Callable[
     [str, int, Mapping[str, object]],
     Mapping[str, object],
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class EncodedObservationEvidence:
+    payload: Mapping[str, object]
+    disposition: ObservationDisposition
+    raw_content: bytes | None
+    state_addresses: tuple[str, ...]
+    observer_code: str
+    observer_version: int
+
+
+type ObservationEvidenceEncoder = Callable[[object], EncodedObservationEvidence]
 type ObservationEvidenceChecker = Callable[
     [object, object, object],
     tuple[str, ...],
@@ -272,6 +286,7 @@ class ResourceDescriptor:
     observation_payload_kind: str | None = None
     observation_payload_version: int | None = None
     observation_policy_digest: str | None = None
+    encode_observation_evidence: ObservationEvidenceEncoder | None = None
     decode_observation_evidence: ObservationEvidenceDecoder | None = None
     check_observation_evidence: ObservationEvidenceChecker | None = None
     validate_observation_addresses: ObservationAddressValidator | None = None
