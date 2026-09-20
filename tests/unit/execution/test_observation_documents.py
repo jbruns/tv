@@ -531,31 +531,44 @@ def test_run_store_observation_restart_boundaries_and_terminal_session_close(
     tmp_path: Path,
 ) -> None:
     revisions = lifecycle()
+    store, device_lease = create_store(tmp_path)
+    initial = decode_observation_run(revisions[0])
+    run_lease, _ = store.create_observation_run(
+        device_lease,
+        RunId(RUN_ID),
+        DeviceId(DEVICE_ID),
+        revisions[0],
+    )
+    attachment = store.attach(
+        run_lease,
+        "raw-observation",
+        "raw-bytes-v1",
+        RAW,
+    )
+    assert attachment.digest == RAW_DIGEST
+    store.release_run(run_lease)
     for stop_after in range(1, len(revisions) + 1):
-        root = tmp_path / f"boundary-{stop_after}"
-        store, device_lease = create_store(root)
-        initial = decode_observation_run(revisions[0])
-        run_lease, _ = store.create_observation_run(
-            device_lease,
-            RunId(RUN_ID),
-            DeviceId(DEVICE_ID),
-            revisions[0],
+        reopened = RunStore(tmp_path / "store")
+        loaded = reopened.load_observation_run(RunId(RUN_ID))
+        workspace = next((tmp_path / "store" / "runs").iterdir())
+        assert not (workspace / "ownership-token.bin").exists()
+        assert loaded.revision == stop_after
+        assert (
+            loaded.checkpoints
+            == decode_observation_run(revisions[stop_after - 1]).checkpoints
         )
-        attachment = store.attach(
-            run_lease,
-            "raw-observation",
-            "raw-bytes-v1",
-            RAW,
-        )
-        assert attachment.digest == RAW_DIGEST
-        for payload in revisions[1:stop_after]:
-            current = store.load_chain(RunId(RUN_ID)).head
-            next_run = decode_observation_run(payload)
-            store.compare_and_append_observation(
-                run_lease,
-                current.revision,
-                current.digest,
-                payload,
+        assert reopened.find_active_by_device(DeviceId(DEVICE_ID)) == ()
+        reacquired = reopened.acquire_run(RunId(RUN_ID))
+        if stop_after == 1:
+            with pytest.raises(RunStoreError, match="terminal"):
+                reopened.record_session_close(reacquired, close_intent())
+        if stop_after < len(revisions):
+            next_run = decode_observation_run(revisions[stop_after])
+            reopened.compare_and_append_observation(
+                reacquired,
+                loaded.revision,
+                loaded.current_digest,
+                revisions[stop_after],
                 ObservationAppendIntent(
                     next_run.status,
                     next_run.status
@@ -565,60 +578,39 @@ def test_run_store_observation_restart_boundaries_and_terminal_session_close(
                     },
                 ),
             )
-        store.release_run(run_lease)
-        reopened = RunStore(root / "store")
-        loaded = reopened.load_observation_run(RunId(RUN_ID))
-        workspace = next((root / "store" / "runs").iterdir())
-        assert not (workspace / "ownership-token.bin").exists()
-        assert loaded.revision == stop_after
-        assert (
-            loaded.checkpoints
-            == decode_observation_run(revisions[stop_after - 1]).checkpoints
+            reopened.release_run(reacquired)
+            continue
+        record = reopened.record_session_close(reacquired, close_intent())
+        assert record.schema_version == 2
+        assert record.run_kind == "CoreElecReconcilerObservationRun"
+        assert record.authority_state == "not_applicable"
+        assert record.seal_digest is None
+        assert check_session_close_invariants(record.canonical_bytes) == ()
+        invalid_close = decode_json_object(record.canonical_bytes)
+        invalid_close["run_kind"] = "CoreElecReconcilerRunReport"
+        close_without_digest = {
+            key: item for key, item in invalid_close.items() if key != "current_digest"
+        }
+        invalid_close["current_digest"] = (
+            "sha256:"
+            + hashlib.sha256(canonical_document_bytes(close_without_digest)).hexdigest()
         )
-        assert reopened.find_active_by_device(DeviceId(DEVICE_ID)) == ()
-        reacquired = reopened.acquire_run(RunId(RUN_ID))
-        if stop_after < len(revisions):
-            with pytest.raises(RunStoreError, match="terminal"):
-                reopened.record_session_close(reacquired, close_intent())
-        else:
-            record = reopened.record_session_close(reacquired, close_intent())
-            assert record.schema_version == 2
-            assert record.run_kind == "CoreElecReconcilerObservationRun"
-            assert record.authority_state == "not_applicable"
-            assert record.seal_digest is None
-            assert check_session_close_invariants(record.canonical_bytes) == ()
-            invalid_close = decode_json_object(record.canonical_bytes)
-            invalid_close["run_kind"] = "CoreElecReconcilerRunReport"
-            close_without_digest = {
-                key: item
-                for key, item in invalid_close.items()
-                if key != "current_digest"
-            }
-            invalid_close["current_digest"] = (
-                "sha256:"
-                + hashlib.sha256(
-                    canonical_document_bytes(close_without_digest)
-                ).hexdigest()
-            )
-            invalid_close_bytes = canonical_document_bytes(invalid_close)
-            with pytest.raises(ValueError, match="version 2"):
-                decode_session_close_record(invalid_close_bytes)
-            assert check_session_close_invariants(invalid_close_bytes)
-            assert (
-                reopened.inspect_session_close(
-                    RunId(RUN_ID),
-                    record.session_id,
-                ).record
-                == record
-            )
-        if stop_after == 3:
-            attachment_path = (
-                workspace / "attachments" / RAW_DIGEST.removeprefix("sha256:")
-            )
-            attachment_path.unlink()
-            with pytest.raises(CorruptRunStore):
-                reopened.load_observation_run(RunId(RUN_ID))
+        invalid_close_bytes = canonical_document_bytes(invalid_close)
+        with pytest.raises(ValueError, match="version 2"):
+            decode_session_close_record(invalid_close_bytes)
+        assert check_session_close_invariants(invalid_close_bytes)
+        assert (
+            reopened.inspect_session_close(
+                RunId(RUN_ID),
+                record.session_id,
+            ).record
+            == record
+        )
         assert initial.scope == loaded.scope
+        attachment_path = workspace / "attachments" / RAW_DIGEST.removeprefix("sha256:")
+        attachment_path.unlink()
+        with pytest.raises(CorruptRunStore):
+            reopened.load_observation_run(RunId(RUN_ID))
 
 
 def test_run_store_rejects_cross_run_and_post_terminal_observation_appends(
