@@ -35,6 +35,7 @@ class FakeManagedFiles:
         self._faults: dict[str, list[tuple[MutationDisposition, bool]]] = {}
         self._operations: list[MutationReceipt] = []
         self.before_mutation: object | None = None
+        self.after_validation: object | None = None
 
     def put(self, path: str, entry: FakeManagedEntry) -> None:
         self._entries[path] = entry
@@ -115,6 +116,10 @@ class FakeManagedFiles:
             return self._receipt(
                 operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
             )
+        if not self._after_matches(path, expected):
+            return self._receipt(
+                operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
+            )
         disposition, applied = self._outcome("stage_write")
         if applied:
             self._entries[path] = FakeManagedEntry(mode, content)
@@ -132,6 +137,10 @@ class FakeManagedFiles:
         del binding_digest
         self._before()
         if not self._matches(path, expected):
+            return self._receipt(
+                operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
+            )
+        if not self._after_matches(path, expected):
             return self._receipt(
                 operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
             )
@@ -162,6 +171,13 @@ class FakeManagedFiles:
             return self._receipt(
                 operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
             )
+        self._after()
+        if not self._matches(staged_path, expected_staged) or not self._matches(
+            destination, expected_destination
+        ):
+            return self._receipt(
+                operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
+            )
         disposition, applied = self._outcome("atomic_replace")
         staged = self._entries.get(staged_path)
         if applied and staged is not None:
@@ -180,6 +196,10 @@ class FakeManagedFiles:
         del binding_digest
         self._before()
         if not self._matches(path, expected):
+            return self._receipt(
+                operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
+            )
+        if not self._after_matches(path, expected):
             return self._receipt(
                 operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
             )
@@ -204,6 +224,10 @@ class FakeManagedFiles:
             return self._receipt(
                 operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
             )
+        if not self._after_matches(path, expected):
+            return self._receipt(
+                operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
+            )
         disposition, applied = self._outcome("restore")
         if applied:
             if content is None:
@@ -223,6 +247,10 @@ class FakeManagedFiles:
         del binding_digest
         self._before()
         if not self._matches(path, expected):
+            return self._receipt(
+                operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
+            )
+        if not self._after_matches(path, expected):
             return self._receipt(
                 operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
             )
@@ -262,6 +290,15 @@ class FakeManagedFiles:
         callback = self.before_mutation
         if callable(callback):
             callback()
+
+    def _after(self) -> None:
+        callback = self.after_validation
+        if callable(callback):
+            callback()
+
+    def _after_matches(self, path: str, expected: NormalizedResourceState) -> bool:
+        self._after()
+        return self._matches(path, expected)
 
 
 __all__ = ["FakeManagedEntry", "FakeManagedFiles", "FiniteRuntimeValues"]

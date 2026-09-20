@@ -1,6 +1,8 @@
 """Fixed server-side compare-and-swap managed-file mutations."""
 
 import base64
+import hashlib
+import secrets
 import zlib
 from dataclasses import dataclass
 from enum import StrEnum
@@ -151,6 +153,10 @@ def opened(directory, name, expected):
         descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
     except FileNotFoundError:
         return False
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            return False
+        raise
     descriptors.append(descriptor)
     metadata = os.fstat(descriptor)
     if (
@@ -185,6 +191,13 @@ def still_named(descriptor, directory, name):
         and named.st_ino == pinned.st_ino
     )
 
+def named_identity(directory, name):
+    try:
+        value = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode)
+
 def write_all(descriptor, payload):
     view = memoryview(payload)
     while view:
@@ -192,6 +205,21 @@ def write_all(descriptor, payload):
         if written <= 0:
             fail(AMBIGUOUS)
         view = view[written:]
+
+def read_all(descriptor):
+    metadata = os.fstat(descriptor)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks = []
+    remaining = metadata.st_size
+    while remaining:
+        chunk = os.read(descriptor, min(65536, remaining))
+        if not chunk:
+            fail(PRECONDITION)
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if os.read(descriptor, 1):
+        fail(PRECONDITION)
+    return b"".join(chunks)
 
 def create(directory, name, payload, desired_mode):
     global mutated
@@ -242,6 +270,79 @@ def rename_no_replace(directory, source, destination):
 def exchange(directory, first, second):
     renameat2(directory, first, second, 2)
 
+def probe(root_path, binding, operation_id):
+    probe_parent, probe_leaf = parent(root_path)
+    try:
+        root = os.open(
+            probe_leaf,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=probe_parent,
+        )
+    except OSError:
+        return UNSAFE
+    descriptors.append(root)
+    token = hashlib.sha256((binding + operation_id).encode()).hexdigest()[:32]
+    directory_name = ".coreelec-reconciler-cas-probe-" + token
+    created_directory = False
+    probe_directory = None
+    owned = {}
+    status = APPLIED
+    cleanup_failed = False
+    try:
+        os.mkdir(directory_name, 0o700, dir_fd=root)
+        created_directory = True
+        probe_directory = os.open(
+            directory_name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=root,
+        )
+        descriptors.append(probe_directory)
+        first = create(probe_directory, "first", b"first", 0o600)
+        second = create(probe_directory, "second", b"second", 0o600)
+        owned["first"] = first
+        owned["second"] = second
+        rename_no_replace(probe_directory, "first", "destination")
+        owned["destination"] = owned.pop("first")
+        if not still_named(owned["destination"], probe_directory, "destination"):
+            status = UNSAFE
+        else:
+            exchange(probe_directory, "second", "destination")
+            owned["second"], owned["destination"] = (
+                owned["destination"],
+                owned["second"],
+            )
+            if (
+                not still_named(owned["second"], probe_directory, "second")
+                or not still_named(
+                    owned["destination"], probe_directory, "destination"
+                )
+            ):
+                status = UNSAFE
+    except OSError as error:
+        status = (
+            UNSUPPORTED
+            if error.errno in (errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP)
+            else UNSAFE
+        )
+    except SystemExit as error:
+        status = int(error.code) if isinstance(error.code, int) else UNSAFE
+    finally:
+        if probe_directory is not None:
+            for entry, descriptor in tuple(owned.items()):
+                if still_named(descriptor, probe_directory, entry):
+                    try:
+                        os.unlink(entry, dir_fd=probe_directory)
+                    except OSError:
+                        cleanup_failed = True
+                else:
+                    cleanup_failed = True
+        if created_directory:
+            try:
+                os.rmdir(directory_name, dir_fd=root)
+            except OSError:
+                cleanup_failed = True
+    return UNSAFE if cleanup_failed else status
+
 def replace(
     directory,
     source,
@@ -257,8 +358,9 @@ def replace(
         rename_no_replace(directory, source, destination)
         return True
     if not still_named(destination_value, directory, destination):
-        fail(PRECONDITION)
+        return False
     exchange(directory, source, destination)
+    captured_identity = named_identity(directory, source)
     captured = opened(directory, source, destination_expected)
     installed = opened(directory, destination, source_expected)
     valid = (
@@ -271,10 +373,10 @@ def replace(
     )
     if not valid:
         if (
-            isinstance(captured, int)
-            and isinstance(installed, int)
-            and still_named(captured, directory, source)
+            isinstance(installed, int)
             and still_named(installed, directory, destination)
+            and captured_identity is not None
+            and named_identity(directory, source) == captured_identity
         ):
             exchange(directory, source, destination)
             return False
@@ -295,13 +397,18 @@ def remove_expected(directory, name, expected, binding, operation_id):
     if not absent(directory, tombstone):
         fail(PRECONDITION)
     rename_no_replace(directory, name, tombstone)
+    captured_identity = named_identity(directory, tombstone)
     captured = opened(directory, tombstone, expected)
     if (
         not isinstance(captured, int)
         or os.fstat(captured).st_ino != os.fstat(descriptor).st_ino
         or os.fstat(captured).st_dev != os.fstat(descriptor).st_dev
     ):
-        if absent(directory, name) and isinstance(captured, int):
+        if (
+            absent(directory, name)
+            and captured_identity is not None
+            and named_identity(directory, tombstone) == captured_identity
+        ):
             rename_no_replace(directory, tombstone, name)
             fail(PRECONDITION)
         fail(AMBIGUOUS)
@@ -319,6 +426,8 @@ try:
         fail(INVALID)
     operation = text(request["operation"], 32)
     if operation == "probe":
+        binding = digest(request["binding_digest"])
+        operation_id = text(request["operation_id"], 512)
         renameat2_available = getattr(
             ctypes.CDLL(None, use_errno=True), "renameat2", None
         ) is not None
@@ -330,7 +439,11 @@ try:
             and os.stat in os.supports_dir_fd
             and os.unlink in os.supports_dir_fd
         )
-        fail(APPLIED if supported else UNSUPPORTED)
+        fail(
+            probe(request["path"], binding, operation_id)
+            if supported
+            else UNSUPPORTED
+        )
     if operation not in ("stage", "chmod", "remove", "replace", "restore", "cleanup"):
         fail(INVALID)
     binding = digest(request["binding_digest"])
@@ -363,9 +476,34 @@ try:
         descriptor = opened(directory, name, expected)
         if not isinstance(descriptor, int):
             fail(PRECONDITION)
-        os.fchmod(descriptor, mode_value(request["mode"]))
-        mutated = True
-        os.fsync(descriptor)
+        payload = read_all(descriptor)
+        desired_mode = mode_value(request["mode"])
+        suffix = hashlib.sha256(
+            (binding + request["operation_id"]).encode()
+        ).hexdigest()[:32]
+        staged_name = "." + name + "." + suffix + ".chmod"
+        if not absent(directory, staged_name):
+            fail(PRECONDITION)
+        staged = create(directory, staged_name, payload, desired_mode)
+        staged_expected = {
+            "content_digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+            "entry_kind": "regular",
+            "managed_mode": desired_mode,
+            "presence": "present",
+        }
+        if not replace(
+            directory,
+            staged_name,
+            staged,
+            staged_expected,
+            name,
+            descriptor,
+            expected,
+        ):
+            if still_named(staged, directory, staged_name):
+                os.unlink(staged_name, dir_fd=directory)
+            fail(PRECONDITION)
+        os.fsync(directory)
     elif operation in ("remove", "cleanup"):
         remove_expected(
             directory,
@@ -482,15 +620,17 @@ _COMMAND = (
 
 
 class FixedManagedMutationHelper:
-    def __init__(self, commands: CommandRunner) -> None:
+    def __init__(self, commands: CommandRunner, profile_root: str) -> None:
         self._commands = commands
+        self._profile_root = profile_root
 
     def supported(self) -> bool:
+        nonce = secrets.token_hex(32)
         result = self._execute(
             "probe",
-            "/",
-            "probe",
-            "sha256:" + "0" * 64,
+            self._profile_root,
+            "probe." + nonce,
+            "sha256:" + hashlib.sha256(nonce.encode()).hexdigest(),
             _absent_state(),
         )
         return result.code is ManagedMutationCode.APPLIED

@@ -276,7 +276,9 @@ class ParamikoSessionFactory:
             commands = ParamikoCommandRunner(transport)
             reader = FixedNoFollowReader(commands)
             no_follow_read = reader.supported()
-            mutation_helper = FixedManagedMutationHelper(commands)
+            mutation_helper = FixedManagedMutationHelper(
+                commands, device.profile_root.path
+            )
             cas_mutations = mutation_helper.supported()
             managed = ParamikoManagedFiles(
                 sftp,

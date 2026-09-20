@@ -10,6 +10,7 @@ import pytest
 
 from coreelec_reconciler.adapters.managed_mutation_helper import (
     FixedManagedMutationHelper,
+    ManagedMutationCode,
 )
 from coreelec_reconciler.adapters.paramiko_managed_file import ParamikoManagedFiles
 from coreelec_reconciler.adapters.paramiko_session import CommandOutcome
@@ -299,6 +300,44 @@ def test_ancestor_symlink_swap_is_unsafe_and_outside_target_is_unchanged() -> No
 
 
 @pytest.mark.parametrize("adapter_kind", ["fake", "paramiko"])
+def test_chmod_swap_after_validation_changes_neither_object(
+    adapter_kind: str,
+) -> None:
+    files: Any
+    store: Any
+    original: Any
+    substituted: Any
+    inspect: Callable[[str], Any]
+    if adapter_kind == "fake":
+        files, store = _fake()
+        original = FakeManagedEntry(0o644, b"old")
+        substituted = FakeManagedEntry(0o644, b"third-party")
+        store.put(PATH, original)
+        files.after_validation = lambda: store.put(PATH, substituted)
+        inspect = store.entry
+    else:
+        files, store, helper = _production()
+        original = Entry(b"old")
+        substituted = Entry(b"third-party")
+        store.entries[PATH] = original
+        helper.after_validation = lambda: store.entries.__setitem__(PATH, substituted)
+        inspect = store.entries.get
+
+    receipt = files.chmod(
+        PATH,
+        0o600,
+        "chmod",
+        expected=_state(b"old"),
+        binding_digest=BINDING,
+    )
+
+    assert receipt.disposition is MutationDisposition.DEFINITELY_NOT_APPLIED
+    assert original.mode & 0o777 == 0o644
+    assert substituted.mode & 0o777 == 0o644
+    assert inspect(PATH) is substituted
+
+
+@pytest.mark.parametrize("adapter_kind", ["fake", "paramiko"])
 @pytest.mark.parametrize(
     "primitive",
     ["stage_write", "chmod", "atomic_replace", "remove", "restore", "cleanup"],
@@ -543,7 +582,7 @@ def test_production_mutations_have_no_direct_sftp_bypass() -> None:
 
 def test_fixed_helper_passes_paths_and_content_only_in_encoded_stdin() -> None:
     commands = ScriptedCommands([CommandOutcome(b"", b"", 0)])
-    helper = FixedManagedMutationHelper(commands)
+    helper = FixedManagedMutationHelper(commands, "/storage")
     dangerous_path = "/storage/a;touch injected/$(command)/file"
     dangerous_content = b"$(command);`other`\x00value"
 
@@ -564,3 +603,35 @@ def test_fixed_helper_passes_paths_and_content_only_in_encoded_stdin() -> None:
     request = json.loads(stdin)
     assert request["path"] == dangerous_path
     assert request["content"] != dangerous_content.decode(errors="ignore")
+
+
+@pytest.mark.parametrize("exit_status", [65, 67, 68])
+def test_capability_probe_fails_closed_for_unsupported_or_unclean_probe(
+    exit_status: int,
+) -> None:
+    commands = ScriptedCommands([CommandOutcome(b"", b"private", exit_status)])
+    helper = FixedManagedMutationHelper(commands, "/storage/.kodi/userdata")
+
+    assert not helper.supported()
+    command, stdin, _ = commands.calls[0]
+    request = json.loads(stdin)
+    assert request["operation"] == "probe"
+    assert request["path"] == "/storage/.kodi/userdata"
+    assert "private" not in command
+
+
+def test_unexpected_runtime_unsupported_mutation_is_ambiguous() -> None:
+    files, sftp, helper = _production()
+    sftp.entries[PATH] = Entry(b"old")
+    helper.forced_code = ManagedMutationCode.UNSUPPORTED
+
+    receipt = files.chmod(
+        PATH,
+        0o600,
+        "chmod",
+        expected=_state(b"old"),
+        binding_digest=BINDING,
+    )
+
+    assert receipt.disposition is MutationDisposition.AMBIGUOUS
+    assert sftp.entries[PATH].mode & 0o777 == 0o644

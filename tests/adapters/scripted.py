@@ -199,9 +199,11 @@ class ScriptedManagedMutationHelper:
     def __init__(self, sftp: ScriptedSFTP) -> None:
         self.sftp = sftp
         self.before_mutation: object | None = None
+        self.after_validation: object | None = None
         self.unsafe_paths: set[str] = set()
         self.lost_ack_operation: str | None = None
         self.lost_ack_applied = False
+        self.forced_code: ManagedMutationCode | None = None
         self.calls: list[tuple[str, str, str | None]] = []
 
     def supported(self) -> bool:
@@ -223,6 +225,8 @@ class ScriptedManagedMutationHelper:
         del operation_id
         assert binding_digest.startswith("sha256:")
         self.calls.append((operation, path, staged_path))
+        if self.forced_code is not None:
+            return ManagedMutationResult(self.forced_code)
         callback = self.before_mutation
         if callable(callback):
             callback()
@@ -250,6 +254,17 @@ class ScriptedManagedMutationHelper:
                 ):
                     return ManagedMutationResult(ManagedMutationCode.APPLIED)
                 return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        if not self._matches(path, expected):
+            return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        if operation == "replace" and (
+            staged_path is None
+            or expected_staged is None
+            or not self._matches(staged_path, expected_staged)
+        ):
+            return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        after_validation = self.after_validation
+        if callable(after_validation):
+            after_validation()
         if not self._matches(path, expected):
             return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
         if operation == "replace" and (

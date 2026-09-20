@@ -190,7 +190,11 @@ class ParamikoManagedFiles:
             if result.code is ManagedMutationCode.APPLIED
             else (
                 MutationDisposition.AMBIGUOUS
-                if result.code is ManagedMutationCode.AMBIGUOUS
+                if result.code
+                in {
+                    ManagedMutationCode.AMBIGUOUS,
+                    ManagedMutationCode.UNSUPPORTED,
+                }
                 else MutationDisposition.DEFINITELY_NOT_APPLIED
             )
         )

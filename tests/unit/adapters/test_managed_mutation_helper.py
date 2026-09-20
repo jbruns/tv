@@ -74,7 +74,7 @@ def device_root() -> Iterator[Path]:
 def test_server_helper_successful_create_update_mode_remove_restore_cleanup(
     device_root: Path,
 ) -> None:
-    helper = FixedManagedMutationHelper(LocalCommands())
+    helper = FixedManagedMutationHelper(LocalCommands(), str(device_root))
     destination = device_root / "managed"
     staged = device_root / f".managed.stage.{BINDING[7:]}.stage"
 
@@ -167,12 +167,21 @@ def test_server_helper_successful_create_update_mode_remove_restore_cleanup(
     assert not destination.exists()
 
 
+def test_capability_probe_exercises_filesystem_and_removes_owned_objects(
+    device_root: Path,
+) -> None:
+    helper = FixedManagedMutationHelper(LocalCommands(), str(device_root))
+
+    assert helper.supported()
+    assert tuple(device_root.iterdir()) == ()
+
+
 @pytest.mark.parametrize("change", ["digest", "mode", "type", "final-symlink"])
 def test_server_helper_rejects_changed_target_without_touching_outside(
     device_root: Path,
     change: str,
 ) -> None:
-    helper = FixedManagedMutationHelper(LocalCommands())
+    helper = FixedManagedMutationHelper(LocalCommands(), str(device_root))
     destination = device_root / "managed"
     outside = device_root / "outside"
     destination.write_bytes(b"old")
@@ -209,7 +218,7 @@ def test_server_helper_rejects_changed_target_without_touching_outside(
 def test_server_helper_rejects_ancestor_symlink_swap(
     device_root: Path,
 ) -> None:
-    helper = FixedManagedMutationHelper(LocalCommands())
+    helper = FixedManagedMutationHelper(LocalCommands(), str(device_root))
     parent = device_root / "parent"
     original = device_root / "original"
     outside = device_root / "outside"
@@ -240,7 +249,7 @@ def test_server_helper_rejects_ancestor_symlink_swap(
 
 
 def test_server_helper_rejects_substituted_stage(device_root: Path) -> None:
-    helper = FixedManagedMutationHelper(LocalCommands())
+    helper = FixedManagedMutationHelper(LocalCommands(), str(device_root))
     destination = device_root / "managed"
     staged = device_root / f".managed.stage.{BINDING[7:]}.stage"
     destination.write_bytes(b"old")
@@ -269,7 +278,7 @@ def test_server_helper_rejects_substituted_stage(device_root: Path) -> None:
 def test_server_helper_lost_ack_is_ambiguous(device_root: Path, applied: bool) -> None:
     commands = LocalCommands()
     commands.lose_ack = "after" if applied else "before"
-    helper = FixedManagedMutationHelper(commands)
+    helper = FixedManagedMutationHelper(commands, str(device_root))
     destination = device_root / f".managed.stage.{BINDING[7:]}.stage"
 
     result = helper.mutate(
@@ -290,7 +299,7 @@ def test_server_helper_does_not_interpolate_command_or_path(
     device_root: Path,
 ) -> None:
     commands = LocalCommands()
-    helper = FixedManagedMutationHelper(commands)
+    helper = FixedManagedMutationHelper(commands, str(device_root))
     dangerous_parent = device_root / "a;touch injected"
     dangerous_parent.mkdir()
     destination = dangerous_parent / f"$(command).{BINDING[7:]}.stage"
@@ -313,7 +322,7 @@ def test_server_helper_does_not_interpolate_command_or_path(
 def test_server_helper_rejects_stage_bound_to_another_run(
     device_root: Path,
 ) -> None:
-    helper = FixedManagedMutationHelper(LocalCommands())
+    helper = FixedManagedMutationHelper(LocalCommands(), str(device_root))
     destination = device_root / f".managed.stage.{BINDING[7:]}.stage"
 
     result = helper.mutate(
