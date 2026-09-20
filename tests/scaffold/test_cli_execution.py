@@ -38,14 +38,7 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     )
     environment_path = root / "environment"
     subprocess.run(
-        [
-            "uv",
-            "venv",
-            "--python",
-            sys.executable,
-            "--system-site-packages",
-            str(environment_path),
-        ],
+        ["uv", "venv", "--python", sys.executable, str(environment_path)],
         cwd=root,
         env=environment,
         check=True,
@@ -68,6 +61,34 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
         capture_output=True,
     )
     yield environment_path / "bin" / "coreelec-reconciler"
+
+
+@pytest.fixture(scope="module")
+def installed_production_cli(installed_cli: Path) -> Path:
+    root = installed_cli.parents[2]
+    environment_path = root / "production-environment"
+    wheel = next((root / "dist").glob("*.whl"))
+    subprocess.run(
+        ["uv", "venv", "--python", sys.executable, str(environment_path)],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(environment_path / "bin" / "python"),
+            "--offline",
+            str(wheel),
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    return environment_path / "bin" / "coreelec-reconciler"
 
 
 def _run(
@@ -362,13 +383,13 @@ def test_installed_output_is_environment_deterministic(installed_cli: Path) -> N
     ],
 )
 def test_installed_wheel_uses_genuine_production_composition_offline(
-    installed_cli: Path,
+    installed_production_cli: Path,
     tmp_path: Path,
     arguments: tuple[str, ...],
     diagnostic: bytes,
 ) -> None:
     result = _run_production(
-        installed_cli,
+        installed_production_cli,
         tmp_path,
         "--repository-root",
         str(REPOSITORY_ROOT / "tests" / "fixtures" / "repository"),
