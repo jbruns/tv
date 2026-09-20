@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -53,6 +54,8 @@ def source_checkout(tmp_path: Path) -> Path:
 def valid_bundle(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> tuple[Path, Path, str]:
+    if os.environ.get("M3_RUN_EXPENSIVE_PILOT_TESTS") != "1":
+        pytest.skip("executable pilot tests run outside the 60-second selector")
     root = _create_source(tmp_path_factory.mktemp("valid-bundle-source"))
     bundle = root.parent / "valid-bundle"
     digest = HARNESS.generate_bundle(root, bundle)

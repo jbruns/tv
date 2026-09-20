@@ -227,6 +227,13 @@ jobs:
             .ci-evidence/m3-pilot-dry-run
           git rev-parse HEAD^{tree} > .ci-evidence/source-tree.txt
           shasum -a 256 uv.lock > .ci-evidence/lock.sha256
+      - name: Exercise pilot semantic rejection tests
+        env:
+          M3_RUN_EXPENSIVE_PILOT_TESTS: "1"
+        run: >-
+          uv run pytest -q
+          tests/integration/test_m3_pilot_harness.py
+          tests/scaffold/test_cli_execution.py::test_installed_wheel_runs_real_pilot_harness_from_unrelated_cwd
       - name: Upload source-bound CI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

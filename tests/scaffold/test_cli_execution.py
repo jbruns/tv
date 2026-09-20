@@ -117,6 +117,10 @@ def _run_production(
     )
 
 
+@pytest.mark.skipif(
+    os.environ.get("M3_RUN_EXPENSIVE_PILOT_TESTS") != "1",
+    reason="installed pilot harness runs outside the 60-second selector",
+)
 def test_installed_wheel_runs_real_pilot_harness_from_unrelated_cwd(
     installed_cli: Path, tmp_path: Path
 ) -> None:
