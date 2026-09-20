@@ -190,36 +190,77 @@ class FixedRemoteHelper:
 
 _NO_FOLLOW_READER = b"""import errno, os, stat, sys
 if sys.argv[1] == "--probe":
-    raise SystemExit(0 if hasattr(os, "O_NOFOLLOW") else 46)
+    supported = (
+        hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+        and os.open in os.supports_dir_fd
+    )
+    raise SystemExit(0 if supported else 46)
 path = sys.argv[1]
 limit = int(sys.argv[2])
+descriptors = []
+payload = b""
+status = 0
 try:
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-except FileNotFoundError:
-    raise SystemExit(40)
-except PermissionError:
-    raise SystemExit(44)
-except OSError as error:
-    raise SystemExit(41 if error.errno == errno.ELOOP else 45)
-try:
+    if not path.startswith("/"):
+        raise ValueError
+    components = path.split("/")[1:]
+    if not components or any(component in ('', '.', '..') for component in components):
+        raise ValueError
+    parent = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    descriptors.append(parent)
+    for component in components[:-1]:
+        parent = os.open(
+            component,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=parent,
+        )
+        descriptors.append(parent)
+        if not stat.S_ISDIR(os.fstat(parent).st_mode):
+            raise ValueError
+    descriptor = os.open(
+        components[-1],
+        os.O_RDONLY | os.O_NOFOLLOW,
+        dir_fd=parent,
+    )
+    descriptors.append(descriptor)
     metadata = os.fstat(descriptor)
     if not stat.S_ISREG(metadata.st_mode):
-        raise SystemExit(41)
+        raise ValueError
     if metadata.st_size > limit:
-        raise SystemExit(42)
-    chunks = []
-    remaining = metadata.st_size
-    while remaining:
-        chunk = os.read(descriptor, min(65536, remaining))
-        if not chunk:
-            raise SystemExit(43)
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    if os.read(descriptor, 1):
-        raise SystemExit(43)
-    os.write(1, b"".join(chunks))
+        status = 42
+    else:
+        chunks = []
+        remaining = metadata.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(65536, remaining))
+            if not chunk:
+                status = 43
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if status == 0 and os.read(descriptor, 1):
+            status = 43
+        if status == 0:
+            payload = b"".join(chunks)
+except FileNotFoundError:
+    status = 40
+except PermissionError:
+    status = 44
+except (NotADirectoryError, ValueError):
+    status = 41
+except OSError as error:
+    status = 41 if error.errno in (errno.ELOOP, errno.ENOTDIR) else 45
 finally:
-    os.close(descriptor)
+    for descriptor in reversed(descriptors):
+        try:
+            os.close(descriptor)
+        except OSError:
+            if status == 0:
+                status = 45
+if status == 0:
+    os.write(1, payload)
+raise SystemExit(status)
 """
 
 

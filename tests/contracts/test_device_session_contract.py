@@ -14,7 +14,10 @@ from coreelec_reconciler.adapters.paramiko_session import (
     SessionError,
     SessionFailureCode,
 )
-from coreelec_reconciler.adapters.remote_helpers import FixedNoFollowReader
+from coreelec_reconciler.adapters.remote_helpers import (
+    _NO_FOLLOW_READER,
+    FixedNoFollowReader,
+)
 from coreelec_reconciler.adapters.secrets import (
     EnvironmentSecretResolver,
     MappingHostKeyResolver,
@@ -162,6 +165,33 @@ def test_fixed_no_follow_read_rejects_oversize_success_payload() -> None:
     result = FixedNoFollowReader(commands).read("/storage/file", 3)
     assert result.failure is not None
     assert result.failure.code.value == "too_large"
+
+
+def test_fixed_reader_walks_every_absolute_path_component_without_following() -> None:
+    script = _NO_FOLLOW_READER.decode()
+    assert "dir_fd=" in script
+    assert "os.O_DIRECTORY | os.O_NOFOLLOW" in script
+    assert "component in ('', '.', '..')" in script
+    assert "os.open('/', os.O_RDONLY | os.O_DIRECTORY)" in script
+    assert "for descriptor in reversed(descriptors)" in script
+    assert "os.close(descriptor)" in script
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "symlinked_intermediate_parent",
+        "intermediate_parent_swap",
+        "final_symlink",
+        "non_directory_parent",
+    ],
+)
+def test_no_follow_path_hazards_fail_closed(scenario: str) -> None:
+    commands = ScriptedCommands([CommandOutcome(b"", scenario.encode(), 41)])
+    result = FixedNoFollowReader(commands).read("/storage/safe/file", 100)
+    assert result.failure is not None
+    assert result.failure.code.value == "unsafe"
+    assert scenario not in result.failure.safe_message
 
 
 def test_typed_secret_resolution_and_redaction() -> None:

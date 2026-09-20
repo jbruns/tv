@@ -13,9 +13,13 @@ The raw command runner remains private. A session exposes only requested typed
 views: read-only managed files, managed-file mutation, or remote ownership.
 
 Managed-file observation uses no-follow `lstat`, accepts only regular-file
-reads through a fixed ephemeral server operation using `O_NOFOLLOW`, enforces a
-byte bound on the opened descriptor, and rejects incomplete reads. If that
-operation or `O_NOFOLLOW` is unavailable, the read capability is unavailable.
+reads through a fixed ephemeral server operation. It opens the absolute root,
+walks every parent relative to pinned directory descriptors using
+`O_DIRECTORY | O_NOFOLLOW`, and opens the final regular file relative to the
+verified parent using `O_NOFOLLOW`. It rejects empty, dot, and dot-dot
+components, enforces a byte bound on the opened descriptor, rejects incomplete
+reads, and closes every descriptor. If those flags or `dir_fd` support are
+unavailable, the read capability is unavailable.
 Replacement uses only Paramiko's OpenSSH `posix_rename` extension. If that
 extension is absent, mutation is unsupported; there is no ordinary rename or
 remove-plus-rename fallback. Every mutating primitive returns an applied,
