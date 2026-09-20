@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import io
 import stat
 from dataclasses import dataclass
 
 import paramiko
 
+from coreelec_reconciler.adapters.managed_mutation_helper import (
+    ManagedMutationCode,
+    ManagedMutationResult,
+)
 from coreelec_reconciler.adapters.paramiko_session import (
     CommandFailureCode,
     CommandOutcome,
 )
+from coreelec_reconciler.domain.execution import NormalizedResourceState, Presence
 from coreelec_reconciler.transports.interfaces import (
     ReadFailure,
     ReadFailureCode,
@@ -187,6 +193,115 @@ class ScriptedNoFollowReader:
                 None, ReadFailure(ReadFailureCode.TOO_LARGE, "Entry exceeds read limit")
             )
         return ReadResult(entry.content)
+
+
+class ScriptedManagedMutationHelper:
+    def __init__(self, sftp: ScriptedSFTP) -> None:
+        self.sftp = sftp
+        self.before_mutation: object | None = None
+        self.unsafe_paths: set[str] = set()
+        self.lost_ack_operation: str | None = None
+        self.lost_ack_applied = False
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    def supported(self) -> bool:
+        return True
+
+    def mutate(
+        self,
+        operation: str,
+        path: str,
+        operation_id: str,
+        binding_digest: str,
+        expected: NormalizedResourceState,
+        *,
+        content: bytes | None = None,
+        mode: int | None = None,
+        staged_path: str | None = None,
+        expected_staged: NormalizedResourceState | None = None,
+    ) -> ManagedMutationResult:
+        del operation_id
+        assert binding_digest.startswith("sha256:")
+        self.calls.append((operation, path, staged_path))
+        callback = self.before_mutation
+        if callable(callback):
+            callback()
+        if path in self.unsafe_paths or (
+            staged_path is not None and staged_path in self.unsafe_paths
+        ):
+            return ManagedMutationResult(ManagedMutationCode.UNSAFE)
+        if operation == "stage" and not _bound_stage(path, binding_digest):
+            return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        if (
+            operation == "replace"
+            and staged_path is not None
+            and not _bound_stage(staged_path, binding_digest)
+        ):
+            return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        if operation == "stage" and expected.presence is Presence.ABSENT:
+            existing = self.sftp.entries.get(path)
+            if existing is not None:
+                if (
+                    content is not None
+                    and mode is not None
+                    and stat.S_IFMT(existing.mode) == stat.S_IFREG
+                    and stat.S_IMODE(existing.mode) == mode
+                    and existing.content == content
+                ):
+                    return ManagedMutationResult(ManagedMutationCode.APPLIED)
+                return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        if not self._matches(path, expected):
+            return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        if operation == "replace" and (
+            staged_path is None
+            or expected_staged is None
+            or not self._matches(staged_path, expected_staged)
+        ):
+            return ManagedMutationResult(ManagedMutationCode.PRECONDITION_CHANGED)
+        if operation == self.lost_ack_operation and not self.lost_ack_applied:
+            return ManagedMutationResult(ManagedMutationCode.AMBIGUOUS)
+        if operation == "stage":
+            assert content is not None and mode is not None
+            self.sftp.entries[path] = Entry(content, stat.S_IFREG | mode)
+        elif operation == "chmod":
+            assert mode is not None
+            entry = self.sftp.entries[path]
+            self.sftp.entries[path] = Entry(entry.content, stat.S_IFREG | mode)
+        elif operation in {"remove", "cleanup"}:
+            self.sftp.entries.pop(path, None)
+        elif operation == "replace":
+            assert staged_path is not None
+            self.sftp.entries[path] = self.sftp.entries.pop(staged_path)
+        elif operation == "restore":
+            if content is None:
+                self.sftp.entries.pop(path, None)
+            else:
+                assert mode is not None
+                self.sftp.entries[path] = Entry(content, stat.S_IFREG | mode)
+        else:
+            raise AssertionError(f"unexpected mutation operation: {operation}")
+        if operation == self.lost_ack_operation:
+            return ManagedMutationResult(ManagedMutationCode.AMBIGUOUS)
+        return ManagedMutationResult(ManagedMutationCode.APPLIED)
+
+    def _matches(self, path: str, expected: NormalizedResourceState) -> bool:
+        entry = self.sftp.entries.get(path)
+        if expected.presence is Presence.ABSENT:
+            return entry is None
+        if expected.presence is not Presence.PRESENT or entry is None:
+            return False
+        return (
+            stat.S_IFMT(entry.mode) == stat.S_IFREG
+            and expected.entry_kind == "regular"
+            and expected.managed_mode == stat.S_IMODE(entry.mode)
+            and expected.content_digest
+            == "sha256:" + hashlib.sha256(entry.content).hexdigest()
+        )
+
+
+def _bound_stage(path: str, binding_digest: str) -> bool:
+    token = binding_digest.removeprefix("sha256:")
+    return path.endswith(f".{token}.stage") or f"/runs/{token}/stage/" in path
 
 
 class ScriptedReadView:

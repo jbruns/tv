@@ -5,6 +5,9 @@ from typing import ClassVar
 import paramiko
 import pytest
 
+from coreelec_reconciler.adapters.managed_mutation_helper import (
+    FixedManagedMutationHelper,
+)
 from coreelec_reconciler.adapters.paramiko_session import (
     CommandFailureCode,
     CommandOutcome,
@@ -425,6 +428,11 @@ def test_construction_failure_closes_sftp_before_client(
         "supported",
         lambda self: supported,
     )
+    monkeypatch.setattr(
+        FixedManagedMutationHelper,
+        "supported",
+        lambda self: True,
+    )
     if failure in {"boot_id", "validation"}:
 
         def fail_boot_id(commands: object) -> str:
@@ -442,4 +450,29 @@ def test_construction_failure_closes_sftp_before_client(
     )
     with pytest.raises(SessionError):
         factory.open(parameters, frozenset({"managed_file.read"}))
+    assert OpenClient.events == ["sftp.close", "client.close"]
+
+
+def test_missing_server_cas_capability_closes_sftp_before_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    OpenClient.events = []
+    resolver, parameters = _session_parameters()
+    monkeypatch.setattr(FixedNoFollowReader, "supported", lambda self: True)
+    monkeypatch.setattr(
+        FixedManagedMutationHelper,
+        "supported",
+        lambda self: False,
+    )
+    factory = ParamikoSessionFactory(
+        resolver,
+        client_factory=OpenClient,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(SessionError):
+        factory.open(
+            parameters,
+            frozenset({"managed_file.write", "atomic_replace_over_existing"}),
+        )
+
     assert OpenClient.events == ["sftp.close", "client.close"]

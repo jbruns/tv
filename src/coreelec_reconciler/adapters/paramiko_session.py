@@ -17,6 +17,7 @@ from coreelec_reconciler.transports.interfaces import (
     ReadResult,
 )
 
+from .managed_mutation_helper import FixedManagedMutationHelper
 from .paramiko_managed_file import ParamikoManagedFiles
 from .remote_helpers import FixedNoFollowReader, FixedRemoteHelper
 from .remote_run_ownership import ParamikoRemoteAuthorityBackend
@@ -275,9 +276,15 @@ class ParamikoSessionFactory:
             commands = ParamikoCommandRunner(transport)
             reader = FixedNoFollowReader(commands)
             no_follow_read = reader.supported()
-            managed = ParamikoManagedFiles(sftp, reader if no_follow_read else None)
+            mutation_helper = FixedManagedMutationHelper(commands)
+            cas_mutations = mutation_helper.supported()
+            managed = ParamikoManagedFiles(
+                sftp,
+                reader if no_follow_read else None,
+                mutation_helper if cas_mutations else None,
+            )
             available_capabilities = DeviceCapabilitySnapshot(
-                device.profile_root, managed.atomic_replace_supported
+                device.profile_root, cas_mutations
             )
             _require_capabilities(
                 available_capabilities,

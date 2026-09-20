@@ -7,6 +7,8 @@ import posixpath
 from coreelec_reconciler.domain.execution import (
     MutationDisposition,
     MutationReceipt,
+    NormalizedResourceState,
+    Presence,
 )
 from coreelec_reconciler.transports.interfaces import EntryKind, FileMetadata
 from coreelec_reconciler.transports.remote_ownership import (
@@ -228,7 +230,14 @@ class ParamikoRemoteAuthorityBackend(RemoteAuthorityBackend):
         if path not in self._created_manifest_paths:
             self._created_manifest_paths.append(path)
         self._require(self._helper.run("prepare", path, digest, path).code)
-        receipt = self._files.stage_write(path, payload, 0o600, "remote-stage")
+        receipt = self._files.stage_write(
+            path,
+            payload,
+            0o600,
+            "remote-stage",
+            expected=NormalizedResourceState(Presence.ABSENT, None, None, None),
+            binding_digest="sha256:" + self._workspace_key,
+        )
         if receipt.disposition is MutationDisposition.DEFINITELY_NOT_APPLIED:
             existing = self._inspect(path)
             if existing.payload is not None and _digest(existing.payload) == digest:

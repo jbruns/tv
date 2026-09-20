@@ -1,9 +1,6 @@
-"""No-follow, bounded Paramiko SFTP managed-file operations."""
+"""No-follow reads and server-side CAS managed-file mutations."""
 
-import errno
-import hashlib
 import stat
-from contextlib import suppress
 from typing import Protocol
 
 import paramiko
@@ -11,6 +8,7 @@ import paramiko
 from coreelec_reconciler.domain.execution import (
     MutationDisposition,
     MutationReceipt,
+    NormalizedResourceState,
 )
 from coreelec_reconciler.transports.interfaces import (
     EntryKind,
@@ -19,6 +17,8 @@ from coreelec_reconciler.transports.interfaces import (
     ReadFailureCode,
     ReadResult,
 )
+
+from .managed_mutation_helper import ManagedMutationCode, ManagedMutationHelper
 
 
 class NoFollowReader(Protocol):
@@ -30,10 +30,12 @@ class ParamikoManagedFiles:
         self,
         sftp: paramiko.SFTPClient,
         no_follow_reader: NoFollowReader | None = None,
+        mutation_helper: ManagedMutationHelper | None = None,
     ) -> None:
         self._sftp = sftp
         self._no_follow_reader = no_follow_reader
-        self.atomic_replace_supported = callable(getattr(sftp, "posix_rename", None))
+        self._mutation_helper = mutation_helper
+        self.atomic_replace_supported = mutation_helper is not None
 
     def lstat(self, path: str) -> ReadResult:
         try:
@@ -60,49 +62,72 @@ class ParamikoManagedFiles:
         return self._no_follow_reader.read(path, limit)
 
     def stage_write(
-        self, path: str, content: bytes, mode: int, operation_id: str
+        self,
+        path: str,
+        content: bytes,
+        mode: int,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
     ) -> MutationReceipt:
-        handle: paramiko.SFTPFile | None = None
-        started = False
-        try:
-            handle = self._sftp.open(path, "x")
-            started = True
-            handle.write(content)
-            handle.flush()
-            handle.close()
-            handle = None
-            self._sftp.chmod(path, mode)
-            return _receipt(operation_id, MutationDisposition.APPLIED)
-        except Exception as error:
-            return _receipt(operation_id, _mutation_failure(error, started))
-        finally:
-            if handle is not None:
-                with suppress(Exception):
-                    handle.close()
+        return self._mutate(
+            operation_id,
+            "stage",
+            path,
+            binding_digest,
+            expected,
+            content=content,
+            mode=mode,
+        )
 
-    def chmod(self, path: str, mode: int, operation_id: str) -> MutationReceipt:
-        return self._single_mutation(operation_id, self._sftp.chmod, path, mode)
+    def chmod(
+        self,
+        path: str,
+        mode: int,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
+    ) -> MutationReceipt:
+        return self._mutate(
+            operation_id,
+            "chmod",
+            path,
+            binding_digest,
+            expected,
+            mode=mode,
+        )
 
     def atomic_replace(
-        self, staged_path: str, destination: str, operation_id: str
+        self,
+        staged_path: str,
+        destination: str,
+        operation_id: str,
+        *,
+        expected_staged: NormalizedResourceState,
+        expected_destination: NormalizedResourceState,
+        binding_digest: str,
     ) -> MutationReceipt:
-        if not self.atomic_replace_supported:
-            return _receipt(operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED)
-        try:
-            self._sftp.posix_rename(staged_path, destination)
-            return _receipt(operation_id, MutationDisposition.APPLIED)
-        except OSError as error:
-            if str(error).casefold() == "operation unsupported":
-                self.atomic_replace_supported = False
-                return _receipt(
-                    operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED
-                )
-            return _receipt(operation_id, _mutation_failure(error, True))
-        except Exception as error:
-            return _receipt(operation_id, _mutation_failure(error, True))
+        return self._mutate(
+            operation_id,
+            "replace",
+            destination,
+            binding_digest,
+            expected_destination,
+            staged_path=staged_path,
+            expected_staged=expected_staged,
+        )
 
-    def remove(self, path: str, operation_id: str) -> MutationReceipt:
-        return self._single_mutation(operation_id, self._sftp.remove, path)
+    def remove(
+        self,
+        path: str,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
+    ) -> MutationReceipt:
+        return self._mutate(operation_id, "remove", path, binding_digest, expected)
 
     def restore(
         self,
@@ -110,34 +135,66 @@ class ParamikoManagedFiles:
         content: bytes | None,
         mode: int | None,
         operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
     ) -> MutationReceipt:
-        if content is None:
-            return self.remove(path, operation_id)
-        suffix = hashlib.sha256(operation_id.encode()).hexdigest()[:24]
-        directory, _, name = path.rpartition("/")
-        staged = f"{directory}/.{name}.{suffix}.restore"
-        staged_receipt = self.stage_write(staged, content, mode or 0, operation_id)
-        if staged_receipt.disposition is not MutationDisposition.APPLIED:
-            return staged_receipt
-        replaced = self.atomic_replace(staged, path, operation_id)
-        if replaced.disposition is not MutationDisposition.APPLIED:
-            return replaced
-        if mode is None:
-            return replaced
-        return self.chmod(path, mode, operation_id)
+        return self._mutate(
+            operation_id,
+            "restore",
+            path,
+            binding_digest,
+            expected,
+            content=content,
+            mode=mode,
+        )
 
-    def cleanup(self, path: str, operation_id: str) -> MutationReceipt:
-        return self.remove(path, operation_id)
-
-    def _single_mutation(
-        self, operation_id: str, operation: object, *args: object
+    def cleanup(
+        self,
+        path: str,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
     ) -> MutationReceipt:
-        try:
-            assert callable(operation)
-            operation(*args)
-            return _receipt(operation_id, MutationDisposition.APPLIED)
-        except Exception as error:
-            return _receipt(operation_id, _mutation_failure(error, True))
+        return self._mutate(operation_id, "cleanup", path, binding_digest, expected)
+
+    def _mutate(
+        self,
+        operation_id: str,
+        operation: str,
+        path: str,
+        binding_digest: str,
+        expected: NormalizedResourceState,
+        *,
+        content: bytes | None = None,
+        mode: int | None = None,
+        staged_path: str | None = None,
+        expected_staged: NormalizedResourceState | None = None,
+    ) -> MutationReceipt:
+        if self._mutation_helper is None:
+            return _receipt(operation_id, MutationDisposition.DEFINITELY_NOT_APPLIED)
+        result = self._mutation_helper.mutate(
+            operation,
+            path,
+            operation_id,
+            binding_digest,
+            expected,
+            content=content,
+            mode=mode,
+            staged_path=staged_path,
+            expected_staged=expected_staged,
+        )
+        disposition = (
+            MutationDisposition.APPLIED
+            if result.code is ManagedMutationCode.APPLIED
+            else (
+                MutationDisposition.AMBIGUOUS
+                if result.code is ManagedMutationCode.AMBIGUOUS
+                else MutationDisposition.DEFINITELY_NOT_APPLIED
+            )
+        )
+        return _receipt(operation_id, disposition)
 
 
 def _kind(mode: int) -> EntryKind:
@@ -156,21 +213,3 @@ def _read_failure(code: ReadFailureCode, message: str) -> ReadResult:
 
 def _receipt(operation_id: str, disposition: MutationDisposition) -> MutationReceipt:
     return MutationReceipt(operation_id, disposition)
-
-
-def _mutation_failure(error: Exception, started: bool) -> MutationDisposition:
-    if isinstance(error, (EOFError, paramiko.SSHException, TimeoutError)):
-        return MutationDisposition.AMBIGUOUS
-    if not started:
-        return MutationDisposition.DEFINITELY_NOT_APPLIED
-    if isinstance(error, OSError) and error.errno in {
-        errno.ENOENT,
-        errno.EEXIST,
-        errno.EACCES,
-        errno.EPERM,
-        errno.ENOTDIR,
-        errno.EISDIR,
-        errno.EOPNOTSUPP,
-    }:
-        return MutationDisposition.DEFINITELY_NOT_APPLIED
-    return MutationDisposition.AMBIGUOUS

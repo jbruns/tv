@@ -230,9 +230,23 @@ def test_known_mismatch_is_rolled_back_only_from_a_run_produced_state() -> None:
 def test_third_party_state_is_not_overwritten_by_rollback() -> None:
     class RacingFiles(FakeManagedFiles):
         def atomic_replace(
-            self, staged_path: str, destination: str, operation_id: str
+            self,
+            staged_path: str,
+            destination: str,
+            operation_id: str,
+            *,
+            expected_staged: NormalizedResourceState,
+            expected_destination: NormalizedResourceState,
+            binding_digest: str,
         ) -> MutationReceipt:
-            receipt = super().atomic_replace(staged_path, destination, operation_id)
+            receipt = super().atomic_replace(
+                staged_path,
+                destination,
+                operation_id,
+                expected_staged=expected_staged,
+                expected_destination=expected_destination,
+                binding_digest=binding_digest,
+            )
             self.put(destination, FakeManagedEntry(0o644, b"third-party"))
             return receipt
 
