@@ -1,17 +1,20 @@
 import base64
 import io
+from typing import ClassVar
 
 import paramiko
 import pytest
 
 from coreelec_reconciler.adapters.paramiko_session import (
     CommandFailureCode,
+    CommandOutcome,
     ParamikoCommandRunner,
     ParamikoDeviceSession,
     ParamikoSessionFactory,
     SessionError,
     SessionFailureCode,
 )
+from coreelec_reconciler.adapters.remote_helpers import FixedNoFollowReader
 from coreelec_reconciler.adapters.secrets import (
     EnvironmentSecretResolver,
     MappingHostKeyResolver,
@@ -29,6 +32,7 @@ from coreelec_reconciler.transports.interfaces import (
     DeviceCapabilitySnapshot,
     DeviceIdentity,
 )
+from tests.adapters.scripted import ScriptedCommands, ScriptedLeastAuthoritySession
 
 
 class Channel:
@@ -126,6 +130,38 @@ def test_command_timeout_is_typed_and_closes_channel() -> None:
     )
     assert outcome.failure is CommandFailureCode.TIMEOUT
     assert channel.closed
+
+
+@pytest.mark.parametrize(
+    ("exit_status", "code"),
+    [
+        (40, "not_found"),
+        (41, "unsafe"),
+        (42, "too_large"),
+        (43, "incomplete"),
+        (44, "unreadable"),
+        (45, "transport"),
+    ],
+)
+def test_fixed_no_follow_read_failures_are_typed(exit_status: int, code: str) -> None:
+    commands = ScriptedCommands([CommandOutcome(b"", b"private", exit_status)])
+    result = FixedNoFollowReader(commands).read("/storage/file", 12)
+    assert result.failure is not None
+    assert result.failure.code.value == code
+    assert "private" not in result.failure.safe_message
+
+
+def test_fixed_no_follow_read_preserves_exact_bytes() -> None:
+    commands = ScriptedCommands([CommandOutcome(b"\x00value\xff", b"", 0)])
+    result = FixedNoFollowReader(commands).read("/storage/file", 12)
+    assert result.value == b"\x00value\xff"
+
+
+def test_fixed_no_follow_read_rejects_oversize_success_payload() -> None:
+    commands = ScriptedCommands([CommandOutcome(b"too-large", b"", 0)])
+    result = FixedNoFollowReader(commands).read("/storage/file", 3)
+    assert result.failure is not None
+    assert result.failure.code.value == "too_large"
 
 
 def test_typed_secret_resolution_and_redaction() -> None:
@@ -227,8 +263,153 @@ def test_session_closes_sftp_before_client_and_is_idempotent() -> None:
         DeviceCapabilitySnapshot(None, True),
         object(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
+        frozenset({"managed_file.read"}),
     )
     session.close()
     session.close()
     assert sftp.closed
     assert client.closed
+
+
+def test_managed_file_only_session_exposes_no_command_runner() -> None:
+    session = ParamikoDeviceSession(
+        Closable(),  # type: ignore[arg-type]
+        Closable(),  # type: ignore[arg-type]
+        DeviceIdentity(DeviceId("device.test"), "sha256:binding", "boot"),
+        DeviceCapabilitySnapshot(None, True),
+        object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        frozenset({"managed_file.read"}),
+    )
+    assert not hasattr(session, "commands")
+    assert not hasattr(session.managed_files, "remove")
+    with pytest.raises(SessionError, match="mutation"):
+        _ = session.managed_file_mutations
+
+
+def test_unrequested_managed_file_capability_is_inaccessible() -> None:
+    session = ParamikoDeviceSession(
+        Closable(),  # type: ignore[arg-type]
+        Closable(),  # type: ignore[arg-type]
+        DeviceIdentity(DeviceId("device.test"), "sha256:binding", "boot"),
+        DeviceCapabilitySnapshot(None, True),
+        object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        frozenset({"remote_run_ownership"}),
+    )
+    with pytest.raises(SessionError, match="not requested"):
+        _ = session.managed_files
+
+
+@pytest.mark.parametrize("adapter_kind", ["fake", "paramiko"])
+def test_shared_session_least_authority_contract(adapter_kind: str) -> None:
+    if adapter_kind == "fake":
+        session: object = ScriptedLeastAuthoritySession(
+            frozenset({"managed_file.read"})
+        )
+    else:
+        session = ParamikoDeviceSession(
+            Closable(),  # type: ignore[arg-type]
+            Closable(),  # type: ignore[arg-type]
+            DeviceIdentity(DeviceId("device.test"), "sha256:binding", "boot"),
+            DeviceCapabilitySnapshot(None, False),
+            object(),  # type: ignore[arg-type]
+            object(),  # type: ignore[arg-type]
+            frozenset({"managed_file.read"}),
+        )
+    assert not hasattr(session, "commands")
+    read_view = session.managed_files  # type: ignore[attr-defined]
+    assert callable(read_view.read)
+    assert not hasattr(read_view, "remove")
+
+
+class ActiveTransport:
+    def is_active(self) -> bool:
+        return True
+
+
+class OrderedSFTP:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def close(self) -> None:
+        self.events.append("sftp.close")
+
+    def posix_rename(self, source: str, destination: str) -> None:
+        del source, destination
+
+
+class OpenClient(RejectingClient):
+    events: ClassVar[list[str]] = []
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sftp = OrderedSFTP(self.events)
+
+    def connect(self, **kwargs: object) -> None:
+        del kwargs
+
+    def get_transport(self) -> ActiveTransport:
+        return ActiveTransport()
+
+    def open_sftp(self) -> OrderedSFTP:
+        return self.sftp
+
+    def close(self) -> None:
+        self.events.append("client.close")
+        super().close()
+
+
+def _session_parameters() -> tuple[MappingHostKeyResolver, DeviceSessionParameters]:
+    host_key = paramiko.RSAKey.generate(1024)
+    private_key = paramiko.RSAKey.generate(1024)
+    private = io.StringIO()
+    private_key.write_private_key(private)
+    resolver = MappingHostKeyResolver(
+        {"host-key": f"{host_key.get_name()} {host_key.get_base64()}"}
+    )
+    device = ResolvedDevice(
+        DeviceId("device.test"),
+        DeviceEndpoint("device.example", 22),
+        "root",
+        "host-key",
+        SecretReference("controller.environment", "private-key"),
+        ProfileRootCapability("/storage/.kodi/userdata"),
+    )
+    return resolver, DeviceSessionParameters(
+        device, SecretValue(private.getvalue().encode())
+    )
+
+
+@pytest.mark.parametrize("failure", ["capability", "boot_id", "validation"])
+def test_construction_failure_closes_sftp_before_client(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import coreelec_reconciler.adapters.paramiko_session as session_module
+
+    OpenClient.events = []
+    resolver, parameters = _session_parameters()
+    supported = failure != "capability"
+    monkeypatch.setattr(
+        FixedNoFollowReader,
+        "supported",
+        lambda self: supported,
+    )
+    if failure in {"boot_id", "validation"}:
+
+        def fail_boot_id(commands: object) -> str:
+            del commands
+            if failure == "validation":
+                raise ValueError("private validation detail")
+            raise SessionError(
+                SessionFailureCode.CAPABILITY, "Device boot identity is invalid"
+            )
+
+        monkeypatch.setattr(session_module, "_read_boot_id", fail_boot_id)
+    factory = ParamikoSessionFactory(
+        resolver,
+        client_factory=OpenClient,  # type: ignore[arg-type]
+    )
+    with pytest.raises(SessionError):
+        factory.open(parameters, frozenset({"managed_file.read"}))
+    assert OpenClient.events == ["sftp.close", "client.close"]

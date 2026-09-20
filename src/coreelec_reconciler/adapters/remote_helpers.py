@@ -4,8 +4,13 @@ import hashlib
 import posixpath
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
-from .paramiko_session import CommandRunner
+from coreelec_reconciler.transports.interfaces import (
+    ReadFailure,
+    ReadFailureCode,
+    ReadResult,
+)
 
 REMOTE_ROOT = "/storage/.coreelec-reconciler"
 
@@ -13,6 +18,7 @@ REMOTE_ROOT = "/storage/.coreelec-reconciler"
 class RemoteHelperCode(StrEnum):
     APPLIED = "applied"
     CONFLICT = "conflict"
+    UNSAFE = "unsafe"
     UNSUPPORTED = "unsupported"
     FAILED = "failed"
     AMBIGUOUS = "ambiguous"
@@ -21,6 +27,22 @@ class RemoteHelperCode(StrEnum):
 @dataclass(frozen=True, slots=True)
 class RemoteHelperResult:
     code: RemoteHelperCode
+
+
+class CommandRunner(Protocol):
+    def execute(
+        self, command: str, *, stdin: bytes = b"", timeout: float = 15.0
+    ) -> object: ...
+
+
+class RemoteHelper(Protocol):
+    def run(
+        self,
+        operation: str,
+        object_path: str,
+        expected_digest: str,
+        staged_path: str,
+    ) -> RemoteHelperResult: ...
 
 
 _HELPER = b"""set -eu
@@ -39,6 +61,11 @@ lock="${object}.operation-lock"
 case "$op" in
 prepare)
   parent=${staged%/*}
+  run_dir=${parent%/stage}
+  runs_dir=${run_dir%/*}
+  [ "$runs_dir" = /storage/.coreelec-reconciler/runs ] || exit 65
+  ensure_dir "$runs_dir"
+  ensure_dir "$run_dir"
   ensure_dir "$parent"
   ;;
 create)
@@ -60,7 +87,7 @@ create)
 replace)
   mkdir "$lock" 2>/dev/null || exit 67
   trap 'rmdir "$lock" 2>/dev/null || true' EXIT
-  [ -f "$object/marker.json" ] && [ ! -L "$object/marker.json" ] || exit 66
+  [ ! -L "$object/marker.json" ] && [ -f "$object/marker.json" ] || exit 66
   actual=$(sha256sum "$object/marker.json" | cut -d' ' -f1)
   [ "sha256:$actual" = "$expected" ] || exit 67
   mv "$staged" "$object/marker.json" || exit 68
@@ -70,6 +97,7 @@ replace)
 remove)
   mkdir "$lock" 2>/dev/null || exit 67
   trap 'rmdir "$lock" 2>/dev/null || true' EXIT
+  [ ! -L "$object/marker.json" ] && [ -f "$object/marker.json" ] || exit 66
   actual=$(sha256sum "$object/marker.json" | cut -d' ' -f1)
   [ "sha256:$actual" = "$expected" ] || exit 67
   rm "$object/marker.json" && rmdir "$object" || exit 68
@@ -78,6 +106,7 @@ remove)
 quarantine)
   mkdir "$lock" 2>/dev/null || exit 67
   trap 'rmdir "$lock" 2>/dev/null || true' EXIT
+  [ ! -L "$object/marker.json" ] && [ -f "$object/marker.json" ] || exit 66
   actual=$(sha256sum "$object/marker.json" | cut -d' ' -f1)
   [ "sha256:$actual" = "$expected" ] || exit 67
   destination="${object%/ownership}/quarantine"
@@ -99,6 +128,18 @@ cleanup)
   [ ! -L "$object" ] || exit 66
   if [ -e "$object" ]; then rm "$object" || exit 68; fi
   sync || exit 69
+  ;;
+inspect_cleanup)
+  parent=${object%/*}
+  run_dir=${parent%/*}
+  runs_dir=${run_dir%/*}
+  [ "$runs_dir" = /storage/.coreelec-reconciler/runs ] || exit 65
+  for directory in "$runs_dir" "$run_dir" "$parent"; do
+    [ ! -L "$directory" ] && [ -d "$directory" ] || exit 66
+  done
+  [ ! -L "$object" ] || exit 66
+  [ -e "$object" ] && exit 67
+  exit 0
   ;;
 *) exit 64 ;;
 esac
@@ -128,23 +169,114 @@ class FixedRemoteHelper:
             )
         )
         outcome = self._commands.execute(command, stdin=_HELPER, timeout=15.0)
-        if outcome.failure is not None:
+        failure = getattr(outcome, "failure", None)
+        if failure is not None:
             return RemoteHelperResult(RemoteHelperCode.AMBIGUOUS)
-        if outcome.exit_status == 0:
+        exit_status = getattr(outcome, "exit_status", None)
+        if exit_status == 0:
             code = RemoteHelperCode.APPLIED
-        elif outcome.exit_status == 67:
+        elif exit_status == 67:
             code = RemoteHelperCode.CONFLICT
-        elif outcome.exit_status == 69:
+        elif exit_status == 66:
+            code = RemoteHelperCode.UNSAFE
+        elif exit_status == 69:
             code = RemoteHelperCode.UNSUPPORTED
+        elif exit_status == 68:
+            code = RemoteHelperCode.AMBIGUOUS
         else:
             code = RemoteHelperCode.FAILED
         return RemoteHelperResult(code)
 
 
-def staged_infrastructure_path(object_path: str, payload: bytes) -> str:
-    _validate_infrastructure_path(object_path)
+_NO_FOLLOW_READER = b"""import errno, os, stat, sys
+if sys.argv[1] == "--probe":
+    raise SystemExit(0 if hasattr(os, "O_NOFOLLOW") else 46)
+path = sys.argv[1]
+limit = int(sys.argv[2])
+try:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+except FileNotFoundError:
+    raise SystemExit(40)
+except PermissionError:
+    raise SystemExit(44)
+except OSError as error:
+    raise SystemExit(41 if error.errno == errno.ELOOP else 45)
+try:
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(41)
+    if metadata.st_size > limit:
+        raise SystemExit(42)
+    chunks = []
+    remaining = metadata.st_size
+    while remaining:
+        chunk = os.read(descriptor, min(65536, remaining))
+        if not chunk:
+            raise SystemExit(43)
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if os.read(descriptor, 1):
+        raise SystemExit(43)
+    os.write(1, b"".join(chunks))
+finally:
+    os.close(descriptor)
+"""
+
+
+class FixedNoFollowReader:
+    def __init__(self, commands: CommandRunner) -> None:
+        self._commands = commands
+
+    def supported(self) -> bool:
+        outcome = self._commands.execute(
+            "/usr/bin/python3 - --probe 0",
+            stdin=_NO_FOLLOW_READER,
+            timeout=5.0,
+        )
+        return (
+            getattr(outcome, "failure", None) is None
+            and getattr(outcome, "exit_status", None) == 0
+        )
+
+    def read(self, path: str, limit: int) -> ReadResult:
+        command = " ".join(
+            (
+                "/usr/bin/python3 -",
+                _shell_word(path),
+                str(limit),
+            )
+        )
+        outcome = self._commands.execute(command, stdin=_NO_FOLLOW_READER, timeout=15.0)
+        if getattr(outcome, "failure", None) is not None:
+            return _read_failure(ReadFailureCode.TRANSPORT, "Entry read failed")
+        exit_status = getattr(outcome, "exit_status", None)
+        if exit_status == 0:
+            stdout = getattr(outcome, "stdout", None)
+            if isinstance(stdout, bytes):
+                if len(stdout) > limit:
+                    return _read_failure(
+                        ReadFailureCode.TOO_LARGE, "Entry exceeds read limit"
+                    )
+                return ReadResult(stdout)
+            return _read_failure(
+                ReadFailureCode.INCOMPLETE, "Entry read was incomplete"
+            )
+        if not isinstance(exit_status, int):
+            return _read_failure(ReadFailureCode.TRANSPORT, "Entry read failed")
+        code = {
+            40: ReadFailureCode.NOT_FOUND,
+            41: ReadFailureCode.UNSAFE,
+            42: ReadFailureCode.TOO_LARGE,
+            43: ReadFailureCode.INCOMPLETE,
+            44: ReadFailureCode.UNREADABLE,
+        }.get(exit_status, ReadFailureCode.TRANSPORT)
+        return _read_failure(code, _READ_MESSAGES[code])
+
+
+def staged_infrastructure_path(workspace_key: str, payload: bytes) -> str:
+    _validate_opaque_key(workspace_key)
     digest = hashlib.sha256(payload).hexdigest()
-    return posixpath.join(REMOTE_ROOT, "stage", digest)
+    return posixpath.join(REMOTE_ROOT, "runs", workspace_key, "stage", digest)
 
 
 def _validate_infrastructure_path(path: str) -> None:
@@ -167,3 +299,24 @@ def _shell_word(value: str) -> str:
 _SAFE_SHELL = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:-"
 )
+
+
+_READ_MESSAGES = {
+    ReadFailureCode.NOT_FOUND: "Entry is absent",
+    ReadFailureCode.UNSAFE: "Entry is not a safe regular file",
+    ReadFailureCode.TOO_LARGE: "Entry exceeds read limit",
+    ReadFailureCode.INCOMPLETE: "Entry read was incomplete",
+    ReadFailureCode.UNREADABLE: "Entry is unreadable",
+    ReadFailureCode.TRANSPORT: "Entry read failed",
+}
+
+
+def _read_failure(code: ReadFailureCode, message: str) -> ReadResult:
+    return ReadResult(None, ReadFailure(code, message))
+
+
+def _validate_opaque_key(value: str) -> None:
+    if len(value) != 64 or any(
+        character not in "0123456789abcdef" for character in value
+    ):
+        raise ValueError("opaque Run key is invalid")

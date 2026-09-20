@@ -3,6 +3,7 @@
 import hashlib
 import io
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -13,9 +14,12 @@ from coreelec_reconciler.config.device import DeviceSessionParameters
 from coreelec_reconciler.transports.interfaces import (
     DeviceCapabilitySnapshot,
     DeviceIdentity,
+    ReadResult,
 )
 
 from .paramiko_managed_file import ParamikoManagedFiles
+from .remote_helpers import FixedNoFollowReader, FixedRemoteHelper
+from .remote_run_ownership import ParamikoRemoteAuthorityBackend
 from .secrets import HostKeyResolver
 
 
@@ -124,7 +128,18 @@ class ParamikoCommandRunner:
                 channel.close()
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
+class ManagedFileReadView:
+    _files: ParamikoManagedFiles
+
+    def lstat(self, path: str) -> ReadResult:
+        return self._files.lstat(path)
+
+    def read(self, path: str, limit: int) -> ReadResult:
+        return self._files.read(path, limit)
+
+
+@dataclass(slots=True, repr=False)
 class ParamikoDeviceSession:
     _client: paramiko.SSHClient
     _sftp: paramiko.SFTPClient
@@ -132,7 +147,16 @@ class ParamikoDeviceSession:
     _capabilities: DeviceCapabilitySnapshot
     _managed_files: ParamikoManagedFiles
     _commands: ParamikoCommandRunner
+    _requested_capabilities: frozenset[str]
     _closed: bool = False
+
+    def __repr__(self) -> str:
+        return (
+            "ParamikoDeviceSession("
+            f"device_id={self._identity.device_id.value!r}, "
+            f"capabilities={sorted(self._requested_capabilities)!r}, "
+            f"closed={self._closed})"
+        )
 
     @property
     def identity(self) -> DeviceIdentity:
@@ -143,21 +167,54 @@ class ParamikoDeviceSession:
         return self._capabilities
 
     @property
-    def managed_files(self) -> ParamikoManagedFiles:
-        return self._managed_files
+    def managed_files(self) -> ManagedFileReadView:
+        if "managed_file.read" not in self._requested_capabilities:
+            raise SessionError(
+                SessionFailureCode.CAPABILITY,
+                "managed-file read capability was not requested",
+            )
+        return ManagedFileReadView(self._managed_files)
 
     @property
-    def commands(self) -> ParamikoCommandRunner:
-        return self._commands
+    def managed_file_mutations(self) -> ParamikoManagedFiles:
+        required = {"managed_file.write", "atomic_replace_over_existing"}
+        if not required.issubset(self._requested_capabilities):
+            raise SessionError(
+                SessionFailureCode.CAPABILITY,
+                "managed-file mutation capability was not requested",
+            )
+        return self._managed_files
+
+    def remote_ownership(self, workspace_key: str) -> ParamikoRemoteAuthorityBackend:
+        if "remote_run_ownership" not in self._requested_capabilities:
+            raise SessionError(
+                SessionFailureCode.CAPABILITY,
+                "remote ownership capability was not requested",
+            )
+        return ParamikoRemoteAuthorityBackend(
+            self._managed_files,
+            FixedRemoteHelper(self._commands),
+            workspace_key=workspace_key,
+        )
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        failed = False
         try:
             self._sftp.close()
-        finally:
+        except Exception:
+            failed = True
+        try:
             self._client.close()
+        except Exception:
+            failed = True
+        if failed:
+            raise SessionError(
+                SessionFailureCode.TRANSPORT,
+                "SSH session closure could not be confirmed",
+            )
 
     def __enter__(self) -> ParamikoDeviceSession:
         return self
@@ -186,6 +243,7 @@ class ParamikoSessionFactory:
         device = parameters.device
         pinned = self._host_keys.resolve_host_key(device.host_key_reference)
         client = self._client_factory()
+        sftp: paramiko.SFTPClient | None = None
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
         hostname = device.endpoint.host
         host_key_name = (
@@ -214,12 +272,27 @@ class ParamikoSessionFactory:
                     "SSH transport did not become active",
                 )
             sftp = client.open_sftp()
-            managed = ParamikoManagedFiles(sftp)
-            capabilities = DeviceCapabilitySnapshot(
+            commands = ParamikoCommandRunner(transport)
+            reader = FixedNoFollowReader(commands)
+            no_follow_read = reader.supported()
+            managed = ParamikoManagedFiles(sftp, reader if no_follow_read else None)
+            available_capabilities = DeviceCapabilitySnapshot(
                 device.profile_root, managed.atomic_replace_supported
             )
-            _require_capabilities(capabilities, required_capabilities)
-            commands = ParamikoCommandRunner(transport)
+            _require_capabilities(
+                available_capabilities,
+                required_capabilities,
+                no_follow_read=no_follow_read,
+            )
+            capabilities = DeviceCapabilitySnapshot(
+                device.profile_root
+                if required_capabilities.intersection(
+                    {"managed_file.read", "managed_file.write"}
+                )
+                else None,
+                available_capabilities.atomic_replace_over_existing
+                and "atomic_replace_over_existing" in required_capabilities,
+            )
             boot_id = _read_boot_id(commands)
             binding = b"\0".join(
                 (
@@ -243,30 +316,36 @@ class ParamikoSessionFactory:
                 capabilities,
                 managed,
                 commands,
+                required_capabilities,
             )
         except SessionError:
-            client.close()
+            _close_failed_session(sftp, client)
             raise
         except paramiko.BadHostKeyException:
-            client.close()
+            _close_failed_session(sftp, client)
             raise SessionError(
                 SessionFailureCode.HOST_KEY_REJECTED,
                 "pinned SSH host key was rejected",
             ) from None
         except paramiko.AuthenticationException:
-            client.close()
+            _close_failed_session(sftp, client)
             raise SessionError(
                 SessionFailureCode.AUTHENTICATION, "SSH authentication failed"
             ) from None
         except TimeoutError:
-            client.close()
+            _close_failed_session(sftp, client)
             raise SessionError(
                 SessionFailureCode.TIMEOUT, "SSH connection timed out"
             ) from None
         except EOFError, paramiko.SSHException, OSError:
-            client.close()
+            _close_failed_session(sftp, client)
             raise SessionError(
                 SessionFailureCode.TRANSPORT, "SSH session could not be established"
+            ) from None
+        except Exception:
+            _close_failed_session(sftp, client)
+            raise SessionError(
+                SessionFailureCode.TRANSPORT, "SSH session validation failed"
             ) from None
 
 
@@ -294,12 +373,16 @@ def _load_private_key(value: bytes) -> paramiko.PKey:
 def _require_capabilities(
     capabilities: DeviceCapabilitySnapshot,
     required: frozenset[str],
+    *,
+    no_follow_read: bool,
 ) -> None:
     available = {
-        "managed_file.read",
         "managed_file.write",
         "atomic_replace_over_existing",
+        "remote_run_ownership",
     }
+    if no_follow_read:
+        available.add("managed_file.read")
     if not capabilities.atomic_replace_over_existing:
         available.discard("atomic_replace_over_existing")
     missing = required - available
@@ -308,6 +391,16 @@ def _require_capabilities(
             SessionFailureCode.CAPABILITY,
             "required Device session capability is unavailable",
         )
+
+
+def _close_failed_session(
+    sftp: paramiko.SFTPClient | None, client: paramiko.SSHClient
+) -> None:
+    if sftp is not None:
+        with suppress(Exception):
+            sftp.close()
+    with suppress(Exception):
+        client.close()
 
 
 def _read_boot_id(commands: CommandRunner) -> str:

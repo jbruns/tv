@@ -1,12 +1,15 @@
 from collections.abc import Callable
+from functools import partial
+from typing import Any, cast
 
+import paramiko
 import pytest
 
 from coreelec_reconciler.adapters.paramiko_managed_file import ParamikoManagedFiles
 from coreelec_reconciler.domain.execution import MutationDisposition
 from coreelec_reconciler.transports.interfaces import ReadFailureCode
-from tests.adapters.scripted import Entry, ScriptedSFTP
-from tests.fakes.runtime import FakeManagedFiles
+from tests.adapters.scripted import Entry, ScriptedNoFollowReader, ScriptedSFTP
+from tests.fakes.runtime import FakeManagedEntry, FakeManagedFiles
 
 PATH = "/storage/file"
 STAGED = "/storage/.file.stage"
@@ -14,7 +17,9 @@ STAGED = "/storage/.file.stage"
 
 def _production() -> tuple[object, Callable[[str], bytes | None]]:
     sftp = ScriptedSFTP()
-    adapter = ParamikoManagedFiles(sftp)  # type: ignore[arg-type]
+    adapter = ParamikoManagedFiles(
+        cast(paramiko.SFTPClient, sftp), ScriptedNoFollowReader(sftp)
+    )
 
     def inspect(path: str) -> bytes | None:
         entry = sftp.entries.get(path)
@@ -52,10 +57,49 @@ def test_absent_and_existing_atomic_replace_contract(
 def test_incomplete_production_read_is_typed() -> None:
     sftp = ScriptedSFTP()
     sftp.entries[PATH] = Entry(b"complete")
-    sftp.incomplete_read = True
-    result = ParamikoManagedFiles(sftp).read(PATH, 100)  # type: ignore[arg-type]
+    reader = ScriptedNoFollowReader(sftp)
+    reader.failure = ReadFailureCode.INCOMPLETE
+    result = ParamikoManagedFiles(cast(paramiko.SFTPClient, sftp), reader).read(
+        PATH, 100
+    )
     assert result.failure is not None
     assert result.failure.code is ReadFailureCode.INCOMPLETE
+
+
+def test_production_read_never_uses_racy_sftp_open() -> None:
+    sftp = ScriptedSFTP()
+    sftp.entries[PATH] = Entry(b"before")
+    files = ParamikoManagedFiles(sftp)  # type: ignore[arg-type]
+    result = files.read(PATH, 100)
+    assert result.failure is not None
+    assert result.failure.code is ReadFailureCode.UNSAFE
+    assert sftp.closed_handles == 0
+
+
+def test_no_follow_reader_rejects_symlink_swap() -> None:
+    import stat
+
+    sftp = ScriptedSFTP()
+    sftp.entries[PATH] = Entry(b"before")
+    reader = ScriptedNoFollowReader(sftp)
+    reader.before_read = lambda: sftp.entries.__setitem__(
+        PATH, Entry(b"/private/other", stat.S_IFLNK | 0o777)
+    )
+    result = ParamikoManagedFiles(cast(paramiko.SFTPClient, sftp), reader).read(
+        PATH, 100
+    )
+    assert result.failure is not None
+    assert result.failure.code is ReadFailureCode.UNSAFE
+
+
+def test_no_follow_reader_enforces_oversize_bound() -> None:
+    sftp = ScriptedSFTP()
+    sftp.entries[PATH] = Entry(b"oversize")
+    result = ParamikoManagedFiles(
+        cast(paramiko.SFTPClient, sftp), ScriptedNoFollowReader(sftp)
+    ).read(PATH, 3)
+    assert result.failure is not None
+    assert result.failure.code is ReadFailureCode.TOO_LARGE
 
 
 @pytest.mark.parametrize(
@@ -122,3 +166,78 @@ def test_server_without_posix_extension_returns_definitely_not_applied() -> None
     assert receipt.disposition is MutationDisposition.DEFINITELY_NOT_APPLIED
     assert sftp.entries[STAGED].content == b"new"
     assert PATH not in sftp.entries
+
+
+@pytest.mark.parametrize("adapter_kind", ["fake", "paramiko"])
+@pytest.mark.parametrize(
+    "primitive",
+    ["stage_write", "chmod", "atomic_replace", "remove", "restore", "cleanup"],
+)
+@pytest.mark.parametrize("applied", [False, True])
+def test_all_mutation_ambiguity_twins_share_fake_production_contract(
+    adapter_kind: str, primitive: str, applied: bool
+) -> None:
+    files: Any
+    inspect: Callable[[str], Any]
+    if adapter_kind == "fake":
+        fake = FakeManagedFiles()
+        fake.put(PATH, FakeManagedEntry(0o644, b"old"))
+        fake.put(STAGED, FakeManagedEntry(0o600, b"new"))
+        fake.lost_ack(primitive, applied=applied)
+        files = fake
+        inspect = partial(_fake_entry, fake)
+    else:
+        sftp = ScriptedSFTP()
+        sftp.entries[PATH] = Entry(b"old")
+        sftp.entries[STAGED] = Entry(b"new", 0o600)
+        sftp.disconnect_applied = applied
+        sftp.disconnect_on = {
+            "stage_write": "write" if applied else "open",
+            "chmod": "chmod",
+            "atomic_replace": "posix_rename",
+            "remove": "remove",
+            "restore": "posix_rename" if applied else "open",
+            "cleanup": "remove",
+        }[primitive]
+        files = ParamikoManagedFiles(
+            cast(paramiko.SFTPClient, sftp), ScriptedNoFollowReader(sftp)
+        )
+        inspect = partial(_production_entry, sftp)
+
+    receipt = {
+        "stage_write": lambda: files.stage_write(
+            "/storage/new", b"value", 0o600, "stage"
+        ),
+        "chmod": lambda: files.chmod(PATH, 0o600, "chmod"),
+        "atomic_replace": lambda: files.atomic_replace(STAGED, PATH, "replace"),
+        "remove": lambda: files.remove(PATH, "remove"),
+        "restore": lambda: files.restore(PATH, b"before", 0o640, "restore"),
+        "cleanup": lambda: files.cleanup(PATH, "cleanup"),
+    }[primitive]()
+
+    assert receipt.disposition is MutationDisposition.AMBIGUOUS
+    if primitive == "stage_write":
+        assert (inspect("/storage/new") is not None) is applied
+    elif primitive == "chmod":
+        entry = inspect(PATH)
+        assert entry is not None
+        assert entry.mode & 0o777 == (0o600 if applied else 0o644)
+    elif primitive == "atomic_replace":
+        entry = inspect(PATH)
+        assert entry is not None
+        assert entry.content == (b"new" if applied else b"old")
+        assert (inspect(STAGED) is None) is applied
+    elif primitive in {"remove", "cleanup"}:
+        assert (inspect(PATH) is None) is applied
+    else:
+        entry = inspect(PATH)
+        assert entry is not None
+        assert entry.content == (b"before" if applied else b"old")
+
+
+def _fake_entry(files: FakeManagedFiles, path: str) -> FakeManagedEntry | None:
+    return files.entry(path)
+
+
+def _production_entry(sftp: ScriptedSFTP, path: str) -> Entry | None:
+    return sftp.entries.get(path)

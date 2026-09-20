@@ -4,6 +4,7 @@ import errno
 import hashlib
 import stat
 from contextlib import suppress
+from typing import Protocol
 
 import paramiko
 
@@ -20,9 +21,18 @@ from coreelec_reconciler.transports.interfaces import (
 )
 
 
+class NoFollowReader(Protocol):
+    def read(self, path: str, limit: int) -> ReadResult: ...
+
+
 class ParamikoManagedFiles:
-    def __init__(self, sftp: paramiko.SFTPClient) -> None:
+    def __init__(
+        self,
+        sftp: paramiko.SFTPClient,
+        no_follow_reader: NoFollowReader | None = None,
+    ) -> None:
         self._sftp = sftp
+        self._no_follow_reader = no_follow_reader
         self.atomic_replace_supported = callable(getattr(sftp, "posix_rename", None))
 
     def lstat(self, path: str) -> ReadResult:
@@ -42,41 +52,12 @@ class ParamikoManagedFiles:
         return ReadResult(FileMetadata(_kind(mode), stat.S_IMODE(mode), value.st_size))
 
     def read(self, path: str, limit: int) -> ReadResult:
-        metadata = self.lstat(path)
-        if metadata.failure is not None:
-            return metadata
-        assert isinstance(metadata.value, FileMetadata)
-        if metadata.value.kind is not EntryKind.REGULAR:
-            return _read_failure(ReadFailureCode.UNSAFE, "Entry is not a regular file")
-        if metadata.value.size > limit:
-            return _read_failure(ReadFailureCode.TOO_LARGE, "Entry exceeds read limit")
-        handle: paramiko.SFTPFile | None = None
-        payload = bytearray()
-        try:
-            handle = self._sftp.open(path, "rb")
-            remaining = metadata.value.size
-            while remaining:
-                chunk = handle.read(min(65_536, remaining))
-                if not chunk:
-                    return _read_failure(
-                        ReadFailureCode.INCOMPLETE, "Entry read was incomplete"
-                    )
-                payload.extend(chunk)
-                remaining -= len(chunk)
-            if handle.read(1):
-                return _read_failure(
-                    ReadFailureCode.INCOMPLETE, "Entry changed during read"
-                )
-            return ReadResult(bytes(payload))
-        except FileNotFoundError:
-            return _read_failure(ReadFailureCode.NOT_FOUND, "Entry is absent")
-        except PermissionError:
-            return _read_failure(ReadFailureCode.UNREADABLE, "Entry is unreadable")
-        except EOFError, paramiko.SSHException, OSError:
-            return _read_failure(ReadFailureCode.TRANSPORT, "Entry read failed")
-        finally:
-            if handle is not None:
-                handle.close()
+        if self._no_follow_reader is None:
+            return _read_failure(
+                ReadFailureCode.UNSAFE,
+                "No-follow regular-file reads are unavailable",
+            )
+        return self._no_follow_reader.read(path, limit)
 
     def stage_write(
         self, path: str, content: bytes, mode: int, operation_id: str
@@ -178,10 +159,10 @@ def _receipt(operation_id: str, disposition: MutationDisposition) -> MutationRec
 
 
 def _mutation_failure(error: Exception, started: bool) -> MutationDisposition:
-    if not started:
-        return MutationDisposition.DEFINITELY_NOT_APPLIED
     if isinstance(error, (EOFError, paramiko.SSHException, TimeoutError)):
         return MutationDisposition.AMBIGUOUS
+    if not started:
+        return MutationDisposition.DEFINITELY_NOT_APPLIED
     if isinstance(error, OSError) and error.errno in {
         errno.ENOENT,
         errno.EEXIST,

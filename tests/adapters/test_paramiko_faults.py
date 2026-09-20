@@ -1,20 +1,21 @@
-import paramiko
-
 from coreelec_reconciler.adapters.paramiko_managed_file import ParamikoManagedFiles
 from coreelec_reconciler.domain.execution import MutationDisposition
 from coreelec_reconciler.transports.interfaces import ReadFailureCode
-from tests.adapters.scripted import Entry, ScriptedSFTP
+from tests.adapters.scripted import (
+    Entry,
+    ScriptedNoFollowReader,
+    ScriptedSFTP,
+)
 
 
 def test_read_disconnect_is_typed_without_transport_detail() -> None:
-    class DisconnectingSFTP(ScriptedSFTP):
-        def open(self, path: str, mode: str) -> object:
-            del path, mode
-            raise paramiko.SSHException("credential=value endpoint=private")
-
-    sftp = DisconnectingSFTP()
+    sftp = ScriptedSFTP()
     sftp.entries["/storage/file"] = Entry(b"content")
-    result = ParamikoManagedFiles(sftp).read("/storage/file", 100)  # type: ignore[arg-type]
+    reader = ScriptedNoFollowReader(sftp)
+    reader.failure = ReadFailureCode.TRANSPORT
+    result = ParamikoManagedFiles(sftp, reader).read(  # type: ignore[arg-type]
+        "/storage/file", 100
+    )
 
     assert result.failure is not None
     assert result.failure.code is ReadFailureCode.TRANSPORT
