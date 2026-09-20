@@ -233,3 +233,20 @@ def test_remote_ownership_contract_has_one_lower_level_definition() -> None:
     assert not hasattr(authority, "AuthorityConflict")
     assert not hasattr(authority, "RemoteObject")
     assert not hasattr(authority, "RemoteAuthorityBackend")
+
+
+def test_managed_file_adapter_has_no_direct_sftp_mutation_bypass() -> None:
+    path = PACKAGE_ROOT / "adapters" / "paramiko_managed_file.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    prohibited = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Attribute)
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == "self"
+        and node.value.attr == "_sftp"
+        and node.attr in {"chmod", "open", "posix_rename", "remove", "rename"}
+    }
+
+    assert prohibited == set()

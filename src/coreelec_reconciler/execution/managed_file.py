@@ -83,7 +83,11 @@ class ManagedFileExecutor:
     ) -> ManagedFileExecutionResult:
         receipts: list[MutationReceipt] = []
         path = prepared.address.device_path.value
-        staged_path = _staged_path(path, prepared.staged_object.object_id)
+        staged_path = _staged_path(
+            path,
+            prepared.staged_object.object_id,
+            prepared.binding.binding_digest,
+        )
         before = self._observe(prepared)
         if not before.safe or before.state != prepared.before:
             verification = ManagedFileVerification(
@@ -100,7 +104,12 @@ class ManagedFileExecutor:
                 resource_id,
                 change_id,
                 PrimitiveKind.REMOVE,
-                lambda operation_id: self._files.remove(path, operation_id),
+                lambda operation_id: self._files.remove(
+                    path,
+                    operation_id,
+                    expected=prepared.before,
+                    binding_digest=prepared.binding.binding_digest,
+                ),
             )
             receipts.append(receipt)
             self._persist_primitive(receipts, prepared.address)
@@ -116,6 +125,8 @@ class ManagedFileExecutor:
                     desired,
                     prepared.desired.managed_mode or 0,
                     operation_id,
+                    expected=_absent_state(),
+                    binding_digest=prepared.binding.binding_digest,
                 ),
             )
             receipts.append(receipt)
@@ -139,7 +150,12 @@ class ManagedFileExecutor:
                     change_id,
                     PrimitiveKind.ATOMIC_REPLACE,
                     lambda operation_id: self._files.atomic_replace(
-                        staged_path, path, operation_id
+                        staged_path,
+                        path,
+                        operation_id,
+                        expected_staged=staged_observation.state,
+                        expected_destination=prepared.before,
+                        binding_digest=prepared.binding.binding_digest,
                     ),
                 )
                 receipts.append(receipt)
@@ -164,6 +180,8 @@ class ManagedFileExecutor:
                         path,
                         prepared.desired.managed_mode or 0,
                         operation_id,
+                        expected=current.state,
+                        binding_digest=prepared.binding.binding_digest,
                     ),
                 )
                 receipts.append(receipt)
@@ -175,7 +193,11 @@ class ManagedFileExecutor:
                 change_id,
                 PrimitiveKind.CHMOD,
                 lambda operation_id: self._files.chmod(
-                    path, prepared.desired.managed_mode or 0, operation_id
+                    path,
+                    prepared.desired.managed_mode or 0,
+                    operation_id,
+                    expected=prepared.before,
+                    binding_digest=prepared.binding.binding_digest,
                 ),
             )
             receipts.append(receipt)
@@ -194,7 +216,9 @@ class ManagedFileExecutor:
                 prepared.desired,
                 *prepared.allowed_intermediates,
             }:
-                rollback = self._restore(prepared, resource_id, change_id)
+                rollback = self._restore(
+                    prepared, resource_id, change_id, verification.observation.state
+                )
                 rollback_verification = self._verify(prepared, prepared.before)
         return ManagedFileExecutionResult(
             MutationTrace(tuple(receipts)),
@@ -234,7 +258,7 @@ class ManagedFileExecutor:
                 else ManagedFileVerificationStatus.MISMATCH,
                 observed,
             )
-        trace = self._restore(prepared, resource_id, change_id)
+        trace = self._restore(prepared, resource_id, change_id, observed.state)
         return trace, self._verify(prepared, prepared.before)
 
     def _verify(
@@ -271,6 +295,7 @@ class ManagedFileExecutor:
         prepared: PreparedManagedFile,
         resource_id: str,
         change_id: str,
+        expected: NormalizedResourceState,
     ) -> MutationTrace:
         payload = self._attachments.read_attachment(prepared.rollback_attachment)
         value = json.loads(payload)
@@ -286,6 +311,8 @@ class ManagedFileExecutor:
                 content,
                 prepared.before.managed_mode,
                 operation_id,
+                expected=expected,
+                binding_digest=prepared.binding.binding_digest,
             ),
         )
         trace = MutationTrace((receipt,))
@@ -300,9 +327,17 @@ class ManagedFileExecutor:
         terminal_evidence_ref: str,
     ) -> MutationTrace:
         path = _staged_path(
-            prepared.address.device_path.value, prepared.staged_object.object_id
+            prepared.address.device_path.value,
+            prepared.staged_object.object_id,
+            prepared.binding.binding_digest,
         )
         operation_id = f"{change_id}.{PrimitiveKind.CLEANUP.value}"
+        staged_address = ResolvedManagedAddress(
+            prepared.address.logical_address, ManagedPath(path)
+        )
+        expected = observe_managed_file(
+            self._files, staged_address, read_limit=self._read_limit
+        )
         marker = self._marker(PrimitiveKind.CLEANUP)
         self._checkpoint(
             CleanupMutationIntent(
@@ -315,11 +350,16 @@ class ManagedFileExecutor:
             )
         )
         self._verify_marker(marker)
-        receipt = self._files.cleanup(path, operation_id)
+        receipt = self._files.cleanup(
+            path,
+            operation_id,
+            expected=expected.state,
+            binding_digest=prepared.binding.binding_digest,
+        )
         trace = MutationTrace((receipt,))
         self._persist_primitive(
             list(trace.receipts),
-            ResolvedManagedAddress(prepared.address.logical_address, ManagedPath(path)),
+            staged_address,
         )
         return trace
 
@@ -375,6 +415,11 @@ class ManagedFileExecutor:
         return self._attachments.read_attachment(prepared.desired_attachment)
 
 
-def _staged_path(destination: str, object_id: str) -> str:
+def _staged_path(destination: str, object_id: str, binding_digest: str) -> str:
     directory, name = posixpath.split(destination)
-    return posixpath.join(directory, f".{name}.{object_id}")
+    binding_key = binding_digest.removeprefix("sha256:")
+    return posixpath.join(directory, f".{name}.{object_id}.{binding_key}.stage")
+
+
+def _absent_state() -> NormalizedResourceState:
+    return NormalizedResourceState(Presence.ABSENT, None, None, None)

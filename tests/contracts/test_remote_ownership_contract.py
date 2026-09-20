@@ -30,7 +30,12 @@ from coreelec_reconciler.transports.remote_ownership import (
     AuthorityConflict,
     RemoteAuthorityBackend,
 )
-from tests.adapters.scripted import Entry, ScriptedNoFollowReader, ScriptedSFTP
+from tests.adapters.scripted import (
+    Entry,
+    ScriptedManagedMutationHelper,
+    ScriptedNoFollowReader,
+    ScriptedSFTP,
+)
 from tests.fakes.device import FakeDevice
 
 KEY = "a" * 64
@@ -106,7 +111,9 @@ def backend() -> tuple[ParamikoRemoteAuthorityBackend, Helper, ScriptedSFTP]:
     helper = Helper(sftp)
     value = ParamikoRemoteAuthorityBackend(
         ParamikoManagedFiles(
-            cast(paramiko.SFTPClient, sftp), ScriptedNoFollowReader(sftp)
+            cast(paramiko.SFTPClient, sftp),
+            ScriptedNoFollowReader(sftp),
+            ScriptedManagedMutationHelper(sftp),
         ),
         helper,
         workspace_key=WORKSPACE_KEY,
@@ -265,7 +272,9 @@ def test_same_payload_is_staged_under_distinct_run_roots() -> None:
     sftp = ScriptedSFTP()
     helper = Helper(sftp)
     files = ParamikoManagedFiles(
-        cast(paramiko.SFTPClient, sftp), ScriptedNoFollowReader(sftp)
+        cast(paramiko.SFTPClient, sftp),
+        ScriptedNoFollowReader(sftp),
+        ScriptedManagedMutationHelper(sftp),
     )
     first = ParamikoRemoteAuthorityBackend(files, helper, workspace_key=WORKSPACE_KEY)
     second = ParamikoRemoteAuthorityBackend(
