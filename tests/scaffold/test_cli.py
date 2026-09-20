@@ -53,10 +53,10 @@ def test_validate_checks_the_inventory_ledger() -> None:
     )
 
     assert result.returncode == 0
-    assert result.stdout.startswith(
+    assert result.stdout == ""
+    assert result.stderr.startswith(
         "inventory ledger valid: rows=169 migrate=153 outside=11 retire=5 sha256="
     )
-    assert result.stderr == ""
 
 
 @pytest.mark.parametrize(
@@ -68,7 +68,7 @@ def test_validate_checks_the_inventory_ledger() -> None:
         (("reconcile", "device-1"), "reconcile"),
         (("provision", "device-1"), "reconcile"),
         (("verify", "device-1"), "verify"),
-        (("recover", "run-1", "resume"), "recover"),
+        (("recover", "run-1", "resume-verification"), "recover"),
         (("report", "run-1"), "report"),
         (("action", "example"), "action"),
     ],
@@ -79,7 +79,7 @@ def test_closed_cli_commands_fail_explicitly(
 ) -> None:
     result = run_cli(*arguments)
 
-    assert result.returncode == 2
+    assert result.returncode == 3
     assert result.stdout == ""
     assert result.stderr == (
         f"{command_name}: not_implemented (application.command-not-implemented)\n"

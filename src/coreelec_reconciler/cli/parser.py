@@ -29,6 +29,7 @@ class ParsedCommand:
     repository_root: str
     command: Command
     output_document: Literal["plan", "run"] = "plan"
+    quiet: bool = False
 
 
 type CommandName = Literal[
@@ -57,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {version('coreelec-reconciler')}",
     )
     parser.add_argument("--repository-root", default=".")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress ordinary human status output on stderr.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate_parser = subparsers.add_parser("validate")
@@ -93,7 +99,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     recover_parser = subparsers.add_parser("recover")
     recover_parser.add_argument("run_id")
-    recover_parser.add_argument("action")
+    recover_parser.add_argument(
+        "action",
+        choices=("inspect", "resume-verification", "rollback", "finalize"),
+    )
+    recover_parser.add_argument("--mode", choices=("normal", "abandon"))
+    recover_parser.add_argument("--approve")
+    recover_parser.add_argument("--reason")
 
     report_parser = subparsers.add_parser("report")
     report_parser.add_argument("run_id")
@@ -104,7 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_command(argv: Sequence[str] | None = None) -> ParsedCommand:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     repository_root = cast(str, args.repository_root)
     command_name = cast(CommandName, args.command)
 
@@ -147,10 +160,41 @@ def parse_command(argv: Sequence[str] | None = None) -> ParsedCommand:
                 DeviceId(cast(str, args.device_id)),
             )
         case "recover":
+            action = cast(str, args.action).replace("-", "_")
+            mode = cast(str | None, args.mode)
+            approval = cast(str | None, args.approve)
+            reason = cast(str | None, args.reason)
+            if action == "finalize":
+                if mode is None:
+                    parser.error("recover finalize requires --mode normal or abandon")
+                if mode == "abandon":
+                    if approval != "recover.abandon":
+                        parser.error(
+                            "recover finalize --mode abandon requires "
+                            "--approve recover.abandon"
+                        )
+                    if reason is None or not reason.strip():
+                        parser.error(
+                            "recover finalize --mode abandon requires a "
+                            "non-empty --reason"
+                        )
+                elif approval is not None or reason is not None:
+                    parser.error(
+                        "recover finalize --mode normal does not accept "
+                        "--approve or --reason"
+                    )
+                action = f"finalize:{mode}"
+            elif mode is not None or approval is not None or reason is not None:
+                parser.error(
+                    "--mode, --approve, and --reason are valid only for "
+                    "recover finalize"
+                )
             command = RecoverCommand(
                 repository_root,
                 RunId(cast(str, args.run_id)),
-                cast(str, args.action),
+                action,
+                approval,
+                reason,
             )
         case "report":
             command = ReportCommand(
@@ -171,4 +215,5 @@ def parse_command(argv: Sequence[str] | None = None) -> ParsedCommand:
         repository_root=repository_root,
         command=command,
         output_document=output_document,
+        quiet=cast(bool, args.quiet),
     )
