@@ -264,6 +264,16 @@ class RecoveryClock(Protocol):
     def utc_now(self) -> str: ...
 
 
+class AuthorityEvidenceJournal(Protocol):
+    def record_authority_state(
+        self,
+        run_id: RunId,
+        ownership_state: str,
+        *,
+        quarantine_receipt_digest: str | None = None,
+    ) -> StoredRevision: ...
+
+
 class M3AuthorityRecovery:
     """Recovery-only adapter over the M3.2 bound authority coordinator."""
 
@@ -272,10 +282,12 @@ class M3AuthorityRecovery:
         coordinator: AuthorityCoordinator,
         authorities: BoundAuthorityStore,
         clock: RecoveryClock,
+        evidence: AuthorityEvidenceJournal | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._authorities = authorities
         self._clock = clock
+        self._evidence = evidence
 
     def release(self, run_id: RunId, terminal_digest: str) -> MutationReceipt:
         authority = self._authorities.load(run_id)
@@ -288,7 +300,13 @@ class M3AuthorityRecovery:
                 updated_at=self._clock.utc_now(),
             )
             self._authorities.save(run_id, authority)
-        return self._coordinator.release(authority, terminal_digest)
+        receipt = self._coordinator.release(authority, terminal_digest)
+        if (
+            self._evidence is not None
+            and receipt.disposition is MutationDisposition.APPLIED
+        ):
+            self._evidence.record_authority_state(run_id, "released")
+        return receipt
 
     def quarantine(
         self,
@@ -309,11 +327,17 @@ class M3AuthorityRecovery:
                 updated_at=self._clock.utc_now(),
             )
             self._authorities.save(run_id, authority)
-        self._coordinator.quarantine(
+        quarantine = self._coordinator.quarantine(
             authority,
             incident_digest,
             updated_at=self._clock.utc_now(),
         )
+        if self._evidence is not None:
+            self._evidence.record_authority_state(
+                run_id,
+                "quarantined",
+                quarantine_receipt_digest=quarantine.incident_receipt_digest,
+            )
 
 
 class RecoveryCoordinator:
@@ -404,15 +428,31 @@ class RecoveryCoordinator:
             terminal = self._persistence.record_abandonment(
                 run_id, approval=approval, reason=reason
             )
+            cleanup_complete = True
+            for resource in self._persistence.resources(run_id):
+                cleanup = resource.cleanup(terminal.digest)
+                self._persistence.record_cleanup(run_id, resource.resource_id, cleanup)
+                cleanup_complete = cleanup_complete and all(
+                    receipt.disposition
+                    in {
+                        MutationDisposition.APPLIED,
+                        MutationDisposition.DEFINITELY_NOT_APPLIED,
+                    }
+                    for receipt in cleanup.receipts
+                )
             self._authority.quarantine(
                 run_id,
                 terminal.digest,
                 approval=approval,
                 reason=reason,
             )
-            self._persistence.seal(run_id, SealIntent(terminal.revision, True))
+            seal_revision = self._persistence.load_chain(run_id).head.revision
+            self._persistence.seal(run_id, SealIntent(seal_revision, True))
             return ExecutionOutcome(
-                run_id, RunStatus.FAILED_RECOVERY_REQUIRED, (), True
+                run_id,
+                RunStatus.FAILED_RECOVERY_REQUIRED,
+                (),
+                cleanup_complete,
             )
         status = _normal_final_status(inspection.evidence)
         return self._finish(
@@ -459,7 +499,8 @@ class RecoveryCoordinator:
         released = (
             release is not None and release.disposition is MutationDisposition.APPLIED
         )
-        self._persistence.seal(run_id, SealIntent(terminal.revision, released))
+        seal_revision = self._persistence.load_chain(run_id).head.revision
+        self._persistence.seal(run_id, SealIntent(seal_revision, released))
         return ExecutionOutcome(run_id, status, (), cleanup_complete)
 
 

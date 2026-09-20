@@ -2,9 +2,13 @@
 
 import base64
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.configuration import (
     DesiredPresence,
     KodiSmartPlaylistIntent,
@@ -19,10 +23,6 @@ from coreelec_reconciler.domain.planning import (
     FileKind,
     KodiSmartPlaylistObservation,
     PlaylistAssessment,
-)
-from coreelec_reconciler.reporting.canonical_json import (
-    canonical_document_bytes,
-    decode_json_object,
 )
 from coreelec_reconciler.resource_types.descriptor import (
     AttachmentStore,
@@ -57,6 +57,7 @@ from coreelec_reconciler.resource_types.managed_file.preparation import (
     PreparationObject,
     PreparedManagedFile,
     decode_prepared_managed_file,
+    normalized_state_digest,
     prepare_managed_file,
 )
 
@@ -101,6 +102,76 @@ def execution_factory(context: ResourceExecutionContext) -> ErasedResourceExecut
         runtime.apply,
         runtime.rollback,
         runtime.cleanup,
+    )
+
+
+def decode_planned_change(
+    value: Mapping[str, object],
+    context: ResourceExecutionContext,
+    rollback_approved: bool,
+) -> PlaylistChange:
+    if set(value) != {
+        "affected_state_addresses",
+        "before",
+        "change_id",
+        "desired",
+        "effects",
+        "impact_codes",
+        "operation_code",
+        "operation_key",
+        "preconditions",
+        "reason_codes",
+        "resource_id",
+        "resource_type",
+        "rollback",
+    }:
+        raise ValueError("unknown or missing planned Change fields")
+    if (
+        value["resource_type"] != "KodiSmartPlaylist"
+        or value["resource_id"] != context.resource.id.value
+        or value["affected_state_addresses"] != [context.address.logical_address]
+        or value["operation_key"] != context.address.logical_address
+    ):
+        raise ValueError("planned Change does not match Resource context")
+    before = value["before"]
+    if not isinstance(before, dict):
+        raise ValueError("planned Change before-state is malformed")
+    expected_digest = before.get("normalized_state_digest")
+    observation = observe_managed_file(
+        context.files,
+        context.address,
+        read_limit=65536,
+    )
+    if (
+        not isinstance(expected_digest, str)
+        or normalized_state_digest(observation.state) != expected_digest
+    ):
+        raise ValueError("planned Change precondition is stale")
+    rollback = value["rollback"]
+    if not isinstance(rollback, dict):
+        raise ValueError("planned Change rollback is malformed")
+    if rollback.get("capability") == "verified_supported" and not rollback_approved:
+        raise ValueError("planned rollback capability is not approved")
+    desired = value["desired"]
+    if not isinstance(desired, dict):
+        raise ValueError("planned Change desired state is malformed")
+    planned_desired_digest = desired.get("normalized_state_digest")
+    current_desired, _ = desired_state(
+        context.resource.intent,
+        context.resource.desired,
+    )
+    if (
+        not isinstance(planned_desired_digest, str)
+        or normalized_state_digest(current_desired) != planned_desired_digest
+    ):
+        raise ValueError("resolved configuration differs from approved Plan")
+    return PlaylistChange(
+        context.resource.id.value,
+        _required_text(value["change_id"]),
+        context.resource.intent,
+        context.resource.desired,
+        observation.state,
+        rollback_approved,
     )
 
 

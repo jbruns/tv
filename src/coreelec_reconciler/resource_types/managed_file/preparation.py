@@ -3,14 +3,14 @@
 import hashlib
 from dataclasses import dataclass
 
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.execution import (
     AttachmentRef,
     NormalizedResourceState,
     Presence,
-)
-from coreelec_reconciler.reporting.canonical_json import (
-    canonical_document_bytes,
-    decode_json_object,
 )
 from coreelec_reconciler.resource_types.descriptor import AttachmentStore
 from coreelec_reconciler.transports.interfaces import ManagedFileReader
@@ -44,6 +44,7 @@ class PreparationObject:
 
 @dataclass(frozen=True, slots=True)
 class PreparedManagedFile:
+    binding: PreparationBinding
     address: ResolvedManagedAddress
     before: NormalizedResourceState
     desired: NormalizedResourceState
@@ -125,21 +126,45 @@ def decode_prepared_managed_file(
             "managed-file-cleanup-object",
             "managed-file-object-v1",
         )
-        for reference in (
-            rollback,
-            desired_attachment,
-            staged_metadata,
-            cleanup_metadata,
-        ):
-            if reference is not None:
-                attachments.read_attachment(reference)
         staged = _decode_object(value["staged_object"], "staged object")
         cleanup = _decode_object(value["cleanup_object"], "cleanup object")
+        binding = PreparationBinding(
+            _string(value["device_id"]),
+            _string(value["binding_digest"]),
+            _string(value["run_id"]),
+            _string(value["resource_id"]),
+            _string(value["change_id"]),
+        )
+        address = ResolvedManagedAddress(
+            _string(value["address"]),
+            ManagedPath(_string(value["managed_path"])),
+        )
+        _validate_before_attachment(
+            attachments.read_attachment(rollback),
+            binding,
+            address,
+            before,
+        )
+        if desired_attachment is not None:
+            _validate_desired_attachment(
+                attachments.read_attachment(desired_attachment),
+                desired,
+            )
+        _validate_object_attachment(
+            attachments.read_attachment(staged_metadata),
+            binding,
+            staged,
+            "staged object",
+        )
+        _validate_object_attachment(
+            attachments.read_attachment(cleanup_metadata),
+            binding,
+            cleanup,
+            "cleanup object",
+        )
         prepared = PreparedManagedFile(
-            ResolvedManagedAddress(
-                _string(value["address"]),
-                ManagedPath(_string(value["managed_path"])),
-            ),
+            binding,
+            address,
             before,
             desired,
             intermediates,
@@ -282,6 +307,7 @@ def prepare_managed_file(
         }
     )
     return PreparedManagedFile(
+        binding,
         address,
         expected_before,
         desired,
@@ -337,9 +363,12 @@ def _before_attachment(
     )
 
 
-def _state_digest(state: NormalizedResourceState) -> str:
+def normalized_state_digest(state: NormalizedResourceState) -> str:
     payload = canonical_document_bytes(_state_value(state))
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+_state_digest = normalized_state_digest
 
 
 def _state_value(state: NormalizedResourceState) -> dict[str, object]:
@@ -385,6 +414,99 @@ def _decode_object(value: object, label: str) -> PreparationObject:
     )
     _validate_object(result, label)
     return result
+
+
+def _validate_before_attachment(
+    payload: bytes,
+    binding: PreparationBinding,
+    address: ResolvedManagedAddress,
+    before: NormalizedResourceState,
+) -> None:
+    value = decode_json_object(payload)
+    expected_fields = {
+        "binding_digest",
+        "change_id",
+        "codec",
+        "content_hex",
+        "content_digest",
+        "device_id",
+        "entry_kind",
+        "logical_address",
+        "managed_mode",
+        "managed_path",
+        "presence",
+        "resource_id",
+        "run_id",
+        "schema_version",
+        "size",
+    }
+    if set(value) != expected_fields:
+        raise ValueError("before-state attachment fields are invalid")
+    content_hex = value["content_hex"]
+    if content_hex is not None and not isinstance(content_hex, str):
+        raise ValueError("before-state content is invalid")
+    content = bytes.fromhex(content_hex) if isinstance(content_hex, str) else None
+    if (
+        value["schema_version"] != 1
+        or value["codec"] != "managed-file-before-v1"
+        or value["device_id"] != binding.device_id
+        or value["binding_digest"] != binding.binding_digest
+        or value["run_id"] != binding.run_id
+        or value["resource_id"] != binding.resource_id
+        or value["change_id"] != binding.change_id
+        or value["logical_address"] != address.logical_address
+        or value["managed_path"] != address.device_path.value
+        or value["presence"] != before.presence.value
+        or value["entry_kind"] != before.entry_kind
+        or value["content_digest"] != before.content_digest
+        or value["managed_mode"] != before.managed_mode
+        or value["size"] != len(content or b"")
+        or (
+            content is not None
+            and "sha256:" + hashlib.sha256(content).hexdigest() != before.content_digest
+        )
+    ):
+        raise ValueError("before-state attachment binding is invalid")
+
+
+def _validate_desired_attachment(
+    payload: bytes,
+    desired: NormalizedResourceState,
+) -> None:
+    if (
+        desired.presence is not Presence.PRESENT
+        or desired.content_digest != "sha256:" + hashlib.sha256(payload).hexdigest()
+    ):
+        raise ValueError("desired-content attachment is invalid")
+
+
+def _validate_object_attachment(
+    payload: bytes,
+    binding: PreparationBinding,
+    expected: PreparationObject,
+    label: str,
+) -> None:
+    value = decode_json_object(payload)
+    if set(value) != {
+        "binding_digest",
+        "change_id",
+        "content_digest",
+        "device_id",
+        "object_id",
+        "resource_id",
+        "run_id",
+        "schema_version",
+    } or value != {
+        "binding_digest": binding.binding_digest,
+        "change_id": binding.change_id,
+        "content_digest": expected.content_digest,
+        "device_id": binding.device_id,
+        "object_id": expected.object_id,
+        "resource_id": binding.resource_id,
+        "run_id": binding.run_id,
+        "schema_version": 1,
+    }:
+        raise ValueError(f"{label} attachment binding is invalid")
 
 
 def _string(value: object) -> str:

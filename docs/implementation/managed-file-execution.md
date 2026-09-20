@@ -63,25 +63,51 @@ Ambiguity and disruptive failure stop further mutation.
 ## Restart-safe production contracts
 
 `PlanStore` durably stores the exact canonical Plan beside its originating
-planning Run. Every load reruns the reporting decoders and verifies the Plan
+planning Run. Every load reruns the persistence codecs and verifies the Plan
 ID, full and semantic digests, Device and originating-Run binding, approval
 requirements, and input/source digests. A partial, changed, noncanonical, or
 unsafe saved entry fails closed.
+
+`ProductionExecutionFactory.approve_saved_plan` is the restart-safe apply
+boundary. It loads that saved pair, checks the complete Device object and all
+input/origin bindings, rejects expired Plans and invalid, missing, duplicate,
+or extraneous approval grants, and asks each registered Resource Type to
+decode only the Changes present in the canonical Plan. Those checks and fresh
+precondition observations complete before authority acquisition creates the
+execution Run. The returned `ApprovedPlan` is already bound to the acquired
+RunStore lease and concrete execution services; production composition cannot
+substitute unrelated hand-built Changes.
 
 `RunStoreExecutionPersistence` is the concrete `ExecutionJournal`,
 `RecoveryPersistence`, and bound `AttachmentStore` adapter. Preparation
 documents are content-addressed attachments referenced by canonical Run
 evidence. Intent, primitive outcome, Verification, rollback, and terminal
 transitions append validated canonical revisions with RunStore CAS ordering.
-Cleanup receipts are operational evidence written only after terminal truth;
-they are digest-verified across restart and never become a successor to the
-terminal canonical revision. Sealing still follows verified cleanup and
-authority release or quarantine.
+Every record uses the Resource Type registry and the closed v1 execution
+evidence codecs; unknown kinds, versions, fields, observers, attachments, or
+sequence transitions are rejected. Cleanup intent, marker, and receipt records
+are terminal cleanup-only successors written after terminal truth. Authority
+release, quarantine, and abandonment evidence are likewise canonical
+successors. Normal sealing requires verified cleanup and release. Separately
+approved abandonment attempts and records cleanup, then permits a quarantined
+seal even when cleanup remains ambiguous so the active authority index can be
+closed without claiming release or cleanup success. Remote release remains
+authorized by the original terminal digest rather than a cleanup successor
+digest.
 
 Playlist preparation has a strict canonical codec. It reconstructs
 `PreparedPlaylistChange` and `PreparedManagedFile` from the manifest and
-verified content-addressed attachments, rejects altered bindings or missing
-attachments, and persists no controller-local path, lease, or ownership token.
+verified content-addressed attachments. Restart checks exact Run, Device, Plan,
+Resource, Change, binding digest, logical address, normalized Device path,
+manifest, and attachment identity before reconstruction. Altered bindings,
+cross-Run preparation, missing attachments, and corrupt codecs fail closed,
+and no controller-local path, lease, or ownership token enters a report.
+
+Bound authority restart reconstructs the expected remote ownership identity
+from verified local Run, Plan, workspace, and token state. It requires exact
+Device, Run, workspace, Plan ID, Plan full digest, binding digest, boot ID, and
+ownership-token digest equality before returning mutating authority; any
+mismatch leaves only inspection available.
 
 Built-in Resource Type descriptors expose a lazy execution factory instead of
 a process-bound execution instance. `ConfigurationResourceContexts` supplies
@@ -94,3 +120,7 @@ all prepared Resources in persisted Plan/dependency order, observes each
 freshly, rolls back in reverse order, and performs terminal cleanup in Plan
 order. `ProductionExecutionFactory` binds these concrete stores and authority
 adapters for one Run without opening a Device session itself.
+
+Canonical JSON and Plan/Run document codecs live in domain/persistence modules.
+Reporting re-exports those implementations for compatibility and remains a
+presentation consumer; execution does not import reporting implementations.

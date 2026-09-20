@@ -3,46 +3,61 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, is_dataclass
-from enum import Enum
+from dataclasses import dataclass
 from typing import Protocol
 
+from coreelec_reconciler.domain.canonical_json import (
+    decode_json_object,
+)
 from coreelec_reconciler.domain.configuration import ResolvedConfiguration
 from coreelec_reconciler.domain.execution import (
+    EXECUTION_EVIDENCE_OBSERVERS,
     AppendIntent,
     AttachmentRef,
     AuthorityPhase,
+    CleanupMutationIntent,
     DeviceIndexIntent,
     EffectDisposition,
+    EvidenceAttachment,
+    EvidenceObserver,
+    ExecutionEvidenceBindings,
+    ExecutionEvidenceKind,
+    ExecutionEvidenceRecord,
     MutationDisposition,
     MutationIntent,
+    MutationOutcome,
     MutationTrace,
+    NormalizedResourceState,
     Presence,
     RecoveryEvidence,
     RemoteOwnership,
+    RemoteOwnershipIdentity,
     RemoteOwnershipSnapshot,
+    ResourceMutationIntent,
     RevisionLease,
     RunStatus,
     SealIntent,
     StateRelation,
     StoredRevision,
+    VerificationOutcome,
     VerifiedRunChain,
+    build_execution_evidence,
+    evidence_proves_terminal_cleanup,
+    execution_run_identity,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
+from coreelec_reconciler.domain.planning import CanonicalRunReport
 from coreelec_reconciler.execution.authority import AcquiredAuthority
 from coreelec_reconciler.execution.engine import (
     ApprovedPlan,
     BoundRecoveryResource,
+    ExecutableChange,
     RecoveryResource,
 )
 from coreelec_reconciler.execution.recovery import RecoveryInspectorPort
 from coreelec_reconciler.execution.run_store import RunStore
-from coreelec_reconciler.reporting.canonical_json import (
-    canonical_document_bytes,
-    decode_json_object,
-)
-from coreelec_reconciler.reporting.execution_documents import (
-    build_execution_run_report,
+from coreelec_reconciler.persistence.document_codecs import (
+    CanonicalExecutionDocumentCodec,
 )
 from coreelec_reconciler.resource_types.descriptor import (
     AttachmentStore,
@@ -62,12 +77,22 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
     PreparationBinding,
+    PreparedManagedFile,
+    normalized_state_digest,
 )
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
 
 class RunClock(Protocol):
     def utc_now(self) -> str: ...
+
+
+class ExecutionDocumentCodec(Protocol):
+    def build(
+        self,
+        value: dict[str, object],
+        resource_registry: ResourceRegistry,
+    ) -> CanonicalRunReport: ...
 
 
 class ResourceContextProvider(Protocol):
@@ -219,25 +244,37 @@ class RemoteOwnershipReader(Protocol):
 class PreparedResourceRecord:
     resource_id: str
     type_code: str
-    requires: tuple[str, ...]
-    disruptive: bool
+    change_id: str
+    state_addresses: tuple[str, ...]
+    manifest_digest: str
     attachment_digest: str
+    attachment_kind: str
     attachment_codec: str
 
 
 class RunStoreAttachmentStore:
     """AttachmentStore bound to one held Run lease."""
 
-    def __init__(self, store: RunStore, lease: RevisionLease) -> None:
+    def __init__(
+        self,
+        store: RunStore,
+        lease: RevisionLease,
+        allowed_codecs: frozenset[tuple[str, str]],
+    ) -> None:
         if not isinstance(lease, RevisionLease):
             raise TypeError("RunStore attachment adapter requires a revision lease")
         self._store = store
         self._lease = lease
+        self._allowed_codecs = allowed_codecs
 
     def attach(self, kind: str, codec: str, payload: bytes) -> AttachmentRef:
+        if (kind, codec) not in self._allowed_codecs:
+            raise ValueError("attachment codec is not registered for execution")
         return self._store.attach(self._lease, kind, codec, payload)
 
     def read_attachment(self, reference: AttachmentRef) -> bytes:
+        if (reference.kind, reference.codec) not in self._allowed_codecs:
+            raise ValueError("attachment codec is not registered for execution")
         return self._store.read_attachment(self._lease, reference).payload
 
 
@@ -261,8 +298,9 @@ class RunStoreBoundAuthorityState:
         if existing is not None:
             return existing
         chain = self._store.load_chain(run_id)
-        identity = decode_json_object(chain.head.payload)
-        device_id = DeviceId(_text(identity, "device_id"))
+        run_value = decode_json_object(chain.head.payload)
+        local_identity = execution_run_identity(run_value)
+        device_id = DeviceId(_text(local_identity, "device_id"))
         device_lease = self._store.acquire_device(device_id)
         try:
             revision_lease = self._revision_lease or self._store.acquire_run(run_id)
@@ -270,10 +308,19 @@ class RunStoreBoundAuthorityState:
             self._store.release_device(device_lease)
             raise
         ownership = self._remote.read_ownership(device_id)
+        expected_identity = RemoteOwnershipIdentity(
+            device_id,
+            run_id,
+            revision_lease.workspace_id,
+            _text(local_identity, "plan_id"),
+            _text(local_identity, "plan_full_digest"),
+            _text(local_identity, "binding_digest"),
+            _text(local_identity, "boot_id"),
+        )
+        expected_token_digest = _text(local_identity, "ownership_token_digest")
         if (
-            ownership.identity.run_id != run_id
-            or ownership.identity.workspace_id != revision_lease.workspace_id
-            or ownership.identity.device_id != device_id
+            ownership.identity != expected_identity
+            or ownership.token_digest != expected_token_digest
         ):
             self._store.release_run(revision_lease)
             self._store.release_device(device_lease)
@@ -301,6 +348,15 @@ class RunStoreBoundAuthorityState:
         self._store.release_device(authority.device_lease)
 
 
+@dataclass(frozen=True, slots=True)
+class _ResourceMetadata:
+    resource_type: str
+    change_id: str
+    requires: tuple[str, ...]
+    disruptive: bool
+    state_addresses: tuple[str, ...]
+
+
 class RunStoreExecutionPersistence:
     """Concrete RunStore adapter for execution evidence and restart recovery."""
 
@@ -313,17 +369,26 @@ class RunStoreExecutionPersistence:
         contexts: ResourceContextProvider,
         recovery_environment: RecoveryEnvironment,
         clock: RunClock,
+        documents: ExecutionDocumentCodec | None = None,
+        revision_lease: RevisionLease | None = None,
     ) -> None:
         self._store = store
         self._run_id = run_id
-        self._lease = store.acquire_run(run_id)
-        self._attachments = RunStoreAttachmentStore(store, self._lease)
+        self._lease = revision_lease or store.acquire_run(run_id)
+        self._attachments = RunStoreAttachmentStore(
+            store,
+            self._lease,
+            _allowed_attachment_codecs(registry),
+        )
         self._registry = registry
         self._resource_types = dict(resource_types)
         self._contexts = contexts
         self._recovery_environment = recovery_environment
         self._clock = clock
-        self._resource_metadata: dict[str, tuple[tuple[str, ...], bool]] = {}
+        self._documents = documents or CanonicalExecutionDocumentCodec()
+        self._resource_metadata: dict[str, _ResourceMetadata] = {}
+        self._prepared: dict[str, PreparedManagedFile] = {}
+        self._last_operation: dict[str, tuple[str, str]] = {}
 
     def close(self) -> None:
         self._store.release_run(self._lease)
@@ -332,11 +397,18 @@ class RunStoreExecutionPersistence:
     def revision_lease(self) -> RevisionLease:
         return self._lease
 
+    @property
+    def attachment_store(self) -> RunStoreAttachmentStore:
+        return self._attachments
+
     def start(self, plan: ApprovedPlan) -> None:
         if plan.run_id != self._run_id:
             raise ValueError("execution Plan does not bind to the Run")
         self._resource_metadata = {
-            change.resource_id: (change.requires, change.disruptive)
+            change.resource_id: _metadata_from_change(
+                change,
+                self._resource_types[change.resource_id],
+            )
             for change in plan.changes
         }
         chain = self.load_chain(plan.run_id)
@@ -347,22 +419,88 @@ class RunStoreExecutionPersistence:
         descriptor = self._descriptor(resource_id)
         if descriptor.encode_prepared is None:
             raise ValueError("Resource Type does not support durable preparation")
+        managed = _prepared_managed_file(prepared)
+        metadata = self._metadata(resource_id)
+        local_identity = execution_run_identity(
+            decode_json_object(self.load_chain(run_id).head.payload)
+        )
+        if (
+            managed.binding.run_id != run_id.value
+            or managed.binding.device_id != _text(local_identity, "device_id")
+            or managed.binding.binding_digest != _text(local_identity, "binding_digest")
+            or managed.binding.resource_id != resource_id
+            or managed.binding.change_id != metadata.change_id
+        ):
+            raise ValueError("prepared Resource bindings do not match execution")
+        metadata = _ResourceMetadata(
+            metadata.resource_type,
+            metadata.change_id,
+            metadata.requires,
+            metadata.disruptive,
+            (managed.address.logical_address,),
+        )
+        self._resource_metadata[resource_id] = metadata
+        self._prepared[resource_id] = managed
         payload = descriptor.encode_prepared(prepared)
         reference = self._attachments.attach(
             "resource-preparation",
             f"{descriptor.type_code.lower()}-preparation-v1",
             payload,
         )
-        requires, disruptive = self._resource_metadata.get(resource_id, ((), False))
-        record = {
-            "attachment_codec": reference.codec,
-            "attachment_digest": reference.digest,
-            "disruptive": disruptive,
-            "requires": list(requires),
-            "resource_id": resource_id,
-            "type_code": descriptor.type_code,
-        }
-        self._append_evidence(run_id, resource_id, "ResourcePreparation", record)
+        manifest_reference = (
+            reference
+            if reference.digest == managed.manifest_digest
+            else self._attachments.attach(
+                "managed-file-preparation-manifest",
+                "managed-file-preparation-v1",
+                managed.manifest_bytes,
+            )
+        )
+        observation_ref = f"evidence.{resource_id}.before"
+        records = [
+            self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION,
+                observation_ref,
+                _observation_payload(managed.before, "before"),
+                attachments=(managed.rollback_attachment,),
+                raw_attachment_digest=managed.rollback_attachment.digest,
+            ),
+            self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED,
+                f"evidence.{resource_id}.preparation",
+                {
+                    "allowed_intermediate_state_digests": [
+                        normalized_state_digest(item)
+                        for item in managed.allowed_intermediates
+                    ],
+                    "before_state_attachment_digest": (
+                        managed.rollback_attachment.digest
+                    ),
+                    "cleanup_object_refs": [managed.cleanup_object.object_id],
+                    "desired_state_digest": normalized_state_digest(managed.desired),
+                    "manifest_digest": managed.manifest_digest,
+                    "preparation_manifest_attachment_digest": (
+                        manifest_reference.digest
+                    ),
+                    "rollback_capable": managed.rollback_capable,
+                },
+                attachments=(
+                    managed.rollback_attachment,
+                    reference,
+                    manifest_reference,
+                    managed.cleanup_metadata_attachment,
+                    managed.staged_metadata_attachment,
+                    *(
+                        ()
+                        if managed.desired_attachment is None
+                        else (managed.desired_attachment,)
+                    ),
+                ),
+            ),
+        ]
+        self._append_records(records)
 
     def result(
         self,
@@ -370,13 +508,38 @@ class RunStoreExecutionPersistence:
         resource_id: str,
         result: ManagedFileExecutionResult,
     ) -> None:
-        self._append_evidence(
-            run_id,
+        observation = result.verification.observation
+        observation_ref = self._observation_evidence(
             resource_id,
-            "ResourceExecutionResult",
-            _jsonable(result),
-            resource_result=_resource_result(result),
+            observation,
+            "verification",
         )
+        intent_ref, outcome_ref = self._last_operation.get(resource_id, (None, None))
+        records = [
+            observation_ref[0],
+            self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT,
+                f"evidence.{resource_id}.execution",
+                {
+                    "intent_evidence_ref": intent_ref,
+                    "mutation_outcome": _mutation_outcome(result).value,
+                    "outcome_evidence_ref": outcome_ref,
+                },
+            ),
+            self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT,
+                f"evidence.{resource_id}.verification",
+                {
+                    "observation_evidence_ref": observation_ref[1],
+                    "outcome": _verification_outcome(result.verification).value,
+                    "post_effect": False,
+                    "relation": self._relation(resource_id, observation).value,
+                },
+            ),
+        ]
+        self._append_records(records, resource_result=_resource_result(result))
 
     def record_intent(
         self,
@@ -384,11 +547,82 @@ class RunStoreExecutionPersistence:
         resource_id: str,
         intent: MutationIntent,
     ) -> StoredRevision:
-        return self._append_evidence(
-            run_id,
-            resource_id,
-            "MutationIntent",
-            _jsonable(intent),
+        payload: dict[str, object]
+        if isinstance(intent, ResourceMutationIntent):
+            payload = {
+                "allowed_intermediate_state_digests": [
+                    normalized_state_digest(item)
+                    for item in intent.allowed_intermediates
+                ],
+                "content_attachment_digest": intent.content_attachment_digest,
+                "expected_after_digest": normalized_state_digest(intent.expected_after),
+                "expected_before_digest": normalized_state_digest(
+                    intent.expected_before
+                ),
+                "manifest_object_ref": None,
+                "marker_digest": intent.marker.marker_digest,
+                "marker_generation": intent.marker.generation,
+                "marker_phase": intent.marker.phase.value,
+                "operation_id": intent.operation_id,
+                "preparation_manifest_digest": intent.preparation_manifest_digest,
+                "primitive": intent.primitive.value,
+                "terminal_revision_digest": None,
+                "token_digest": intent.marker.token_digest,
+            }
+            terminal_cleanup = False
+        elif isinstance(intent, CleanupMutationIntent):
+            payload = {
+                "allowed_intermediate_state_digests": [],
+                "content_attachment_digest": None,
+                "expected_after_digest": None,
+                "expected_before_digest": None,
+                "manifest_object_ref": intent.manifest_object_ref,
+                "marker_digest": intent.marker.marker_digest,
+                "marker_generation": intent.marker.generation,
+                "marker_phase": intent.marker.phase.value,
+                "operation_id": intent.operation_id,
+                "preparation_manifest_digest": None,
+                "primitive": intent.primitive.value,
+                "terminal_revision_digest": intent.terminal_or_seal_evidence_ref,
+                "token_digest": intent.marker.token_digest,
+            }
+            terminal_cleanup = True
+        else:
+            raise TypeError("managed-file journal received an Effect intent")
+        intent_ref = _evidence_id(resource_id, intent.operation_id, "intent")
+        marker_ref = _evidence_id(resource_id, intent.operation_id, "marker")
+        records = [
+            self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT,
+                intent_ref,
+                payload,
+                attachments=self._intent_attachments(resource_id, intent),
+            ),
+            self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT,
+                marker_ref,
+                {
+                    "generation": intent.marker.generation,
+                    "manifest_digest": (
+                        intent.preparation_manifest_digest
+                        if isinstance(intent, ResourceMutationIntent)
+                        else None
+                    ),
+                    "marker_digest": intent.marker.marker_digest,
+                    "operation_id": intent.operation_id,
+                    "phase": intent.marker.phase.value,
+                    "token_digest": intent.marker.token_digest,
+                },
+            ),
+        ]
+        self._last_operation[resource_id] = (intent_ref, "")
+        return self._append_records(
+            records,
+            pending_attempt=None
+            if terminal_cleanup
+            else self._pending_attempt(resource_id, intent, intent_ref),
         )
 
     def record_primitive_outcome(
@@ -398,14 +632,57 @@ class RunStoreExecutionPersistence:
         trace: MutationTrace,
         observation: ManagedFileObservation,
     ) -> StoredRevision:
-        return self._append_evidence(
-            run_id,
+        if not trace.receipts:
+            raise ValueError("primitive outcome trace is empty")
+        receipt = trace.receipts[-1]
+        intent_ref, _ = self._last_operation[resource_id]
+        operation_id = receipt.operation_id
+        intent_record = self._evidence_by_id(intent_ref)
+        intent_payload = dict(intent_record.payload)
+        if intent_payload["primitive"] == "cleanup":
+            receipt_ref = _evidence_id(resource_id, operation_id, "cleanup")
+            record = self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT,
+                receipt_ref,
+                {
+                    "disposition": receipt.disposition.value,
+                    "leftover": receipt.disposition is MutationDisposition.AMBIGUOUS,
+                    "manifest_object_ref": intent_payload["manifest_object_ref"],
+                    "operation_id": operation_id,
+                    "terminal_revision_digest": intent_payload[
+                        "terminal_revision_digest"
+                    ],
+                },
+            )
+            self._last_operation[resource_id] = (intent_ref, receipt_ref)
+            return self._append_records([record])
+        observation_record, observation_ref = self._observation_evidence(
             resource_id,
-            "PrimitiveOutcome",
+            observation,
+            f"{operation_id}.outcome",
+        )
+        outcome_ref = _evidence_id(resource_id, operation_id, "outcome")
+        outcome = self._resource_evidence(
+            resource_id,
+            ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME,
+            outcome_ref,
             {
-                "observation": _jsonable(observation),
-                "trace": _jsonable(trace),
+                "disposition": receipt.disposition.value,
+                "observation_evidence_ref": observation_ref,
+                "observed_state_digest": normalized_state_digest(observation.state),
+                "operation_id": operation_id,
+                "receipt_sequence": len(trace.receipts),
             },
+        )
+        self._last_operation[resource_id] = (intent_ref, outcome_ref)
+        return self._append_records(
+            [observation_record, outcome],
+            completed_attempt=(
+                f"attempt.{operation_id}",
+                receipt.disposition.value,
+                outcome_ref,
+            ),
         )
 
     def terminal(self, run_id: RunId, status: RunStatus) -> StoredRevision:
@@ -420,11 +697,25 @@ class RunStoreExecutionPersistence:
         resource_id: str,
         dependency_ids: tuple[str, ...],
     ) -> None:
-        self._append_evidence(
-            run_id,
-            resource_id,
-            "ResourceSkipped",
-            {"dependency_ids": list(dependency_ids)},
+        self._append_records(
+            [
+                self._resource_evidence(
+                    resource_id,
+                    ExecutionEvidenceKind.RESOURCE_SKIP_RESULT,
+                    f"evidence.{resource_id}.skip",
+                    {
+                        "final_convergence": (
+                            "skipped_dependency"
+                            if dependency_ids
+                            else "skipped_run_stopped"
+                        ),
+                        "reason_code": (
+                            "skip.dependency" if dependency_ids else "skip.run-stopped"
+                        ),
+                        "stop_scope": "resource",
+                    },
+                )
+            ],
             resource_result={
                 "final_convergence": (
                     "skipped_dependency" if dependency_ids else "skipped_run_stopped"
@@ -447,12 +738,12 @@ class RunStoreExecutionPersistence:
 
     def resources(self, run_id: RunId) -> tuple[RecoveryResource, ...]:
         self._require_run(run_id)
-        records = _preparation_records(self._store.load_chain(run_id).head.payload)
+        records = _preparation_records(
+            self._store.load_chain(run_id).head.payload,
+            self._registry,
+        )
         resources: list[RecoveryResource] = []
-        seen: set[str] = set()
         for record in records:
-            if not set(record.requires) <= seen:
-                raise ValueError("persisted Resource order violates dependencies")
             descriptor = self._registry.descriptor(record.type_code)
             if (
                 descriptor is None
@@ -462,23 +753,40 @@ class RunStoreExecutionPersistence:
                 raise ValueError("persisted Resource Type cannot be reconstructed")
             reference = AttachmentRef(
                 record.attachment_digest,
-                "resource-preparation",
+                record.attachment_kind,
                 record.attachment_codec,
             )
             payload = self._attachments.read_attachment(reference)
             prepared = descriptor.decode_prepared(payload, self._attachments)
-            runtime = descriptor.execution_factory(
-                self._contexts.context(
-                    run_id,
-                    record.resource_id,
-                    record.type_code,
-                    self._attachments,
-                )
+            context = self._contexts.context(
+                run_id,
+                record.resource_id,
+                record.type_code,
+                self._attachments,
             )
+            managed = _prepared_managed_file(prepared)
+            if (
+                managed.binding != context.binding
+                or managed.binding.change_id != record.change_id
+                or managed.address != context.address
+                or record.state_addresses != (context.address.logical_address,)
+                or managed.manifest_digest != record.manifest_digest
+            ):
+                raise ValueError(
+                    "prepared Resource does not match current execution context"
+                )
+            self._resource_metadata[record.resource_id] = _ResourceMetadata(
+                record.type_code,
+                record.change_id,
+                (),
+                False,
+                record.state_addresses,
+            )
+            self._prepared[record.resource_id] = managed
+            runtime = descriptor.execution_factory(context)
             resources.append(
                 BoundRecoveryResource(runtime, prepared, record.resource_id)
             )
-            seen.add(record.resource_id)
         return tuple(resources)
 
     def record_verification(
@@ -488,14 +796,27 @@ class RunStoreExecutionPersistence:
         observation: object,
         assessment: object,
     ) -> StoredRevision:
-        return self._append_evidence(
-            run_id,
-            resource_id,
-            "RecoveryVerification",
-            {
-                "assessment": _jsonable(assessment),
-                "observation": _jsonable(observation),
-            },
+        if not isinstance(observation, ManagedFileObservation):
+            raise TypeError("recovery Verification requires managed-file Observation")
+        observation_record, observation_ref = self._observation_evidence(
+            resource_id, observation, "recovery"
+        )
+        verification = _require_verification(assessment, observation)
+        return self._append_records(
+            [
+                observation_record,
+                self._resource_evidence(
+                    resource_id,
+                    ExecutionEvidenceKind.RECOVERY_VERIFICATION_RESULT,
+                    f"evidence.{resource_id}.recovery-verification",
+                    {
+                        "action": "resume_verification",
+                        "observation_evidence_ref": observation_ref,
+                        "outcome": _verification_outcome(verification).value,
+                        "relation": self._relation(resource_id, observation).value,
+                    },
+                ),
+            ]
         )
 
     def record_rollback(
@@ -505,11 +826,26 @@ class RunStoreExecutionPersistence:
         trace: MutationTrace | None,
         verification: ManagedFileVerification,
     ) -> StoredRevision:
-        return self._append_evidence(
-            run_id,
-            resource_id,
-            "RollbackResult",
-            {"trace": _jsonable(trace), "verification": _jsonable(verification)},
+        observation_record, observation_ref = self._observation_evidence(
+            resource_id, verification.observation, "rollback"
+        )
+        return self._append_records(
+            [
+                observation_record,
+                self._resource_evidence(
+                    resource_id,
+                    ExecutionEvidenceKind.RESOURCE_ROLLBACK_RESULT,
+                    f"evidence.{resource_id}.rollback",
+                    {
+                        "observation_evidence_ref": observation_ref,
+                        "original_failure_code": "failure.verification",
+                        "outcome": _rollback_outcome(trace, verification),
+                        "relation": self._relation(
+                            resource_id, verification.observation
+                        ).value,
+                    },
+                ),
+            ],
             resource_result=_rollback_result(trace, verification),
         )
 
@@ -524,11 +860,19 @@ class RunStoreExecutionPersistence:
         approval: str,
         reason: str,
     ) -> StoredRevision:
-        self._append_evidence(
-            run_id,
-            "run",
-            "RecoveryAbandonment",
-            {"approval": approval, "reason": reason},
+        self._append_records(
+            [
+                self._run_evidence(
+                    ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL,
+                    "evidence.run.abandonment",
+                    {
+                        "actor": approval,
+                        "approved_at": self._clock.utc_now(),
+                        "mechanism": "noninteractive-cli",
+                        "reason": reason,
+                    },
+                )
+            ]
         )
         return self._append_status(RunStatus.FAILED_RECOVERY_REQUIRED)
 
@@ -539,16 +883,51 @@ class RunStoreExecutionPersistence:
         trace: MutationTrace,
     ) -> str:
         self._require_run(run_id)
-        return self._store.record_operational_receipt(
-            self._lease,
-            "cleanup",
-            resource_id,
-            canonical_document_bytes({"trace": _jsonable(trace)}),
-        )
+        if any(
+            receipt.disposition is MutationDisposition.AMBIGUOUS
+            for receipt in trace.receipts
+        ):
+            return self.load_chain(run_id).head.digest
+        return self.load_chain(run_id).head.digest
 
     def seal(self, run_id: RunId, intent: SealIntent) -> None:
         self._require_run(run_id)
         self._store.finalize_and_seal(self._lease, intent)
+
+    def record_authority_state(
+        self,
+        run_id: RunId,
+        ownership_state: str,
+        *,
+        quarantine_receipt_digest: str | None = None,
+    ) -> StoredRevision:
+        self._require_run(run_id)
+        chain = self.load_chain(run_id)
+        value = decode_json_object(chain.head.payload)
+        authority = value.get("authority")
+        if not isinstance(authority, dict):
+            raise ValueError("Run authority summary is malformed")
+        if authority.get("ownership_state") == ownership_state:
+            return chain.head
+        record = self._authority_evidence(
+            f"evidence.authority.{ownership_state}.{chain.head.revision + 1}",
+            {
+                "generation": authority.get("marker_generation"),
+                "manifest_digest": None,
+                "marker_digest": authority.get("marker_digest"),
+                "ownership_state": ownership_state,
+                "phase": authority.get("marker_phase"),
+                "quarantine_receipt_digest": quarantine_receipt_digest,
+                "token_digest": authority.get("ownership_token_digest"),
+            },
+        )
+        authority["ownership_state"] = ownership_state
+        authority["device_index_intent"] = "remove_after_release_or_quarantine"
+        value["authority"] = authority
+        evidence = list(_list(value, "evidence"))
+        evidence.append(record)
+        value["evidence"] = evidence
+        return self._append(value, _status(chain.head), terminal=True)
 
     def _descriptor(self, resource_id: str) -> ResourceDescriptor:
         type_code = self._resource_types.get(resource_id)
@@ -559,53 +938,241 @@ class RunStoreExecutionPersistence:
             raise ValueError("Resource Type is not registered")
         return descriptor
 
-    def _append_evidence(
+    def _append_records(
         self,
-        run_id: RunId,
-        resource_id: str,
-        payload_kind: str,
-        payload: object,
+        records: list[dict[str, object]],
         *,
         resource_result: dict[str, object] | None = None,
+        pending_attempt: dict[str, object] | None = None,
+        completed_attempt: tuple[str, str, str] | None = None,
     ) -> StoredRevision:
-        self._require_run(run_id)
-        chain = self._store.load_chain(run_id)
+        chain = self._store.load_chain(self._run_id)
         value = decode_json_object(chain.head.payload)
         evidence = list(_list(value, "evidence"))
-        evidence.append(
-            {
-                "evidence_id": f"evidence.{chain.head.revision + 1}.{resource_id}",
-                "observed_at": self._clock.utc_now(),
-                "payload": payload,
-                "payload_kind": payload_kind,
-                "payload_schema_version": 1,
-                "raw_attachment_digest": (
-                    payload.get("attachment_digest")
-                    if isinstance(payload, dict)
-                    else None
-                ),
-                "subject": {"id": resource_id, "kind": "resource"},
-            }
-        )
+        evidence.extend(records)
         value["evidence"] = evidence
-        if isinstance(payload, dict) and payload_kind == "ResourcePreparation":
-            attachments = list(_list(value, "attachments"))
-            attachments.append(
-                {
-                    "codec": payload["attachment_codec"],
-                    "digest": payload["attachment_digest"],
-                    "kind": "resource-preparation",
-                }
-            )
-            value["attachments"] = attachments
+        _update_cleanup_summary(value, records)
+        attachments = list(_list(value, "attachments"))
+        known_digests = {
+            item.get("digest") for item in attachments if isinstance(item, dict)
+        }
+        for record in records:
+            for attachment in _list(record, "attachment_refs"):
+                if (
+                    isinstance(attachment, dict)
+                    and attachment.get("digest") not in known_digests
+                ):
+                    attachments.append(dict(attachment))
+                    known_digests.add(attachment.get("digest"))
+        value["attachments"] = attachments
+        attempts = list(_list(value, "attempts"))
+        if pending_attempt is not None:
+            attempts.append(pending_attempt)
+        if completed_attempt is not None:
+            attempt_id, disposition, outcome_ref = completed_attempt
+            for item in attempts:
+                if isinstance(item, dict) and item.get("attempt_id") == attempt_id:
+                    item["ended_at"] = self._clock.utc_now()
+                    item["outcome"] = _attempt_outcome(disposition)
+                    item["outcome_evidence_ref"] = outcome_ref
+                    break
+            else:
+                raise ValueError("primitive outcome has no durable intent attempt")
+        value["attempts"] = attempts
         if resource_result is not None:
+            bindings_value = records[-1].get("bindings")
+            if not isinstance(bindings_value, dict):
+                raise ValueError("Resource evidence bindings are unavailable")
+            resource_id = _text(bindings_value, "resource_id")
             results = list(_list(value, "resource_results"))
             for item in results:
                 if isinstance(item, dict) and item.get("resource_id") == resource_id:
                     item.update(resource_result)
                     break
             value["resource_results"] = results
-        return self._append(value, _status(chain.head), terminal=False)
+        return self._append(value, _status(chain.head), terminal=chain.terminal)
+
+    def _resource_evidence(
+        self,
+        resource_id: str,
+        kind: ExecutionEvidenceKind,
+        evidence_id: str,
+        payload: dict[str, object],
+        *,
+        attachments: tuple[AttachmentRef, ...] = (),
+        raw_attachment_digest: str | None = None,
+    ) -> dict[str, object]:
+        metadata = self._metadata(resource_id)
+        return build_execution_evidence(
+            evidence_id=evidence_id,
+            observed_at=self._clock.utc_now(),
+            observer=EvidenceObserver(_observer_code(kind), 1),
+            subject_kind="resource",
+            subject_id=resource_id,
+            resource_type=metadata.resource_type,
+            bindings=self._evidence_bindings(resource_id),
+            state_addresses=metadata.state_addresses,
+            attachment_refs=_evidence_attachments(attachments),
+            attempt=1,
+            kind=kind,
+            payload=payload,
+            resource_registry=self._registry,
+            raw_attachment_digest=raw_attachment_digest,
+        )
+
+    def _run_evidence(
+        self,
+        kind: ExecutionEvidenceKind,
+        evidence_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        bindings = self._evidence_bindings(None)
+        return build_execution_evidence(
+            evidence_id=evidence_id,
+            observed_at=self._clock.utc_now(),
+            observer=EvidenceObserver(_observer_code(kind), 1),
+            subject_kind="run",
+            subject_id=bindings.run_id,
+            resource_type=None,
+            bindings=bindings,
+            state_addresses=(),
+            attachment_refs=(),
+            attempt=None,
+            kind=kind,
+            payload=payload,
+            resource_registry=self._registry,
+        )
+
+    def _authority_evidence(
+        self,
+        evidence_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        bindings = self._evidence_bindings(None)
+        return build_execution_evidence(
+            evidence_id=evidence_id,
+            observed_at=self._clock.utc_now(),
+            observer=EvidenceObserver(
+                _observer_code(ExecutionEvidenceKind.AUTHORITY_EVIDENCE), 1
+            ),
+            subject_kind="device",
+            subject_id=bindings.device_id,
+            resource_type=None,
+            bindings=bindings,
+            state_addresses=(),
+            attachment_refs=(),
+            attempt=None,
+            kind=ExecutionEvidenceKind.AUTHORITY_EVIDENCE,
+            payload=payload,
+            resource_registry=self._registry,
+        )
+
+    def _evidence_bindings(self, resource_id: str | None) -> ExecutionEvidenceBindings:
+        value = decode_json_object(self.load_chain(self._run_id).head.payload)
+        identity = execution_run_identity(value)
+        metadata = self._metadata(resource_id) if resource_id is not None else None
+        return ExecutionEvidenceBindings(
+            _text(identity, "device_id"),
+            _text(identity, "run_id"),
+            _text(identity, "workspace_id"),
+            _text(identity, "plan_id"),
+            _text(identity, "plan_full_digest"),
+            _text(identity, "binding_digest"),
+            resource_id,
+            metadata.change_id if metadata is not None else None,
+        )
+
+    def _metadata(self, resource_id: str) -> _ResourceMetadata:
+        try:
+            return self._resource_metadata[resource_id]
+        except KeyError as error:
+            raise ValueError("Resource execution metadata is unavailable") from error
+
+    def _observation_evidence(
+        self,
+        resource_id: str,
+        observation: ManagedFileObservation,
+        suffix: str,
+    ) -> tuple[dict[str, object], str]:
+        evidence_id = _evidence_id(resource_id, suffix, "observation")
+        return (
+            self._resource_evidence(
+                resource_id,
+                ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION,
+                evidence_id,
+                _observation_payload(
+                    observation.state,
+                    self._relation(resource_id, observation).value,
+                ),
+            ),
+            evidence_id,
+        )
+
+    def _relation(
+        self, resource_id: str, observation: ManagedFileObservation
+    ) -> StateRelation:
+        prepared = self._prepared.get(resource_id)
+        if prepared is None:
+            return StateRelation.UNKNOWN
+        if observation.state == prepared.before:
+            return StateRelation.BEFORE
+        if observation.state == prepared.desired:
+            return StateRelation.POST
+        if observation.state in prepared.allowed_intermediates:
+            return StateRelation.ALLOWED_INTERMEDIATE
+        if observation.state.presence is Presence.UNKNOWN:
+            return StateRelation.UNKNOWN
+        return StateRelation.OTHER
+
+    def _intent_attachments(
+        self, resource_id: str, intent: MutationIntent
+    ) -> tuple[AttachmentRef, ...]:
+        if not isinstance(intent, ResourceMutationIntent):
+            return ()
+        digest = intent.content_attachment_digest
+        if digest is None:
+            return ()
+        prepared = self._prepared[resource_id]
+        for reference in (
+            prepared.rollback_attachment,
+            prepared.desired_attachment,
+        ):
+            if reference is not None and reference.digest == digest:
+                return (reference,)
+        raise ValueError("primitive intent attachment is not prepared")
+
+    def _pending_attempt(
+        self,
+        resource_id: str,
+        intent: ResourceMutationIntent | CleanupMutationIntent,
+        intent_ref: str,
+    ) -> dict[str, object]:
+        metadata = self._metadata(resource_id)
+        bindings = self._evidence_bindings(resource_id)
+        return {
+            "attempt": 1,
+            "attempt_id": f"attempt.{intent.operation_id}",
+            "bindings": _bindings_value(bindings),
+            "ended_at": None,
+            "intent_evidence_ref": intent_ref,
+            "operation_code": intent.primitive.value,
+            "outcome": "pending",
+            "outcome_evidence_ref": None,
+            "phase": "mutation",
+            "resource_type": metadata.resource_type,
+            "started_at": self._clock.utc_now(),
+            "state_addresses": list(metadata.state_addresses),
+            "subject": {"id": resource_id, "kind": "resource"},
+        }
+
+    def _evidence_by_id(self, evidence_id: str) -> ExecutionEvidenceRecord:
+        value = decode_json_object(self.load_chain(self._run_id).head.payload)
+        from coreelec_reconciler.domain.execution import decode_execution_evidence
+
+        for item in _list(value, "evidence"):
+            if isinstance(item, dict) and item.get("evidence_id") == evidence_id:
+                return decode_execution_evidence(item, resource_registry=self._registry)
+        raise ValueError("durable evidence reference is missing")
 
     def _append_status(self, status: RunStatus) -> StoredRevision:
         chain = self._store.load_chain(self._run_id)
@@ -634,7 +1201,7 @@ class RunStoreExecutionPersistence:
         chain = self._store.load_chain(self._run_id)
         value["revision"] = chain.head.revision + 1
         value["previous_revision_digest"] = chain.head.digest
-        report = build_execution_run_report(value)
+        report = self._documents.build(value, self._registry)
         return self._store.compare_and_append(
             self._lease,
             chain.head.revision,
@@ -709,25 +1276,31 @@ class _RunStoreInspectionPort:
             )
         current_relation = _aggregate_relation(relations)
         identity = first.identity
+        local_identity = execution_run_identity(value)
+        expected_identity = RemoteOwnershipIdentity(
+            DeviceId(_text(local_identity, "device_id")),
+            run_id,
+            self._persistence._lease.workspace_id,
+            _text(local_identity, "plan_id"),
+            _text(local_identity, "plan_full_digest"),
+            _text(local_identity, "binding_digest"),
+            _text(local_identity, "boot_id"),
+        )
+        expected_token_digest = _text(local_identity, "ownership_token_digest")
         binding_matches = (
-            identity is not None
-            and identity.run_id == run_id
-            and identity.workspace_id == self._persistence._lease.workspace_id
-            and identity.device_id.value == _text(value, "device_id")
+            identity == expected_identity
+            and first.token_digest == expected_token_digest
         )
-        cleanup_receipts = self._persistence._store.load_operational_receipts(
-            run_id, "cleanup"
-        )
-        cleanup_by_resource = {
-            receipt.resource_id: _cleanup_receipt_applied(receipt.payload)
-            for receipt in cleanup_receipts
-        }
         results = _list(value, "resource_results")
         evidence_records = _list(value, "evidence")
         forward_work_unperformed = not any(
             isinstance(item, dict)
             and item.get("payload_kind")
-            in {"MutationIntent", "PrimitiveOutcome", "ResourceExecutionResult"}
+            in {
+                ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT.value,
+                ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME.value,
+                ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT.value,
+            }
             for item in evidence_records
         )
         rollback_complete = bool(results) and all(
@@ -745,7 +1318,7 @@ class _RunStoreInspectionPort:
             remote_phase=first.phase,
             remote_marker_digest=first.marker_digest,
             remote_integrity_valid=(
-                first.marker_digest is not None and first.identity is not None
+                first.marker_digest is not None and binding_matches
                 if first.presence is Presence.PRESENT
                 else None
             ),
@@ -772,10 +1345,9 @@ class _RunStoreInspectionPort:
             restore_effect_approved=False,
             canonical_status=_status(chain.head),
             terminal_revision_durable=chain.terminal,
-            cleanup_complete=(
-                bool(resources)
-                and len(cleanup_by_resource) == len(resources)
-                and all(cleanup_by_resource.get(item.resource_id) for item in resources)
+            cleanup_complete=evidence_proves_terminal_cleanup(
+                value,
+                resource_registry=self._persistence._registry,
             ),
             ownership_release_or_quarantine_durable=(
                 chain.terminal
@@ -786,30 +1358,59 @@ class _RunStoreInspectionPort:
         )
 
 
-def _preparation_records(content: bytes) -> tuple[PreparedResourceRecord, ...]:
+def _preparation_records(
+    content: bytes,
+    registry: ResourceRegistry,
+) -> tuple[PreparedResourceRecord, ...]:
+    from coreelec_reconciler.domain.execution import decode_execution_evidence
+
     value = decode_json_object(content)
     records: list[PreparedResourceRecord] = []
     for evidence in _list(value, "evidence"):
-        if not isinstance(evidence, dict):
+        record = decode_execution_evidence(
+            evidence,
+            resource_registry=registry,
+        )
+        if record.kind is not ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED:
             continue
-        if evidence.get("payload_kind") != "ResourcePreparation":
-            continue
-        payload = evidence.get("payload")
-        if not isinstance(payload, dict):
-            raise ValueError("Resource preparation evidence is malformed")
-        requires = payload.get("requires")
-        if not isinstance(requires, list) or not all(
-            isinstance(item, str) for item in requires
+        if (
+            record.resource_type is None
+            or record.bindings.resource_id is None
+            or record.bindings.change_id is None
         ):
-            raise ValueError("Resource dependency evidence is malformed")
+            raise ValueError("Resource preparation bindings are incomplete")
+        payload = dict(record.payload)
+        manifest_attachment_digest = _text(
+            payload, "preparation_manifest_attachment_digest"
+        )
+        manifest_attachment = next(
+            (
+                item
+                for item in record.attachment_refs
+                if item.digest == manifest_attachment_digest
+            ),
+            None,
+        )
+        attachment = next(
+            (
+                item
+                for item in record.attachment_refs
+                if item.kind == "resource-preparation"
+            ),
+            None,
+        )
+        if manifest_attachment is None or attachment is None:
+            raise ValueError("Resource preparation attachment is missing")
         records.append(
             PreparedResourceRecord(
-                _text(payload, "resource_id"),
-                _text(payload, "type_code"),
-                tuple(requires),
-                _boolean(payload, "disruptive"),
-                _text(payload, "attachment_digest"),
-                _text(payload, "attachment_codec"),
+                record.bindings.resource_id,
+                record.resource_type,
+                record.bindings.change_id,
+                record.state_addresses,
+                _text(payload, "manifest_digest"),
+                attachment.digest,
+                attachment.kind,
+                attachment.codec,
             )
         )
     return tuple(records)
@@ -826,18 +1427,6 @@ def _aggregate_relation(relations: list[StateRelation]) -> StateRelation:
     if StateRelation.OTHER in relations:
         return StateRelation.OTHER
     return StateRelation.ALLOWED_INTERMEDIATE
-
-
-def _cleanup_receipt_applied(content: bytes) -> bool:
-    value = decode_json_object(content)
-    trace = value.get("trace")
-    if not isinstance(trace, dict) or set(trace) != {"receipts"}:
-        raise ValueError("cleanup receipt trace is malformed")
-    receipts = trace["receipts"]
-    return isinstance(receipts, list) and all(
-        isinstance(item, dict) and item.get("disposition") == "applied"
-        for item in receipts
-    )
 
 
 def _resource_result(result: ManagedFileExecutionResult) -> dict[str, object]:
@@ -917,6 +1506,225 @@ def _require_trace(value: object) -> MutationTrace:
     return value
 
 
+def _metadata_from_change(
+    change: ExecutableChange, resource_type: str
+) -> _ResourceMetadata:
+    typed_change = getattr(change, "change", None)
+    change_id = getattr(typed_change, "change_id", None)
+    if not isinstance(change_id, str) or not change_id:
+        raise ValueError("executable Change lacks a canonical Change ID")
+    return _ResourceMetadata(
+        resource_type,
+        change_id,
+        change.requires,
+        change.disruptive,
+        (),
+    )
+
+
+def _allowed_attachment_codecs(
+    registry: ResourceRegistry,
+) -> frozenset[tuple[str, str]]:
+    managed_file = {
+        ("managed-file-before-state", "managed-file-before-v1"),
+        ("managed-file-desired-content", "managed-file-content-v1"),
+        ("managed-file-staged-object", "managed-file-object-v1"),
+        ("managed-file-cleanup-object", "managed-file-object-v1"),
+        ("managed-file-preparation-manifest", "managed-file-preparation-v1"),
+    }
+    resource_preparation = {
+        ("resource-preparation", f"{type_code.lower()}-preparation-v1")
+        for type_code in registry.type_codes
+    }
+    return frozenset(managed_file | resource_preparation)
+
+
+def _prepared_managed_file(value: object) -> PreparedManagedFile:
+    managed = getattr(value, "managed_file", value)
+    if not isinstance(managed, PreparedManagedFile):
+        raise TypeError("prepared Resource lacks managed-file evidence")
+    return managed
+
+
+def _observer_code(kind: ExecutionEvidenceKind) -> str:
+    return EXECUTION_EVIDENCE_OBSERVERS[kind]
+
+
+def _observation_payload(
+    state: NormalizedResourceState, relation: str
+) -> dict[str, object]:
+    return {
+        "content_digest": state.content_digest,
+        "entry_kind": state.entry_kind,
+        "managed_mode": state.managed_mode,
+        "normalized_state_digest": normalized_state_digest(state),
+        "presence": state.presence.value,
+        "relation": relation,
+    }
+
+
+def _evidence_id(resource_id: str, operation_id: str, suffix: str) -> str:
+    safe_operation = operation_id.replace(":", ".")
+    return f"evidence.{resource_id}.{safe_operation}.{suffix}"
+
+
+def _bindings_value(bindings: ExecutionEvidenceBindings) -> dict[str, object]:
+    return {
+        "binding_digest": bindings.binding_digest,
+        "change_id": bindings.change_id,
+        "device_id": bindings.device_id,
+        "plan_full_digest": bindings.plan_full_digest,
+        "plan_id": bindings.plan_id,
+        "resource_id": bindings.resource_id,
+        "run_id": bindings.run_id,
+        "workspace_id": bindings.workspace_id,
+    }
+
+
+def _evidence_attachments(
+    references: tuple[AttachmentRef, ...],
+) -> tuple[EvidenceAttachment, ...]:
+    result: list[EvidenceAttachment] = []
+    seen: set[str] = set()
+    for reference in references:
+        if reference.digest in seen:
+            continue
+        seen.add(reference.digest)
+        result.append(
+            EvidenceAttachment(reference.digest, reference.kind, reference.codec)
+        )
+    return tuple(result)
+
+
+def _attempt_outcome(disposition: str) -> str:
+    if disposition == MutationDisposition.APPLIED.value:
+        return "completed"
+    return disposition
+
+
+def _update_cleanup_summary(
+    run: dict[str, object],
+    added_records: list[dict[str, object]],
+) -> None:
+    kinds = {item.get("payload_kind") for item in added_records}
+    cleanup = run.get("cleanup")
+    authority = run.get("authority")
+    if not isinstance(cleanup, dict) or not isinstance(authority, dict):
+        raise ValueError("Run cleanup or authority summary is malformed")
+    cleanup_intent = False
+    for item in added_records:
+        payload_value = item.get("payload")
+        if (
+            item.get("payload_kind")
+            == ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT.value
+            and isinstance(payload_value, dict)
+            and payload_value.get("primitive") == "cleanup"
+        ):
+            cleanup_intent = True
+            break
+    if cleanup_intent:
+        cleanup["state"] = "pending"
+        authority["cleanup_state"] = "pending"
+    if ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT.value not in kinds:
+        return
+    required: set[tuple[object, object, object]] = set()
+    receipts: dict[tuple[object, object, object], dict[str, object]] = {}
+    for record_value in _list(run, "evidence"):
+        if not isinstance(record_value, dict):
+            continue
+        evidence_payload = record_value.get("payload")
+        bindings = record_value.get("bindings")
+        if not isinstance(evidence_payload, dict) or not isinstance(bindings, dict):
+            continue
+        if record_value.get("payload_kind") == (
+            ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED.value
+        ):
+            objects = evidence_payload.get("cleanup_object_refs")
+            if isinstance(objects, list):
+                required.update(
+                    (bindings.get("resource_id"), bindings.get("change_id"), obj)
+                    for obj in objects
+                )
+        elif record_value.get("payload_kind") == (
+            ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT.value
+        ):
+            key = (
+                bindings.get("resource_id"),
+                bindings.get("change_id"),
+                evidence_payload.get("manifest_object_ref"),
+            )
+            receipts[key] = evidence_payload
+    leftovers = sum(payload.get("leftover") is True for payload in receipts.values())
+    complete = (
+        set(receipts) == required
+        and all(
+            payload.get("disposition")
+            in {
+                MutationDisposition.APPLIED.value,
+                MutationDisposition.DEFINITELY_NOT_APPLIED.value,
+            }
+            for payload in receipts.values()
+        )
+        and leftovers == 0
+    )
+    cleanup["state"] = "complete" if complete else "failed"
+    cleanup["leftover_count"] = leftovers
+    authority["cleanup_state"] = cleanup["state"]
+
+
+def _mutation_outcome(result: ManagedFileExecutionResult) -> MutationOutcome:
+    if not result.mutation.receipts:
+        return MutationOutcome.NOT_REQUIRED
+    if any(
+        item.disposition is MutationDisposition.AMBIGUOUS
+        for item in result.mutation.receipts
+    ):
+        return MutationOutcome.AMBIGUOUS
+    if all(
+        item.disposition is MutationDisposition.DEFINITELY_NOT_APPLIED
+        for item in result.mutation.receipts
+    ):
+        return MutationOutcome.DEFINITELY_NOT_APPLIED
+    return MutationOutcome.COMPLETED
+
+
+def _verification_outcome(
+    verification: ManagedFileVerification,
+) -> VerificationOutcome:
+    return {
+        ManagedFileVerificationStatus.MATCHED: VerificationOutcome.MATCHED,
+        ManagedFileVerificationStatus.MISMATCH: VerificationOutcome.MISMATCH,
+        ManagedFileVerificationStatus.UNKNOWN: VerificationOutcome.UNKNOWN,
+    }[verification.status]
+
+
+def _rollback_outcome(
+    trace: MutationTrace | None,
+    verification: ManagedFileVerification,
+) -> str:
+    if trace is not None and any(
+        item.disposition is MutationDisposition.AMBIGUOUS for item in trace.receipts
+    ):
+        return "ambiguous"
+    if verification.status is ManagedFileVerificationStatus.MATCHED:
+        return "restored_and_verified"
+    return "failed"
+
+
+def _require_verification(
+    assessment: object, observation: ManagedFileObservation
+) -> ManagedFileVerification:
+    relation = getattr(assessment, "relation", None)
+    status = (
+        ManagedFileVerificationStatus.MATCHED
+        if getattr(relation, "value", None) == "satisfied"
+        else ManagedFileVerificationStatus.UNKNOWN
+        if getattr(relation, "value", None) == "unverifiable"
+        else ManagedFileVerificationStatus.MISMATCH
+    )
+    return ManagedFileVerification(status, observation)
+
+
 def _status(revision: StoredRevision) -> RunStatus:
     return RunStatus(_text(decode_json_object(revision.payload), "status"))
 
@@ -940,19 +1748,3 @@ def _boolean(value: Mapping[str, object], key: str) -> bool:
     if type(item) is not bool:
         raise ValueError(f"{key} is not boolean")
     return item
-
-
-def _jsonable(value: object) -> object:
-    if value is None or isinstance(value, str | int | bool):
-        return value
-    if isinstance(value, bytes):
-        return {"hex": value.hex()}
-    if isinstance(value, Enum):
-        return value.value
-    if is_dataclass(value) and not isinstance(value, type):
-        return _jsonable(asdict(value))
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, tuple | list):
-        return [_jsonable(item) for item in value]
-    raise TypeError(f"unsupported canonical evidence value: {type(value).__name__}")

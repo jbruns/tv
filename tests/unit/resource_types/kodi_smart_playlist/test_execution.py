@@ -144,7 +144,18 @@ def test_prepared_playlist_round_trips_across_process_boundary() -> None:
     assert b"ownership" not in encoded
 
 
-def test_prepared_playlist_rejects_corrupt_attachment() -> None:
+@pytest.mark.parametrize(
+    "attachment_name",
+    (
+        "rollback_attachment",
+        "desired_attachment",
+        "staged_metadata_attachment",
+        "cleanup_metadata_attachment",
+    ),
+)
+def test_prepared_playlist_rejects_corrupt_attachment(
+    attachment_name: str,
+) -> None:
     attachments = FakeAttachments()
     files = FakeManagedFiles()
     address = ResolvedManagedAddress(
@@ -177,8 +188,9 @@ def test_prepared_playlist_rejects_corrupt_attachment() -> None:
             True,
         )
     )
-    assert prepared.managed_file.desired_attachment is not None
-    attachments.corrupt(prepared.managed_file.desired_attachment)
+    reference = getattr(prepared.managed_file, attachment_name)
+    assert reference is not None
+    attachments.corrupt(reference)
 
     with pytest.raises(PreparationError, match="evidence is invalid"):
         decode_prepared_playlist_change(

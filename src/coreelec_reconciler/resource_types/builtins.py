@@ -1,5 +1,6 @@
 """Construction of the immutable built-in Resource Type registry."""
 
+from collections.abc import Mapping
 from typing import cast
 
 from coreelec_reconciler.resource_types.descriptor import (
@@ -32,6 +33,7 @@ def built_in_resource_registry() -> ResourceRegistry:
                 execution_factory=_playlist_execution,
                 encode_prepared=_encode_playlist_prepared,
                 decode_prepared=_decode_playlist_prepared,
+                decode_planned_change=_decode_playlist_planned_change,
             ),
         )
     )
@@ -65,3 +67,15 @@ def _decode_playlist_prepared(
     )
 
     return decode_erased_prepared(content, cast(AttachmentStore, attachments))
+
+
+def _decode_playlist_planned_change(
+    value: Mapping[str, object],
+    context: ResourceExecutionContext,
+    rollback_approved: bool,
+) -> object:
+    from coreelec_reconciler.resource_types.kodi_smart_playlist.execution import (
+        decode_planned_change,
+    )
+
+    return decode_planned_change(value, context, rollback_approved)

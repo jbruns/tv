@@ -24,6 +24,7 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
     ResolvedManagedAddress,
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
+    PreparationBinding,
     PreparationObject,
     PreparedManagedFile,
 )
@@ -97,6 +98,13 @@ def _prepared(
             ),
         )
     return PreparedManagedFile(
+        PreparationBinding(
+            "device",
+            "sha256:" + "b" * 64,
+            "run",
+            "skin.playlist.new-shows",
+            "change",
+        ),
         ADDRESS,
         before,
         desired,

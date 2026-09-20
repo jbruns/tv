@@ -169,6 +169,14 @@ class _RecoveryResource:
         return MutationTrace(())
 
 
+class _AmbiguousCleanupResource(_RecoveryResource):
+    def cleanup(self, terminal_evidence_ref: str) -> MutationTrace:
+        self.calls.append("cleanup")
+        return MutationTrace(
+            (MutationReceipt("cleanup", MutationDisposition.AMBIGUOUS),)
+        )
+
+
 class _MatchedVerification:
     status = ManagedFileVerificationStatus.MATCHED
 
@@ -503,6 +511,7 @@ def test_concrete_recovery_uses_persisted_evidence_and_verified_rollback() -> No
         "terminal:failed_rolled_back",
         "cleanup:sha256:cleanup",
         "release:sha256:terminal",
+        "load",
         "seal:True",
     ]
 
@@ -548,10 +557,33 @@ def test_approved_reasoned_abandonment_terminalizes_then_quarantines() -> None:
     )
 
     assert outcome.status is RunStatus.FAILED_RECOVERY_REQUIRED
-    assert persistence.events[-2:] == [
+    assert persistence.events[-4:] == [
         "abandon:approval.operator:evidence is corrupt",
+        "cleanup:sha256:cleanup",
+        "load",
         "seal:True",
     ]
+    assert authority.events == ["quarantine:approval.operator:evidence is corrupt"]
+
+
+def test_abandonment_seals_quarantine_when_cleanup_is_ambiguous() -> None:
+    resource = _AmbiguousCleanupResource()
+    persistence = _Persistence(resource, evidence(attachments_valid=False))
+    authority = _Authority()
+    engine = ExecutionEngine(_Journal(), RecoveryCoordinator(persistence, authority))
+
+    outcome = engine.recover(
+        RunId("run.test"),
+        RecoveryRequest(
+            RecoveryActionCode.FINALIZE,
+            FinalizeMode.ABANDON,
+            approval="approval.operator",
+            reason="evidence is corrupt",
+        ),
+    )
+
+    assert not outcome.cleanup_complete
+    assert persistence.events[-2:] == ["load", "seal:True"]
     assert authority.events == ["quarantine:approval.operator:evidence is corrupt"]
 
 
@@ -611,9 +643,10 @@ def test_normal_finalize_preserves_existing_terminal_truth() -> None:
 
     assert outcome.status is RunStatus.FAILED_PARTIAL
     assert not any(event.startswith("terminal:") for event in timeline)
-    assert timeline[-3:] == [
+    assert timeline[-4:] == [
         "cleanup:sha256:cleanup",
         "release:sha256:head",
+        "load",
         "seal:True",
     ]
 
@@ -655,6 +688,7 @@ def test_cleanup_receipt_precedes_terminal_authorized_m3_release() -> None:
         "cleanup:sha256:cleanup",
         "checkpoint:terminal_release_pending:sha256:terminal",
         "release:sha256:terminal",
+        "load",
         "seal:True",
     ]
 

@@ -236,6 +236,10 @@ type ResourceExecutionFactory = Callable[
 ]
 type PreparedEncoder = Callable[[object], bytes]
 type PreparedDecoder = Callable[[bytes, AttachmentStore], object]
+type PlannedChangeDecoder = Callable[
+    [Mapping[str, object], ResourceExecutionContext, bool],
+    object,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,3 +253,4 @@ class ResourceDescriptor:
     execution_factory: ResourceExecutionFactory | None = None
     encode_prepared: PreparedEncoder | None = None
     decode_prepared: PreparedDecoder | None = None
+    decode_planned_change: PlannedChangeDecoder | None = None

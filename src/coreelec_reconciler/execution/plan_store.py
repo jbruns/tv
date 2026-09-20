@@ -4,7 +4,9 @@ import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
+from coreelec_reconciler.domain.canonical_json import decode_json_object
 from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
 from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
 from coreelec_reconciler.execution.local_durability import (
@@ -13,11 +15,7 @@ from coreelec_reconciler.execution.local_durability import (
     PosixLocalDurability,
     read_regular_file,
 )
-from coreelec_reconciler.reporting.canonical_json import decode_json_object
-from coreelec_reconciler.reporting.planning_documents import (
-    decode_plan,
-    decode_run_report,
-)
+from coreelec_reconciler.persistence.document_codecs import CanonicalPlanDocumentCodec
 
 
 class PlanStoreError(RuntimeError):
@@ -30,6 +28,16 @@ class PlanNotFound(PlanStoreError):
 
 class CorruptPlanStore(PlanStoreError):
     pass
+
+
+class PlanDocumentCodec(Protocol):
+    def decode_plan(self, content: bytes) -> CanonicalPlan: ...
+
+    def decode_run_report(
+        self,
+        content: bytes,
+        plan: CanonicalPlan,
+    ) -> CanonicalRunReport: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,8 +57,10 @@ class PlanStore:
         self,
         root: Path,
         durability: LocalDurability | None = None,
+        documents: PlanDocumentCodec | None = None,
     ) -> None:
         self._root = root
+        self._documents = documents or CanonicalPlanDocumentCodec()
         self._durability = durability or PosixLocalDurability()
         self._initialize()
 
@@ -59,7 +69,7 @@ class PlanStore:
         plan: CanonicalPlan,
         planning_run: CanonicalRunReport,
     ) -> SavedPlan:
-        verified = _verify_pair(plan, planning_run)
+        verified = _verify_pair(plan, planning_run, self._documents)
         directory = self._directory(PlanId(plan.plan_id))
         if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
             raise CorruptPlanStore("saved Plan path is unsafe")
@@ -82,8 +92,8 @@ class PlanStore:
                 raise PlanNotFound("saved Plan does not exist") from error
             raise CorruptPlanStore("saved Plan is incomplete or unsafe") from error
         try:
-            plan = decode_plan(plan_bytes)
-            run = decode_run_report(run_bytes, plan)
+            plan = self._documents.decode_plan(plan_bytes)
+            run = self._documents.decode_run_report(run_bytes, plan)
         except ValueError as error:
             raise CorruptPlanStore("saved Plan validation failed") from error
         if plan.plan_id != plan_id.value:
@@ -131,10 +141,13 @@ class PlanStore:
 def _verify_pair(
     plan: CanonicalPlan,
     planning_run: CanonicalRunReport,
+    documents: PlanDocumentCodec,
 ) -> SavedPlan:
     try:
-        decoded_plan = decode_plan(plan.canonical_bytes)
-        decoded_run = decode_run_report(planning_run.canonical_bytes, decoded_plan)
+        decoded_plan = documents.decode_plan(plan.canonical_bytes)
+        decoded_run = documents.decode_run_report(
+            planning_run.canonical_bytes, decoded_plan
+        )
     except ValueError as error:
         raise PlanStoreError("canonical Plan pair validation failed") from error
     if decoded_plan != plan or decoded_run != planning_run:

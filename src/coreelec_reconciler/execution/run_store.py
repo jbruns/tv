@@ -8,6 +8,10 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.execution import (
     TERMINAL_RUN_STATUSES,
     ActiveDeviceRun,
@@ -29,10 +33,6 @@ from coreelec_reconciler.domain.execution import (
     validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
-from coreelec_reconciler.reporting.canonical_json import (
-    canonical_document_bytes,
-    decode_json_object,
-)
 from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
@@ -629,12 +629,21 @@ class RunStore:
         head_value = decode_json_object(chain.head.payload)
         cleanup = head_value.get("cleanup")
         authority = head_value.get("authority")
+        ownership_state = (
+            authority.get("ownership_state") if isinstance(authority, dict) else None
+        )
+        cleanup_allows_seal = isinstance(cleanup, dict) and (
+            (
+                ownership_state == "released"
+                and cleanup.get("state") == "complete"
+                and cleanup.get("leftover_count") == 0
+            )
+            or ownership_state == "quarantined"
+        )
         if (
-            not isinstance(cleanup, dict)
-            or cleanup.get("state") != "complete"
-            or cleanup.get("leftover_count") != 0
+            not cleanup_allows_seal
             or not isinstance(authority, dict)
-            or authority.get("ownership_state") not in {"released", "quarantined"}
+            or ownership_state not in {"released", "quarantined"}
             or authority.get("device_index_intent")
             != "remove_after_release_or_quarantine"
             or not intent.ownership_released_or_quarantined
@@ -644,7 +653,7 @@ class RunStore:
             )
         ):
             raise RunStoreError(
-                "seal requires completed cleanup and release or quarantine truth"
+                "seal requires completed cleanup for release or quarantine truth"
             )
         workspace = self._workspace_for_run(lease.run_id)
         identity = self._read_object(workspace / "identity.json")
