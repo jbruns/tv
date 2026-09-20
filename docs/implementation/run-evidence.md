@@ -36,6 +36,58 @@ Verification, and final convergence separate. Attempts and failures are
 append-only and carry closed phases, outcomes, stop scopes, retry
 classifications, safe messages, and resolved evidence references.
 
+### M3.1 execution-evidence schema amendment
+
+Execution evidence schema version 1 is a closed discriminated union. The only
+accepted payload kinds are:
+
+- `ManagedFileObservation`;
+- `ResourcePreparationCompleted`;
+- `ResourcePrimitiveIntent`;
+- `RemoteMarkerCheckpoint`;
+- `ResourcePrimitiveOutcome`;
+- `ResourceExecutionResult`;
+- `ResourceVerificationResult`;
+- `ResourceRollbackResult`;
+- `ResourceSkipResult`;
+- `RecoveryVerificationResult`;
+- `ResourceCleanupReceipt`;
+- `EffectIntent`, `EffectReadinessObservation`, and `EffectOutcome`;
+- `AuthorityEvidence`; and
+- `RunAbandonmentApproval`.
+
+Each kind has one exact field set, observer code/version, subject kind, and
+schema version. `ResourcePrimitiveIntent` is a closed primitive-discriminated
+union: state primitives carry exact before/after and marker bindings, cleanup
+carries the manifest object and terminal revision binding, and Effects use
+their dedicated intent. Effect intent carries its operation ID, exact marker
+generation/digest/phase/token tuple, approval and readiness references, and
+the complete affected Resource/State Address set. Its immediately following
+marker checkpoint must match that tuple. An Effect outcome requires that
+checkpoint, fresh positive readiness, and exactly one correctly bound fresh
+Observation for every affected Resource.
+
+Unknown kinds, unregistered Resource Types, versions, observers, fields,
+primitive combinations, unsafe content, unresolved or forward references,
+duplicate IDs/operations, and out-of-order timestamps fail closed. Resource
+Type membership comes from the immutable Resource Type registry; adding a
+registered type does not require editing the domain evidence codec.
+
+Every Resource-bound record carries `KodiSmartPlaylist`, Resource and Change
+IDs, Run/workspace/Device/Plan/full-digest/binding identity, observer identity,
+logical sorted State Addresses, attachment references, and attempt `1`.
+Abandonment approval is Run/workspace/Device bound and carries a non-empty safe
+reason. Attempts represent write-ahead state explicitly: `pending` has a
+durable intent reference and no end time or outcome reference; completion
+requires both.
+
+The production codec and the independent invariant checker are separate
+algorithms at the domain/reporting persistence boundary. They share only
+immutable schema constants and domain types, preventing one validator defect
+from making the other accept the same malformed record. Execution code can
+construct and decode this vocabulary without importing reporting
+implementations.
+
 Recovery exposes `inspect`, `resume_verification`, `rollback`, and two
 separate `finalize` variants: `normal` and `abandon`. Abandonment always
 requires a distinct approval and reason. Allowed actions are computed solely
@@ -50,7 +102,9 @@ Each workspace contains one Run and one linear immutable revision chain:
 - every later predecessor digest equals the prior revision digest;
 - `current_digest` is SHA-256 over canonical bytes with that field omitted;
 - immutable Run, Plan, Device, and workspace bindings do not change;
-- terminal truth has no canonical successor;
+- terminal truth permits only cleanup-progress successors (write-ahead cleanup
+  intent, its exact marker checkpoint, and its receipt) that preserve the
+  terminal status and every non-cleanup fact;
 - a complete verified chain is returned, never an unchecked head alone.
 
 The workspace identity persists schema and Run kind, producer, Run ID,
@@ -94,9 +148,17 @@ describes controller/remote Run Infrastructure housekeeping. They are not the
 same fact:
 
 - terminal truth is durable before cleanup;
+- post-terminal revisions may append only the bound write-ahead
+  intent/checkpoint/receipt sequence and monotonic cleanup/authority truth;
+  they cannot revise terminal status or prior evidence;
+- each preparation manifest declares its required cleanup objects; a complete
+  summary requires a matching non-ambiguous receipt proving no leftover for
+  every object;
 - cleanup failure cannot change `converged` or a terminal failure status;
 - the active index is removed only after terminal truth and verified ownership
   release or quarantine are durable;
+- sealing requires complete zero-leftover cleanup plus durable release or
+  quarantine evidence whose marker/token tuple matches the summary;
 - abandonment records `failed_recovery_required` and remains blocking through
   quarantine.
 
@@ -107,8 +169,12 @@ recovery-required Runs are never implicitly removable.
 
 ## Validation fixtures
 
-Committed positive fixtures cover ready execution, converged execution, and
-interrupted recovery. Negative fixtures independently exercise digest,
-identity, terminal-time, cleanup-order, index-release, Resource-convergence,
-abandonment-approval, and workspace-opacity invariants. M2 Plan and planning
-Run fixtures remain byte-for-byte unchanged.
+Committed positive fixtures cover ready execution, converged execution,
+interrupted recovery, and a complete Resource/Effect execution sequence;
+parameterized codec tests cover every accepted execution-evidence v1 kind.
+Negative fixtures independently exercise digest, identity, terminal-time,
+cleanup-order, index-release, Resource-convergence, abandonment-approval,
+workspace-opacity, unknown evidence kinds/versions, and arbitrary evidence
+fields. The amendment changes no prior canonical fixture bytes or digests; it
+only closes validation for previously unspecified non-empty execution
+evidence.
