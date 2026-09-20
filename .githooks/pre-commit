@@ -8,21 +8,22 @@
 
 set -euo pipefail
 
-if ! command -v uv >/dev/null 2>&1; then
-  printf 'pre-commit: uv not found, skipping Python checks\n' >&2
-  exit 0
-fi
-
-if [[ ! -f pyproject.toml ]]; then
-  exit 0
-fi
-
 run() {
   printf 'pre-commit: %s\n' "$*" >&2
   "$@"
 }
 
-run uv run ruff format --check .
-run uv run ruff check .
-run uv run mypy
-run uv run pytest -q
+if command -v uv >/dev/null 2>&1 && [[ -f pyproject.toml ]]; then
+  run uv run ruff check .
+  run uv run ruff format --check scripts
+  run uv run mypy
+  # Once the Reconciler exists, its tests run here too.
+  if uv run python -c "import pytest" 2>/dev/null && [[ -d tests/unit ]]; then
+    run uv run pytest -q
+  fi
+else
+  printf 'pre-commit: uv or pyproject.toml missing, skipping Python checks\n' >&2
+fi
+
+run python3 scripts/check_shell_permissions.py --audit
+run python3 scripts/check_markdown.py

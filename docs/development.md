@@ -1,156 +1,77 @@
-# Python development and packaging
+# Python development
 
-The production Reconciler is a Python 3.14 `src/` package managed with
-[`uv`](https://docs.astral.sh/uv/). Create the locked development environment
-from the repository root:
+The Reconciler does not exist yet. Milestones M0 through M3 built an
+implementation that never contacted a Device; it is archived at the
+`m3-archive` tag and removed from the working tree. See
+[ADR 0008](adr/0008-restart-from-a-walking-skeleton.md) for what went wrong and
+[ADR 0007](adr/0007-trusted-home-appliance-bar.md) for the bar that replaces
+it. The first slice rebuilds it as a walking skeleton that changes one real
+setting on the real Device.
+
+Device provisioning today is the shell provisioner. See
+[the Ugoos provisioning operations guide](operations/provision-ugoos.md).
+
+## What Python remains
+
+Two helpers, both standard library only:
+
+- `scripts/check_shell_permissions.py` and `scripts/shell_permissions.py` —
+  the fail-closed write-set permission guard the shell provisioner calls
+  before it mutates a Device. `provision-coreelec.sh`,
+  `configure-coreelec-addons.sh`, and `configure-kodi-lifecycle.sh` depend on
+  this at runtime. It reads `inventory/shell-write-sets.json` and
+  `inventory/ownership-ledger.json`.
+- `scripts/check_markdown.py` — repository Markdown and link validation.
+
+## Setup
 
 ```console
 uv sync --frozen
 ```
 
-Run the scaffold quality checks and build the source distribution and wheel:
+## Checks
+
+These are exactly what CI runs:
 
 ```console
 uv run ruff check .
-uv run ruff format --check \
-  src scripts/run_test_budget.py scripts/check_inventory_milestones.py \
-  scripts/check_shell_permissions.py scripts/run_m3_pilot_harness.py \
-  scripts/verify_m3_evidence_bundle.py \
-  tests/scaffold tests/inventory tests/ci tests/unit tests/adapters \
-  tests/contracts tests/integration \
-  tests/conftest.py tests/support
+uv run ruff format --check scripts
 uv run mypy
-uv run python scripts/check_inventory_milestones.py
 python3 scripts/check_shell_permissions.py --audit
-uv run python scripts/run_test_budget.py \
-  --label pure-unit-architecture \
-  --budget-seconds 10 \
-  --timeout-seconds 300 \
-  --result .ci-evidence/pure.json \
-  -- \
-  .venv/bin/python -m pytest -q \
-  tests/scaffold/test_application.py \
-  tests/scaffold/test_architecture.py tests/inventory tests/ci tests/unit \
-  --ignore=tests/unit/execution/test_run_adapters.py
-uv run python scripts/run_test_budget.py \
-  --label complete-offline \
-  --budget-seconds 60 \
-  --timeout-seconds 300 \
-  --include-result .ci-evidence/pure.json \
-  --result .ci-evidence/offline.json \
-  -- \
-  .venv/bin/python -m pytest -q \
-  tests/adapters tests/contracts \
-  tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py \
-  tests/scaffold/test_cli_execution.py tests/integration \
-  tests/unit/execution/test_run_adapters.py
-uv build
-uv run python - <<'PY'
-import hashlib
-from pathlib import Path
-from zipfile import ZipFile
-
-wheels = list(Path("dist").glob("*.whl"))
-assert len(wheels) == 1, wheels
-with ZipFile(wheels[0]) as archive:
-    names = archive.namelist()
-    entry_point_paths = [
-        name for name in names if name.endswith(".dist-info/entry_points.txt")
-    ]
-    assert len(entry_point_paths) == 1, entry_point_paths
-    entry_points = archive.read(entry_point_paths[0]).decode()
-assert all(
-    name.startswith(("coreelec_reconciler/", "coreelec_reconciler-"))
-    for name in names
-), names
-assert "coreelec-reconciler = coreelec_reconciler.cli.main:main" in entry_points
-evidence_directory = Path(".ci-evidence")
-evidence_directory.mkdir(exist_ok=True)
-(evidence_directory / "wheel-contents.txt").write_text(
-    "\n".join(names) + "\n",
-    encoding="utf-8",
-)
-digests = []
-artifacts = [
-    *Path("dist").glob("*.whl"),
-    *Path("dist").glob("*.tar.gz"),
-]
-for artifact in sorted(artifacts):
-    with artifact.open("rb") as stream:
-        digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    digests.append(f"{digest}  {artifact}")
-(evidence_directory / "artifacts.sha256").write_text(
-    "\n".join(digests) + "\n",
-    encoding="utf-8",
-)
-print(f"wheel inspection passed: {wheels[0]} ({len(names)} files)")
-print("\n".join(digests))
-PY
-uv venv --python 3.14 --clear .wheel-venv
-uv pip install --python .wheel-venv/bin/python --no-deps dist/*.whl
-mkdir -p .wheel-smoke
-DEPENDENCY_SITE_PACKAGES="$(
-  .venv/bin/python -c 'import site; print(site.getsitepackages()[0])'
-)"
-(
-  cd .wheel-smoke
-  export PYTHONPATH="$DEPENDENCY_SITE_PACKAGES"
-  export HOME="$PWD/home"
-  ../.wheel-venv/bin/coreelec-reconciler --version
-  ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null
-  ../.wheel-venv/bin/coreelec-reconciler --repository-root .. validate >/dev/null
-  set +e
-  output="$(
-    ../.wheel-venv/bin/coreelec-reconciler \
-      --repository-root .. apply \
-      019950f8-4c00-7000-8000-000000999999 2>&1
-  )"
-  status=$?
-  set -e
-  test "$status" -eq 3
-  grep -q \
-    "apply: capability_unavailable (production.saved-plan-rejected)" \
-    <<<"$output"
-)
-uv run python scripts/run_m3_pilot_harness.py \
-  --dry-run --output .ci-evidence/m3-pilot-dry-run
-uv run python scripts/verify_m3_evidence_bundle.py \
-  .ci-evidence/m3-pilot-dry-run
+python3 scripts/check_markdown.py
+git diff --check
 ```
 
-The first selection contains pure, unit, architecture, and CI-helper tests and
-must finish in under 10 seconds. The second command runs the remaining offline
-tests exactly once and adds the first result, enforcing a complete offline
-total under 60 seconds. Each command has a 300-second hang watchdog; it does
-not waive either budget. Each test command starts in its own POSIX process
-session. On timeout the runner signals the complete process group, waits a
-bounded grace period, and escalates to `SIGKILL` so descendants cannot outlive
-the gate. The runner writes source, platform, command, status, and monotonic
-timing evidence under `.ci-evidence/`.
-
-`tests/conftest.py` installs the offline socket guard before test collection
-and passes it to Python subprocesses. Any socket creation fails with
-`UnexpectedSocketError`; live Device and network-dependent tests therefore do
-not belong in these selectors.
-
-The [offline CI workflow](../.github/workflows/offline-ci.yml) runs the same
-frozen sync, Ruff, strict mypy, exact pytest selectors, budgets, and package
-build on Linux x86_64. Per
-[ADR 0011](adr/0011-linux-only-ci-and-boundary-tests.md), CI is Linux-only and
-the code carries no platform-specific branches; the macOS workstation is
-covered by the pre-commit hook in `.githooks/`, installed with
-`git config core.hooksPath .githooks`. Its least-privilege token grants only
-read access to repository contents. Pull-request jobs explicitly check out the
-head `SOURCE_SHA`, verify `HEAD` matches it, and use that SHA in evidence
-artifact names. `workflow_sha` separately records GitHub's workflow context,
-which may be a synthetic pull-request merge commit.
-
-The legacy shell tests are retained as manual reference evidence. They are not
-part of routine CI, milestone acceptance, or Python's budgets. Run them only
-when investigating legacy shell behavior:
+Install the pre-commit hook so the same checks run before each commit. CI is
+Linux-only per [ADR 0011](adr/0011-linux-only-ci-and-boundary-tests.md), so on
+macOS this hook is the only thing exercising the code locally:
 
 ```console
-export PATH="$PWD/.venv/bin:$PATH"
+git config core.hooksPath .githooks
+```
+
+Bypass it with `git commit --no-verify` when you need to.
+
+## Rules for new code
+
+- **Weigh every edge case.** Before writing a mechanism that exists only to
+  handle a failure, name the failure, how likely it is, and what recovery costs
+  without it. Disaster recovery is reprovisioning from scratch.
+- **No mechanism before a slice needs it.** No upfront design documents
+  specifying machinery, and no infrastructure for failures that have not
+  happened.
+- **Test at the boundary.** Tests may not import from the package except
+  through its public entry point. Tests that reach inside modules weld the
+  implementation in place.
+- **No platform-specific code.** Where behaviour differs, choose the option
+  that works everywhere and accept the weaker guarantee.
+
+## Legacy shell tests
+
+Retained as manual reference evidence. They are not part of CI. Run them when
+investigating legacy shell behavior:
+
+```console
 for test_script in tests/test-*.sh; do
   case "$test_script" in
     *test-helper.sh) continue ;;
@@ -158,53 +79,3 @@ for test_script in tests/test-*.sh; do
   bash "$test_script"
 done
 ```
-
-The installed command is `coreelec-reconciler`. Its version and help paths are
-local metadata operations: they do not load Desired State, create a Device
-session, or make network calls.
-
-```console
-uv run coreelec-reconciler --version
-uv run coreelec-reconciler --help
-uv run coreelec-reconciler validate
-```
-
-Pure playlist planning consumes an explicit bounded offline observation
-document and never opens a Device connection:
-
-```console
-uv run coreelec-reconciler \
-  --repository-root tests/fixtures/repository \
-  plan living-room.ugoos-am6b-plus \
-  --observations observations/living-room.ugoos-am6b-plus.json
-```
-
-`plan` writes canonical `CoreElecReconcilerPlan` JSON plus exactly one framing
-newline. Add `--document run` to write the corresponding canonical
-nonmutating planning Run Report instead. The canonical bytes used for either
-digest contain no newline. The same input document can be checked with
-`validate --device-id ... --observations ...`; validation and planning read
-authored configuration and supplied observations only and never write files
-or create network connections.
-
-The installed command enters through the one production `bootstrap`. That
-composition root builds `ApplicationDependencies`,
-`ExecutionApplicationWorkflows`, and `ExecutionEngine`, and owns lazy
-construction of the Paramiko session, secret, pinned-host-key, and filesystem
-RunStore adapters. CLI and application modules do not instantiate concrete
-adapters. Merely constructing the application performs no secret resolution,
-filesystem creation, socket operation, or Device access.
-
-`validate` performs the
-deterministic offline inventory-ledger gate and can additionally validate the
-first playlist planning input. `plan` implements the pure
-`skin.playlist.new-shows` slice. Execution and recovery commands enter the real
-production workflow graph. When an approved Plan, Device session, or local Run
-is unavailable, they return a typed `capability_unavailable` result rather than
-`not_implemented`; they never silently fall back to a test composition.
-
-`provision` is command-line sugar for `reconcile`; it is not a separate
-application command. Building with `uv build` packages only
-`src/coreelec_reconciler` and project metadata. Repository research,
-prototypes, Profiles, inventory, templates, and other repository data remain
-outside the wheel.

@@ -7,13 +7,9 @@ import argparse
 import sys
 from pathlib import Path
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
+from shell_permissions import audit_shell_map, evaluate_shell_permission
 
-from coreelec_reconciler.inventory.shell_permissions import (  # noqa: E402
-    audit_shell_map,
-    evaluate_shell_permission,
-)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def parser() -> argparse.ArgumentParser:
