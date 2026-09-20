@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0009
 ---
 
 # Use exclusive Resource ownership and verified rollback

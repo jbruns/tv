@@ -133,7 +133,7 @@ This research record refines the implementation architecture; it does not
 override accepted ADRs. It refines, but does not replace:
 
 - the accepted
-  [CoreELEC Reconciler architecture](../architecture/coreelec-reconciler.md);
+  [CoreELEC Reconciler architecture](./2026-09-18-coreelec-reconciler-original-architecture.md);
 - ADR 0001's controller-only, on-demand model;
 - ADR 0002's domain Resource model;
 - ADR 0003's exclusive State Address ownership and verified

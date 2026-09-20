@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0010
 ---
 
 # Cut over through a disposable pilot and retire shell promptly

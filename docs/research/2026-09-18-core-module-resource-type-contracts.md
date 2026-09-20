@@ -198,7 +198,7 @@ wheel isolation, and Paramiko SSH/SFTP behavior. The production design keeps
 those proven constraints while replacing proof-only module shapes.
 
 The accepted
-[CoreELEC Reconciler architecture](../architecture/coreelec-reconciler.md) is
+[CoreELEC Reconciler architecture](./2026-09-18-coreelec-reconciler-original-architecture.md) is
 the stable foundation context. Future updates to its “Application Structure”
 section must adopt the direction in sections 5 and 6, including the single
 `execute` interface, pure assessment/fresh Verification rule, and deep

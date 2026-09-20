@@ -1,0 +1,28 @@
+#!/bin/bash
+# Pre-commit checks. CI runs on Linux only (ADR 0011), so this hook is what
+# covers the macOS workstation. Install it with:
+#
+#   git config core.hooksPath .githooks
+#
+# Bypass with `git commit --no-verify` when you need to.
+
+set -euo pipefail
+
+if ! command -v uv >/dev/null 2>&1; then
+  printf 'pre-commit: uv not found, skipping Python checks\n' >&2
+  exit 0
+fi
+
+if [[ ! -f pyproject.toml ]]; then
+  exit 0
+fi
+
+run() {
+  printf 'pre-commit: %s\n' "$*" >&2
+  "$@"
+}
+
+run uv run ruff format --check .
+run uv run ruff check .
+run uv run mypy
+run uv run pytest -q
