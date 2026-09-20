@@ -8,6 +8,7 @@ from coreelec_reconciler.application.commands import RecoverCommand
 from coreelec_reconciler.application.outcomes import (
     PlanOutcome,
     RecoverOutcome,
+    ReportOutcome,
     ValidationOutcome,
 )
 from coreelec_reconciler.application.reconciler import (
@@ -38,7 +39,7 @@ from coreelec_reconciler.domain.execution import (
     WorkspaceId,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
-from coreelec_reconciler.domain.planning import DesiredRelation
+from coreelec_reconciler.domain.planning import CanonicalRunReport, DesiredRelation
 from coreelec_reconciler.execution.authority import (
     AcquiredAuthority,
     AuthorityCoordinator,
@@ -617,7 +618,15 @@ def test_public_recover_seam_uses_concrete_recovery_coordinator() -> None:
     persistence = _Persistence(_RecoveryResource())
     authority = _Authority()
     engine = ExecutionEngine(_Journal(), RecoveryCoordinator(persistence, authority))
-    workflows = ExecutionApplicationWorkflows(cast(ApplicationData, object()), engine)
+    report = CanonicalRunReport(
+        b'{"run_id":"run.test","status":"failed_rolled_back"}',
+        "run.test",
+        "sha256:terminal",
+        2,
+        RunStatus.FAILED_ROLLED_BACK,
+    )
+    data = SimpleNamespace(report=lambda command: ReportOutcome(report))
+    workflows = ExecutionApplicationWorkflows(cast(ApplicationData, data), engine)
     application = ApplicationReconciler(
         dependencies=ApplicationDependencies(
             workflows,
@@ -628,7 +637,7 @@ def test_public_recover_seam_uses_concrete_recovery_coordinator() -> None:
 
     outcome = application.execute(RecoverCommand(".", RunId("run.test"), "rollback"))
 
-    assert outcome == RecoverOutcome(RunId("run.test"), "failed_rolled_back")
+    assert outcome == RecoverOutcome(report, True)
 
 
 @pytest.mark.parametrize("boundary", range(1, 7))
