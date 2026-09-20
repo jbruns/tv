@@ -1076,6 +1076,20 @@ def _saved_multi_plan_request() -> tuple[
     )
 
 
+@pytest.fixture(scope="module")
+def saved_plan_environment(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[RunStore, PlanStore, ResourceRegistry]:
+    request, plan, planning_run = _saved_plan_request()
+    registry = _registry()
+    root = tmp_path_factory.mktemp("saved-plan-environment")
+    store = RunStore(root / "runs", resource_registry=registry)
+    plans = PlanStore(root / "plans")
+    plans.save(plan, planning_run)
+    assert request.plan_id == PlanId(plan.plan_id)
+    return store, plans, registry
+
+
 def _saved_plan_with_unchanged_resources() -> tuple[
     SavedPlanExecutionRequest, CanonicalPlan, CanonicalRunReport
 ]:
@@ -1320,10 +1334,10 @@ def test_saved_plan_projects_unchanged_resources_for_execution_and_restart(
     ),
 )
 def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
-    tmp_path: Path,
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
     mismatch: str,
 ) -> None:
-    request, plan, planning_run = _saved_plan_request()
+    request, _, _ = _saved_plan_request()
     clock = _Clock()
     if mismatch.startswith("device_"):
         device = deepcopy(dict(request.expected_device))
@@ -1398,10 +1412,7 @@ def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
             ),
         }
         request = replace(request, approval_grants=(replacements[mismatch],))
-    registry = _registry()
-    store = RunStore(tmp_path / "runs", resource_registry=registry)
-    plans = PlanStore(tmp_path / "plans")
-    plans.save(plan, planning_run)
+    store, plans, registry = saved_plan_environment
     authority = _AcquiringAuthority(store)
     device = cast(dict[str, object], request.expected_device)
     factory = ProductionExecutionFactory(
@@ -1497,10 +1508,10 @@ def test_saved_plan_decoding_failure_precedes_authority_acquisition(
     ("binding_digest", "boot_id", "platform_identity", "host_key"),
 )
 def test_saved_plan_rejects_spoofed_or_changed_device_authority(
-    tmp_path: Path,
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
     mismatch: str,
 ) -> None:
-    request, plan, planning_run = _saved_plan_request()
+    request, _, _ = _saved_plan_request()
     device = cast(dict[str, object], request.expected_device)
     expected_probe = _DeviceAuthority(device)
     if mismatch == "binding_digest":
@@ -1514,10 +1525,7 @@ def test_saved_plan_rejects_spoofed_or_changed_device_authority(
             device,
             second=replace(expected_probe.observation, boot_id="boot.changed"),
         )
-    registry = _registry()
-    store = RunStore(tmp_path / "runs", resource_registry=registry)
-    plans = PlanStore(tmp_path / "plans")
-    plans.save(plan, planning_run)
+    store, plans, registry = saved_plan_environment
     authority = _AcquiringAuthority(store)
     factory = ProductionExecutionFactory(
         plans,
