@@ -97,6 +97,7 @@ class CanonicalPlan:
     full_digest: str
     semantic_digest: str
     disposition: PlanDisposition
+    resource_dependencies: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
