@@ -41,7 +41,20 @@ from coreelec_reconciler.domain.execution import (
     validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
+from coreelec_reconciler.domain.observation import (
+    TERMINAL_OBSERVATION_STATUSES,
+    CanonicalObservationRun,
+    ObservationAppendIntent,
+    ObservationRunStatus,
+)
 from coreelec_reconciler.domain.validation import parse_rfc3339_utc
+from coreelec_reconciler.persistence.observation_documents import (
+    OBSERVATION_RUN_KIND,
+    decode_observation_run,
+    observation_attachment_refs,
+    observation_run_identity,
+    verify_observation_revision_chain,
+)
 from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
@@ -80,7 +93,7 @@ class OperationalReceipt:
     payload: bytes
 
 
-_IDENTITY_FIELDS = {
+_EXECUTION_IDENTITY_FIELDS = {
     "binding_digest",
     "boot_id",
     "created_at",
@@ -93,6 +106,16 @@ _IDENTITY_FIELDS = {
     "producer",
     "run_id",
     "schema_version",
+    "workspace_id",
+}
+_OBSERVATION_IDENTITY_FIELDS = {
+    "created_at",
+    "device_id",
+    "kind",
+    "producer",
+    "run_id",
+    "schema_version",
+    "scope",
     "workspace_id",
 }
 
@@ -188,6 +211,82 @@ class RunStore:
             initial_payload,
             active=False,
         )
+
+    def create_observation_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: RunId,
+        device_id: DeviceId,
+        initial_payload: bytes,
+    ) -> tuple[RevisionLease, WorkspaceId]:
+        """Create a read-only canonical observation Run workspace."""
+        self._require_device_lease(device_lease, device_id)
+        try:
+            initial_run = decode_observation_run(
+                initial_payload,
+                resource_registry=self._resource_registry,
+            )
+        except ValueError as error:
+            raise RunStoreError("initial observation Run is invalid") from error
+        workspace_id = WorkspaceId(f"workspace:{run_id.value}")
+        if (
+            initial_run.run_id != run_id.value
+            or initial_run.device_id != device_id.value
+            or initial_run.workspace_id != workspace_id.value
+            or initial_run.revision != 1
+            or initial_run.status is not ObservationRunStatus.READY
+        ):
+            raise RunStoreError("initial observation Run bindings are inconsistent")
+        try:
+            self._workspace_for_run(run_id)
+        except FileNotFoundError:
+            pass
+        else:
+            raise RunStoreError("Run already exists")
+        directory = self._root / "runs" / _opaque_key(workspace_id.value)
+        directory.mkdir(mode=0o700)
+        os.chmod(directory, 0o700)
+        for name in ("revisions", "attachments", "receipts"):
+            child = directory / name
+            child.mkdir(mode=0o700)
+            os.chmod(child, 0o700)
+        identity = observation_run_identity(decode_json_object(initial_payload))
+        stored = StoredRevision(
+            initial_run.revision,
+            initial_run.current_digest,
+            initial_payload,
+        )
+        try:
+            self._publish(
+                directory / "identity.json",
+                canonical_document_bytes(identity),
+                "create-observation-identity",
+            )
+            self._publish(
+                directory / "revisions" / "00000001.json",
+                initial_payload,
+                "create-observation-revision",
+            )
+            self._publish(
+                directory / "head.json",
+                _head_bytes(stored),
+                "create-observation-head",
+            )
+            self._publish(
+                directory / "state.json",
+                canonical_document_bytes(
+                    {
+                        "authority_phase": None,
+                        "status": initial_run.status.value,
+                        "terminal": False,
+                    }
+                ),
+                "create-observation-state",
+            )
+        except Exception:
+            self._remove_unpublished_workspace(directory)
+            raise
+        return self.acquire_run(run_id), workspace_id
 
     def _create_run(
         self,
@@ -302,7 +401,9 @@ class RunStore:
     def load_chain(self, run_id: RunId) -> VerifiedRunChain:
         workspace = self._workspace_for_run(run_id)
         identity = self._read_object(workspace / "identity.json")
-        if set(identity) != _IDENTITY_FIELDS:
+        if identity.get("kind") == OBSERVATION_RUN_KIND:
+            return self._load_observation_chain(run_id, workspace, identity)
+        if set(identity) != _EXECUTION_IDENTITY_FIELDS:
             raise CorruptRunStore("workspace identity fields are incomplete")
         if _required_string(identity, "run_id") != run_id.value:
             raise CorruptRunStore("workspace identity does not match Run")
@@ -375,11 +476,76 @@ class RunStore:
             raise CorruptRunStore("Run terminal state does not match canonical head")
         return VerifiedRunChain(tuple(revisions), revisions[-1], terminal)
 
+    def _load_observation_chain(
+        self,
+        run_id: RunId,
+        workspace: Path,
+        identity: dict[str, object],
+    ) -> VerifiedRunChain:
+        if set(identity) != _OBSERVATION_IDENTITY_FIELDS:
+            raise CorruptRunStore(
+                "observation workspace identity fields are incomplete"
+            )
+        if _required_string(identity, "run_id") != run_id.value:
+            raise CorruptRunStore("observation workspace identity does not match Run")
+        head = self._read_object(workspace / "head.json")
+        head_revision = _required_int(head, "revision")
+        contents: list[bytes] = []
+        for number in range(1, head_revision + 1):
+            try:
+                contents.append(
+                    self._read_bytes(workspace / "revisions" / f"{number:08d}.json")
+                )
+            except FileNotFoundError as error:
+                raise CorruptRunStore("observation revision chain has a gap") from error
+        try:
+            reports = verify_observation_revision_chain(
+                contents,
+                resource_registry=self._resource_registry,
+            )
+        except ValueError as error:
+            raise CorruptRunStore("observation Run chain is invalid") from error
+        if observation_run_identity(decode_json_object(contents[0])) != identity:
+            raise CorruptRunStore("observation immutable scope binding changed")
+        stored = tuple(
+            StoredRevision(
+                report.revision, report.current_digest, report.canonical_bytes
+            )
+            for report in reports
+        )
+        if (
+            not stored
+            or head.get("revision") != stored[-1].revision
+            or head.get("digest") != stored[-1].digest
+        ):
+            raise CorruptRunStore("observation Run head does not match revision chain")
+        for reference in observation_attachment_refs(reports[-1]):
+            try:
+                self._read_attachment(run_id, reference)
+            except (CorruptRunStore, FileNotFoundError) as error:
+                raise CorruptRunStore(
+                    "observation raw attachment is unavailable"
+                ) from error
+        terminal = reports[-1].status in TERMINAL_OBSERVATION_STATUSES
+        state = self._read_object(workspace / "state.json")
+        if (
+            state.get("authority_phase") is not None
+            or state.get("status") != reports[-1].status.value
+            or state.get("terminal") is not terminal
+        ):
+            raise CorruptRunStore("observation Run state does not match canonical head")
+        return VerifiedRunChain(stored, stored[-1], terminal)
+
     def inspect_head(self, run_id: RunId) -> StoredRevision:
         """Read the exact canonical head without trusting the evidence chain."""
         workspace = self._workspace_for_run(run_id)
         identity = self._read_object(workspace / "identity.json")
-        if set(identity) != _IDENTITY_FIELDS:
+        identity_fields = (
+            _OBSERVATION_IDENTITY_FIELDS
+            if identity.get("kind") == OBSERVATION_RUN_KIND
+            else _EXECUTION_IDENTITY_FIELDS
+        )
+        if set(identity) != identity_fields:
             raise CorruptRunStore("workspace identity fields are incomplete")
         if _required_string(identity, "run_id") != run_id.value:
             raise CorruptRunStore("workspace identity does not match Run")
@@ -394,7 +560,7 @@ class RunStore:
         if _required_string(value, "run_id") != run_id.value:
             raise CorruptRunStore("Run revision identity mismatch")
         try:
-            revision_identity = execution_run_identity(value)
+            revision_identity = _run_identity(value)
         except ValueError as error:
             raise CorruptRunStore(
                 "Run immutable identity bindings are malformed"
@@ -406,10 +572,17 @@ class RunStore:
     def load_identity(self, run_id: RunId) -> dict[str, object]:
         workspace = self._workspace_for_run(run_id)
         identity = self._read_object(workspace / "identity.json")
-        if set(identity) != _IDENTITY_FIELDS:
+        identity_fields = (
+            _OBSERVATION_IDENTITY_FIELDS
+            if identity.get("kind") == OBSERVATION_RUN_KIND
+            else _EXECUTION_IDENTITY_FIELDS
+        )
+        if set(identity) != identity_fields:
             raise CorruptRunStore("workspace identity fields are incomplete")
         if _required_string(identity, "run_id") != run_id.value:
             raise CorruptRunStore("workspace identity does not match Run")
+        if identity.get("kind") == OBSERVATION_RUN_KIND:
+            return identity
         try:
             token = self._read_bytes(workspace / "ownership-token.bin")
         except FileNotFoundError as error:
@@ -480,6 +653,143 @@ class RunStore:
                 raise CompareConflict(
                     "append acknowledgement reconciliation failed"
                 ) from retry_error
+
+    def compare_and_append_observation(
+        self,
+        lease: RevisionLease,
+        expected_revision: int,
+        expected_digest: str,
+        payload: bytes,
+        intent: ObservationAppendIntent,
+    ) -> StoredRevision:
+        """CAS-append one observation checkpoint or lifecycle boundary."""
+        self._require_run_lease(lease)
+        chain = self.load_chain(lease.run_id)
+        if (
+            chain.head.revision != expected_revision
+            or chain.head.digest != expected_digest
+        ):
+            raise CompareConflict("Run head changed")
+        if chain.terminal:
+            raise CompareConflict("terminal observation Run is immutable")
+        try:
+            proposed_report = decode_observation_run(
+                payload,
+                resource_registry=self._resource_registry,
+            )
+            verify_observation_revision_chain(
+                (*tuple(item.payload for item in chain.revisions), payload),
+                resource_registry=self._resource_registry,
+            )
+        except ValueError as error:
+            raise RunStoreError("proposed observation revision is invalid") from error
+        if (
+            proposed_report.revision != expected_revision + 1
+            or proposed_report.run_id != lease.run_id.value
+            or intent.next_status is not proposed_report.status
+            or intent.terminal
+            != (proposed_report.status in TERMINAL_OBSERVATION_STATUSES)
+            or observation_run_identity(decode_json_object(payload))
+            != observation_run_identity(decode_json_object(chain.head.payload))
+        ):
+            raise RunStoreError("proposed observation revision bindings are invalid")
+        proposed = StoredRevision(
+            proposed_report.revision,
+            proposed_report.current_digest,
+            payload,
+        )
+        try:
+            return self._complete_observation_append(
+                lease,
+                expected_revision,
+                expected_digest,
+                proposed,
+                intent,
+            )
+        except AcknowledgementLost:
+            try:
+                return self._complete_observation_append(
+                    lease,
+                    expected_revision,
+                    expected_digest,
+                    proposed,
+                    intent,
+                )
+            except AcknowledgementLost as retry_error:
+                raise CompareConflict(
+                    "observation append acknowledgement was lost twice"
+                ) from retry_error
+            except (CompareConflict, CorruptRunStore) as retry_error:
+                raise CompareConflict(
+                    "observation append acknowledgement reconciliation failed"
+                ) from retry_error
+
+    def _complete_observation_append(
+        self,
+        lease: RevisionLease,
+        expected_revision: int,
+        expected_digest: str,
+        proposed: StoredRevision,
+        intent: ObservationAppendIntent,
+    ) -> StoredRevision:
+        workspace = self._workspace_for_run(lease.run_id)
+        chain = self.load_chain(lease.run_id)
+        if chain.head.payload == proposed.payload:
+            pass
+        elif (
+            chain.head.revision == expected_revision
+            and chain.head.digest == expected_digest
+        ):
+            revision_path = workspace / "revisions" / f"{proposed.revision:08d}.json"
+            try:
+                existing = self._read_bytes(revision_path)
+            except FileNotFoundError:
+                self._publish(
+                    revision_path,
+                    proposed.payload,
+                    f"append-observation-revision-{proposed.revision}",
+                )
+            else:
+                if existing != proposed.payload:
+                    raise CompareConflict("different successor revision already exists")
+            self._publish(
+                workspace / "head.json",
+                _head_bytes(proposed),
+                f"append-observation-head-{proposed.revision}",
+            )
+        else:
+            raise CompareConflict("Run head changed during observation append")
+        self._publish(
+            workspace / "state.json",
+            canonical_document_bytes(
+                {
+                    "authority_phase": None,
+                    "status": intent.next_status.value,
+                    "terminal": intent.terminal,
+                }
+            ),
+            f"append-observation-state-{proposed.revision}",
+        )
+        self._durability.acknowledge(
+            f"compare-and-append-observation:{lease.run_id.value}:{proposed.revision}"
+        )
+        completed = self.load_chain(lease.run_id)
+        if completed.head != proposed:
+            raise CorruptRunStore(
+                "observation append did not durably advance the Run head"
+            )
+        return proposed
+
+    def load_observation_run(self, run_id: RunId) -> CanonicalObservationRun:
+        """Decode the verified canonical observation Run head."""
+        chain = self.load_chain(run_id)
+        try:
+            return decode_observation_run(
+                chain.head.payload,
+                resource_registry=self._resource_registry,
+            )
+        except ValueError as error:
+            raise CorruptRunStore("Run is not a valid observation Run") from error
 
     def _complete_append(
         self,
@@ -835,11 +1145,18 @@ class RunStore:
         identity = self._read_object(workspace / "identity.json")
         terminal = _first_terminal_revision(chain)
         head_value = decode_json_object(chain.head.payload)
-        authority = head_value.get("authority")
-        if not isinstance(authority, dict):
-            raise CorruptRunStore("terminal Run authority is malformed")
-        authority_state = _required_string(authority, "ownership_state")
-        seal_digest = self._current_seal_digest(workspace, chain)
+        run_kind = _required_string(identity, "kind")
+        if run_kind == OBSERVATION_RUN_KIND:
+            authority_state = "not_applicable"
+            seal_digest = None
+            close_schema_version = 2
+        else:
+            authority = head_value.get("authority")
+            if not isinstance(authority, dict):
+                raise CorruptRunStore("terminal Run authority is malformed")
+            authority_state = _required_string(authority, "ownership_state")
+            seal_digest = self._current_seal_digest(workspace, chain)
+            close_schema_version = 1
         failure: dict[str, str] | None = None
         if intent.disposition is not SessionCloseDisposition.COMPLETE:
             if intent.failure_category is None or intent.failure_code is None:
@@ -852,27 +1169,28 @@ class RunStore:
             }
         elif intent.failure_category is not None or intent.failure_code is not None:
             raise RunStoreError("complete session close cannot contain failure")
-        record = build_session_close_record(
-            {
-                "authority_state": authority_state,
-                "device_id": _required_string(identity, "device_id"),
-                "disposition": intent.disposition.value,
-                "failure": failure,
-                "kind": "CoreElecReconcilerSessionClose",
-                "observed_at": intent.observed_at,
-                "observed_head_digest": chain.head.digest,
-                "observed_head_revision": chain.head.revision,
-                "producer": {"name": "coreelec-reconciler", "version": "0.1.0"},
-                "record_id": intent.record_id,
-                "run_id": lease.run_id.value,
-                "schema_version": 1,
-                "seal_digest": seal_digest,
-                "session_id": intent.session_id,
-                "terminal_digest": terminal.digest,
-                "terminal_revision": terminal.revision,
-                "workspace_id": lease.workspace_id.value,
-            }
-        )
+        record_value: dict[str, object] = {
+            "authority_state": authority_state,
+            "device_id": _required_string(identity, "device_id"),
+            "disposition": intent.disposition.value,
+            "failure": failure,
+            "kind": "CoreElecReconcilerSessionClose",
+            "observed_at": intent.observed_at,
+            "observed_head_digest": chain.head.digest,
+            "observed_head_revision": chain.head.revision,
+            "producer": {"name": "coreelec-reconciler", "version": "0.1.0"},
+            "record_id": intent.record_id,
+            "run_id": lease.run_id.value,
+            "schema_version": close_schema_version,
+            "seal_digest": seal_digest,
+            "session_id": intent.session_id,
+            "terminal_digest": terminal.digest,
+            "terminal_revision": terminal.revision,
+            "workspace_id": lease.workspace_id.value,
+        }
+        if close_schema_version == 2:
+            record_value["run_kind"] = run_kind
+        record = build_session_close_record(record_value)
         self._validate_session_close_binding(record, chain, workspace)
         self._publish_new(
             path,
@@ -981,15 +1299,27 @@ class RunStore:
             raise CorruptRunStore("session close immutable binding is invalid")
         observed = chain.revisions[record.observed_head_revision - 1]
         observed_value = decode_json_object(observed.payload)
-        authority = observed_value.get("authority")
+        run_kind = _required_string(identity, "kind")
         if (
             observed.digest != record.observed_head_digest
-            or not isinstance(authority, dict)
-            or authority.get("ownership_state") != record.authority_state
-            or RunStatus(_required_string(observed_value, "status"))
-            not in TERMINAL_RUN_STATUSES
+            or record.run_kind != run_kind
+            or not _run_value_is_terminal(observed_value)
         ):
             raise CorruptRunStore("session close head binding is invalid")
+        if run_kind == OBSERVATION_RUN_KIND:
+            if (
+                record.schema_version != 2
+                or record.authority_state != "not_applicable"
+                or record.seal_digest is not None
+            ):
+                raise CorruptRunStore("observation session close binding is invalid")
+        else:
+            authority = observed_value.get("authority")
+            if (
+                not isinstance(authority, dict)
+                or authority.get("ownership_state") != record.authority_state
+            ):
+                raise CorruptRunStore("session close authority binding is invalid")
         ended_at = observed_value.get("ended_at")
         if ended_at is not None and parse_rfc3339_utc(
             record.observed_at, "session close observed_at"
@@ -1335,6 +1665,15 @@ class RunStore:
         without_digest.pop("current_digest", None)
         if digest != _sha256(canonical_document_bytes(without_digest)):
             raise CorruptRunStore("Run revision digest mismatch")
+        if value.get("kind") == OBSERVATION_RUN_KIND:
+            try:
+                report = decode_observation_run(
+                    payload,
+                    resource_registry=self._resource_registry,
+                )
+            except ValueError as error:
+                raise CorruptRunStore("observation Run revision is invalid") from error
+            return StoredRevision(report.revision, report.current_digest, payload)
         try:
             status = RunStatus(_required_string(value, "status"))
             evidence = value.get("evidence")
@@ -1503,9 +1842,30 @@ def _sha256(payload: bytes) -> str:
 def _first_terminal_revision(chain: VerifiedRunChain) -> StoredRevision:
     for revision in chain.revisions:
         value = decode_json_object(revision.payload)
-        if RunStatus(_required_string(value, "status")) in TERMINAL_RUN_STATUSES:
+        if _run_value_is_terminal(value):
             return revision
     raise CorruptRunStore("terminal Run has no terminal revision")
+
+
+def _run_value_is_terminal(value: dict[str, object]) -> bool:
+    if value.get("kind") == OBSERVATION_RUN_KIND:
+        try:
+            return (
+                ObservationRunStatus(_required_string(value, "status"))
+                in TERMINAL_OBSERVATION_STATUSES
+            )
+        except ValueError as error:
+            raise CorruptRunStore("observation Run status is invalid") from error
+    try:
+        return RunStatus(_required_string(value, "status")) in TERMINAL_RUN_STATUSES
+    except ValueError as error:
+        raise CorruptRunStore("execution Run status is invalid") from error
+
+
+def _run_identity(value: dict[str, object]) -> dict[str, object]:
+    if value.get("kind") == OBSERVATION_RUN_KIND:
+        return observation_run_identity(value)
+    return execution_run_identity(value)
 
 
 def _session_close_matches_intent(

@@ -1,5 +1,35 @@
 # Run workspace, recovery, and Effect contracts
 
+## Accepted M3.1 amendment: observation-only Runs
+
+Observation is a distinct Run family, not a degenerate Plan, Verification, or
+execution. `CoreElecReconcilerObservationRun` version 1 has only
+`ready -> observing -> observed|observed_partial`. The two final states are
+terminal; `observed` means every selected Resource produced an available
+Observation, while `observed_partial` preserves unavailable or unknown facts.
+
+Its immutable identity includes Run/workspace/Device/creation bindings and the
+complete ordered scope: Resource IDs and Types, logical State Addresses,
+dependency order, configuration/Profile/artifact/capability/selector digests,
+and each Resource Type's registered observation payload kind, version, and
+policy digest. It contains no Plan, Change, Desired State, approval,
+Verification, convergence, mutation, rollback, cleanup, or write-authority
+field.
+
+Each revision preserves the prior checkpoint prefix and adds at most one next
+Resource checkpoint. The checkpoint binds its Resource identity and addresses,
+observer, timestamp, disposition, closed Resource-Type-owned evidence, and raw
+content-addressed attachment when present. Restart resumes after the durable
+prefix and never re-observes a completed Resource. Unknown fields, codecs,
+versions, Resource Types, unsafe payload combinations, duplicate/dangling
+dependencies, gaps, rewrites, and terminal successors fail closed.
+
+Observation Runs use local Device/Run leases and the existing revision CAS and
+durability protocol, but never enter the active mutation index or persist an
+ownership token. Session-close version 2 binds the observation Run kind and
+uses `authority_state: not_applicable` with no seal. Transport close remains
+distinct from Resource cleanup and authority release.
+
 Date: 2026-09-18
 
 Ticket: [Define Run workspace, recovery, and Effect contracts](https://github.com/jbruns/tv/issues/43)
