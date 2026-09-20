@@ -44,6 +44,57 @@ def test_production_package_has_one_bootstrap_composition_root() -> None:
     assert bootstrap_definitions == [PACKAGE_ROOT / "bootstrap.py"]
 
 
+def test_only_bootstrap_imports_concrete_production_adapters() -> None:
+    violations = {
+        path.relative_to(PACKAGE_ROOT): sorted(
+            module
+            for module in imported_modules(path)
+            if module.startswith("coreelec_reconciler.adapters")
+        )
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if path.name != "bootstrap.py"
+        and any(
+            module.startswith("coreelec_reconciler.adapters")
+            for module in imported_modules(path)
+        )
+    }
+
+    assert violations == {}
+
+
+def test_application_and_cli_do_not_instantiate_concrete_adapters() -> None:
+    concrete_names = {
+        "EnvironmentSecretResolver",
+        "MappingHostKeyResolver",
+        "ParamikoManagedFiles",
+        "ParamikoSessionFactory",
+        "RunStore",
+    }
+    violations = {
+        path.relative_to(PACKAGE_ROOT): sorted(
+            node.func.id
+            for node in ast.walk(
+                ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            )
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in concrete_names
+        )
+        for directory in ("application", "cli")
+        for path in (PACKAGE_ROOT / directory).glob("*.py")
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in concrete_names
+            for node in ast.walk(
+                ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            )
+        )
+    }
+
+    assert violations == {}
+
+
 def test_network_modules_are_limited_to_approved_boundaries() -> None:
     prohibited_modules = {"socket", "urllib", "httpx", "requests", "paramiko"}
     violations = {

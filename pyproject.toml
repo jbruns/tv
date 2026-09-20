@@ -29,7 +29,15 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
-testpaths = ["tests/scaffold", "tests/inventory", "tests/ci", "tests/unit"]
+testpaths = [
+  "tests/adapters",
+  "tests/ci",
+  "tests/contracts",
+  "tests/integration",
+  "tests/inventory",
+  "tests/scaffold",
+  "tests/unit",
+]
 
 [tool.mypy]
 python_version = "3.14"
@@ -37,9 +45,14 @@ strict = true
 files = [
   "scripts/check_inventory_milestones.py",
   "scripts/check_shell_permissions.py",
+  "scripts/run_m3_pilot_harness.py",
   "scripts/run_test_budget.py",
+  "scripts/verify_m3_evidence_bundle.py",
   "src",
+  "tests/adapters",
   "tests/conftest.py",
+  "tests/contracts",
+  "tests/integration",
   "tests/scaffold",
   "tests/inventory",
   "tests/ci",

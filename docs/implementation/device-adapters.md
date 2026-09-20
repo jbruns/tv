@@ -1,8 +1,11 @@
 # Production Device Adapters
 
 The production adapter package implements the typed SSH, command, SFTP
-managed-file, and remote Run Infrastructure capabilities accepted for M3. It
-is deliberately not wired into `bootstrap.py` or any installed command.
+managed-file, and remote Run Infrastructure capabilities accepted for M3.
+The single production `bootstrap.py` now owns their lazy construction and
+passes that production-services seam to the application. The installed CLI
+uses only that bootstrap; neither CLI nor application code imports or
+constructs concrete adapters.
 
 Sessions resolve secret values only at the composition seam, load exactly one
 reviewed pinned host key, disable agent and ambient-key discovery, and reject

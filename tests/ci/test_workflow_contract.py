@@ -39,6 +39,8 @@ def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
         "uv run ruff format --check" in command
         and "scripts/run_test_budget.py" in command
         and "scripts/check_inventory_milestones.py" in command
+        and "scripts/run_m3_pilot_harness.py" in command
+        and "scripts/verify_m3_evidence_bundle.py" in command
         and "tests/inventory" in command
         and "tests/support" in command
         for command in run_commands
@@ -64,9 +66,21 @@ def test_workflow_uses_frozen_tools_exact_selectors_and_hard_budgets() -> None:
         for command in run_commands
     )
     assert any(
-        "tests/scaffold/test_cli.py" in command
+        "python3 scripts/check_shell_permissions.py --audit" in command
+        for command in run_commands
+    )
+    assert any(
+        "tests/adapters tests/contracts" in command
+        and "tests/scaffold/test_cli.py" in command
+        and "tests/scaffold/test_cli_execution.py tests/integration" in command
         and "--budget-seconds 60" in command
         and "--include-result .ci-evidence/pure.json" in command
+        for command in run_commands
+    )
+    assert any(
+        "scripts/run_m3_pilot_harness.py" in command
+        and "scripts/verify_m3_evidence_bundle.py" in command
+        and "diff -r" in command
         for command in run_commands
     )
 

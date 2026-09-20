@@ -1,7 +1,12 @@
 """Production composition root for the Reconciler."""
 
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from coreelec_reconciler.application.commands import PlanCommand, ValidateCommand
 from coreelec_reconciler.application.outcomes import PlanOutcome, ValidationOutcome
@@ -12,10 +17,61 @@ from coreelec_reconciler.application.reconciler import (
 from coreelec_reconciler.domain.identifiers import PlanId, RunId, SelectorId
 from coreelec_reconciler.inventory.ledger import validate_ledger
 
+if TYPE_CHECKING:
+    from coreelec_reconciler.domain.configuration import ResolvedDevice
+    from coreelec_reconciler.transports.interfaces import DeviceSession
+
 
 @dataclass(frozen=True, slots=True)
 class BootstrapSettings:
     repository_root: str
+    state_root: str | None = None
+    environment_secret_names: tuple[tuple[str, str], ...] = ()
+    pinned_host_keys: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ProductionServices:
+    """Lazy production Adapter access owned exclusively by the composition root."""
+
+    settings: BootstrapSettings
+    environment: Mapping[str, str]
+
+    def open_device_session(
+        self,
+        device: ResolvedDevice,
+        required_capabilities: frozenset[str],
+    ) -> DeviceSession:
+        from coreelec_reconciler.adapters.paramiko_session import (
+            ParamikoSessionFactory,
+        )
+        from coreelec_reconciler.adapters.secrets import (
+            EnvironmentSecretResolver,
+            MappingHostKeyResolver,
+        )
+        from coreelec_reconciler.config.device import (
+            resolve_device_session_parameters,
+        )
+
+        secrets = EnvironmentSecretResolver(
+            dict(self.settings.environment_secret_names), self.environment
+        )
+        parameters = resolve_device_session_parameters(device, secrets)
+        sessions = ParamikoSessionFactory(
+            MappingHostKeyResolver(dict(self.settings.pinned_host_keys))
+        )
+        return sessions.open(parameters, required_capabilities)
+
+    def run_store(self) -> object:
+        from coreelec_reconciler.execution.run_store import RunStore
+
+        configured = self.settings.state_root
+        root = (
+            Path(configured)
+            if configured is not None
+            else Path.home() / ".local" / "state" / "coreelec-reconciler"
+        )
+        return RunStore(root)
 
 
 def bootstrap(settings: BootstrapSettings) -> Reconciler:
@@ -158,4 +214,9 @@ def bootstrap(settings: BootstrapSettings) -> Reconciler:
             run_report=run,
         )
 
-    return ApplicationReconciler(validate_repository, plan_repository)
+    services = ProductionServices(settings, os.environ)
+    return ApplicationReconciler(
+        validate_repository,
+        plan_repository,
+        production_services=services,
+    )

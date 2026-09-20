@@ -65,8 +65,9 @@ jobs:
           uv run ruff format --check
           src scripts/run_test_budget.py scripts/check_inventory_milestones.py
           scripts/check_shell_permissions.py
+          scripts/run_m3_pilot_harness.py scripts/verify_m3_evidence_bundle.py
           tests/scaffold tests/inventory tests/ci
-          tests/unit
+          tests/unit tests/adapters tests/contracts tests/integration
           tests/conftest.py tests/support
       - name: Strict mypy
         run: uv run mypy
@@ -74,6 +75,10 @@ jobs:
         run: >-
           uv run python scripts/check_inventory_milestones.py
           > .ci-evidence/inventory-ledger.txt
+      - name: Audit shell permissions
+        run: >-
+          python3 scripts/check_shell_permissions.py --audit
+          > .ci-evidence/shell-permissions.txt
       - name: Pure, unit, architecture, and CI helper budget
         run: >-
           uv run python scripts/run_test_budget.py
@@ -96,7 +101,9 @@ jobs:
           --result .ci-evidence/offline.json
           --
           .venv/bin/python -m pytest -q
+          tests/adapters tests/contracts
           tests/scaffold/test_cli.py tests/scaffold/test_cli_planning.py
+          tests/scaffold/test_cli_execution.py tests/integration
       - name: Build package
         run: uv build
       - name: Inspect and smoke-test wheel
@@ -120,6 +127,18 @@ jobs:
               name.startswith(("coreelec_reconciler/", "coreelec_reconciler-"))
               for name in names
           ), names
+          required = {
+              "coreelec_reconciler/bootstrap.py",
+              "coreelec_reconciler/adapters/paramiko_session.py",
+              "coreelec_reconciler/adapters/paramiko_managed_file.py",
+              "coreelec_reconciler/cli/main.py",
+              "coreelec_reconciler/execution/engine.py",
+              "coreelec_reconciler/execution/run_store.py",
+          }
+          assert required <= set(names), required - set(names)
+          assert not any(
+              name.startswith(("tests/", "scripts/", ".github/")) for name in names
+          )
           assert (
               "coreelec-reconciler = coreelec_reconciler.cli.main:main"
               in entry_points
@@ -155,6 +174,22 @@ jobs:
             ../.wheel-venv/bin/coreelec-reconciler --version
             ../.wheel-venv/bin/coreelec-reconciler --help >/dev/null
           )
+      - name: Generate and verify deterministic pilot dry run
+        shell: bash
+        run: |
+          uv run python scripts/run_m3_pilot_harness.py \
+            --dry-run \
+            --output .ci-evidence/m3-pilot-dry-run
+          uv run python scripts/run_m3_pilot_harness.py \
+            --dry-run \
+            --output .ci-evidence/m3-pilot-dry-run-repeat
+          diff -r \
+            .ci-evidence/m3-pilot-dry-run \
+            .ci-evidence/m3-pilot-dry-run-repeat
+          uv run python scripts/verify_m3_evidence_bundle.py \
+            .ci-evidence/m3-pilot-dry-run
+          git rev-parse HEAD^{tree} > .ci-evidence/source-tree.txt
+          shasum -a 256 uv.lock > .ci-evidence/lock.sha256
       - name: Upload source-bound CI evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -246,8 +246,10 @@ class ApplicationReconciler:
         | None = None,
         *,
         dependencies: ApplicationDependencies | None = None,
+        production_services: object | None = None,
     ) -> None:
         self._dependencies = dependencies
+        self._production_services = production_services
         self._validate_repository = (
             dependencies.validate_repository
             if dependencies is not None
@@ -258,6 +260,10 @@ class ApplicationReconciler:
             if dependencies is not None
             else plan_repository
         )
+
+    @property
+    def production_services(self) -> object | None:
+        return self._production_services
 
     @overload
     def execute(self, command: ValidateCommand) -> ValidateResult: ...
