@@ -495,8 +495,7 @@ def build_multi_resource_plan_and_run(
                     "converged"
                     if status is RunStatus.NOOP
                     or (
-                        status is RunStatus.BLOCKED
-                        and not assessment.blocker_codes
+                        not assessment.blocker_codes
                         and assessment.operation_code is None
                     )
                     else "blocked"
@@ -508,8 +507,7 @@ def build_multi_resource_plan_and_run(
                     "not_required"
                     if status is RunStatus.NOOP
                     or (
-                        status is RunStatus.BLOCKED
-                        and not assessment.blocker_codes
+                        not assessment.blocker_codes
                         and assessment.operation_code is None
                     )
                     else "blocked"
@@ -523,8 +521,7 @@ def build_multi_resource_plan_and_run(
                     "fresh_match"
                     if status is RunStatus.NOOP
                     or (
-                        status is RunStatus.BLOCKED
-                        and not assessment.blocker_codes
+                        not assessment.blocker_codes
                         and assessment.operation_code is None
                     )
                     else "not_started"
@@ -2080,12 +2077,10 @@ def _validate_run_shape(
             raise ValueError("unknown post-Effect Verification outcome")
         if result["final_convergence"] not in {"converged", "blocked", "pending"}:
             raise ValueError("unknown final convergence")
-        if status is RunStatus.NOOP:
+        if result["latest_observed_relation"] == "satisfied":
             expected = ("satisfied", "not_required", "fresh_match", "converged")
         elif status is RunStatus.AWAITING_APPROVAL:
             expected = ("divergent", "pending", "not_started", "pending")
-        elif result["latest_observed_relation"] == "satisfied":
-            expected = ("satisfied", "not_required", "fresh_match", "converged")
         else:
             expected = (
                 result["latest_observed_relation"],

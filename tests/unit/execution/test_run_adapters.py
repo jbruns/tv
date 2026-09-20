@@ -37,7 +37,6 @@ from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
 from coreelec_reconciler.domain.planning import (
     CanonicalPlan,
     CanonicalRunReport,
-    PlanDependencyGraph,
 )
 from coreelec_reconciler.execution.authority import (
     AcquiredAuthority,
@@ -139,8 +138,11 @@ def _avoid_physical_fsync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _Clock:
+    def __init__(self, now: str = "2026-09-19T08:02:00Z") -> None:
+        self.now = now
+
     def utc_now(self) -> str:
-        return "2026-09-19T08:02:00Z"
+        return self.now
 
 
 class _DeviceAuthority:
@@ -426,6 +428,37 @@ class _Contexts:
         )
 
 
+class _PlanContexts(_Contexts):
+    def context(
+        self,
+        run_id: RunId,
+        resource_id: str,
+        type_code: str,
+        attachments: AttachmentStore,
+    ) -> ResourceExecutionContext:
+        leaf = resource_id.rsplit(".", maxsplit=1)[-1]
+        return ResourceExecutionContext(
+            cast(Resource, object()),
+            cast(ManagedFileCapabilities, object()),
+            attachments,
+            cast(ManagedFileLifecycle, object()),
+            ResolvedManagedAddress(
+                f"special://profile/playlists/video/{leaf.title()}.xsp",
+                ManagedPath(
+                    f"/storage/.kodi/userdata/playlists/video/{leaf.title()}.xsp"
+                ),
+            ),
+            PreparationBinding(
+                self.device_id,
+                self.binding_digest,
+                self.run_id,
+                resource_id,
+                f"change.{resource_id}.update",
+            ),
+            _Clock().utc_now,
+        )
+
+
 class _Inspections:
     def read_remote_ownership(self, run_id: RunId) -> RemoteOwnershipSnapshot:
         return RemoteOwnershipSnapshot(
@@ -620,6 +653,10 @@ def _adapter(
 def _prepared(
     persistence: RunStoreExecutionPersistence,
     resource_id: str = "skin.playlist.new-shows",
+    *,
+    filename: str = "NewShows.xsp",
+    change_id: str | None = None,
+    binding_digest: str = "sha256:" + "a" * 64,
 ) -> PreparedManagedFile:
     files = FakeManagedFiles()
     desired = NormalizedResourceState(
@@ -632,15 +669,15 @@ def _prepared(
         reader=files,
         attachments=persistence.attachment_store,
         address=ResolvedManagedAddress(
-            "special://profile/playlists/video/NewShows.xsp",
-            ManagedPath("/storage/.kodi/userdata/playlists/video/NewShows.xsp"),
+            f"special://profile/playlists/video/{filename}",
+            ManagedPath(f"/storage/.kodi/userdata/playlists/video/{filename}"),
         ),
         binding=PreparationBinding(
             "living-room.ugoos-am6b-plus",
-            "sha256:" + "a" * 64,
+            binding_digest,
             RUN_ID,
             resource_id,
-            f"change.{resource_id}",
+            change_id or f"change.{resource_id}",
         ),
         expected_before=NormalizedResourceState(Presence.ABSENT, None, None, None),
         desired=desired,
@@ -931,59 +968,6 @@ def test_ambiguous_cleanup_receipt_is_not_classified_complete_after_restart(
     restarted.close()
 
 
-def test_persisted_resources_reconstruct_in_dependency_order_after_restart(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "runs"
-    first_store = RunStore(root, resource_registry=_registry())
-    _create(first_store, ("first", "second"))
-    graph = PlanDependencyGraph((("first", ()), ("second", ("first",))))
-    first = RunStoreExecutionPersistence(
-        first_store,
-        RunId(RUN_ID),
-        _registry(),
-        {"first": "KodiSmartPlaylist", "second": "KodiSmartPlaylist"},
-        cast(ResourceContextProvider, _Contexts()),
-        cast(RecoveryEnvironment, _Inspections()),
-        cast(RunClock, _Clock()),
-        dependency_graph=graph,
-    )
-    changes = (
-        cast(ExecutableChange, _Change("first")),
-        cast(ExecutableChange, _Change("second", ("first",))),
-    )
-    first.start(ApprovedPlan(RunId(RUN_ID), changes))
-    first.prepared(RunId(RUN_ID), "first", _prepared(first, "first"))
-    first.prepared(RunId(RUN_ID), "second", _prepared(first, "second"))
-    first.close()
-
-    restarted = RunStoreExecutionPersistence(
-        RunStore(root, resource_registry=_registry()),
-        RunId(RUN_ID),
-        _registry(),
-        {"first": "KodiSmartPlaylist", "second": "KodiSmartPlaylist"},
-        cast(ResourceContextProvider, _Contexts()),
-        cast(RecoveryEnvironment, _Inspections()),
-        cast(RunClock, _Clock()),
-        dependency_graph=graph,
-    )
-
-    resources = restarted.resources(RunId(RUN_ID))
-    assert [item.resource_id for item in resources] == [
-        "first",
-        "second",
-    ]
-    rollback_events: list[str] = []
-    _Runtime.rollback_events = rollback_events
-    try:
-        for resource in reversed(resources):
-            resource.rollback()
-    finally:
-        _Runtime.rollback_events = None
-    assert rollback_events == ["second", "first"]
-    restarted.close()
-
-
 def _saved_plan_request() -> tuple[
     SavedPlanExecutionRequest, CanonicalPlan, CanonicalRunReport
 ]:
@@ -1021,6 +1005,43 @@ def _device_binding(device: dict[str, object]) -> str:
     return "sha256:" + hashlib.sha256(canonical_document_bytes(device)).hexdigest()
 
 
+def _canonical_plan(value: dict[str, object]) -> bytes:
+    semantic = {
+        key: item
+        for key, item in value.items()
+        if key
+        not in {
+            "plan_id",
+            "created_at",
+            "expires_at",
+            "full_digest",
+            "semantic_digest",
+        }
+    }
+    producer = dict(cast(dict[str, object], semantic["producer"]))
+    producer.pop("version")
+    semantic["producer"] = producer
+    value["semantic_digest"] = (
+        "sha256:" + hashlib.sha256(canonical_document_bytes(semantic)).hexdigest()
+    )
+    without_full = dict(value)
+    without_full.pop("full_digest")
+    value["full_digest"] = (
+        "sha256:" + hashlib.sha256(canonical_document_bytes(without_full)).hexdigest()
+    )
+    return canonical_document_bytes(value)
+
+
+def _canonical_run(value: dict[str, object]) -> bytes:
+    without_current = dict(value)
+    without_current.pop("current_digest")
+    value["current_digest"] = (
+        "sha256:"
+        + hashlib.sha256(canonical_document_bytes(without_current)).hexdigest()
+    )
+    return canonical_document_bytes(value)
+
+
 def _saved_multi_plan_request() -> tuple[
     SavedPlanExecutionRequest, CanonicalPlan, CanonicalRunReport
 ]:
@@ -1049,6 +1070,79 @@ def _saved_multi_plan_request() -> tuple[
                 ),
             ),
             "2026-09-19T08:01:00Z",
+        ),
+        plan,
+        planning_run,
+    )
+
+
+def _saved_plan_with_unchanged_resources() -> tuple[
+    SavedPlanExecutionRequest, CanonicalPlan, CanonicalRunReport
+]:
+    plan_value = decode_json_object(
+        (FIXTURES / "plan-actionable-multi.json").read_bytes()
+    )
+    resources = cast(list[dict[str, object]], plan_value["resources"])
+    evidence = cast(list[dict[str, object]], plan_value["evidence"])
+    alpha = deepcopy(resources[0])
+    beta = deepcopy(resources[1])
+    alpha_evidence = deepcopy(evidence[0])
+
+    def renamed(value: dict[str, object], suffix: str) -> dict[str, object]:
+        content = (
+            canonical_document_bytes(value)
+            .decode()
+            .replace("skin.playlist.alpha", f"skin.playlist.{suffix}")
+        )
+        return decode_json_object(
+            content.replace("Alpha.xsp", f"{suffix.title()}.xsp").encode()
+        )
+
+    independent = renamed(alpha, "independent")
+    independent["changes"] = []
+    independent["desired_relation"] = "satisfied"
+    independent["requires"] = []
+    bridge = renamed(alpha, "bridge")
+    bridge["changes"] = []
+    bridge["desired_relation"] = "satisfied"
+    bridge["requires"] = ["skin.playlist.alpha"]
+    beta["requires"] = ["skin.playlist.bridge"]
+    resources[:] = [alpha, independent, bridge, beta]
+    evidence[:] = [
+        alpha_evidence,
+        renamed(alpha_evidence, "independent"),
+        renamed(alpha_evidence, "bridge"),
+        evidence[1],
+    ]
+    plan = decode_plan(_canonical_plan(plan_value))
+
+    run_value = decode_json_object(
+        (FIXTURES / "run-awaiting-approval-multi.json").read_bytes()
+    )
+    results = cast(list[dict[str, object]], run_value["resource_results"])
+    alpha_result = deepcopy(results[0])
+    independent_result = deepcopy(alpha_result)
+    independent_result["resource_id"] = "skin.playlist.independent"
+    independent_result["latest_observed_relation"] = "satisfied"
+    independent_result["mutation_outcome"] = "not_required"
+    independent_result["verification_outcome"] = "fresh_match"
+    independent_result["final_convergence"] = "converged"
+    bridge_result = deepcopy(alpha_result)
+    bridge_result["resource_id"] = "skin.playlist.bridge"
+    bridge_result["latest_observed_relation"] = "satisfied"
+    bridge_result["mutation_outcome"] = "not_required"
+    bridge_result["verification_outcome"] = "fresh_match"
+    bridge_result["final_convergence"] = "converged"
+    results[:] = [alpha_result, independent_result, bridge_result, results[1]]
+    plan_reference = cast(dict[str, object], run_value["plan_reference"])
+    plan_reference["plan_full_digest"] = plan.full_digest
+    planning_run = decode_run_report(_canonical_run(run_value), plan)
+    request, _, _ = _saved_multi_plan_request()
+    return (
+        replace(
+            request,
+            plan_id=PlanId(plan.plan_id),
+            originating_run_id=RunId(planning_run.run_id),
         ),
         plan,
         planning_run,
@@ -1099,31 +1193,35 @@ def test_saved_plan_approval_creates_bound_run_and_only_encoded_changes(
     run_authority = cast(dict[str, object], run["authority"])
     assert run_authority["binding_digest"] == _device_binding(device)
     assert run_authority["boot_id"] == "boot.opaque"
+    assert run["started_at"] == "2026-09-19T08:02:00Z"
     assert device_authority.calls == 2
     approved.services.close()
 
 
-def test_saved_plan_v2_preserves_dependency_graph_from_canonical_bytes(
+def test_saved_plan_projects_unchanged_resources_for_execution_and_restart(
     tmp_path: Path,
 ) -> None:
-    request, plan, planning_run = _saved_multi_plan_request()
+    request, plan, planning_run = _saved_plan_with_unchanged_resources()
     device = cast(dict[str, object], request.expected_device)
     registry = _registry()
     store = RunStore(tmp_path / "runs", resource_registry=registry)
     plans = PlanStore(tmp_path / "plans")
     plans.save(plan, planning_run)
     authority = _AcquiringAuthority(store)
+    resource_types = {
+        "skin.playlist.alpha": "KodiSmartPlaylist",
+        "skin.playlist.independent": "KodiSmartPlaylist",
+        "skin.playlist.bridge": "KodiSmartPlaylist",
+        "skin.playlist.beta": "KodiSmartPlaylist",
+    }
     factory = ProductionExecutionFactory(
         plans,
         store,
         registry,
-        {
-            "skin.playlist.alpha": "KodiSmartPlaylist",
-            "skin.playlist.beta": "KodiSmartPlaylist",
-        },
+        resource_types,
         cast(
             ResourceContextProviderFactory,
-            _Contexts(binding_digest=_device_binding(device)),
+            _PlanContexts(binding_digest=_device_binding(device)),
         ),
         cast(RecoveryEnvironment, _Inspections()),
         _DeviceAuthority(device),
@@ -1132,16 +1230,67 @@ def test_saved_plan_v2_preserves_dependency_graph_from_canonical_bytes(
         cast(RunClock, _Clock()),
     )
 
-    prepared = factory.approve_saved_plan(request)
+    approved = factory.approve_saved_plan(request)
 
     assert [
         (change.resource_id, change.requires)
-        for change in prepared.approved_plan.changes
+        for change in approved.approved_plan.changes
     ] == [
         ("skin.playlist.alpha", ()),
         ("skin.playlist.beta", ("skin.playlist.alpha",)),
     ]
-    prepared.services.close()
+    initial = decode_json_object(
+        store.load_chain(request.execution_run_id).head.payload
+    )
+    results = {
+        cast(str, result["resource_id"]): result
+        for result in cast(list[dict[str, object]], initial["resource_results"])
+    }
+    for resource_id in (
+        "skin.playlist.independent",
+        "skin.playlist.bridge",
+    ):
+        assert results[resource_id]["mutation_outcome"] == "not_required"
+        assert results[resource_id]["verification_outcome"] == "fresh_match"
+        assert results[resource_id]["final_convergence"] == "converged"
+    approved.services.persistence.start(approved.approved_plan)
+    for change in approved.approved_plan.changes:
+        prepared = _prepared(
+            approved.services.persistence,
+            change.resource_id,
+            filename=(
+                "Alpha.xsp"
+                if change.resource_id == "skin.playlist.alpha"
+                else "Beta.xsp"
+            ),
+            change_id=f"change.{change.resource_id}.update",
+            binding_digest=_device_binding(device),
+        )
+        approved.services.persistence.prepared(
+            request.execution_run_id,
+            change.resource_id,
+            prepared,
+        )
+    approved.services.close()
+
+    restarted = factory.bind(request.execution_run_id)
+    resources = restarted.persistence.resources(request.execution_run_id)
+    assert [resource.resource_id for resource in resources] == [
+        "skin.playlist.alpha",
+        "skin.playlist.beta",
+    ]
+    rollback_events: list[str] = []
+    _Runtime.rollback_events = rollback_events
+    try:
+        for resource in reversed(resources):
+            resource.rollback()
+    finally:
+        _Runtime.rollback_events = None
+    assert rollback_events == [
+        "skin.playlist.beta",
+        "skin.playlist.alpha",
+    ]
+    restarted.close()
 
 
 @pytest.mark.parametrize(
@@ -1160,14 +1309,14 @@ def test_saved_plan_v2_preserves_dependency_graph_from_canonical_bytes(
         "input_aggregate",
         "origin",
         "not_yet_valid",
-        "expiry",
+        "caller_backdated_after_expiry",
         "approval_missing",
         "approval_extra",
         "approval_duplicate",
         "approval_actor",
         "approval_mechanism",
         "approval_before_plan",
-        "approval_after_request",
+        "approval_after_trusted_time",
     ),
 )
 def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
@@ -1175,6 +1324,7 @@ def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
     mismatch: str,
 ) -> None:
     request, plan, planning_run = _saved_plan_request()
+    clock = _Clock()
     if mismatch.startswith("device_"):
         device = deepcopy(dict(request.expected_device))
         endpoint = cast(dict[str, object], device["endpoint"])
@@ -1209,10 +1359,11 @@ def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
             request,
             originating_run_id=RunId("019950f8-4c00-7000-8000-000000000699"),
         )
-    elif mismatch == "expiry":
-        request = replace(request, now="2030-01-01T00:00:00Z")
+    elif mismatch == "caller_backdated_after_expiry":
+        request = replace(request, now="2026-09-19T08:01:00Z")
+        clock = _Clock("2030-01-01T00:00:00Z")
     elif mismatch == "not_yet_valid":
-        request = replace(request, now="2026-09-19T08:00:59Z")
+        clock = _Clock("2026-09-19T08:00:59Z")
     elif mismatch == "approval_missing":
         request = replace(request, approval_grants=())
     elif mismatch == "approval_extra":
@@ -1242,7 +1393,9 @@ def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
             "approval_actor": replace(grant, actor=""),
             "approval_mechanism": replace(grant, mechanism=""),
             "approval_before_plan": replace(grant, granted_at="2026-09-19T08:00:59Z"),
-            "approval_after_request": replace(grant, granted_at="2026-09-19T08:01:01Z"),
+            "approval_after_trusted_time": replace(
+                grant, granted_at="2026-09-19T08:02:01Z"
+            ),
         }
         request = replace(request, approval_grants=(replacements[mismatch],))
     registry = _registry()
@@ -1264,7 +1417,7 @@ def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
         _DeviceAuthority(device),
         cast(AuthorityCoordinator, authority),
         cast(RemoteOwnershipReader, object()),
-        cast(RunClock, _Clock()),
+        cast(RunClock, clock),
     )
 
     with pytest.raises(ValueError):

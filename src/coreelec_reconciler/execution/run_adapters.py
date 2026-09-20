@@ -1304,6 +1304,14 @@ class RunStoreExecutionPersistence:
             lifecycle.append(status.value)
         value["lifecycle_history"] = lifecycle
         value["status"] = status.value
+        if status is RunStatus.FAILED_ROLLED_BACK:
+            for result in _list(value, "resource_results"):
+                if (
+                    isinstance(result, dict)
+                    and result.get("mutation_outcome") == "not_required"
+                    and result.get("final_convergence") == "converged"
+                ):
+                    result["rollback_outcome"] = "restored_or_unchanged"
         terminal = status in {
             RunStatus.CONVERGED,
             RunStatus.FAILED_ROLLED_BACK,

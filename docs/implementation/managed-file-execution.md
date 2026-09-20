@@ -80,16 +80,21 @@ substitute unrelated hand-built Changes.
 
 Plan schema v2 owns the Resource dependency graph. Composition reconstructs
 and validates that graph from the immutable saved canonical Plan bytes, uses
-its deterministic execution order, and binds each executable Change to its
-encoded prerequisites. Restart loads the same saved graph rather than current
-configuration, so a changed configuration cannot alter dependent skipping or
-reverse-dependency rollback order.
+its deterministic execution order, and projects it onto only Resources with
+encoded Changes. Unchanged Resources are satisfied dependency barriers:
+dependencies through them collapse to the nearest executable prerequisites.
+Independent unchanged Resources require no preparation. Restart loads and
+projects the same saved graph rather than current configuration, so a changed
+configuration cannot alter dependent skipping or reverse-dependency rollback
+order.
 
 The Device authority probe supplies fresh boot, platform, and pinned host-key
 identity. Composition performs two equal observations, derives the binding
 digest from the canonical accepted Device object, and requires every observed
 and Resource-context identity to match before remote authority acquisition.
-Callers cannot assert a binding digest or boot identity.
+Callers cannot assert a binding digest or boot identity. Plan validity and
+approval-grant timestamps are checked against the injected trusted Run clock;
+the request timestamp has no authority over execution time.
 
 `RunStoreExecutionPersistence` is the concrete `ExecutionJournal`,
 `RecoveryPersistence`, and bound `AttachmentStore` adapter. Preparation

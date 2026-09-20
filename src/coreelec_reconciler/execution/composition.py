@@ -272,16 +272,15 @@ class ProductionExecutionFactory:
         except RunStoreError:
             identity = self._run_store.load_identity(run_id)
         saved = self.load_plan(PlanId(_required_text(identity, "plan_id")))
-        graph = reconstruct_plan_dependency_graph(
-            saved.plan.canonical_bytes,
-            resource_registry=self._registry,
-        )
+        graph = _saved_plan_execution_graph(saved.plan, self._registry)
         return self._bind(run_id, dependency_graph=graph)
 
     def approve_saved_plan(
         self,
         request: SavedPlanExecutionRequest,
     ) -> PreparedExecution:
+        trusted_now = self._clock.utc_now()
+        trusted_instant = _timestamp(trusted_now)
         saved = self.load_plan(request.plan_id)
         value = decode_json_object(saved.plan.canonical_bytes)
         if saved.device_id != request.device_id:
@@ -308,14 +307,12 @@ class ProductionExecutionFactory:
         ):
             raise ValueError("observed Device authority identity changed")
         expires_at = value.get("expires_at")
-        if not isinstance(expires_at, str) or _timestamp(request.now) > _timestamp(
-            expires_at
-        ):
+        if not isinstance(expires_at, str) or trusted_instant > _timestamp(expires_at):
             raise ValueError("saved Plan expired")
         valid_from = value.get("valid_from")
         if not isinstance(valid_from, str):
             raise ValueError("saved Plan validity boundary is invalid")
-        if _timestamp(request.now) < _timestamp(valid_from):
+        if trusted_instant < _timestamp(valid_from):
             raise ValueError("saved Plan is not yet valid")
         if len({grant.scope for grant in request.approval_grants}) != len(
             request.approval_grants
@@ -325,9 +322,7 @@ class ProductionExecutionFactory:
             if not grant.scope or not grant.actor or not grant.mechanism:
                 raise ValueError("approval grant identity is incomplete")
             granted_at = _timestamp(grant.granted_at)
-            if granted_at < _timestamp(valid_from) or granted_at > _timestamp(
-                request.now
-            ):
+            if granted_at < _timestamp(valid_from) or granted_at > trusted_instant:
                 raise ValueError("approval grant time is outside Plan validity")
         grants = {grant.scope: grant for grant in request.approval_grants}
         missing = set(saved.approval_scopes) - set(grants)
@@ -339,10 +334,7 @@ class ProductionExecutionFactory:
         ):
             raise ValueError("approval grant is not required by saved Plan")
         resources = _objects(value, "resources")
-        dependency_graph = reconstruct_plan_dependency_graph(
-            saved.plan.canonical_bytes,
-            resource_registry=self._registry,
-        )
+        dependency_graph = _saved_plan_execution_graph(saved.plan, self._registry)
         resources_by_id = {
             _required_text(resource, "resource_id"): resource for resource in resources
         }
@@ -395,6 +387,7 @@ class ProductionExecutionFactory:
                     token_digest,
                     binding_digest,
                     observed_device.boot_id,
+                    trusted_now,
                     resources,
                 ),
                 self._registry,
@@ -415,7 +408,7 @@ class ProductionExecutionFactory:
                     binding_digest,
                     observed_device.boot_id,
                 ),
-                request.now,
+                trusted_now,
             )
         )
         services = self._bind(
@@ -494,6 +487,7 @@ def _initial_execution_run(
     token_digest: str,
     binding_digest: str,
     boot_id: str,
+    started_at: str,
     resources: list[dict[str, object]],
 ) -> dict[str, object]:
     return {
@@ -560,25 +554,12 @@ def _initial_execution_run(
             "workspace_id": f"workspace:{request.execution_run_id.value}",
         },
         "resource_results": [
-            {
-                "decisive_attempt_id": None,
-                "desired_disposition": _desired_disposition(resource),
-                "final_convergence": "pending",
-                "latest_observed_relation": _required_text(
-                    resource, "desired_relation"
-                ),
-                "mutation_outcome": "pending",
-                "post_effect_verification": "not_applicable",
-                "resource_id": _required_text(resource, "resource_id"),
-                "rollback_outcome": "not_attempted",
-                "verification_outcome": "not_started",
-            }
-            for resource in resources
+            _initial_resource_result(resource) for resource in resources
         ],
         "revision": 1,
         "run_id": request.execution_run_id.value,
         "schema_version": 1,
-        "started_at": request.now,
+        "started_at": started_at,
         "status": "ready",
     }
 
@@ -620,6 +601,80 @@ def _desired_disposition(resource: Mapping[str, object]) -> str:
 
 def _device_binding_digest(device: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(canonical_document_bytes(device)).hexdigest()
+
+
+def _executable_dependency_graph(
+    graph: PlanDependencyGraph,
+    executable_resource_ids: tuple[str, ...],
+) -> PlanDependencyGraph:
+    executable = set(executable_resource_ids)
+    if not executable <= set(graph.execution_order):
+        raise ValueError("executable Resources are absent from saved Plan graph")
+
+    def executable_requirements(resource_id: str) -> set[str]:
+        requirements: set[str] = set()
+        pending = list(graph.requires(resource_id))
+        while pending:
+            requirement = pending.pop()
+            if requirement in executable:
+                requirements.add(requirement)
+            else:
+                pending.extend(graph.requires(requirement))
+        return requirements
+
+    order = tuple(
+        resource_id
+        for resource_id in graph.execution_order
+        if resource_id in executable
+    )
+    return PlanDependencyGraph(
+        tuple(
+            (
+                resource_id,
+                tuple(
+                    candidate
+                    for candidate in order
+                    if candidate in executable_requirements(resource_id)
+                ),
+            )
+            for resource_id in order
+        )
+    )
+
+
+def _saved_plan_execution_graph(
+    plan: CanonicalPlan,
+    registry: ResourceRegistry,
+) -> PlanDependencyGraph:
+    value = decode_json_object(plan.canonical_bytes)
+    resources = _objects(value, "resources")
+    complete = reconstruct_plan_dependency_graph(
+        plan.canonical_bytes,
+        resource_registry=registry,
+    )
+    return _executable_dependency_graph(
+        complete,
+        tuple(
+            _required_text(resource, "resource_id")
+            for resource in resources
+            if _objects(resource, "changes")
+        ),
+    )
+
+
+def _initial_resource_result(resource: Mapping[str, object]) -> dict[str, object]:
+    unchanged = not _objects(resource, "changes")
+    return {
+        "decisive_attempt_id": None,
+        "desired_disposition": _desired_disposition(resource),
+        "final_convergence": "converged" if unchanged else "pending",
+        "latest_observed_relation": _required_text(resource, "desired_relation"),
+        "mutation_outcome": "not_required" if unchanged else "pending",
+        "post_effect_verification": "not_applicable",
+        "resource_id": _required_text(resource, "resource_id"),
+        "rollback_outcome": "not_attempted",
+        "verification_outcome": "fresh_match" if unchanged else "not_started",
+    }
 
 
 def _timestamp(value: str) -> datetime:
