@@ -27,7 +27,7 @@ def test_apply_creates_the_playlist_on_a_fresh_device(
     assert device.playlist.stat().st_mode & 0o777 == 0o644
     out = capsys.readouterr().out
     assert "create" in out
-    assert "applied 1 change" in out
+    assert "applied 2 changes" in out
     assert "converged" in out
 
 
@@ -76,7 +76,7 @@ def test_plan_reports_the_diff_and_changes_nothing(
     out = capsys.readouterr().out
     assert "create" in out
     assert "+    <name>New Shows</name>" in out
-    assert "1 change" in out
+    assert "plan: 2 changes" in out
 
 
 def test_plan_on_a_converged_device_reports_no_changes(

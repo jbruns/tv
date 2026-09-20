@@ -9,7 +9,7 @@ integrations.
 
 - [Shared room setup runbook](docs/runbook.md)
 - [Python development](docs/development.md)
-- [Reconciling theater Smart Playlists](docs/operations/reconcile-theater-playlists.md)
+- [Reconciling the theater Ugoos](docs/operations/reconcile-theater.md)
 - [Shell write-set map and permission guard](docs/reference/shell-write-set-map.md)
 - [Legacy shell write-set permissions](docs/operations/shell-write-set-permissions.md)
 - [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)

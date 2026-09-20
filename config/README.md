@@ -11,7 +11,7 @@ config/rooms/theater/room.yaml                             Room Overlay
 
 Neither reader looks at the other's files. The Reconciler's surface is
 documented in
-[reconciling theater Smart Playlists](../docs/operations/reconcile-theater-playlists.md).
+[reconciling the theater Ugoos](../docs/operations/reconcile-theater.md).
 
 ## Shell configuration
 

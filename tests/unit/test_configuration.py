@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import PROFILE, ROOM, FakeDevice
+from .conftest import ROOM, FakeDevice
 
 
 def test_an_unknown_room_is_named(
@@ -67,9 +67,7 @@ def test_a_playlist_file_name_with_a_directory_is_rejected(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     device.write_profile(
-        PROFILE.format(directory=device.playlists_dir, identity="/dev/null").replace(
-            "file: NewShows.xsp", "file: ../NewShows.xsp"
-        )
+        device.profile_body().replace("file: NewShows.xsp", "file: ../NewShows.xsp")
     )
 
     assert reconcile("apply", "--room", "theater") == 1

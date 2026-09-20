@@ -107,3 +107,11 @@ class Device:
             f" mv {shlex.quote(staged)} {shlex.quote(path)}",
             stdin=content,
         )
+
+    def stop_service(self, unit: str) -> None:
+        """Takes a service Effect. The Run takes it once, not once per Change."""
+
+        self._checked(f"stopping {unit}", f"systemctl stop {shlex.quote(unit)}")
+
+    def start_service(self, unit: str) -> None:
+        self._checked(f"starting {unit}", f"systemctl start {shlex.quote(unit)}")
