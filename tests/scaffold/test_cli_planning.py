@@ -37,7 +37,7 @@ def test_plan_cli_emits_canonical_json_plus_exactly_one_newline(
     )
 
     assert result.returncode == 0
-    assert result.stderr == b""
+    assert result.stderr == b"status: noop\n"
     assert result.stdout.endswith(b"}\n")
     assert not result.stdout.endswith(b"}\n\n")
     assert b'"kind":"CoreElecReconcilerPlan"' in result.stdout
@@ -62,9 +62,9 @@ def test_validate_cli_accepts_the_same_offline_observation(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0
-    assert result.stdout.startswith(b"inventory ledger valid:")
-    assert result.stdout.endswith(b"\n")
-    assert result.stderr == b""
+    assert result.stdout == b""
+    assert result.stderr.startswith(b"inventory ledger valid:")
+    assert result.stderr.endswith(b"\n")
 
 
 def test_plan_cli_can_emit_the_nonmutating_run_report(tmp_path: Path) -> None:
@@ -83,7 +83,7 @@ def test_plan_cli_can_emit_the_nonmutating_run_report(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert result.stderr == b""
+    assert result.stderr == b"status: noop\n"
     assert result.stdout.endswith(b"}\n")
     assert b'"kind":"CoreElecReconcilerRunReport"' in result.stdout
 
@@ -102,6 +102,6 @@ def test_blocked_plan_cli_emits_document_and_returns_three(tmp_path: Path) -> No
     )
 
     assert result.returncode == 3
-    assert result.stderr == b""
+    assert result.stderr == b"status: blocked\n"
     assert result.stdout.endswith(b"}\n")
     assert b'"disposition":"blocked"' in result.stdout
