@@ -1100,16 +1100,14 @@ def main(argv):
         ("dateadded", "descending"), limit=25)
 
     write_smart_playlist(
-        os.path.join(playlists_dir, "NewShows.xsp"),
-        "New Shows", "tvshows",
-        [("playcount", "is", "0")],
-        ("dateadded", "descending"))
-
-    write_smart_playlist(
         os.path.join(playlists_dir, "NewMovies.xsp"),
         "New Movies", "movies",
         [("playcount", "is", "0")],
         ("dateadded", "descending"))
+
+    # NewShows.xsp is deliberately absent: the Reconciler owns it. The home and
+    # TV menu entries still point at it, so a device provisioned by this script
+    # alone shows an empty "New Shows" menu until `reconcile apply` runs.
 
     # --- CoreELEC timezone cache -------------------------------------------
     # Kodi's CoreELEC patch writes this file when the timezone changes through
@@ -1197,7 +1195,6 @@ SERVICE_SETTINGS_PATHS
 .kodi/userdata/playlists/video/RecentlyReleasedMoviesCurrentAndPreviousYear.xsp
 .kodi/userdata/playlists/video/TraktPopularTVShows.xsp
 .kodi/userdata/playlists/video/TraktWeekendBoxOffice.xsp
-.kodi/userdata/playlists/video/NewShows.xsp
 .kodi/userdata/playlists/video/NewMovies.xsp
 SKIN_SETTINGS_PATHS
   fi
@@ -3537,12 +3534,6 @@ def main(argv):
                       ("year", "lessthan", str(datetime.date.today().year + 1))],
             "order": ("year", "descending"),
         },
-        "NewShows": {
-            "type": "tvshows", "name": "New Shows", "match": "all",
-            "limit": "50",
-            "rules": [("playcount", "is", "0")],
-            "order": ("dateadded", "descending"),
-        },
         "NewMovies": {
             "type": "movies", "name": "New Movies", "match": "all",
             "limit": "50",
@@ -5138,7 +5129,7 @@ verify_remote_baseline() {
 
   for playlist_name in InProgressMovies90Days InProgressShows90Days \
     RecentlyAiredEpisodes30Days TraktPopularTVShows TraktWeekendBoxOffice \
-    RecentlyReleasedMoviesCurrentAndPreviousYear NewShows NewMovies; do
+    RecentlyReleasedMoviesCurrentAndPreviousYear NewMovies; do
     coreelec_verify_boolean_observation "${observations}" \
       "arctic_fuse.playlist.${playlist_name}.configured" \
       "arctic_fuse.playlist.${playlist_name}" \

@@ -2721,20 +2721,14 @@
       "id": "SKIN-025",
       "state_address": "NewShows.xsp",
       "role": "resource",
-      "current_owner_or_executor": "shell",
+      "current_owner_or_executor": "python",
       "shell_write_set": {
-        "status": "audited",
-        "items": [
-          "special://profile/playlists/video/NewShows.xsp"
-        ]
+        "status": "retired",
+        "items": []
       },
       "permitted_effects": {
-        "status": "audited",
-        "items": [
-          "EFFECT-001",
-          "EFFECT-002",
-          "EFFECT-004"
-        ]
+        "status": "retired",
+        "items": []
       }
     },
     {

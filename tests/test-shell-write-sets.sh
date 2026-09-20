@@ -26,18 +26,21 @@ test_addons_scope_reports_indirect_skin_effect_without_new_shows() {
   assert_contains "${output}" "effect_ids=EFFECT-001,EFFECT-002,EFFECT-004"
 }
 
-test_skin_handoff_is_rejected_before_device_contact() {
+test_python_owned_id_in_a_shell_write_set_is_rejected_before_device_contact() {
   local scratch ledger output status
   scratch="$(make_scratch_dir)"
   ledger="${scratch}/ledger.json"
   trap 'rm -rf -- "${scratch}"' RETURN
+  # SKIN-024 stands in for any address a future slice hands to the Reconciler
+  # before the shell stops writing it. SKIN-025 cannot play this part any more:
+  # it has completed the handoff and left the shell write set entirely.
   python3 - "${ROOT}/inventory/ownership-ledger.json" "${ledger}" <<'PY'
 import json
 import sys
 
 source, destination = sys.argv[1:]
 document = json.load(open(source, encoding="utf-8"))
-row = next(row for row in document["rows"] if row["id"] == "SKIN-025")
+row = next(row for row in document["rows"] if row["id"] == "SKIN-024")
 row["current_owner_or_executor"] = "python"
 with open(destination, "w", encoding="utf-8") as handle:
     json.dump(document, handle)
@@ -56,7 +59,25 @@ PY
 
   assert_failure "${status}"
   assert_contains "${output}" "permission=blocked"
-  assert_contains "${output}" "blocked_inventory_ids=SKIN-025"
+  assert_contains "${output}" "blocked_inventory_ids=SKIN-024"
+}
+
+test_new_shows_has_left_the_shell_write_set() {
+  local output
+  # The handoff is complete, so the Recovery Baseline still runs; it simply no
+  # longer reaches the address. A regression here means either the shell writes
+  # NewShows.xsp again, or skin runs have started failing closed.
+  output="$(python3 "${CHECKER}" \
+    --entry-point provision-coreelec.sh \
+    --operation deploy \
+    --scope skin \
+    --addon script.plexmod \
+    --no-harden-ssh)"
+
+  assert_contains "${output}" "permission=allowed"
+  assert_contains "${output}" "SKIN-024"
+  assert_contains "${output}" "SKIN-026"
+  assert_not_contains "${output}" "SKIN-025"
 }
 
 test_dynamic_recovery_scope_fails_closed() {
@@ -124,7 +145,8 @@ SH
 
 run_all_tests \
   test_addons_scope_reports_indirect_skin_effect_without_new_shows \
-  test_skin_handoff_is_rejected_before_device_contact \
+  test_python_owned_id_in_a_shell_write_set_is_rejected_before_device_contact \
+  test_new_shows_has_left_the_shell_write_set \
   test_dynamic_recovery_scope_fails_closed \
   test_provision_entry_point_uses_the_audited_effective_write_set \
   test_interactive_addon_unknown_is_denied_before_device_contact

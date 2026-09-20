@@ -116,17 +116,21 @@ by `apply` again.
 
 ## Ownership
 
-`inventory/ownership-ledger.json` still records `SKIN-025`
-(`special://profile/playlists/video/NewShows.xsp`) as shell-owned, and the
-shell still writes it during a `skin` or `baseline` run. That is deliberate
-for now: transferring the row freezes those shell runs
-([the write-set permission freeze](shell-write-set-permissions.md)), which
-would remove the Recovery Baseline this slice depends on.
+`NewShows.xsp` has exactly one writer. `inventory/ownership-ledger.json`
+records `SKIN-025` as Python-owned, and `provision-coreelec.sh` no longer
+writes it, verifies it, or backs it up — see
+[the handoff](shell-write-set-permissions.md).
 
-The two declarations agree byte for byte — the Reconciler renders the same
-document the shell does — so a Device restored from the shell baseline
-converges with no Change. The Observation is the file's content only. The
-shell writes the file `0600` and the Reconciler writes it `0644`, so a file
-the shell last wrote keeps `0600`; on a single-user appliance where Kodi runs
-as root that difference is inert, and observing a mode portably costs more
-than the difference is worth.
+This matters because the shell is run ad hoc. Were both engines still writing
+the address, any `--component skin` run would silently revert whatever the
+Reconciler had converged, and nothing would report it.
+
+The practical consequence is that a shell baseline no longer leaves this
+playlist behind. The home and TV menus still link to it, so after a recovery
+run the "New Shows" entry is empty until `apply` runs. That is the intended
+shape of [retiring the shell by attrition](../adr/0010-retire-the-shell-by-attrition.md):
+the Recovery Baseline lags Desired State by exactly the addresses handed over.
+
+The Observation is the file's content only. Mode is not observed: the
+Reconciler writes `0644`, and on a single-user appliance where Kodi runs as
+root, observing a mode portably costs more than the difference is worth.

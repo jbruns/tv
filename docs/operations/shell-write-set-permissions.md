@@ -68,21 +68,25 @@ Finalize and inspect operations remain available because they do not restore
 managed Device state. Lifecycle rollback is exact: its transaction can only
 restore `LIFE-001` and `LIFE-002` and the temporary `LIFE-003` service state.
 
-## `NewShows.xsp` handoff freeze
+## `NewShows.xsp`: the first completed handoff
 
-`SKIN-025` is
-`special://profile/playlists/video/NewShows.xsp`. The legacy transformer writes
-it through `write_xml_atomic(..., mode=0o600)` and does not verify its mode.
-The accepted Python Resource requires `0644`. Equal XML semantics therefore
-do not make shell resumption safe.
+`SKIN-025` is `special://profile/playlists/video/NewShows.xsp`, and it is
+Python-owned. It is the worked example of
+[retiring the shell by attrition](../adr/0010-retire-the-shell-by-attrition.md).
 
-After the ownership ledger transfers `SKIN-025` to Python or marks its shell
-write set frozen, every operation whose audited effective IDs contain
-`SKIN-025` is rejected before Device contact. Today that includes `skin` and
-`baseline`; the decision follows the audited write set, not those names.
-Cross-component `addons` execution remains allowed only while its actual
-write set is disjoint from every Python-owned ID.
+The handoff was done in one direction, and the order is the whole point. The
+permission decision is per-operation, not per-ID: an operation is rejected when
+*any* ID it would reach is Python-owned or frozen. Transferring the ledger row
+while the shell still wrote the file would therefore have rejected every `skin`
+and `baseline` run, which is the Recovery Baseline. So the shell stopped
+writing the address first, `SKIN-025` left its write set, and only then did the
+ledger record Python as the owner. `skin` and `baseline` still run; they simply
+no longer produce that file.
 
-There is no shell ownership handback after the first successful pilot
-handoff. Any unknown target or newly discovered indirect write blocks the
-affected pilot operation until the audit and ledger are reviewed together.
+The cost is that the Recovery Baseline now lags Desired State by exactly this
+address. A device provisioned by `provision-coreelec.sh` alone has a "New Shows"
+menu entry pointing at a playlist that does not exist yet; `reconcile apply`
+creates it. That lag is expected to grow with each handoff.
+
+There is no handback. Any unknown target or newly discovered indirect write
+blocks the affected operation until the map and ledger are reviewed together.

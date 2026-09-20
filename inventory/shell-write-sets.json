@@ -189,16 +189,7 @@
     "/storage/.cache/kodi-lifecycle/**",
     "/storage/backup/kodi-lifecycle/**"
   ],
-  "known_conflicts": {
-    "SKIN-025": {
-      "state_address": "special://profile/playlists/video/NewShows.xsp",
-      "shell_physical_path": "/storage/.kodi/userdata/playlists/video/NewShows.xsp",
-      "shell_mode": "0600",
-      "python_mode": "0644",
-      "shell_verifies_mode": false,
-      "permission_rule": "Any operation whose audited inventory IDs include SKIN-025 is rejected once the ledger owner is python or the row is frozen."
-    }
-  },
+  "known_conflicts": {},
   "unknowns": [
     {
       "id": "addon-owned-state-mutated-by-guided-GUI-workflow",
@@ -328,7 +319,6 @@
       "SKIN-022",
       "SKIN-023",
       "SKIN-024",
-      "SKIN-025",
       "SKIN-026",
       "SKIN-027",
       "SKIN-028",
@@ -747,9 +737,6 @@
     "SKIN-024": [
       "special://profile/playlists/video/TraktWeekendBoxOffice.xsp"
     ],
-    "SKIN-025": [
-      "special://profile/playlists/video/NewShows.xsp"
-    ],
     "SKIN-026": [
       "special://profile/playlists/video/NewMovies.xsp"
     ],
@@ -939,7 +926,6 @@
             "SKIN-022",
             "SKIN-023",
             "SKIN-024",
-            "SKIN-025",
             "SKIN-026",
             "SKIN-027",
             "SKIN-028"
@@ -1190,9 +1176,6 @@
         ],
         "SKIN-024": [
           "special://profile/playlists/video/TraktWeekendBoxOffice.xsp"
-        ],
-        "SKIN-025": [
-          "special://profile/playlists/video/NewShows.xsp"
         ],
         "SKIN-026": [
           "special://profile/playlists/video/NewMovies.xsp"

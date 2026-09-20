@@ -22,7 +22,7 @@ directory swaps, add-on enablement, shared-document writes, dynamic CEC
 discovery, `BuildSkinViews` output, lifecycle gateway files, service Effects,
 bootstrap state, rollback/finalize paths, and shell Run Infrastructure.
 
-Coverage is 146 shell-actor rows: 135 Device writes or indirect writes, 5
+Coverage is 145 shell-actor rows: 134 Device writes or indirect writes, 5
 Effects, and 6 read-only Guards or inventory observations. The remaining ledger
 rows are not shell-actor rows. `python3 scripts/check_shell_permissions.py
 --audit` prints the live counts and the map digest.
@@ -36,7 +36,8 @@ rows are not shell-actor rows. `python3 scripts/check_shell_permissions.py
   report-only `ADDON-003`, indirect outputs `SKIN-017`–`SKIN-018`,
   and `EFFECT-001`, `EFFECT-002`, and `EFFECT-004`.
 - `services`: `addons` plus `SVC-001`–`SVC-017`.
-- `skin`: `core`, `addons`, and `SKIN-001`–`SKIN-028`.
+- `skin`: `core`, `addons`, and `SKIN-001`–`SKIN-028` except `SKIN-025`, which
+  is Python-owned.
 - `room`: `core` plus `ROOM-001`–`ROOM-011`.
 - `baseline`: `core`, `cec`, `addons`, `services`, and `skin`.
 - optional SSH hardening: `SSH-003` and `EFFECT-003`.
@@ -69,26 +70,23 @@ Both operations now fail closed. No target was guessed. They remain residual
 pilot blockers until a separately reviewed exact scope/evidence mechanism
 exists.
 
-## `NewShows.xsp`: the first contested address
+## `NewShows.xsp`: the first completed handoff
 
-`SKIN-025` maps to `special://profile/playlists/video/NewShows.xsp`. Both
-engines write it: the shell through its smart-playlist transformer, and the
-Reconciler as its first working slice. That is a violation of
-[ADR 0009](../adr/0009-fail-forward-and-exclusive-execution-ownership.md), and it is resolved by
-attrition rather than by arbitration: the shell stops writing the address, and
-only then does the ledger hand it to Python.
+`SKIN-025` is `special://profile/playlists/video/NewShows.xsp`. It is
+Python-owned, and it is the only address that has left the shell so far.
 
-The ordering matters because the guard is component-level and all-or-nothing.
-`evaluate_shell_permission` refuses an operation when *any* ID it would reach
-is Python-owned or frozen. Flipping `SKIN-025` to `python` while the shell
-still writes it would therefore block every `--component skin` run, not just
-the one write. The permission test proves the reach: both `skin` and `baseline`
-reach `SKIN-025`, while an `addons`-only run reaches the indirect skin outputs
-`SKIN-017`-`SKIN-018` but not `SKIN-025`.
+The ordering is the instructive part, because the permission decision is
+per-operation and all-or-nothing: `evaluate_shell_permission` rejects an
+operation when *any* ID it would reach is Python-owned or frozen. Flipping the
+ledger row while the shell still wrote the file would therefore have rejected
+every `skin` and `baseline` run, removing the Recovery Baseline. The shell
+stopped writing the address first — the writer, the report expectation, and the
+backup manifest entry all went — `SKIN-025` then left the `skin` write set, and
+only then did the ledger record the new owner. Shell coverage went 146 to 145.
 
-There is no ownership return. Once an address is Python-owned, the shell cannot
-take it back, and the Recovery Baseline deliberately lags Desired State by
-exactly the set of addresses that have been handed over. See
+The shell keeps the home and TV menu entries that point at the playlist. It
+owns the menu; it no longer owns the file the menu points at. There is no
+ownership return. See
 [ADR 0010](../adr/0010-retire-the-shell-by-attrition.md).
 
 ## Checking the map

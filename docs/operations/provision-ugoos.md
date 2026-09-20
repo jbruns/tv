@@ -13,12 +13,14 @@ For unique settings, use the selected room's Ugoos guide, such as the current
 Before any Device contact, the legacy entry points enforce the
 [audited shell write-set permissions](shell-write-set-permissions.md). The
 effective permission decision is based on accepted inventory IDs and Effects,
-not component names. After the `NewShows.xsp` handoff, `skin` and `baseline`
-runs are rejected because their audited writes include `SKIN-025`. Do not
-bypass that freeze. Interactive add-on workflows and provisioning rollback
-currently have untraceable dynamic targets and therefore fail closed; see the
-audit document for the retained pilot blockers and safe finalize/inspection
-operations.
+not component names. `skin` and `baseline` runs are permitted: `SKIN-025`
+(`NewShows.xsp`) left the shell write set when the Reconciler took the address
+over, so those runs no longer reach a Python-owned ID. What they no longer do
+is write `NewShows.xsp`; run `reconcile apply` after a baseline to restore it.
+Interactive add-on workflows and provisioning rollback have untraceable
+dynamic targets and therefore fail closed; see
+[the write-set map](../reference/shell-write-set-map.md) for the retained
+pilot blockers and the safe finalize and inspection operations.
 
 An invocation without `--component` applies the full shared baseline. This
 remains true for the legacy `--addon ID` form: it filters the locked artifact

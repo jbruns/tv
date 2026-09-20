@@ -66,7 +66,9 @@ EXPECTED_PRIMITIVE_CALL_PATHS: Final[dict[str, dict[str, JsonObject]]] = {
         "provision.cec-settings": _binding(_range("CEC", 1, 5)),
         "provision.services-settings": _binding(_range("SVC", 1, 17)),
         "provision.skin-settings": _binding(
-            _range("SKIN", 1, 16) + _range("SKIN", 19, 28)
+            # SKIN-025 (NewShows.xsp) is absent: the Reconciler owns it, and the
+            # shell no longer writes it. See docs/adr/0010.
+            _range("SKIN", 1, 16) + _range("SKIN", 19, 24) + _range("SKIN", 26, 28)
         ),
         "provision.room-settings": _binding(_range("ROOM", 1, 11)),
     },
