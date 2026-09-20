@@ -59,6 +59,7 @@ from coreelec_reconciler.domain.identifiers import (
     RunId,
     SelectorId,
 )
+from coreelec_reconciler.domain.observation import CanonicalObservationRun
 from coreelec_reconciler.domain.planning import (
     CanonicalPlan,
     CanonicalRunReport,
@@ -83,6 +84,13 @@ from coreelec_reconciler.execution.engine import (
     ExecutionEngine,
     ExecutionOutcome,
     RecoveryRequest,
+)
+from coreelec_reconciler.execution.observation import (
+    CanonicalObservationRuns,
+    ObservationInputDigests,
+    ObservationResource,
+    ObservationResourceContext,
+    ObservationRunRequest,
 )
 from coreelec_reconciler.execution.plan_store import PlanStore, PlanStoreError
 from coreelec_reconciler.execution.recovery import RecoveryInspection
@@ -221,10 +229,21 @@ class ProductionServices:
 
     def run_store(self) -> RunStore:
         from coreelec_reconciler.execution.run_store import RunStore
+        from coreelec_reconciler.persistence.observation_documents import (
+            observation_run_document_family,
+        )
+        from coreelec_reconciler.resource_types.builtins import (
+            built_in_resource_registry,
+        )
 
         if self._store is not None:
             return self._store
-        self._store = RunStore(self.state_root() / "runs")
+        registry = built_in_resource_registry()
+        self._store = RunStore(
+            self.state_root() / "runs",
+            resource_registry=registry,
+            document_families=(observation_run_document_family(registry),),
+        )
         return self._store
 
     def plan_store(self) -> PlanStore:
@@ -566,7 +585,7 @@ class _LifecycleFactory:
 
 def _durably_close_session(
     services: ProductionServices,
-    report: CanonicalRunReport,
+    report: CanonicalRunReport | CanonicalObservationRun,
     guidance: tuple[AllowedRecoveryAction, ...],
     session: DeviceSession,
     *,
@@ -800,16 +819,6 @@ class _ProductionApplicationData:
         self._plan_repository = plan_repository
         self._router = router
 
-    def observe(
-        self, command: ObserveCommand
-    ) -> ObservationOutcome | UnsupportedOutcome:
-        planned = self._plan_repository(
-            PlanCommand(command.repository_root, command.device_id)
-        )
-        if planned.run_report is None:
-            return _unavailable("observe", "production.observation-unavailable")
-        return ObservationOutcome(planned.run_report)
-
     def plan(self, command: PlanCommand) -> PlanOutcome:
         return self._plan_repository(command)
 
@@ -885,6 +894,18 @@ class _ProductionApplicationData:
 
         try:
             chain = self._services.run_store().load_chain(command.run_id)
+            value = decode_json_object(chain.head.payload)
+            if value.get("kind") == "CoreElecReconcilerObservationRun":
+                from coreelec_reconciler.resource_types.builtins import (
+                    built_in_resource_registry,
+                )
+
+                observed = CanonicalObservationRuns(
+                    self._services.run_store(),
+                    built_in_resource_registry(),
+                    self._services.runtime,
+                ).report(command.run_id)
+                return ReportOutcome(observed)
             return ReportOutcome(decode_execution_run_report(chain.head.payload))
         except FileNotFoundError, RunStoreError, ValueError:
             return _unavailable("report", "production.run-unavailable")
@@ -1319,6 +1340,120 @@ def _verify_configuration(
     )
 
 
+def _observation_input_digests(
+    services: ProductionServices,
+    configuration: ResolvedConfiguration,
+    session: _ProductionDeviceSession,
+) -> ObservationInputDigests:
+    from coreelec_reconciler.config.codecs import encode_resolved_configuration
+
+    configuration_bytes = encode_resolved_configuration(configuration)
+    capability = session.capabilities
+    identity = session.identity
+    device = configuration.device
+    if device is None:
+        raise ValueError("resolved Device capabilities are unavailable")
+    return ObservationInputDigests(
+        configuration="sha256:" + hashlib.sha256(configuration_bytes).hexdigest(),
+        profile=_digest_object(
+            {
+                "profile_ids": list(configuration.profile_ids),
+                "profile_root": (
+                    capability.kodi_profile_root.path
+                    if capability.kodi_profile_root is not None
+                    else None
+                ),
+            }
+        ),
+        artifact_set=_digest_object(
+            {
+                "artifacts": [
+                    {
+                        "distribution_sha256": artifact.distribution_sha256,
+                        "id": artifact.id.value,
+                        "origin_sha256": artifact.origin_sha256,
+                        "version": artifact.version,
+                    }
+                    for artifact in configuration.artifacts
+                ]
+            }
+        ),
+        capability=_digest_object(
+            {
+                "atomic_replace_over_existing": (
+                    capability.atomic_replace_over_existing
+                ),
+                "boot_id": identity.boot_id,
+                "device_id": identity.device_id.value,
+                "host_key_fingerprint": services.host_key_fingerprint(device),
+                "managed_file.read": True,
+                "platform_identity": identity.binding_digest,
+                "profile_root": (
+                    capability.kodi_profile_root.path
+                    if capability.kodi_profile_root is not None
+                    else None
+                ),
+            }
+        ),
+        selector=_digest_object({"selectors": ["selector.skin"]}),
+    )
+
+
+def _observe_configuration(
+    services: ProductionServices,
+    configuration: ResolvedConfiguration,
+    session: DeviceSession,
+) -> CanonicalObservationRun:
+    from coreelec_reconciler.resource_types.builtins import (
+        built_in_resource_registry,
+    )
+
+    device = configuration.device
+    if device is None:
+        raise ValueError("resolved Device capabilities are unavailable")
+    production_session = cast(_ProductionDeviceSession, session)
+    if (
+        production_session.identity.device_id != configuration.device_id
+        or not production_session.identity.binding_digest
+        or not production_session.identity.boot_id
+    ):
+        raise ValueError("Device session identity changed")
+    registry = built_in_resource_registry()
+    resources_by_id = {
+        resource.id.value: resource for resource in configuration.resources
+    }
+    resources: list[ObservationResource] = []
+    for resource_id in configuration.dependency_order:
+        resource = resources_by_id.get(resource_id.value)
+        if resource is None:
+            raise ValueError("observation dependency order is invalid")
+        resources.append(
+            ObservationResource(
+                resource.id.value,
+                resource.type,
+                resource.state_addresses,
+                tuple(required.value for required in resource.requires),
+                ObservationResourceContext(
+                    configuration.device_id,
+                    resource.id.value,
+                    resource.type,
+                    resource.state_addresses,
+                    production_session.capabilities.kodi_profile_root,
+                    production_session.managed_files,
+                ),
+            )
+        )
+    request = ObservationRunRequest(
+        RunId(services.runtime.new_uuid7()),
+        configuration.device_id,
+        _observation_input_digests(services, configuration, production_session),
+        tuple(resources),
+    )
+    return CanonicalObservationRuns(
+        services.run_store(), registry, services.runtime
+    ).start(request)
+
+
 def bootstrap(settings: BootstrapSettings) -> Reconciler:
     from coreelec_reconciler.application.supplied_observations import (
         load_supplied_planning_input,
@@ -1571,6 +1706,32 @@ def bootstrap(settings: BootstrapSettings) -> Reconciler:
         )
 
     services = ProductionServices(settings, os.environ)
+
+    def observe_repository(
+        command: ObserveCommand,
+    ) -> ObservationOutcome | UnsupportedOutcome:
+        session: DeviceSession | None = None
+        try:
+            configuration = _configuration(
+                services,
+                command.repository_root or settings.repository_root,
+                command.device_id,
+            )
+            device = configuration.device
+            if device is None:
+                raise ValueError("resolved Device capabilities are unavailable")
+            session = services.open_device_session(
+                device, frozenset({"managed_file.read"})
+            )
+            run = _observe_configuration(services, configuration, session)
+            _durably_close_session(services, run, (), session)
+            return ObservationOutcome(run)
+        except FileNotFoundError, ValueError, RuntimeError:
+            if session is not None:
+                with suppress(OSError, RuntimeError, ValueError):
+                    session.close()
+            return _unavailable("observe", "production.observation-unavailable")
+
     router = _ProductionExecutionRouter(services)
     data = _ProductionApplicationData(services, plan_repository, router)
     return ApplicationReconciler(
@@ -1579,4 +1740,5 @@ def bootstrap(settings: BootstrapSettings) -> Reconciler:
             validate_repository,
             plan_repository,
         ),
+        observe_repository=observe_repository,
     )

@@ -33,12 +33,16 @@ from coreelec_reconciler.domain.execution import (
     RunStatus,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId
+from coreelec_reconciler.domain.observation import ObservationRunStatus
 from coreelec_reconciler.transports.interfaces import (
     DeviceCapabilitySnapshot,
     DeviceIdentity,
+    ReadFailure,
+    ReadFailureCode,
+    ReadResult,
 )
 from tests.fakes.device import FakeDevice
-from tests.fakes.runtime import FakeManagedFiles
+from tests.fakes.runtime import FakeManagedEntry, FakeManagedFiles
 
 DEVICE_ID = DeviceId("living-room.ugoos-am6b-plus")
 MANAGED_PATH = "/storage/.kodi/userdata/playlists/video/NewShows.xsp"
@@ -103,6 +107,15 @@ class _Session:
             raise self.close_error
 
 
+class _UnavailableManagedFiles(FakeManagedFiles):
+    def read(self, path: str, limit: int) -> ReadResult:
+        del path, limit
+        return ReadResult(
+            None,
+            ReadFailure(ReadFailureCode.TRANSPORT, "synthetic transport unavailable"),
+        )
+
+
 def _repository(tmp_path: Path) -> Path:
     source = Path(__file__).parents[1] / "fixtures" / "repository"
     root = tmp_path / "repository"
@@ -137,6 +150,10 @@ def test_bootstrap_composes_all_workflows_and_restart_recovery(
 
     observed = application.execute(ObserveCommand(str(root), DEVICE_ID))
     assert isinstance(observed, ObservationOutcome)
+    assert observed.status is ObservationRunStatus.OBSERVED
+    assert not (state / "plans").exists()
+    assert sessions[-1].requested == frozenset({"managed_file.read"})
+    assert files.operations == ()
     planned = application.execute(PlanCommand(str(root), DEVICE_ID))
     assert isinstance(planned, CanonicalPlanOutcome)
     awaiting = application.execute(ReconcileCommand(str(root), DEVICE_ID, ()))
@@ -233,6 +250,54 @@ def test_bootstrap_composes_all_workflows_and_restart_recovery(
     )
 
 
+def test_observation_partial_and_close_failure_preserve_canonical_outcome(
+    tmp_path: Path,
+) -> None:
+    root = _repository(tmp_path)
+    state = tmp_path / "state"
+    files = _UnavailableManagedFiles()
+    files.put(MANAGED_PATH, FakeManagedEntry(0o644, b"synthetic"))
+    remote = FakeDevice()
+    sessions: list[_Session] = []
+
+    def open_session(device: object, capabilities: frozenset[str]) -> _Session:
+        del device
+        session = _Session(
+            files,
+            remote,
+            capabilities,
+            close_error=OSError("synthetic observation close failure"),
+        )
+        sessions.append(session)
+        return session
+
+    application = bootstrap(
+        BootstrapSettings(
+            str(root),
+            state_root=str(state),
+            session_opener=open_session,
+            runtime_values=_Runtime(),
+            host_key_fingerprint=lambda device: "SHA256:synthetic-host-key",
+        )
+    )
+
+    observed = application.execute(ObserveCommand(str(root), DEVICE_ID))
+
+    assert isinstance(observed, ObservationOutcome)
+    assert observed.status is ObservationRunStatus.OBSERVED_PARTIAL
+    assert sessions[0].requested == frozenset({"managed_file.read"})
+    assert sessions[0].closed
+    assert files.operations == ()
+    assert not (state / "plans").exists()
+    reported = application.execute(ReportCommand(str(root), observed.run_id))
+    assert isinstance(reported, ReportOutcome)
+    assert reported.run_report.current_digest == observed.run_report.current_digest
+    close_records = tuple((state / "runs").rglob("session-closes/*.json"))
+    assert any(
+        b"session_close.transport" in path.read_bytes() for path in close_records
+    )
+
+
 def test_saved_plan_preflight_rejects_before_opening_a_session(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     sessions: list[_Session] = []
@@ -273,7 +338,6 @@ def test_saved_plan_preflight_rejects_before_opening_a_session(tmp_path: Path) -
 def test_verification_is_read_only_and_reports_semantic_relations(
     tmp_path: Path,
 ) -> None:
-    from tests.fakes.runtime import FakeManagedEntry
 
     root = _repository(tmp_path)
     state = tmp_path / "state"

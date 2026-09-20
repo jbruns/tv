@@ -406,6 +406,7 @@ assert "site-packages" in str(installed), installed
 sys.path.insert(0, sys.argv[1])
 from tests.integration.test_production_composition import (
     test_bootstrap_composes_all_workflows_and_restart_recovery,
+    test_observation_partial_and_close_failure_preserve_canonical_outcome,
 )
 
 def forbidden_socket(*args, **kwargs):
@@ -413,6 +414,9 @@ def forbidden_socket(*args, **kwargs):
 
 socket.socket = forbidden_socket
 test_bootstrap_composes_all_workflows_and_restart_recovery(Path(sys.argv[2]))
+test_observation_partial_and_close_failure_preserve_canonical_outcome(
+    Path(sys.argv[2]) / "observation-partial"
+)
 print("installed production composition: passed")
 """
 

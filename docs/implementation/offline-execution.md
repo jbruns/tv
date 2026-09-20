@@ -16,6 +16,13 @@ instantiate no concrete adapter. Bootstrap construction itself has no socket,
 secret-resolution, or local-state side effect.
 
 Planning persists the canonical Plan and planning Run through `PlanStore`.
+Observe instead runs the dedicated canonical observation service: it requests
+only `managed_file.read`, invokes Resource-Type-owned observers, checkpoints
+fresh normalized evidence in dependency order, and produces observed or
+observed-partial Runs. It never assesses Desired State, creates a Plan, requests
+mutation authority, or changes the Device. Observation Runs are restart-safe,
+locally reportable, and preserve their durable outcome if session teardown is
+uncertain.
 Apply reloads and validates those exact bytes, resolves approvals against a
 trusted clock, revalidates Device/boot/host-key identity, and asks
 `ProductionExecutionFactory` to bind the Resource registry, RunStore journal,

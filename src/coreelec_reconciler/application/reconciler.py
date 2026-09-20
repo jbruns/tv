@@ -222,6 +222,8 @@ class ExecutionApplicationWorkflows:
             return outcome
         if outcome.run_id != run_id:
             raise ValueError("canonical Run Report does not bind to the requested Run")
+        if not isinstance(outcome.run_report, CanonicalRunReport):
+            raise ValueError("requested Run is not an execution-family Run")
         return outcome.run_report
 
 
@@ -287,7 +289,7 @@ class ApplicationReconciler:
         *,
         dependencies: ApplicationDependencies | None = None,
         observe_repository: (
-            Callable[[ObserveCommand], ObservationOutcome] | None
+            Callable[[ObserveCommand], ObservationOutcome | UnsupportedOutcome] | None
         ) = None,
     ) -> None:
         self._dependencies = dependencies

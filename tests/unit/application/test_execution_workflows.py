@@ -55,6 +55,11 @@ from coreelec_reconciler.domain.execution import (
     RunStatus,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
+from coreelec_reconciler.domain.observation import (
+    CanonicalObservationRun,
+    ObservationRunStatus,
+    ObservationScope,
+)
 from coreelec_reconciler.domain.planning import (
     CanonicalPlan,
     CanonicalRunReport,
@@ -86,7 +91,24 @@ PLAN = CanonicalPlan(
     "sha256:plan-semantic",
     PlanDisposition.ACTIONABLE,
 )
-OBSERVE_REPORT = _report("observe", RunStatus.NOOP)
+OBSERVE_REPORT = CanonicalObservationRun(
+    b'{"kind":"CoreElecReconcilerObservationRun","run_id":"observe"}',
+    "observe",
+    "workspace:observe",
+    "device",
+    "sha256:observe",
+    3,
+    ObservationRunStatus.OBSERVED,
+    ObservationScope(
+        "sha256:configuration",
+        "sha256:profile",
+        "sha256:artifacts",
+        "sha256:capability",
+        "sha256:selector",
+        (),
+    ),
+    (),
+)
 PLANNING_REPORT = _report("planning", RunStatus.AWAITING_APPROVAL, revision=2)
 EXECUTION_REPORT = _report("execute", RunStatus.CONVERGED, revision=8)
 VERIFY_REPORT = _report("verify", RunStatus.CONVERGED, revision=4)

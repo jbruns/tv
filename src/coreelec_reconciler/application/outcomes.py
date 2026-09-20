@@ -8,6 +8,10 @@ from coreelec_reconciler.domain.execution import (
     RunStatus,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
+from coreelec_reconciler.domain.observation import (
+    CanonicalObservationRun,
+    ObservationRunStatus,
+)
 from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
 
 
@@ -40,7 +44,7 @@ class InventoryOutcome:
 
 @dataclass(frozen=True, slots=True)
 class ObservationOutcome:
-    run_report: CanonicalRunReport
+    run_report: CanonicalObservationRun
 
     @property
     def run_id(self) -> RunId:
@@ -51,7 +55,7 @@ class ObservationOutcome:
         return self.run_report.revision
 
     @property
-    def status(self) -> RunStatus:
+    def status(self) -> ObservationRunStatus:
         return self.run_report.status
 
 
@@ -179,7 +183,7 @@ class RecoveryInspectionOutcome:
 
 @dataclass(frozen=True, slots=True)
 class ReportOutcome:
-    run_report: CanonicalRunReport
+    run_report: CanonicalRunReport | CanonicalObservationRun
 
     @property
     def run_id(self) -> RunId:
@@ -190,7 +194,7 @@ class ReportOutcome:
         return self.run_report.revision
 
     @property
-    def status(self) -> RunStatus:
+    def status(self) -> RunStatus | ObservationRunStatus:
         return self.run_report.status
 
 
