@@ -1,6 +1,13 @@
 """Construction of the immutable built-in Resource Type registry."""
 
-from coreelec_reconciler.resource_types.descriptor import ResourceDescriptor
+from collections.abc import Mapping
+from typing import cast
+
+from coreelec_reconciler.resource_types.descriptor import (
+    ErasedResourceExecution,
+    ResourceDescriptor,
+    ResourceExecutionContext,
+)
 from coreelec_reconciler.resource_types.kodi_smart_playlist.codecs import (
     decode_intent,
     encode_intent,
@@ -27,6 +34,52 @@ def built_in_resource_registry() -> ResourceRegistry:
                 encode_intent=encode_intent,
                 decode_intent=decode_intent,
                 decode_plan_evidence=decode_plan_evidence,
+                execution_factory=_playlist_execution,
+                encode_prepared=_encode_playlist_prepared,
+                decode_prepared=_decode_playlist_prepared,
+                decode_planned_change=_decode_playlist_planned_change,
             ),
         )
     )
+
+
+def _playlist_execution(
+    context: ResourceExecutionContext,
+) -> ErasedResourceExecution:
+    from coreelec_reconciler.resource_types.kodi_smart_playlist.execution import (
+        execution_factory,
+    )
+
+    return execution_factory(context)
+
+
+def _encode_playlist_prepared(value: object) -> bytes:
+    from coreelec_reconciler.resource_types.kodi_smart_playlist.execution import (
+        encode_erased_prepared,
+    )
+
+    return encode_erased_prepared(value)
+
+
+def _decode_playlist_prepared(
+    content: bytes,
+    attachments: object,
+) -> object:
+    from coreelec_reconciler.resource_types.descriptor import AttachmentStore
+    from coreelec_reconciler.resource_types.kodi_smart_playlist.execution import (
+        decode_erased_prepared,
+    )
+
+    return decode_erased_prepared(content, cast(AttachmentStore, attachments))
+
+
+def _decode_playlist_planned_change(
+    value: Mapping[str, object],
+    context: ResourceExecutionContext,
+    rollback_approved: bool,
+) -> object:
+    from coreelec_reconciler.resource_types.kodi_smart_playlist.execution import (
+        decode_planned_change,
+    )
+
+    return decode_planned_change(value, context, rollback_approved)

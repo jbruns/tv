@@ -1,5 +1,7 @@
 from typing import cast
 
+import pytest
+
 from coreelec_reconciler.domain.configuration import (
     DesiredPresence,
     KodiSmartPlaylistIntent,
@@ -9,12 +11,15 @@ from coreelec_reconciler.domain.execution import (
     NormalizedResourceState,
     Presence,
 )
+from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
 from coreelec_reconciler.resource_types.descriptor import ManagedFileLifecycle
 from coreelec_reconciler.resource_types.kodi_smart_playlist.execution import (
     KodiSmartPlaylistExecution,
     PlaylistChange,
     PreparedPlaylistChange,
+    decode_prepared_playlist_change,
     desired_state,
+    encode_prepared_playlist_change,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.intent import (
     parse_intent,
@@ -28,6 +33,7 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
     PreparationBinding,
+    PreparationError,
     PreparedManagedFile,
 )
 from tests.fakes.run_infrastructure import FakeAttachments
@@ -44,6 +50,14 @@ def test_playlist_execution_renders_deterministic_managed_file_state() -> None:
     assert state.content_digest is not None
     assert content is not None
     assert content.startswith(b'<?xml version="1.0" encoding="UTF-8"')
+
+
+def test_builtin_descriptor_exposes_lazy_execution_factory() -> None:
+    descriptor = built_in_resource_registry().descriptor("KodiSmartPlaylist")
+
+    assert descriptor is not None
+    assert descriptor.execution is None
+    assert descriptor.execution_factory is not None
 
 
 def test_execution_verification_uses_fresh_observation_and_pure_assessment() -> None:
@@ -85,6 +99,104 @@ def test_execution_verification_uses_fresh_observation_and_pure_assessment() -> 
     runtime.apply(PreparedPlaylistChange(change, cast(PreparedManagedFile, object())))
 
     assert lifecycle.semantic_match is True
+
+
+def test_prepared_playlist_round_trips_across_process_boundary() -> None:
+    attachments = FakeAttachments()
+    files = FakeManagedFiles()
+    address = ResolvedManagedAddress(
+        "special://profile/playlists/video/NewShows.xsp",
+        ManagedPath("/storage/.kodi/userdata/playlists/video/NewShows.xsp"),
+    )
+    runtime = KodiSmartPlaylistExecution(
+        files,
+        attachments,
+        cast(ManagedFileLifecycle, object()),
+        address,
+        PreparationBinding(
+            "device",
+            "sha256:binding",
+            "run",
+            "skin.playlist.new-shows",
+            "change",
+        ),
+        _intent(),
+        DesiredPresence.PRESENT,
+        lambda: "2026-09-19T08:00:00Z",
+    )
+    before = NormalizedResourceState(Presence.ABSENT, None, None, None)
+    prepared = runtime.prepare(
+        PlaylistChange(
+            "skin.playlist.new-shows",
+            "change",
+            _intent(),
+            DesiredPresence.PRESENT,
+            before,
+            True,
+        )
+    )
+
+    encoded = encode_prepared_playlist_change(prepared)
+    decoded = decode_prepared_playlist_change(encoded, attachments)
+
+    assert decoded == prepared
+    assert b"/Users/" not in encoded
+    assert b"ownership" not in encoded
+
+
+@pytest.mark.parametrize(
+    "attachment_name",
+    (
+        "rollback_attachment",
+        "desired_attachment",
+        "staged_metadata_attachment",
+        "cleanup_metadata_attachment",
+    ),
+)
+def test_prepared_playlist_rejects_corrupt_attachment(
+    attachment_name: str,
+) -> None:
+    attachments = FakeAttachments()
+    files = FakeManagedFiles()
+    address = ResolvedManagedAddress(
+        "special://profile/playlists/video/NewShows.xsp",
+        ManagedPath("/storage/.kodi/userdata/playlists/video/NewShows.xsp"),
+    )
+    runtime = KodiSmartPlaylistExecution(
+        files,
+        attachments,
+        cast(ManagedFileLifecycle, object()),
+        address,
+        PreparationBinding(
+            "device",
+            "sha256:binding",
+            "run",
+            "skin.playlist.new-shows",
+            "change",
+        ),
+        _intent(),
+        DesiredPresence.PRESENT,
+        lambda: "2026-09-19T08:00:00Z",
+    )
+    prepared = runtime.prepare(
+        PlaylistChange(
+            "skin.playlist.new-shows",
+            "change",
+            _intent(),
+            DesiredPresence.PRESENT,
+            NormalizedResourceState(Presence.ABSENT, None, None, None),
+            True,
+        )
+    )
+    reference = getattr(prepared.managed_file, attachment_name)
+    assert reference is not None
+    attachments.corrupt(reference)
+
+    with pytest.raises(PreparationError, match="evidence is invalid"):
+        decode_prepared_playlist_change(
+            encode_prepared_playlist_change(prepared),
+            attachments,
+        )
 
 
 class _CapturingLifecycle:

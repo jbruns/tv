@@ -72,6 +72,7 @@ from tests.unit.execution.test_recovery_actions import Inspector, evidence, snap
 class _Journal:
     def __init__(self) -> None:
         self.events: list[str] = []
+        self.skips: list[tuple[str, tuple[str, ...]]] = []
 
     def start(self, plan: object) -> None:
         self.events.append("start")
@@ -98,6 +99,7 @@ class _Journal:
         self, run_id: RunId, resource_id: str, dependency_ids: tuple[str, ...]
     ) -> None:
         self.events.append("skipped")
+        self.skips.append((resource_id, dependency_ids))
 
 
 class _SuccessfulResult:
@@ -127,9 +129,17 @@ class _CleanupFailure(_Change):
 
 
 class _RecoveryResource:
-    def __init__(self, *, ambiguous_rollback: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        resource_id: str = "resource",
+        ambiguous_rollback: bool = False,
+        timeline: list[str] | None = None,
+    ) -> None:
         self.calls: list[str] = []
         self.ambiguous_rollback = ambiguous_rollback
+        self.resource_id = resource_id
+        self.timeline = timeline
 
     def observe(self) -> object:
         self.calls.append("observe")
@@ -143,6 +153,8 @@ class _RecoveryResource:
         self,
     ) -> tuple[MutationTrace | None, ManagedFileVerification]:
         self.calls.append("rollback")
+        if self.timeline is not None:
+            self.timeline.append(f"rollback:{self.resource_id}")
         if self.ambiguous_rollback:
             return (
                 MutationTrace(
@@ -154,7 +166,17 @@ class _RecoveryResource:
 
     def cleanup(self, terminal_evidence_ref: str) -> MutationTrace:
         self.calls.append("cleanup")
+        if self.timeline is not None:
+            self.timeline.append(f"cleanup:{self.resource_id}")
         return MutationTrace(())
+
+
+class _AmbiguousCleanupResource(_RecoveryResource):
+    def cleanup(self, terminal_evidence_ref: str) -> MutationTrace:
+        self.calls.append("cleanup")
+        return MutationTrace(
+            (MutationReceipt("cleanup", MutationDisposition.AMBIGUOUS),)
+        )
 
 
 class _MatchedVerification:
@@ -171,8 +193,10 @@ class _Persistence:
         resource: _RecoveryResource,
         evidence_value: RecoveryEvidence | None = None,
         events: list[str] | None = None,
+        resources: tuple[_RecoveryResource, ...] | None = None,
     ) -> None:
         self.resource_value = resource
+        self.resource_values = resources or (resource,)
         self.evidence_value = evidence_value or evidence()
         self.events = events if events is not None else []
         head = StoredRevision(1, "sha256:head", b"{}")
@@ -185,11 +209,15 @@ class _Persistence:
     def inspection_port(self, run_id: RunId) -> Inspector:
         return Inspector(snapshot(), snapshot(), self.evidence_value)
 
-    def resource(self, run_id: RunId) -> _RecoveryResource:
-        return self.resource_value
+    def resources(self, run_id: RunId) -> tuple[_RecoveryResource, ...]:
+        return self.resource_values
 
     def record_verification(
-        self, run_id: RunId, observation: object, assessment: object
+        self,
+        run_id: RunId,
+        resource_id: str,
+        observation: object,
+        assessment: object,
     ) -> StoredRevision:
         self.events.append("verification")
         return self.chain.head
@@ -197,6 +225,7 @@ class _Persistence:
     def record_rollback(
         self,
         run_id: RunId,
+        resource_id: str,
         trace: MutationTrace | None,
         verification: ManagedFileVerification,
     ) -> StoredRevision:
@@ -213,7 +242,9 @@ class _Persistence:
         self.events.append(f"abandon:{approval}:{reason}")
         return StoredRevision(2, "sha256:terminal", b"{}")
 
-    def record_cleanup(self, run_id: RunId, trace: MutationTrace) -> str:
+    def record_cleanup(
+        self, run_id: RunId, resource_id: str, trace: MutationTrace
+    ) -> str:
         self.events.append("cleanup:sha256:cleanup")
         return "sha256:cleanup"
 
@@ -482,7 +513,32 @@ def test_concrete_recovery_uses_persisted_evidence_and_verified_rollback() -> No
         "terminal:failed_rolled_back",
         "cleanup:sha256:cleanup",
         "release:sha256:terminal",
+        "load",
         "seal:True",
+    ]
+
+
+def test_multi_resource_recovery_rolls_back_reverse_and_cleans_plan_order() -> None:
+    resource_events: list[str] = []
+    first = _RecoveryResource(resource_id="first", timeline=resource_events)
+    second = _RecoveryResource(resource_id="second", timeline=resource_events)
+    persistence = _Persistence(first, resources=(first, second))
+    engine = ExecutionEngine(
+        _Journal(),
+        RecoveryCoordinator(persistence, _Authority()),
+    )
+
+    outcome = engine.recover(
+        RunId("run.test"),
+        RecoveryRequest(RecoveryActionCode.ROLLBACK),
+    )
+
+    assert outcome.status is RunStatus.FAILED_ROLLED_BACK
+    assert resource_events == [
+        "rollback:second",
+        "rollback:first",
+        "cleanup:first",
+        "cleanup:second",
     ]
 
 
@@ -503,10 +559,38 @@ def test_approved_reasoned_abandonment_terminalizes_then_quarantines() -> None:
     )
 
     assert outcome.status is RunStatus.FAILED_RECOVERY_REQUIRED
+    assert persistence.events[-4:] == [
+        "load",
+        "load",
+        "abandon:approval.operator:evidence is corrupt",
+        "seal:True",
+    ]
+    assert resource.calls == []
+    assert authority.events == ["quarantine:approval.operator:evidence is corrupt"]
+
+
+def test_abandonment_seals_quarantine_when_cleanup_is_ambiguous() -> None:
+    resource = _AmbiguousCleanupResource()
+    persistence = _Persistence(resource, evidence(attachments_valid=False))
+    authority = _Authority()
+    engine = ExecutionEngine(_Journal(), RecoveryCoordinator(persistence, authority))
+
+    outcome = engine.recover(
+        RunId("run.test"),
+        RecoveryRequest(
+            RecoveryActionCode.FINALIZE,
+            FinalizeMode.ABANDON,
+            approval="approval.operator",
+            reason="evidence is corrupt",
+        ),
+    )
+
+    assert not outcome.cleanup_complete
     assert persistence.events[-2:] == [
         "abandon:approval.operator:evidence is corrupt",
         "seal:True",
     ]
+    assert resource.calls == []
     assert authority.events == ["quarantine:approval.operator:evidence is corrupt"]
 
 
@@ -566,9 +650,10 @@ def test_normal_finalize_preserves_existing_terminal_truth() -> None:
 
     assert outcome.status is RunStatus.FAILED_PARTIAL
     assert not any(event.startswith("terminal:") for event in timeline)
-    assert timeline[-3:] == [
+    assert timeline[-4:] == [
         "cleanup:sha256:cleanup",
         "release:sha256:head",
+        "load",
         "seal:True",
     ]
 
@@ -610,6 +695,7 @@ def test_cleanup_receipt_precedes_terminal_authorized_m3_release() -> None:
         "cleanup:sha256:cleanup",
         "checkpoint:terminal_release_pending:sha256:terminal",
         "release:sha256:terminal",
+        "load",
         "seal:True",
     ]
 
@@ -710,6 +796,7 @@ def test_known_resource_failure_skips_dependents_and_continues_independent_work(
     assert outcome.status is RunStatus.FAILED_PARTIAL
     assert journal.events.count("result") == 2
     assert journal.events.count("skipped") == 1
+    assert journal.skips == [("dependent", ("failed",))]
 
 
 def test_disruptive_failure_stops_all_later_mutation() -> None:

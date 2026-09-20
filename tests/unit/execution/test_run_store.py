@@ -100,6 +100,67 @@ def test_run_store_persists_verified_chain_token_attachment_and_index(
     )
 
 
+def test_operational_receipt_survives_restart_after_terminal_truth(
+    tmp_path: Path,
+) -> None:
+    run_store = store(tmp_path)
+    _, lease, _ = create(run_store)
+    head = run_store.load_chain(RunId(RUN_ID)).head
+    terminal_report = build_execution_run_report(
+        run_value(
+            RunStatus.FAILED_PARTIAL,
+            revision=2,
+            previous=head.digest,
+        )
+    )
+    run_store.compare_and_append(
+        lease,
+        head.revision,
+        head.digest,
+        terminal_report.canonical_bytes,
+        AppendIntent(
+            RunStatus.FAILED_PARTIAL,
+            True,
+            DeviceIndexIntent.ADD_OR_RETAIN_ACTIVE,
+            AuthorityPhase.RELEASE_PENDING,
+        ),
+    )
+
+    digest = run_store.record_operational_receipt(
+        lease,
+        "cleanup",
+        "skin.playlist.new-shows",
+        b'{"trace":[]}',
+    )
+    run_store.release_run(lease)
+    receipts = RunStore(tmp_path / "store").load_operational_receipts(
+        RunId(RUN_ID), "cleanup"
+    )
+
+    assert digest.startswith("sha256:")
+    assert len(receipts) == 1
+    assert receipts[0].resource_id == "skin.playlist.new-shows"
+    assert receipts[0].payload == b'{"trace":[]}'
+
+
+def test_operational_receipt_corruption_is_rejected(tmp_path: Path) -> None:
+    run_store = store(tmp_path)
+    _, lease, _ = create(run_store)
+    digest = run_store.record_operational_receipt(
+        lease,
+        "cleanup",
+        "skin.playlist.new-shows",
+        b'{"trace":[]}',
+    )
+    run_store.release_run(lease)
+    workspace = next((tmp_path / "store" / "runs").iterdir())
+    receipt = workspace / "receipts" / f"{digest.removeprefix('sha256:')}.json"
+    receipt.write_bytes(receipt.read_bytes() + b" ")
+
+    with pytest.raises(CorruptRunStore, match="receipt digest mismatch"):
+        RunStore(tmp_path / "store").load_operational_receipts(RunId(RUN_ID), "cleanup")
+
+
 def test_compare_append_seal_and_index_ordering(tmp_path: Path) -> None:
     run_store = store(tmp_path)
     device_lease, revision_lease, _ = create(run_store)

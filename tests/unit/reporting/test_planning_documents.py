@@ -14,8 +14,15 @@ from coreelec_reconciler.application.supplied_observations import (
 from coreelec_reconciler.bootstrap import BootstrapSettings, bootstrap
 from coreelec_reconciler.config.load import load_configuration
 from coreelec_reconciler.domain.identifiers import DeviceId, ResourceId, SelectorId
-from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
-from coreelec_reconciler.reporting.canonical_json import canonical_document_bytes
+from coreelec_reconciler.domain.planning import (
+    CanonicalPlan,
+    CanonicalRunReport,
+    PlanDisposition,
+)
+from coreelec_reconciler.reporting.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.reporting.planning_documents import (
     build_multi_resource_plan_and_run,
     check_plan_invariants,
@@ -54,7 +61,11 @@ def _plan(tmp_path: Path, content: bytes) -> PlanOutcome:
     return outcome
 
 
-def _multi_plan(tmp_path: Path) -> tuple[CanonicalPlan, CanonicalRunReport]:
+def _multi_plan(
+    tmp_path: Path,
+    *,
+    satisfied_prerequisite: bool = False,
+) -> tuple[CanonicalPlan, CanonicalRunReport]:
     loaded = load_configuration(
         FIXTURE_ROOT,
         DeviceId("living-room.ugoos-am6b-plus"),
@@ -86,14 +97,22 @@ def _multi_plan(tmp_path: Path) -> tuple[CanonicalPlan, CanonicalRunReport]:
         )
     )
     base_input = load_supplied_planning_input(supplied_path)
+    desired_path = tmp_path / "desired-multi-observations.json"
+    desired_path.write_bytes(supplied_document(desired_xml()))
+    desired_input = load_supplied_planning_input(desired_path)
     entries = []
     for resource in (dependent, prerequisite):
+        source = (
+            desired_input
+            if satisfied_prerequisite and resource is prerequisite
+            else base_input
+        )
         observation = replace(
-            base_input.observation,
+            source.observation,
             resource_id=resource.id.value,
             state_address=resource.state_addresses[0],
         )
-        inputs = replace(base_input, observation=observation)
+        inputs = replace(source, observation=observation)
         assessment = assess_playlist(
             resource.intent,
             resource.desired,
@@ -102,6 +121,26 @@ def _multi_plan(tmp_path: Path) -> tuple[CanonicalPlan, CanonicalRunReport]:
         )
         entries.append((resource, inputs, assessment))
     return build_multi_resource_plan_and_run(configuration, tuple(entries))
+
+
+def test_actionable_multi_plan_preserves_satisfied_resource_result(
+    tmp_path: Path,
+) -> None:
+    plan, run = _multi_plan(tmp_path, satisfied_prerequisite=True)
+
+    assert plan.disposition is PlanDisposition.ACTIONABLE
+    results = {
+        cast(str, result["resource_id"]): result
+        for result in cast(
+            list[dict[str, object]],
+            decode_json_object(run.canonical_bytes)["resource_results"],
+        )
+    }
+    unchanged = results["skin.playlist.alpha"]
+    assert unchanged["latest_observed_relation"] == "satisfied"
+    assert unchanged["mutation_outcome"] == "not_required"
+    assert unchanged["verification_outcome"] == "fresh_match"
+    assert unchanged["final_convergence"] == "converged"
 
 
 def _sha256(value: dict[str, object]) -> str:

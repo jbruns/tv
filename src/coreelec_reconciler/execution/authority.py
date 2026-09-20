@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.execution import (
     ActiveDeviceRun,
     DeviceLease,
@@ -21,10 +25,6 @@ from coreelec_reconciler.domain.execution import (
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.execution.run_store import CorruptRunStore
-from coreelec_reconciler.reporting.canonical_json import (
-    canonical_document_bytes,
-    decode_json_object,
-)
 
 
 class RemoteObjectKind(StrEnum):
