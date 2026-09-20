@@ -12,11 +12,6 @@ def test_workflow_is_least_privilege_and_runs_supported_platforms() -> None:
     assert workflow["permissions"] == {"contents": "read"}
     assert set(workflow["jobs"]) == {"python-offline"}
     python_job = workflow["jobs"]["python-offline"]
-    assert python_job["strategy"] == {
-        "fail-fast": False,
-        "matrix": {"os": ["ubuntu-24.04", "macos-15"]},
-    }
-    assert python_job["runs-on"] == "${{ matrix.os }}"
     assert python_job["timeout-minutes"] == 15
     assert workflow["env"]["SOURCE_SHA"] == (
         "${{ github.event.pull_request.head.sha || github.sha }}"

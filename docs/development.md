@@ -135,7 +135,11 @@ not belong in these selectors.
 
 The [offline CI workflow](../.github/workflows/offline-ci.yml) runs the same
 frozen sync, Ruff, strict mypy, exact pytest selectors, budgets, and package
-build on Linux x86_64 and macOS arm64. Its least-privilege token grants only
+build on Linux x86_64. Per
+[ADR 0011](adr/0011-linux-only-ci-and-boundary-tests.md), CI is Linux-only and
+the code carries no platform-specific branches; the macOS workstation is
+covered by the pre-commit hook in `.githooks/`, installed with
+`git config core.hooksPath .githooks`. Its least-privilege token grants only
 read access to repository contents. Pull-request jobs explicitly check out the
 head `SOURCE_SHA`, verify `HEAD` matches it, and use that SHA in evidence
 artifact names. `workflow_sha` separately records GitHub's workflow context,

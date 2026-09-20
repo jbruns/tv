@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR-0011
 ---
 
 # Use an evidence-gated Python foundation toolchain

@@ -1,8 +1,21 @@
-# CoreELEC Reconciler Architecture
+# CoreELEC Reconciler Architecture (superseded, historical)
 
 ## Status
 
-Accepted for implementation planning.
+**Superseded and retained only as a historical record.** This document drove
+milestones M0 through M3 and is the proximate cause of the over-engineering
+that [ADR 0008](../adr/0008-restart-from-a-walking-skeleton.md) reverses: it
+specified rollback, Run evidence, device authority, stale-Plan rejection, and
+digest-verified remote helpers in a single pass, before any code had contacted
+a Device.
+
+Do not build from this document. The current quality bar is
+[ADR 0007](../adr/0007-trusted-home-appliance-bar.md), which forbids
+specifying a mechanism before a slice needs it. The replacement system has no
+upfront architecture document by design; `CONTEXT.md` holds the domain
+vocabulary and `docs/adr/` holds decisions as they are made.
+
+Originally: accepted for implementation planning.
 
 ## Purpose
 

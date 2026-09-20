@@ -16,9 +16,17 @@ _Avoid_: First-boot Device, prepared host
 A versioned declaration of desired state for a class of Devices sharing relevant platform and deployment characteristics.
 _Avoid_: Baseline, manifest
 
+**Room Overlay**:
+The small set of Desired State values that tailor a Profile to the room a Device is installed in.
+_Avoid_: Device profile, local override
+
 **Desired State**:
 The state a Profile declares that a Device must have.
 _Avoid_: Target values, expected configuration
+
+**Recovery Baseline**:
+The shell-declared configuration that restores a Device to a working state, deliberately allowed to lag current Desired State.
+_Avoid_: Desired State, fallback profile
 
 **Intent**:
 A stable, device-independent expression of Desired State that may be resolved to a device-specific representation using observed capabilities.
@@ -68,10 +76,6 @@ _Avoid_: Effective component plan, action list
 One attempt to observe, plan, apply, or verify selected Resources for one Device.
 _Avoid_: Transaction, deployment
 
-**Run Infrastructure**:
-Operational state used to coordinate, audit, recover, or finalize a Run without representing Device Desired State.
-_Avoid_: Resource, managed Device state
-
 **Verification**:
 An independent comparison of a Resource's new Observation with its Desired State after Changes have been applied.
 _Avoid_: Command success, post-check
@@ -83,6 +87,10 @@ _Avoid_: Verification, drift check
 **Convergence**:
 The condition in which Verification finds that a Resource's Observation matches its Desired State.
 _Avoid_: Successful command, completed deployment
+
+**Fail Forward**:
+The failure semantic in which an interrupted Run stops and reports what changed, and a repeated Run is the means of reaching Convergence.
+_Avoid_: Rollback, retry
 
 **Guided Action**:
 An operator-assisted operation that cannot be expressed as verifiable Desired State, such as interactive account linking.
@@ -103,3 +111,11 @@ _Avoid_: Download, payload
 **Smart Playlist**:
 A Kodi-defined saved query whose typed rules, ordering, and result limit select media for playback or navigation.
 _Avoid_: Widget, static playlist
+
+**Pilot Phase**:
+The period in which exactly one disposable Device is managed, ending when a factory-fresh Device can be provisioned from a Profile alone.
+_Avoid_: Beta, rollout
+
+**Wife Acceptance Factor**:
+The project's quality bar: the Device just works, the configuration stays easy to maintain, and any Device is easy to snap to its Desired State.
+_Avoid_: Reliability, production readiness
