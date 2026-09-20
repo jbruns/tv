@@ -20,11 +20,7 @@ from coreelec_reconciler.domain.execution import (
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.execution.authority import (
     AuthorityAcquisitionRequest,
-    AuthorityBlocked,
-    AuthorityConflict,
     AuthorityCoordinator,
-    RemoteObject,
-    RemoteObjectKind,
     _RemoteAuthority,
 )
 from coreelec_reconciler.execution.run_store import (
@@ -38,6 +34,12 @@ from coreelec_reconciler.reporting.canonical_json import (
 )
 from coreelec_reconciler.reporting.execution_documents import (
     build_execution_run_report,
+)
+from coreelec_reconciler.transports.remote_ownership import (
+    AuthorityBlocked,
+    AuthorityConflict,
+    RemoteObject,
+    RemoteObjectKind,
 )
 from tests.fakes.device import FakeDevice
 

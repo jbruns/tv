@@ -3,6 +3,9 @@
 The production adapter package implements the typed SSH, command, SFTP
 managed-file, and remote Run Infrastructure capabilities accepted for M3. It
 is deliberately not wired into `bootstrap.py` or any installed command.
+The shared remote ownership objects, backend port, and typed authority failures
+live below both orchestration and production code in
+`transports.remote_ownership`; adapters never import execution modules.
 
 Sessions resolve secret values only at the composition seam, load exactly one
 reviewed pinned host key, disable agent and ambient-key discovery, and reject
