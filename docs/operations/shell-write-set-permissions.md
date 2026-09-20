@@ -11,7 +11,6 @@ Validate the map and ownership ledger together without Device access:
 
 ```console
 python3 scripts/check_shell_permissions.py --audit
-uv run python scripts/check_inventory_milestones.py
 ```
 
 Inspect the exact effective write set of a provisioning command locally:

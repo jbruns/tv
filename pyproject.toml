@@ -1,63 +1,28 @@
-[build-system]
-requires = ["uv_build>=0.12.17,<0.13"]
-build-backend = "uv_build"
+# No Python package exists yet. The Reconciler restarts as a walking skeleton
+# in the first slice (ADR 0008); this file currently configures the tooling
+# that checks the repository's remaining Python helpers.
 
 [project]
-name = "coreelec-reconciler"
-version = "0.1.0"
-description = "Reconcile CoreELEC Device Desired State"
-readme = "README.md"
+name = "tv"
+version = "0.0.0"
+description = "CoreELEC Device configuration"
 requires-python = ">=3.14"
-dependencies = [
-  "paramiko>=5.0.0,<6",
-  "pydantic>=2.13.5,<3",
-  "PyYAML>=6.0.3,<7",
-]
 
-[project.scripts]
-coreelec-reconciler = "coreelec_reconciler.cli.main:main"
+[tool.uv]
+package = false
 
 [dependency-groups]
 dev = [
-  "jinja2>=3.1.6,<4",
   "mypy>=2.3.1,<3",
-  "pytest>=9.1.1,<10",
   "ruff>=0.16.8,<0.17",
-  "types-paramiko>=5.0.0.20260724,<5.1",
-  "types-PyYAML>=6.0.12.20260906,<6.1",
-]
-
-[tool.pytest.ini_options]
-addopts = "-p no:cacheprovider"
-testpaths = [
-  "tests/adapters",
-  "tests/ci",
-  "tests/contracts",
-  "tests/integration",
-  "tests/inventory",
-  "tests/scaffold",
-  "tests/unit",
 ]
 
 [tool.mypy]
 python_version = "3.14"
 strict = true
 files = [
-  "scripts/check_inventory_milestones.py",
   "scripts/check_shell_permissions.py",
-  "scripts/run_m3_pilot_harness.py",
-  "scripts/run_test_budget.py",
-  "scripts/verify_m3_evidence_bundle.py",
-  "src",
-  "tests/adapters",
-  "tests/conftest.py",
-  "tests/contracts",
-  "tests/integration",
-  "tests/scaffold",
-  "tests/inventory",
-  "tests/ci",
-  "tests/unit",
-  "tests/support",
+  "scripts/shell_permissions.py",
 ]
 
 [tool.ruff]
