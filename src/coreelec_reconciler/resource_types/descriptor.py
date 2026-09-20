@@ -17,9 +17,11 @@ from coreelec_reconciler.domain.execution import (
     MutationReceipt,
     MutationTrace,
 )
+from coreelec_reconciler.domain.observation import ObservationDisposition
 
 if TYPE_CHECKING:
-    from coreelec_reconciler.domain.configuration import Resource
+    from coreelec_reconciler.domain.configuration import ProfileRootCapability, Resource
+    from coreelec_reconciler.domain.identifiers import DeviceId
     from coreelec_reconciler.resource_types.managed_file.observation import (
         ManagedFileObservation,
     )
@@ -52,6 +54,74 @@ type IntentDecoder = Callable[[Mapping[str, object]], KodiSmartPlaylistIntent]
 type PlanEvidenceDecoder = Callable[
     [str, int, Mapping[str, object]],
     tuple[Mapping[str, object], str],
+]
+type ObservationEvidenceDecoder = Callable[
+    [str, int, Mapping[str, object]],
+    Mapping[str, object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class EncodedObservationEvidence:
+    payload: Mapping[str, object]
+    disposition: ObservationDisposition
+    raw_content: bytes | None
+    state_addresses: tuple[str, ...]
+    observer_code: str
+    observer_version: int
+
+
+type ObservationEvidenceEncoder = Callable[[object], EncodedObservationEvidence]
+type ObservationEvidenceChecker = Callable[
+    [object, object, object],
+    tuple[str, ...],
+]
+type ObservationAddressValidator = Callable[[tuple[str, ...]], None]
+type ObservationAddressChecker = Callable[[tuple[str, ...]], tuple[str, ...]]
+
+
+class ResourceObservationContext(Protocol):
+    """Read-only, identity-bound capabilities available during observation."""
+
+    @property
+    def device_id(self) -> DeviceId: ...
+
+    @property
+    def resource_id(self) -> str: ...
+
+    @property
+    def resource_type(self) -> str: ...
+
+    @property
+    def state_addresses(self) -> tuple[str, ...]: ...
+
+    @property
+    def profile_root(self) -> ProfileRootCapability | None: ...
+
+    def lstat(self, path: str) -> ReadResult: ...
+
+    def read(self, path: str, limit: int) -> ReadResult: ...
+
+
+class ErasedResourceObserver(Protocol):
+    def observe(self) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ErasedResourceObserverAdapter[ObservationT]:
+    observation_type: type[ObservationT]
+    observe_typed: Callable[[], ObservationT]
+
+    def observe(self) -> object:
+        observation = self.observe_typed()
+        if not isinstance(observation, self.observation_type):
+            raise TypeError("Resource Observation type does not match descriptor")
+        return observation
+
+
+type ResourceObservationFactory = Callable[
+    [ResourceObservationContext],
+    ErasedResourceObserver,
 ]
 
 
@@ -259,3 +329,17 @@ class ResourceDescriptor:
     encode_prepared: PreparedEncoder | None = None
     decode_prepared: PreparedDecoder | None = None
     decode_planned_change: PlannedChangeDecoder | None = None
+    observation_payload_kind: str | None = None
+    observation_payload_version: int | None = None
+    observation_policy_digest: str | None = None
+    encode_observation_evidence: ObservationEvidenceEncoder | None = None
+    decode_observation_evidence: ObservationEvidenceDecoder | None = None
+    check_observation_evidence: ObservationEvidenceChecker | None = None
+    validate_observation_addresses: ObservationAddressValidator | None = None
+    check_observation_addresses: ObservationAddressChecker | None = None
+    _observation_factory: ResourceObservationFactory | None = None
+
+    def observe(self, context: ResourceObservationContext) -> object:
+        if self._observation_factory is None:
+            raise ValueError("Resource Type has no observation factory")
+        return self._observation_factory(context).observe()

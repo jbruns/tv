@@ -63,10 +63,6 @@ if TYPE_CHECKING:
 
 
 class ApplicationWorkflows(Protocol):
-    def observe(
-        self, command: ObserveCommand
-    ) -> ObservationOutcome | UnsupportedOutcome: ...
-
     def apply(self, command: ApplyCommand) -> ApplyOutcome | UnsupportedOutcome: ...
 
     def reconcile(
@@ -84,10 +80,6 @@ class ApplicationWorkflows(Protocol):
 
 class ApplicationData(Protocol):
     """Typed non-execution services used by the concrete workflows."""
-
-    def observe(
-        self, command: ObserveCommand
-    ) -> ObservationOutcome | UnsupportedOutcome: ...
 
     def plan(self, command: PlanCommand) -> PlanOutcome | UnsupportedOutcome: ...
 
@@ -120,11 +112,6 @@ class ExecutionApplicationWorkflows:
     def __init__(self, data: ApplicationData, engine: ExecutionEngine) -> None:
         self._data = data
         self._engine = engine
-
-    def observe(
-        self, command: ObserveCommand
-    ) -> ObservationOutcome | UnsupportedOutcome:
-        return self._data.observe(command)
 
     def apply(self, command: ApplyCommand) -> ApplyOutcome | UnsupportedOutcome:
         plan = self._data.approved_plan(command.plan_id, command.approval_scopes)
@@ -299,8 +286,12 @@ class ApplicationReconciler:
         | None = None,
         *,
         dependencies: ApplicationDependencies | None = None,
+        observe_repository: (
+            Callable[[ObserveCommand], ObservationOutcome] | None
+        ) = None,
     ) -> None:
         self._dependencies = dependencies
+        self._observe_repository = observe_repository
         self._validate_repository = (
             dependencies.validate_repository
             if dependencies is not None
@@ -351,8 +342,8 @@ class ApplicationReconciler:
             case InventoryCommand():
                 name = "inventory"
             case ObserveCommand():
-                if self._dependencies is not None:
-                    return self._dependencies.workflows.observe(command)
+                if self._observe_repository is not None:
+                    return self._observe_repository(command)
                 name = "observe"
             case PlanCommand():
                 if self._plan_repository is not None:

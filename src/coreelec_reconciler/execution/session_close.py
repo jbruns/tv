@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from coreelec_reconciler.domain.execution import (
     AllowedRecoveryAction,
@@ -12,7 +13,6 @@ from coreelec_reconciler.domain.execution import (
     SessionCloseIntent,
 )
 from coreelec_reconciler.domain.identifiers import RunId
-from coreelec_reconciler.domain.planning import CanonicalRunReport
 from coreelec_reconciler.execution.run_store import (
     CompareConflict,
     CorruptRunStore,
@@ -28,9 +28,14 @@ class SessionCloseRequest:
     session_id: str
 
 
+class _CanonicalRunDocument(Protocol):
+    @property
+    def run_id(self) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
-class PreservedRunResult:
-    run_report: CanonicalRunReport
+class PreservedRunResult[RunDocumentT: _CanonicalRunDocument = _CanonicalRunDocument]:
+    run_report: RunDocumentT
     recovery_guidance: tuple[AllowedRecoveryAction, ...]
     close: SessionCloseInspection
 
@@ -46,15 +51,15 @@ class DurableSessionClose:
         self._store = store
         self._runtime = runtime
 
-    def close(
+    def close[RunDocumentT: _CanonicalRunDocument](
         self,
         request: SessionCloseRequest,
-        run_report: CanonicalRunReport,
+        run_report: RunDocumentT,
         recovery_guidance: tuple[AllowedRecoveryAction, ...],
         attempt: Callable[[], SessionCloseDisposition],
         *,
         lease: RevisionLease | None = None,
-    ) -> PreservedRunResult:
+    ) -> PreservedRunResult[RunDocumentT]:
         run_id = RunId(run_report.run_id)
         owned_lease = lease is None
         active_lease = lease
@@ -107,12 +112,12 @@ class DurableSessionClose:
             self._safe_inspect(run_id, request.session_id),
         )
 
-    def inspect(
+    def inspect[RunDocumentT: _CanonicalRunDocument](
         self,
         request: SessionCloseRequest,
-        run_report: CanonicalRunReport,
+        run_report: RunDocumentT,
         recovery_guidance: tuple[AllowedRecoveryAction, ...],
-    ) -> PreservedRunResult:
+    ) -> PreservedRunResult[RunDocumentT]:
         return PreservedRunResult(
             run_report,
             recovery_guidance,

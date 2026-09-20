@@ -322,6 +322,8 @@ class SessionCloseRecord:
     disposition: SessionCloseDisposition
     failure_category: SessionCloseFailureCategory | None
     failure_code: str | None
+    schema_version: int
+    run_kind: str
     digest: str
     canonical_bytes: bytes
 
@@ -628,6 +630,7 @@ _SESSION_CLOSE_FIELDS = {
     "terminal_revision",
     "workspace_id",
 }
+_SESSION_CLOSE_V2_FIELDS = _SESSION_CLOSE_FIELDS | {"run_kind"}
 
 
 def build_session_close_record(value: dict[str, object]) -> SessionCloseRecord:
@@ -644,17 +647,33 @@ def build_session_close_record(value: dict[str, object]) -> SessionCloseRecord:
 
 def decode_session_close_record(content: bytes) -> SessionCloseRecord:
     value = decode_json_object(content)
-    if set(value) != _SESSION_CLOSE_FIELDS:
+    schema_version = value.get("schema_version")
+    expected_fields = (
+        _SESSION_CLOSE_V2_FIELDS if schema_version == 2 else _SESSION_CLOSE_FIELDS
+    )
+    if set(value) != expected_fields:
         raise ValueError("unknown or missing session close fields")
     if canonical_document_bytes(value) != content:
         raise ValueError("session close bytes are not canonical")
     if (
         value["kind"] != "CoreElecReconcilerSessionClose"
-        or type(value["schema_version"]) is not int
-        or value["schema_version"] != 1
+        or type(schema_version) is not int
+        or schema_version not in {1, 2}
         or value["producer"] != {"name": "coreelec-reconciler", "version": "0.1.0"}
     ):
         raise ValueError("unsupported session close record")
+    run_kind = (
+        "CoreElecReconcilerRunReport"
+        if schema_version == 1
+        else _session_close_string(value["run_kind"], "run_kind")
+    )
+    if run_kind not in {
+        "CoreElecReconcilerRunReport",
+        "CoreElecReconcilerObservationRun",
+    }:
+        raise ValueError("unsupported session close Run kind")
+    if schema_version == 2 and run_kind != "CoreElecReconcilerObservationRun":
+        raise ValueError("session close version 2 requires an observation Run")
     record_id = require_uuid7(value["record_id"], "session close record_id")
     session_id = _session_close_code(value["session_id"], "session_id")
     run_id = require_uuid7(value["run_id"], "session close run_id")
@@ -681,14 +700,26 @@ def decode_session_close_record(content: bytes) -> SessionCloseRecord:
         "quarantined",
         "released",
         "unknown",
+        "not_applicable",
     }:
         raise ValueError("unknown session close authority state")
+    if run_kind == "CoreElecReconcilerObservationRun" and (
+        schema_version != 2 or authority_state != "not_applicable"
+    ):
+        raise ValueError("observation session close authority must be not applicable")
+    if (
+        run_kind == "CoreElecReconcilerRunReport"
+        and authority_state == "not_applicable"
+    ):
+        raise ValueError("execution session close requires authority state")
     seal_digest_value = value["seal_digest"]
     seal_digest = (
         None
         if seal_digest_value is None
         else require_sha256(seal_digest_value, "session close seal_digest")
     )
+    if run_kind == "CoreElecReconcilerObservationRun" and seal_digest is not None:
+        raise ValueError("observation session close cannot bind an authority seal")
     observed_at = require_rfc3339_utc(value["observed_at"], "observed_at")
     try:
         disposition = SessionCloseDisposition(
@@ -737,6 +768,8 @@ def decode_session_close_record(content: bytes) -> SessionCloseRecord:
         disposition=disposition,
         failure_category=failure_category,
         failure_code=failure_code,
+        schema_version=schema_version,
+        run_kind=run_kind,
         digest=digest,
         canonical_bytes=content,
     )
