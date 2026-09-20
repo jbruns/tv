@@ -40,6 +40,65 @@ Transport is the system `ssh` client with the existing administrator key
 (`~/.ssh/coreelec_admin_ed25519` by default; change it in the Profile). Kodi
 does not need to be stopped: a Smart Playlist is read when it is opened.
 
+## Hardware acceptance
+
+A Reconciler change is accepted on the real Device, not in CI. Kodi on the
+theater Ugoos is under the Home Assistant lifecycle package, which stops Kodi
+whenever the Sony is off, so acceptance runs bracketed by the operational
+override. Take control, test, hand control back:
+
+```console
+set -a && . ./.env && set +a
+ha() { curl -sS --max-time 15 -H "Authorization: Bearer $HOME_ASSISTANT_TOKEN" \
+  -H 'Content-Type: application/json' "$HOME_ASSISTANT_URL/api/$1" "${@:2}"; }
+keep=input_boolean.ugoos_theater_keep_kodi_running
+
+# 1. Take control: keep Kodi running regardless of the Sony.
+ha services/input_boolean/turn_on -d "{\"entity_id\": \"$keep\"}"
+ha states/$keep                     # expect "state": "on"
+
+# 2. Confirm Kodi is actually up before touching anything.
+ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater systemctl is-active kodi
+
+# 3. Run the acceptance scenarios (below).
+
+# 4. Hand control back to Home Assistant.
+ha services/input_boolean/turn_off -d "{\"entity_id\": \"$keep\"}"
+ha states/$keep                     # expect "state": "off"
+```
+
+The override is persistent: nothing turns it off on its own, so leaving it on
+silently disables the Sony-off and idle power-off behaviour until someone
+notices. Turning it off is part of the run, not an afterthought — if a
+scenario fails, turn it off before investigating.
+
+The scenarios are:
+
+1. **Fresh convergence** — remove the file on the Device, `apply`, the file is
+   present and correct.
+2. **No-op** — `apply` again, no Changes, the file is unchanged.
+3. **Drift repair** — edit the file on the Device, `apply`, it converges.
+4. **Interruption** — kill a Run mid-`apply` at several points, confirm the
+   file is always either the old or the new document and never truncated, then
+   `apply` again and reach Convergence. This is the property that replaces
+   rollback and is the one that matters most.
+5. **Usable** — Kodi still starts and the playlist still opens:
+
+   ```console
+   curl -sS --max-time 15 --user "$KODI_USER:$KODI_WEB_PASSWORD" \
+     -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"Files.GetDirectory","params":
+          {"directory":"special://profile/playlists/video/NewShows.xsp",
+           "media":"video","limits":{"end":5}}}' \
+     http://ugoos-theater:8080/jsonrpc
+   ```
+
+   A `result` with `files` (or an empty list when nothing is unwatched) means
+   Kodi parsed the Smart Playlist. An `error` means it did not.
+
+See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
+the override changes and for the rest of the lifecycle contract.
+
 ## Failure semantics
 
 There is no rollback. A Run that fails partway stops, reports what it did, and
