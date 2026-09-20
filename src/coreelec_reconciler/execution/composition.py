@@ -4,7 +4,9 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from threading import Lock
 from typing import Protocol, cast
+from weakref import WeakKeyDictionary
 
 from coreelec_reconciler.domain.canonical_json import (
     canonical_document_bytes,
@@ -114,6 +116,34 @@ class SavedPlanExecutionRequest:
     input_digests: Mapping[str, str]
     approval_grants: tuple[ApprovalGrant, ...]
     now: str
+
+
+class SavedPlanExecutionPreflight:
+    """Opaque capability issued by one ProductionExecutionFactory."""
+
+    __slots__ = ("__weakref__",)
+
+    def __new__(cls) -> SavedPlanExecutionPreflight:
+        raise TypeError("Saved Plan execution preflights are factory-issued")
+
+
+@dataclass(frozen=True, slots=True)
+class _SavedPlanExecutionPreflightState:
+    plan_id: PlanId
+    execution_run_id: RunId
+    device_id: DeviceId
+    originating_run_id: RunId
+    expected_device_bytes: bytes
+    input_digests: tuple[tuple[str, str], ...]
+    approval_grants: tuple[ApprovalGrant, ...]
+    requested_at: str
+    validated_at: str
+    valid_from: str
+    expires_at: str
+    plan_full_digest: str
+    planning_run_digest: str
+    binding_digest: str
+    dependency_graph: PlanDependencyGraph
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +283,11 @@ class ProductionExecutionFactory:
         self._clock = clock
         self._documents = documents or CanonicalExecutionDocumentCodec()
         self._progress = progress
+        self._saved_plan_preflights: WeakKeyDictionary[
+            SavedPlanExecutionPreflight,
+            _SavedPlanExecutionPreflightState,
+        ] = WeakKeyDictionary()
+        self._saved_plan_preflights_lock = Lock()
 
     def save_plan(
         self,
@@ -279,8 +314,16 @@ class ProductionExecutionFactory:
         self,
         request: SavedPlanExecutionRequest,
     ) -> PreparedExecution:
+        preflight = self.preflight_saved_plan(request)
+        return self.prepare_saved_plan(preflight)
+
+    def preflight_saved_plan(
+        self,
+        request: SavedPlanExecutionRequest,
+    ) -> SavedPlanExecutionPreflight:
         trusted_now = self._clock.utc_now()
         trusted_instant = _timestamp(trusted_now)
+        _timestamp(request.now)
         saved = self.load_plan(request.plan_id)
         value = decode_json_object(saved.plan.canonical_bytes)
         if saved.device_id != request.device_id:
@@ -292,20 +335,7 @@ class ProductionExecutionFactory:
         device = value.get("device")
         if not isinstance(device, dict) or device != dict(request.expected_device):
             raise ValueError("saved Plan Device identity changed")
-        observed_device = self._device_authority.observe_authority(request.device_id)
-        reobserved_device = self._device_authority.observe_authority(request.device_id)
         binding_digest = _device_binding_digest(device)
-        if (
-            reobserved_device != observed_device
-            or observed_device.device_id != request.device_id
-            or observed_device.binding_digest != binding_digest
-            or observed_device.platform_identity_fingerprint
-            != _required_text(device, "observed_platform_identity_fingerprint")
-            or observed_device.ssh_host_key_fingerprint
-            != _required_text(device, "ssh_host_key_fingerprint")
-            or not observed_device.boot_id
-        ):
-            raise ValueError("observed Device authority identity changed")
         expires_at = value.get("expires_at")
         if not isinstance(expires_at, str) or trusted_instant > _timestamp(expires_at):
             raise ValueError("saved Plan expired")
@@ -314,27 +344,100 @@ class ProductionExecutionFactory:
             raise ValueError("saved Plan validity boundary is invalid")
         if trusted_instant < _timestamp(valid_from):
             raise ValueError("saved Plan is not yet valid")
-        if len({grant.scope for grant in request.approval_grants}) != len(
-            request.approval_grants
-        ):
-            raise ValueError("approval grant scopes must be unique")
-        for grant in request.approval_grants:
-            if not grant.scope or not grant.actor or not grant.mechanism:
-                raise ValueError("approval grant identity is incomplete")
-            granted_at = _timestamp(grant.granted_at)
-            if granted_at < _timestamp(valid_from) or granted_at > trusted_instant:
-                raise ValueError("approval grant time is outside Plan validity")
-        grants = {grant.scope: grant for grant in request.approval_grants}
-        missing = set(saved.approval_scopes) - set(grants)
-        if missing:
-            raise ValueError("saved Plan approval scopes are insufficient")
-        if any(
-            grant.scope not in saved.approval_scopes
-            for grant in request.approval_grants
-        ):
-            raise ValueError("approval grant is not required by saved Plan")
-        resources = _objects(value, "resources")
+        _validate_approval_grants(
+            request.approval_grants,
+            saved.approval_scopes,
+            valid_from,
+            trusted_instant,
+        )
         dependency_graph = _saved_plan_execution_graph(saved.plan, self._registry)
+        state = _SavedPlanExecutionPreflightState(
+            request.plan_id,
+            request.execution_run_id,
+            request.device_id,
+            request.originating_run_id,
+            canonical_document_bytes(device),
+            tuple(sorted(request.input_digests.items())),
+            request.approval_grants,
+            request.now,
+            trusted_now,
+            valid_from,
+            expires_at,
+            saved.plan.full_digest,
+            saved.planning_run.current_digest,
+            binding_digest,
+            dependency_graph,
+        )
+        preflight = object.__new__(SavedPlanExecutionPreflight)
+        with self._saved_plan_preflights_lock:
+            self._saved_plan_preflights[preflight] = state
+        return preflight
+
+    def prepare_saved_plan(
+        self,
+        preflight: SavedPlanExecutionPreflight,
+    ) -> PreparedExecution:
+        try:
+            with self._saved_plan_preflights_lock:
+                state = self._saved_plan_preflights.pop(preflight)
+        except KeyError, TypeError:
+            raise ValueError(
+                "saved Plan preflight was not issued by this factory "
+                "or was already used"
+            ) from None
+        trusted_now = self._clock.utc_now()
+        trusted_instant = _timestamp(trusted_now)
+        _timestamp(state.requested_at)
+        if trusted_instant < _timestamp(state.validated_at):
+            raise ValueError("saved Plan preflight is stale")
+        saved = self.load_plan(state.plan_id)
+        value = decode_json_object(saved.plan.canonical_bytes)
+        device = value.get("device")
+        valid_from = value.get("valid_from")
+        expires_at = value.get("expires_at")
+        if (
+            not isinstance(valid_from, str)
+            or not isinstance(expires_at, str)
+            or trusted_instant < _timestamp(valid_from)
+            or trusted_instant > _timestamp(expires_at)
+        ):
+            raise ValueError("saved Plan preflight is stale")
+        _validate_approval_grants(
+            state.approval_grants,
+            saved.approval_scopes,
+            valid_from,
+            trusted_instant,
+        )
+        if (
+            saved.plan.full_digest != state.plan_full_digest
+            or saved.planning_run.current_digest != state.planning_run_digest
+            or saved.device_id != state.device_id
+            or saved.originating_run_id != state.originating_run_id
+            or tuple(saved.input_digests) != state.input_digests
+            or not isinstance(device, dict)
+            or canonical_document_bytes(device) != state.expected_device_bytes
+            or _device_binding_digest(device) != state.binding_digest
+            or valid_from != state.valid_from
+            or expires_at != state.expires_at
+            or _saved_plan_execution_graph(saved.plan, self._registry)
+            != state.dependency_graph
+        ):
+            raise ValueError("saved Plan preflight identity changed")
+        observed_device = self._device_authority.observe_authority(state.device_id)
+        reobserved_device = self._device_authority.observe_authority(state.device_id)
+        if (
+            reobserved_device != observed_device
+            or observed_device.device_id != state.device_id
+            or observed_device.binding_digest != state.binding_digest
+            or observed_device.platform_identity_fingerprint
+            != _required_text(device, "observed_platform_identity_fingerprint")
+            or observed_device.ssh_host_key_fingerprint
+            != _required_text(device, "ssh_host_key_fingerprint")
+            or not observed_device.boot_id
+        ):
+            raise ValueError("observed Device authority identity changed")
+        resources = _objects(value, "resources")
+        dependency_graph = state.dependency_graph
         resources_by_id = {
             _required_text(resource, "resource_id"): resource for resource in resources
         }
@@ -353,14 +456,14 @@ class ProductionExecutionFactory:
             ):
                 raise ValueError("saved Plan Resource Type is not executable")
             context = execution_contexts.context(
-                request.execution_run_id,
+                state.execution_run_id,
                 resource_id,
                 type_code,
                 deferred_attachments,
             )
             if (
-                context.binding.device_id != request.device_id.value
-                or context.binding.binding_digest != binding_digest
+                context.binding.device_id != state.device_id.value
+                or context.binding.binding_digest != state.binding_digest
             ):
                 raise ValueError("Resource context Device binding changed")
             runtime = descriptor.execution_factory(context)
@@ -374,7 +477,10 @@ class ProductionExecutionFactory:
                         descriptor.decode_planned_change(
                             change,
                             context,
-                            "apply" in grants,
+                            any(
+                                grant.scope == "apply"
+                                for grant in state.approval_grants
+                            ),
                         ),
                     )
                 )
@@ -383,9 +489,9 @@ class ProductionExecutionFactory:
             report = self._documents.build(
                 _initial_execution_run(
                     saved,
-                    request,
+                    state,
                     token_digest,
-                    binding_digest,
+                    state.binding_digest,
                     observed_device.boot_id,
                     trusted_now,
                     resources,
@@ -396,23 +502,23 @@ class ProductionExecutionFactory:
 
         acquired = self._authority.acquire(
             AuthorityAcquisitionRequest(
-                request.device_id,
-                request.execution_run_id,
+                state.device_id,
+                state.execution_run_id,
                 initial_revision,
                 lambda workspace_id: RemoteOwnershipIdentity(
-                    request.device_id,
-                    request.execution_run_id,
+                    state.device_id,
+                    state.execution_run_id,
                     workspace_id,
                     saved.plan.plan_id,
                     saved.plan.full_digest,
-                    binding_digest,
+                    state.binding_digest,
                     observed_device.boot_id,
                 ),
                 trusted_now,
             )
         )
         services = self._bind(
-            request.execution_run_id,
+            state.execution_run_id,
             acquired,
             execution_contexts,
             deferred_journal,
@@ -420,7 +526,7 @@ class ProductionExecutionFactory:
             dependency_graph,
         )
         return PreparedExecution(
-            ApprovedPlan(request.execution_run_id, tuple(changes)),
+            ApprovedPlan(state.execution_run_id, tuple(changes)),
             services,
         )
 
@@ -483,7 +589,7 @@ class ProductionExecutionFactory:
 
 def _initial_execution_run(
     saved: SavedPlan,
-    request: SavedPlanExecutionRequest,
+    preflight: _SavedPlanExecutionPreflightState,
     token_digest: str,
     binding_digest: str,
     boot_id: str,
@@ -500,7 +606,7 @@ def _initial_execution_run(
                 "plan_id": saved.plan.plan_id,
                 "scope": grant.scope,
             }
-            for grant in request.approval_grants
+            for grant in preflight.approval_grants
         ],
         "attachments": [],
         "attempts": [],
@@ -517,7 +623,7 @@ def _initial_execution_run(
         },
         "cleanup": {"leftover_count": 0, "state": "not_started"},
         "current_digest": "",
-        "device_id": request.device_id.value,
+        "device_id": preflight.device_id.value,
         "ended_at": None,
         "evidence": [],
         "failures": [],
@@ -551,13 +657,13 @@ def _initial_execution_run(
                 },
             ],
             "required": False,
-            "workspace_id": f"workspace:{request.execution_run_id.value}",
+            "workspace_id": f"workspace:{preflight.execution_run_id.value}",
         },
         "resource_results": [
             _initial_resource_result(resource) for resource in resources
         ],
         "revision": 1,
-        "run_id": request.execution_run_id.value,
+        "run_id": preflight.execution_run_id.value,
         "schema_version": 1,
         "started_at": started_at,
         "status": "ready",
@@ -601,6 +707,27 @@ def _desired_disposition(resource: Mapping[str, object]) -> str:
 
 def _device_binding_digest(device: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(canonical_document_bytes(device)).hexdigest()
+
+
+def _validate_approval_grants(
+    approval_grants: tuple[ApprovalGrant, ...],
+    required_scopes: tuple[str, ...],
+    valid_from: str,
+    trusted_instant: datetime,
+) -> None:
+    if len({grant.scope for grant in approval_grants}) != len(approval_grants):
+        raise ValueError("approval grant scopes must be unique")
+    for grant in approval_grants:
+        if not grant.scope or not grant.actor or not grant.mechanism:
+            raise ValueError("approval grant identity is incomplete")
+        granted_at = _timestamp(grant.granted_at)
+        if granted_at < _timestamp(valid_from) or granted_at > trusted_instant:
+            raise ValueError("approval grant time is outside Plan validity")
+    granted_scopes = {grant.scope for grant in approval_grants}
+    if set(required_scopes) - granted_scopes:
+        raise ValueError("saved Plan approval scopes are insufficient")
+    if any(grant.scope not in required_scopes for grant in approval_grants):
+        raise ValueError("approval grant is not required by saved Plan")
 
 
 def _executable_dependency_graph(

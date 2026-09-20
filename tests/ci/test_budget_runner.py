@@ -165,7 +165,7 @@ signal.pause()
             sys.executable,
             "-c",
             parent_code,
-            timeout_seconds="0.5",
+            timeout_seconds="0.1",
         )
 
         assert result.returncode == 124

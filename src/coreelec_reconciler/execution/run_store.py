@@ -159,6 +159,47 @@ class RunStore:
         ownership_token_digest: str,
         initial_payload: bytes,
     ) -> tuple[RevisionLease, WorkspaceId]:
+        return self._create_run(
+            device_lease,
+            run_id,
+            device_id,
+            ownership_token,
+            ownership_token_digest,
+            initial_payload,
+            active=True,
+        )
+
+    def create_read_only_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: RunId,
+        device_id: DeviceId,
+        ownership_token: bytes,
+        ownership_token_digest: str,
+        initial_payload: bytes,
+    ) -> tuple[RevisionLease, WorkspaceId]:
+        """Create a canonical Run workspace without claiming mutation authority."""
+        return self._create_run(
+            device_lease,
+            run_id,
+            device_id,
+            ownership_token,
+            ownership_token_digest,
+            initial_payload,
+            active=False,
+        )
+
+    def _create_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: RunId,
+        device_id: DeviceId,
+        ownership_token: bytes,
+        ownership_token_digest: str,
+        initial_payload: bytes,
+        *,
+        active: bool,
+    ) -> tuple[RevisionLease, WorkspaceId]:
         self._require_device_lease(device_lease, device_id)
         if _sha256(ownership_token) != ownership_token_digest:
             raise RunStoreError("ownership token digest mismatch")
@@ -229,26 +270,29 @@ class RunStore:
                 directory / "state.json",
                 canonical_document_bytes(
                     {
-                        "authority_phase": AuthorityPhase.ACQUISITION_PENDING.value,
+                        "authority_phase": (
+                            AuthorityPhase.ACQUISITION_PENDING.value if active else None
+                        ),
                         "status": initial_status.value,
                         "terminal": False,
                     }
                 ),
                 "create-run-state",
             )
-            self._write_index(
-                device_id,
-                (
-                    ActiveDeviceRun(
-                        run_id,
-                        workspace_id,
-                        1,
-                        initial.digest,
-                        initial_status,
-                        AuthorityPhase.ACQUISITION_PENDING,
+            if active:
+                self._write_index(
+                    device_id,
+                    (
+                        ActiveDeviceRun(
+                            run_id,
+                            workspace_id,
+                            1,
+                            initial.digest,
+                            initial_status,
+                            AuthorityPhase.ACQUISITION_PENDING,
+                        ),
                     ),
-                ),
-            )
+                )
         except Exception:
             self._remove_unpublished_workspace(directory)
             raise
@@ -330,6 +374,34 @@ class RunStore:
         if terminal != terminal_seen:
             raise CorruptRunStore("Run terminal state does not match canonical head")
         return VerifiedRunChain(tuple(revisions), revisions[-1], terminal)
+
+    def inspect_head(self, run_id: RunId) -> StoredRevision:
+        """Read the exact canonical head without trusting the evidence chain."""
+        workspace = self._workspace_for_run(run_id)
+        identity = self._read_object(workspace / "identity.json")
+        if set(identity) != _IDENTITY_FIELDS:
+            raise CorruptRunStore("workspace identity fields are incomplete")
+        if _required_string(identity, "run_id") != run_id.value:
+            raise CorruptRunStore("workspace identity does not match Run")
+        head = self._read_object(workspace / "head.json")
+        revision = _required_int(head, "revision")
+        stored = self._validate_revision(
+            self._read_bytes(workspace / "revisions" / f"{revision:08d}.json")
+        )
+        if stored.revision != revision or head.get("digest") != stored.digest:
+            raise CorruptRunStore("Run head does not match referenced revision")
+        value = decode_json_object(stored.payload)
+        if _required_string(value, "run_id") != run_id.value:
+            raise CorruptRunStore("Run revision identity mismatch")
+        try:
+            revision_identity = execution_run_identity(value)
+        except ValueError as error:
+            raise CorruptRunStore(
+                "Run immutable identity bindings are malformed"
+            ) from error
+        if revision_identity != identity:
+            raise CorruptRunStore("Run immutable identity bindings changed")
+        return stored
 
     def load_identity(self, run_id: RunId) -> dict[str, object]:
         workspace = self._workspace_for_run(run_id)
