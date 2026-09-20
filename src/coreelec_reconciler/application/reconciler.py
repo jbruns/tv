@@ -23,10 +23,13 @@ from coreelec_reconciler.application.outcomes import (
     ActionResult,
     ApplyOutcome,
     ApplyResult,
+    ApprovalResolution,
+    CanonicalPlanOutcome,
     InventoryResult,
     ObservationOutcome,
     ObserveResult,
     Outcome,
+    PlanningFailureOutcome,
     PlanOutcome,
     PlanResult,
     ReconcileOutcome,
@@ -49,7 +52,7 @@ from coreelec_reconciler.domain.execution import (
     RunStatus,
 )
 from coreelec_reconciler.domain.identifiers import PlanId, RunId
-from coreelec_reconciler.domain.planning import CanonicalRunReport
+from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
 
 if TYPE_CHECKING:
     from coreelec_reconciler.execution.engine import (
@@ -64,7 +67,9 @@ class ApplicationWorkflows(Protocol):
 
     def apply(self, command: ApplyCommand) -> ApplyOutcome: ...
 
-    def reconcile(self, command: ReconcileCommand) -> ReconcileOutcome: ...
+    def reconcile(
+        self, command: ReconcileCommand
+    ) -> ReconcileOutcome | PlanningFailureOutcome: ...
 
     def verify(self, command: VerifyCommand) -> VerifyOutcome: ...
 
@@ -85,6 +90,12 @@ class ApplicationData(Protocol):
     def approved_plan(
         self, plan_id: PlanId, approval_scopes: tuple[str, ...]
     ) -> ApprovedPlan: ...
+
+    def resolve_approval(
+        self,
+        plan: CanonicalPlan,
+        approval_scopes: tuple[str, ...],
+    ) -> ApprovalResolution: ...
 
     def verify(self, command: VerifyCommand) -> VerifyOutcome: ...
 
@@ -109,22 +120,38 @@ class ExecutionApplicationWorkflows:
         _require_execution_result_binding(result.run_id, result.status, report)
         return ApplyOutcome(report, result.cleanup_complete)
 
-    def reconcile(self, command: ReconcileCommand) -> ReconcileOutcome:
-        planned = self._data.plan(
-            PlanCommand(command.repository_root, command.device_id)
+    def reconcile(
+        self, command: ReconcileCommand
+    ) -> ReconcileOutcome | PlanningFailureOutcome:
+        planned = _classify_plan_outcome(
+            self._data.plan(PlanCommand(command.repository_root, command.device_id))
         )
-        planning_report = _require_planning_report(planned)
-        if planned.plan_id is None or planned.disposition != "actionable":
-            return ReconcileOutcome(planning_report, planned.plan, None, None)
-        plan = self._data.approved_plan(planned.plan_id, command.approval_scopes)
-        result = self._engine.start(plan)
+        if isinstance(planned, PlanningFailureOutcome):
+            return planned
+        canonical_plan, planning_report = _canonical_planning_documents(planned)
+        if planned.disposition != "actionable":
+            return ReconcileOutcome(planning_report, canonical_plan, None, None)
+        approval = self._data.resolve_approval(canonical_plan, command.approval_scopes)
+        if not approval.sufficient:
+            return ReconcileOutcome(
+                planning_report,
+                canonical_plan,
+                None,
+                None,
+                approval,
+            )
+        approved_plan = self._data.approved_plan(
+            planned.plan_id, command.approval_scopes
+        )
+        result = self._engine.start(approved_plan)
         report = self._run_report(command.repository_root, result.run_id)
         _require_execution_result_binding(result.run_id, result.status, report)
         return ReconcileOutcome(
             planning_report,
-            planned.plan,
+            canonical_plan,
             report,
             result.cleanup_complete,
+            approval,
         )
 
     def verify(self, command: VerifyCommand) -> VerifyOutcome:
@@ -145,8 +172,8 @@ class ExecutionApplicationWorkflows:
                 )
             return RecoveryInspectionOutcome(
                 report,
-                inspection.evidence,
                 inspection.actions,
+                inspection.evidence.cleanup_complete,
             )
         result = self._engine.recover(command.run_id, request)
         report = self._run_report(command.repository_root, result.run_id)
@@ -172,7 +199,7 @@ class ApplicationDependencies:
 
     workflows: ApplicationWorkflows
     validate_repository: Callable[[ValidateCommand], ValidationOutcome]
-    plan_repository: Callable[[PlanCommand], PlanResult]
+    plan_repository: Callable[[PlanCommand], PlanOutcome | UnsupportedOutcome]
 
 
 class Reconciler(Protocol):
@@ -215,7 +242,8 @@ class ApplicationReconciler:
         self,
         validate_repository: Callable[[ValidateCommand], ValidationOutcome]
         | None = None,
-        plan_repository: Callable[[PlanCommand], PlanResult] | None = None,
+        plan_repository: Callable[[PlanCommand], PlanOutcome | UnsupportedOutcome]
+        | None = None,
         *,
         dependencies: ApplicationDependencies | None = None,
     ) -> None:
@@ -275,7 +303,10 @@ class ApplicationReconciler:
                 name = "observe"
             case PlanCommand():
                 if self._plan_repository is not None:
-                    return self._plan_repository(command)
+                    planned = self._plan_repository(command)
+                    if isinstance(planned, UnsupportedOutcome):
+                        return planned
+                    return _classify_plan_outcome(planned)
                 name = "plan"
             case ApplyCommand():
                 if self._dependencies is not None:
@@ -325,13 +356,42 @@ def _recovery_request(command: RecoverCommand) -> RecoveryRequest:
     return RecoveryRequest(code, mode, command.approval, command.reason)
 
 
-def _require_planning_report(outcome: PlanOutcome) -> CanonicalRunReport:
+def _classify_plan_outcome(
+    outcome: PlanOutcome,
+) -> CanonicalPlanOutcome | PlanningFailureOutcome:
+    if (
+        outcome.plan_id is not None
+        and outcome.plan is not None
+        and outcome.run_report is not None
+    ):
+        return CanonicalPlanOutcome(
+            outcome.run_id,
+            outcome.plan_id,
+            outcome.disposition,
+            outcome.plan,
+            outcome.run_report,
+            outcome.diagnostics,
+        )
+    if outcome.plan is None and outcome.run_report is None and outcome.plan_id is None:
+        return PlanningFailureOutcome(
+            outcome.run_id,
+            None,
+            outcome.disposition,
+            None,
+            None,
+            outcome.diagnostics,
+        )
+    raise ValueError("planning outcome has inconsistent canonical documents")
+
+
+def _canonical_planning_documents(
+    outcome: CanonicalPlanOutcome,
+) -> tuple[CanonicalPlan, CanonicalRunReport]:
+    plan = outcome.plan
     report = outcome.run_report
-    if report is None:
-        raise RuntimeError("planning workflow omitted its canonical Run Report")
     if report.run_id != outcome.run_id.value:
         raise ValueError("planning Run Report does not bind to the planning outcome")
-    return report
+    return plan, report
 
 
 def _require_execution_result_binding(

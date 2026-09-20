@@ -5,7 +5,6 @@ from enum import StrEnum
 
 from coreelec_reconciler.domain.execution import (
     AllowedRecoveryAction,
-    RecoveryEvidence,
     RunStatus,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, PlanId, RunId
@@ -67,6 +66,35 @@ class PlanOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class CanonicalPlanOutcome(PlanOutcome):
+    """A modeled planning result with canonical Plan and Run documents."""
+
+    plan_id: PlanId
+    plan: CanonicalPlan
+    run_report: CanonicalRunReport
+
+
+@dataclass(frozen=True, slots=True)
+class PlanningFailureOutcome(PlanOutcome):
+    """A failure that occurs before a canonical planning Run exists."""
+
+    plan_id: None
+    plan: None
+    run_report: None
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalResolution:
+    required_scopes: tuple[str, ...]
+    granted_scopes: tuple[str, ...]
+    missing_scopes: tuple[str, ...]
+
+    @property
+    def sufficient(self) -> bool:
+        return not self.missing_scopes
+
+
+@dataclass(frozen=True, slots=True)
 class ApplyOutcome:
     run_report: CanonicalRunReport
     cleanup_complete: bool
@@ -86,6 +114,7 @@ class ReconcileOutcome:
     plan: CanonicalPlan | None
     execution_run_report: CanonicalRunReport | None
     cleanup_complete: bool | None
+    approval: ApprovalResolution | None = None
 
     @property
     def planning_run_id(self) -> RunId:
@@ -136,8 +165,8 @@ class RecoverOutcome:
 @dataclass(frozen=True, slots=True)
 class RecoveryInspectionOutcome:
     run_report: CanonicalRunReport
-    evidence: RecoveryEvidence
     actions: tuple[AllowedRecoveryAction, ...]
+    cleanup_complete: bool
 
     @property
     def run_id(self) -> RunId:
@@ -146,10 +175,6 @@ class RecoveryInspectionOutcome:
     @property
     def status(self) -> RunStatus:
         return self.run_report.status
-
-    @property
-    def cleanup_complete(self) -> bool:
-        return self.evidence.cleanup_complete
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,9 +203,9 @@ class ActionOutcome:
 type ValidateResult = ValidationOutcome | UnsupportedOutcome
 type InventoryResult = InventoryOutcome | UnsupportedOutcome
 type ObserveResult = ObservationOutcome | UnsupportedOutcome
-type PlanResult = PlanOutcome | UnsupportedOutcome
+type PlanResult = CanonicalPlanOutcome | PlanningFailureOutcome | UnsupportedOutcome
 type ApplyResult = ApplyOutcome | UnsupportedOutcome
-type ReconcileResult = ReconcileOutcome | UnsupportedOutcome
+type ReconcileResult = ReconcileOutcome | PlanningFailureOutcome | UnsupportedOutcome
 type VerifyResult = VerifyOutcome | UnsupportedOutcome
 type RecoverResult = RecoverOutcome | RecoveryInspectionOutcome | UnsupportedOutcome
 type ReportResult = ReportOutcome | UnsupportedOutcome

@@ -11,11 +11,20 @@ rather than asking presentation code to reconstruct a document from IDs and
 status strings. Reconcile retains both its planning Run and Plan and, when
 execution occurs, its execution Run; this preserves the `awaiting_approval`
 planning document. Recovery inspection returns the stable `RecoveryEvidence`
-and the complete computed `AllowedRecoveryAction` tuple. Mutating recovery
-returns the resulting current terminal Run report. Cleanup completion remains
-separate metadata, so cleanup uncertainty cannot change Device convergence or
-failure truth. Missing or mismatched canonical reports fail at the application
-boundary instead of being fabricated by the CLI.
+internally but exposes only the current Run report, cleanup completion, and the
+complete computed `AllowedRecoveryAction` tuple. Mutating recovery returns the
+resulting current terminal Run report. Cleanup completion remains separate
+metadata, so cleanup uncertainty cannot change Device convergence or failure
+truth.
+
+Planning results are classified at the application boundary into
+report-bearing canonical outcomes or typed pre-report failures. Reconcile uses
+a typed approval resolution containing required, granted, and missing scopes.
+Insufficient approval returns the canonical Plan and `awaiting_approval`
+planning Run without starting execution, allowing presentation to render a
+copyable command without duplicating approval logic. Inconsistent or
+mismatched canonical documents fail at the application boundary instead of
+being fabricated by presentation code.
 
 Managed-file execution uses least-authority fake capabilities. Every
 state-changing primitive follows the same durable boundary: persist its typed

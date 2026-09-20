@@ -19,9 +19,12 @@ from coreelec_reconciler.application.outcomes import (
     ActionResult,
     ApplyOutcome,
     ApplyResult,
+    ApprovalResolution,
+    CanonicalPlanOutcome,
     InventoryResult,
     ObservationOutcome,
     ObserveResult,
+    PlanningFailureOutcome,
     PlanOutcome,
     PlanResult,
     ReconcileOutcome,
@@ -129,8 +132,13 @@ def _application() -> ApplicationReconciler:
 
 
 class _Data:
-    def __init__(self, planned: PlanOutcome) -> None:
+    def __init__(
+        self,
+        planned: PlanOutcome,
+        approval: ApprovalResolution,
+    ) -> None:
         self.planned = planned
+        self.approval = approval
         self.reports = {
             RunId("execute"): EXECUTION_REPORT,
             RunId("recover"): RECOVERY_REPORT,
@@ -146,6 +154,13 @@ class _Data:
         self, plan_id: PlanId, approval_scopes: tuple[str, ...]
     ) -> ApprovedPlan:
         return ApprovedPlan(RunId("execute"), ())
+
+    def resolve_approval(
+        self,
+        plan: CanonicalPlan,
+        approval_scopes: tuple[str, ...],
+    ) -> ApprovalResolution:
+        return self.approval
 
     def verify(self, command: VerifyCommand) -> VerifyOutcome:
         return VerifyOutcome(VERIFY_REPORT)
@@ -164,8 +179,10 @@ class _InspectionEvidence:
 class _Engine:
     def __init__(self, inspection: RecoveryInspection) -> None:
         self.inspection = inspection
+        self.start_calls = 0
 
     def start(self, plan: ApprovedPlan) -> ExecutionOutcome:
+        self.start_calls += 1
         return ExecutionOutcome(
             plan.run_id,
             RunStatus.CONVERGED,
@@ -190,7 +207,14 @@ class _Engine:
 def _concrete_workflows(
     planned: PlanOutcome,
     actions: tuple[AllowedRecoveryAction, ...] = (),
+    approval: ApprovalResolution | None = None,
 ) -> ExecutionApplicationWorkflows:
+    if approval is None:
+        approval = ApprovalResolution(
+            required_scopes=("apply",),
+            granted_scopes=("apply",),
+            missing_scopes=(),
+        )
     evidence = cast(
         RecoveryEvidence,
         _InspectionEvidence(
@@ -201,7 +225,7 @@ def _concrete_workflows(
     )
     inspection = RecoveryInspection(evidence, actions)
     return ExecutionApplicationWorkflows(
-        cast(ApplicationData, _Data(planned)),
+        cast(ApplicationData, _Data(planned, approval)),
         cast(ExecutionEngine, _Engine(inspection)),
     )
 
@@ -238,6 +262,24 @@ def test_overloads_preserve_precise_public_result_types() -> None:
     )
     assert_type(app.execute(ReportCommand(".", RunId("run"))), ReportResult)
     assert_type(app.execute(ActionCommand(".", "guided")), ActionResult)
+
+
+def test_plan_results_are_classified_into_a_closed_public_algebra() -> None:
+    planned = _application().execute(PlanCommand(".", DeviceId("device")))
+    failed = ApplicationReconciler(
+        plan_repository=lambda command: PlanOutcome(
+            RunId("unavailable"),
+            None,
+            "blocked",
+            diagnostics=("observation.missing",),
+        )
+    ).execute(PlanCommand(".", DeviceId("device")))
+
+    assert isinstance(planned, CanonicalPlanOutcome)
+    assert planned.plan is PLAN
+    assert planned.run_report is PLANNING_REPORT
+    assert isinstance(failed, PlanningFailureOutcome)
+    assert failed.diagnostics == ("observation.missing",)
 
 
 def test_observe_verify_and_report_preserve_canonical_run_documents() -> None:
@@ -296,6 +338,7 @@ def test_reconcile_preserves_awaiting_approval_plan_and_run_documents() -> None:
 
     outcome = workflows.reconcile(ReconcileCommand(".", DeviceId("device"), ()))
 
+    assert isinstance(outcome, ReconcileOutcome)
     assert outcome.plan is PLAN
     assert outcome.planning_run_report is PLANNING_REPORT
     assert outcome.execution_run_report is EXECUTION_REPORT
@@ -311,21 +354,110 @@ def test_reconcile_without_execution_returns_the_planning_run_document() -> None
 
     outcome = workflows.reconcile(ReconcileCommand(".", DeviceId("device"), ()))
 
+    assert isinstance(outcome, ReconcileOutcome)
     assert outcome.run_report is noop_report
     assert outcome.execution_run_report is None
     assert outcome.cleanup_complete is None
 
 
-def test_reconcile_rejects_a_missing_canonical_planning_run_document() -> None:
+def test_reconcile_returns_typed_pre_report_planning_failure() -> None:
     workflows = _concrete_workflows(
         PlanOutcome(RunId("planning"), None, "blocked", None, None)
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match="planning workflow omitted its canonical Run Report",
-    ):
-        workflows.reconcile(ReconcileCommand(".", DeviceId("device"), ()))
+    outcome = workflows.reconcile(ReconcileCommand(".", DeviceId("device"), ()))
+
+    assert isinstance(outcome, PlanningFailureOutcome)
+    assert outcome.diagnostics == ()
+
+
+@pytest.mark.parametrize(
+    ("granted_scopes", "missing_scopes"),
+    [
+        ((), ("apply", "impact.removal")),
+        (("apply",), ("impact.removal",)),
+    ],
+)
+def test_reconcile_stops_before_execution_when_approval_is_insufficient(
+    granted_scopes: tuple[str, ...],
+    missing_scopes: tuple[str, ...],
+) -> None:
+    planned = PlanOutcome(
+        RunId("planning"),
+        PlanId("plan"),
+        "actionable",
+        PLAN,
+        PLANNING_REPORT,
+    )
+    data = _Data(
+        planned,
+        ApprovalResolution(
+            required_scopes=("apply", "impact.removal"),
+            granted_scopes=granted_scopes,
+            missing_scopes=missing_scopes,
+        ),
+    )
+    evidence = cast(
+        RecoveryEvidence,
+        _InspectionEvidence(
+            RunId("recover"),
+            cleanup_complete=False,
+            canonical_status=RunStatus.FAILED_ROLLED_BACK,
+        ),
+    )
+    engine = _Engine(RecoveryInspection(evidence, ()))
+    workflows = ExecutionApplicationWorkflows(
+        cast(ApplicationData, data),
+        cast(ExecutionEngine, engine),
+    )
+
+    outcome = workflows.reconcile(
+        ReconcileCommand(".", DeviceId("device"), granted_scopes)
+    )
+
+    assert isinstance(outcome, ReconcileOutcome)
+    assert engine.start_calls == 0
+    assert outcome.plan is PLAN
+    assert outcome.planning_run_report is PLANNING_REPORT
+    assert outcome.run_report.status is RunStatus.AWAITING_APPROVAL
+    assert outcome.approval is not None
+    assert outcome.approval.required_scopes == ("apply", "impact.removal")
+    assert outcome.approval.granted_scopes == granted_scopes
+    assert outcome.approval.missing_scopes == missing_scopes
+
+
+def test_reconcile_starts_execution_when_approval_is_sufficient() -> None:
+    planned = PlanOutcome(
+        RunId("planning"),
+        PlanId("plan"),
+        "actionable",
+        PLAN,
+        PLANNING_REPORT,
+    )
+    data = _Data(
+        planned,
+        ApprovalResolution(("apply",), ("apply",), ()),
+    )
+    evidence = cast(
+        RecoveryEvidence,
+        _InspectionEvidence(
+            RunId("recover"),
+            cleanup_complete=False,
+            canonical_status=RunStatus.FAILED_ROLLED_BACK,
+        ),
+    )
+    engine = _Engine(RecoveryInspection(evidence, ()))
+    workflows = ExecutionApplicationWorkflows(
+        cast(ApplicationData, data),
+        cast(ExecutionEngine, engine),
+    )
+
+    outcome = workflows.reconcile(ReconcileCommand(".", DeviceId("device"), ("apply",)))
+
+    assert isinstance(outcome, ReconcileOutcome)
+    assert engine.start_calls == 1
+    assert outcome.execution_run_report is EXECUTION_REPORT
+    assert outcome.approval == ApprovalResolution(("apply",), ("apply",), ())
 
 
 def test_recovery_inspect_preserves_exact_computed_actions_and_current_report() -> None:
@@ -367,6 +499,7 @@ def test_recovery_inspect_preserves_exact_computed_actions_and_current_report() 
     assert outcome.actions is actions
     assert outcome.cleanup_complete is False
     assert outcome.status is RunStatus.FAILED_ROLLED_BACK
+    assert not hasattr(outcome, "evidence")
 
 
 def test_non_inspect_recovery_returns_current_report_and_cleanup_truth() -> None:
