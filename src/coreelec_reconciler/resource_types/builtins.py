@@ -8,6 +8,9 @@ from coreelec_reconciler.resource_types.kodi_smart_playlist.codecs import (
 from coreelec_reconciler.resource_types.kodi_smart_playlist.intent import (
     parse_intent,
 )
+from coreelec_reconciler.resource_types.kodi_smart_playlist.planning_codecs import (
+    decode_plan_evidence,
+)
 from coreelec_reconciler.resource_types.kodi_smart_playlist.resource_type import (
     state_addresses,
 )
@@ -23,6 +26,7 @@ def built_in_resource_registry() -> ResourceRegistry:
                 state_addresses=state_addresses,
                 encode_intent=encode_intent,
                 decode_intent=decode_intent,
+                decode_plan_evidence=decode_plan_evidence,
             ),
         )
     )

@@ -43,6 +43,10 @@ type StateAddressResolver = Callable[
 ]
 type IntentEncoder = Callable[[KodiSmartPlaylistIntent], Mapping[str, object]]
 type IntentDecoder = Callable[[Mapping[str, object]], KodiSmartPlaylistIntent]
+type PlanEvidenceDecoder = Callable[
+    [str, int, Mapping[str, object]],
+    tuple[Mapping[str, object], str],
+]
 
 
 class ErasedResourceExecution(Protocol):
@@ -212,4 +216,5 @@ class ResourceDescriptor:
     state_addresses: StateAddressResolver
     encode_intent: IntentEncoder
     decode_intent: IntentDecoder
+    decode_plan_evidence: PlanEvidenceDecoder
     execution: ErasedResourceExecution | None = None
