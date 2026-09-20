@@ -21,17 +21,28 @@ dirty tracked checkout or any untracked effective configuration beneath
 Untracked files outside that effective configuration boundary do not affect
 the bundle.
 
-The bundle describes, but does not execute, the issue-44 core sequence:
-absent/create, formatting no-op, semantic repair, mode-only repair, malformed
-XML repair, approved removal, recreate with Kodi attestation, and immediate
-no-op. Every record is synthetic, description-only, and explicitly says that
-Device contact and secret resolution did not occur.
+The harness executes the issue-44 core sequence through the installed
+production bootstrap and public application commands: absent/create,
+formatting no-op, semantic repair, mode-only repair, malformed XML repair,
+approved removal, recreate with Kodi attestation, and immediate no-op. It also
+executes the approval-required reconcile branch and restart recovery
+inspection. Deterministic stateful transport, session, authority, host-key,
+clock, and identity seams replace only the live boundaries; the application,
+composition root, planning, execution, observation, verification, reporting,
+RunStore, PlanStore, and recovery implementations are production code.
+
+The bundle contains sanitized canonical Plan and Run revision artifacts,
+attachments, session-close records, authority and cleanup evidence, compact
+public-command receipts, recovery action derivation, and the final synthetic
+Device state. It records actual command exit statuses. It contains no raw
+exceptions, controller paths, secret values, or live Device identifiers.
 
 ## Independent verification
 
-The verifier separately checks commit/tree correspondence and recomputes
-configuration and lock bytes from the claimed commit object, plus artifact and
-bundle digests. It rejects:
+The verifier is independent: it uses standard JSON and Git-object reads, and
+does not call harness generation or production validators to decide semantic
+acceptance. It separately checks commit/tree correspondence and recomputes
+configuration and lock bytes from the claimed commit object. It then checks:
 
 - missing or unexpected files;
 - duplicate scenarios or ordinals;
@@ -40,12 +51,15 @@ bundle digests. It rejects:
 - noncanonical JSON or bad artifact/bundle digests;
 - secret-bearing fields, private controller paths, real Device identity, or
   raw exception/traceback content;
-- changed order, status, primitive trace, safety boundary, or other semantic
-  invalidity.
+- canonical Plan/Run identities, revision links, cross-document references,
+  attachments, command results, operation ordering, recovery actions, final
+  state, safety boundaries, and other semantic consistency;
+- resealed evidence whose JSON and outer digests are valid but whose claimed
+  execution is inconsistent.
 
-Generate the bundle twice and compare all bytes before accepting it. The core
-bundle is unstitched; supplemental recovery evidence, if ever authorized after
-a live core seal, is always separate.
+Generate the bundle twice and compare all bytes before accepting it. The
+installed-wheel workflow repeats the same real harness path from an unrelated
+working directory. The core bundle is a single unstitched attempt.
 
 ## Authorization boundary
 

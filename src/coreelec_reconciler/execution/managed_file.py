@@ -383,7 +383,13 @@ class ManagedFileExecutor:
             allowed_intermediates=prepared.allowed_intermediates,
             content_attachment_digest=(
                 prepared.desired_attachment.digest
-                if prepared.desired_attachment is not None
+                if primitive
+                in {
+                    PrimitiveKind.STAGE_WRITE,
+                    PrimitiveKind.ATOMIC_REPLACE,
+                    PrimitiveKind.RESTORE,
+                }
+                and prepared.desired_attachment is not None
                 else None
             ),
             marker=self._marker(primitive),

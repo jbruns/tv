@@ -181,6 +181,11 @@ def test_complete_managed_file_lifecycle(
         receipt.disposition is MutationDisposition.APPLIED
         for receipt in result.mutation.receipts
     )
+    assert all(
+        getattr(intent, "content_attachment_digest", None) is None
+        for intent in intents
+        if intent.primitive in {"chmod", "remove", "cleanup"}
+    )
 
 
 def test_lost_ack_is_resolved_by_fresh_verification() -> None:

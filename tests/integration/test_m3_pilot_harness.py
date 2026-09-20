@@ -25,10 +25,8 @@ VERIFIER = _module(
 )
 
 
-@pytest.fixture
-def source_checkout(tmp_path: Path) -> Path:
-    root = tmp_path / "source"
-    root.mkdir()
+def _create_source(root: Path) -> Path:
+    root.mkdir(exist_ok=True)
     (root / "inventory").mkdir()
     (root / "profiles").mkdir()
     (root / "inventory" / "device.yaml").write_text("synthetic: true\n")
@@ -46,6 +44,21 @@ def source_checkout(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.fixture
+def source_checkout(tmp_path: Path) -> Path:
+    return _create_source(tmp_path / "source")
+
+
+@pytest.fixture(scope="module")
+def valid_bundle(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, Path, str]:
+    root = _create_source(tmp_path_factory.mktemp("valid-bundle-source"))
+    bundle = root.parent / "valid-bundle"
+    digest = HARNESS.generate_bundle(root, bundle)
+    return root, bundle, digest
+
+
 def _write_canonical(path: Path, value: object) -> None:
     path.write_bytes(VERIFIER._canonical(value))
 
@@ -55,7 +68,7 @@ def _reseal(bundle: Path) -> None:
         "schema": VERIFIER.SCHEMA,
         "files": {
             name: VERIFIER._sha256((bundle / name).read_bytes())
-            for name in ("manifest.json", "sequence.json")
+            for name in ("manifest.json", "execution.json", "artifacts.json")
         },
     }
     digest_bytes = VERIFIER._canonical(digests)
@@ -90,28 +103,20 @@ def _working_configuration_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
-def test_dry_run_is_byte_deterministic_and_independently_valid(
-    source_checkout: Path,
+def test_dry_run_executes_and_is_independently_valid(
+    valid_bundle: tuple[Path, Path, str],
 ) -> None:
-    first = source_checkout / "first"
-    second = source_checkout / "second"
-
-    first_digest = HARNESS.generate_bundle(source_checkout, first)
-    second_digest = HARNESS.generate_bundle(source_checkout, second)
-
-    assert first_digest == second_digest
-    assert {path.name: path.read_bytes() for path in first.iterdir()} == {
-        path.name: path.read_bytes() for path in second.iterdir()
-    }
+    source_checkout, first, first_digest = valid_bundle
     assert VERIFIER.verify_bundle(first, source_checkout) == first_digest
-    expected = json.loads(
-        (
-            REPOSITORY_ROOT / "tests/fixtures/pilot-harness/core-sequence.json"
-        ).read_bytes()
-    )
-    assert (
-        json.loads((first / "sequence.json").read_bytes())["scenarios"]
-        == (expected["scenarios"])
+    execution = json.loads((first / "execution.json").read_bytes())
+    artifacts = json.loads((first / "artifacts.json").read_bytes())
+    assert execution["mode"] == "executed-offline"
+    assert execution["exit_status"] == 0
+    assert artifacts["documents"]
+    assert any(
+        isinstance(item["content"], dict)
+        and item["content"].get("kind") == "CoreElecReconcilerObservationRun"
+        for item in artifacts["documents"]
     )
     manifest = json.loads((first / "manifest.json").read_bytes())
     assert manifest["safety"]["device_contact"] is False
@@ -132,8 +137,20 @@ def test_dry_run_rejects_untracked_effective_configuration(
         HARNESS.generate_bundle(source_checkout, source_checkout / "bundle")
 
 
-def test_dry_run_allows_irrelevant_untracked_files(source_checkout: Path) -> None:
+def test_dry_run_allows_irrelevant_untracked_files(
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid_source, valid, _ = valid_bundle
+    source_checkout = tmp_path / "source"
+    shutil.copytree(valid_source, source_checkout)
     (source_checkout / "notes.txt").write_text("not effective configuration\n")
+    execution = json.loads((valid / "execution.json").read_bytes())
+    artifacts = json.loads((valid / "artifacts.json").read_bytes())
+    monkeypatch.setattr(
+        HARNESS, "execute_dry_run", lambda runtime: (execution, artifacts)
+    )
 
     digest = HARNESS.generate_bundle(source_checkout, source_checkout / "bundle")
 
@@ -185,10 +202,21 @@ def test_dry_run_rejects_repository_and_session_internal_roots(
         HARNESS.generate_bundle(source_checkout, session_root / "bundle")
 
 
-def test_dry_run_regenerates_only_owned_bundle(source_checkout: Path) -> None:
-    bundle = source_checkout / "bundle"
-    first = HARNESS.generate_bundle(source_checkout, bundle)
+def test_dry_run_regenerates_only_owned_bundle(
+    valid_bundle: tuple[Path, Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_checkout, valid, first = valid_bundle
+    bundle = source_checkout / "regenerated"
+    shutil.copytree(valid, bundle)
+    marker, marker_content = HARNESS._ownership_marker(source_checkout, bundle)
+    marker.write_bytes(marker_content)
     (bundle / "manifest.json").write_text("stale")
+    execution = json.loads((valid / "execution.json").read_bytes())
+    artifacts = json.loads((valid / "artifacts.json").read_bytes())
+    monkeypatch.setattr(
+        HARNESS, "execute_dry_run", lambda runtime: (execution, artifacts)
+    )
 
     second = HARNESS.generate_bundle(source_checkout, bundle)
 
@@ -197,10 +225,13 @@ def test_dry_run_regenerates_only_owned_bundle(source_checkout: Path) -> None:
 
 
 def test_dry_run_rejects_unknown_content_in_owned_bundle(
-    source_checkout: Path,
+    valid_bundle: tuple[Path, Path, str],
 ) -> None:
-    bundle = source_checkout / "bundle"
-    HARNESS.generate_bundle(source_checkout, bundle)
+    source_checkout, valid, _ = valid_bundle
+    bundle = source_checkout / "unknown-content"
+    shutil.copytree(valid, bundle)
+    marker, marker_content = HARNESS._ownership_marker(source_checkout, bundle)
+    marker.write_bytes(marker_content)
     (bundle / "user-file.txt").write_text("preserve me")
 
     with pytest.raises(ValueError, match="unknown content"):
@@ -227,25 +258,32 @@ def test_dry_run_rejects_unknown_content_in_owned_bundle(
         "real-identity",
         "raw-exception",
         "semantic",
+        "plan-binding",
+        "final-state",
+        "revision-link",
     ],
 )
 def test_independent_verifier_rejects_invalid_bundles(
-    source_checkout: Path, case: str
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+    case: str,
 ) -> None:
-    original = source_checkout / "original"
-    HARNESS.generate_bundle(source_checkout, original)
-    bundle = source_checkout / case
+    valid_source, original, _ = valid_bundle
+    source_checkout = tmp_path / "source"
+    shutil.copytree(valid_source, source_checkout)
+    bundle = tmp_path / f"bundle-{case}"
     shutil.copytree(original, bundle)
 
     manifest_path = bundle / "manifest.json"
-    sequence_path = bundle / "sequence.json"
+    execution_path = bundle / "execution.json"
     manifest = json.loads(manifest_path.read_bytes())
-    sequence = json.loads(sequence_path.read_bytes())
+    execution = json.loads(execution_path.read_bytes())
+    artifacts = json.loads((bundle / "artifacts.json").read_bytes())
     if case == "missing":
-        sequence_path.unlink()
+        execution_path.unlink()
     elif case == "duplicate":
-        sequence["scenarios"][-1] = dict(sequence["scenarios"][0])
-        _write_canonical(sequence_path, sequence)
+        execution["scenarios"][-1] = dict(execution["scenarios"][0])
+        _write_canonical(execution_path, execution)
         _reseal(bundle)
     elif case == "stitched":
         manifest["components"].append("supplemental-recovery")
@@ -279,7 +317,7 @@ def test_independent_verifier_rejects_invalid_bundles(
     elif case == "artifact-digest":
         digests_path = bundle / "digests.json"
         digests = json.loads(digests_path.read_bytes())
-        digests["files"]["sequence.json"] = "0" * 64
+        digests["files"]["execution.json"] = "0" * 64
         _write_canonical(digests_path, digests)
         (bundle / "bundle.sha256").write_text(
             VERIFIER._sha256(digests_path.read_bytes()) + "\n",
@@ -303,9 +341,34 @@ def test_independent_verifier_rejects_invalid_bundles(
         manifest["diagnostic"] = "Traceback (most recent call last)"
         _write_canonical(manifest_path, manifest)
         _reseal(bundle)
+    elif case == "semantic":
+        execution["scenarios"][0]["operations"] = [
+            {
+                "primitive": "atomic-replace",
+                "operation_id": "resealed.semantic.mutation",
+                "disposition": "applied",
+            }
+        ]
+        _write_canonical(execution_path, execution)
+        _reseal(bundle)
+    elif case == "plan-binding":
+        execution["scenarios"][0]["plan_id"] = "019950f8-4c00-7000-8000-999999999999"
+        _write_canonical(execution_path, execution)
+        _reseal(bundle)
+    elif case == "final-state":
+        execution["scenarios"][0]["final_content_sha256"] = "0" * 64
+        _write_canonical(execution_path, execution)
+        _reseal(bundle)
     else:
-        sequence["scenarios"][0]["expected_status"] = "noop"
-        _write_canonical(sequence_path, sequence)
+        revision = next(
+            item
+            for item in artifacts["documents"]
+            if "/revisions/00000002.json" in item["artifact_id"]
+            and isinstance(item["content"], dict)
+        )
+        revision["content"]["previous_revision_digest"] = "sha256:" + "0" * 64
+        revision["sha256"] = VERIFIER._sha256(VERIFIER._canonical(revision["content"]))
+        _write_canonical(bundle / "artifacts.json", artifacts)
         _reseal(bundle)
 
     with pytest.raises(VERIFIER.VerificationError):

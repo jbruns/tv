@@ -1,6 +1,7 @@
 import errno
 import os
 import pty
+import shutil
 import subprocess
 import sys
 import termios
@@ -114,6 +115,55 @@ def _run_production(
         check=False,
         capture_output=True,
     )
+
+
+def test_installed_wheel_runs_real_pilot_harness_from_unrelated_cwd(
+    installed_cli: Path, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    scripts = source / "scripts"
+    scripts.mkdir(parents=True)
+    for name in ("run_m3_pilot_harness.py", "verify_m3_evidence_bundle.py"):
+        shutil.copy2(REPOSITORY_ROOT / "scripts" / name, scripts / name)
+    shutil.copy2(REPOSITORY_ROOT / "uv.lock", source / "uv.lock")
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=source,
+        check=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=source, check=True)
+    output = tmp_path / "pilot"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(DEPENDENCY_SITE_PACKAGES)
+    generated = subprocess.run(
+        [
+            str(installed_cli.parent / "python"),
+            str(scripts / "run_m3_pilot_harness.py"),
+            "--dry-run",
+            "--output",
+            str(output),
+        ],
+        cwd=installed_cli.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+    assert generated.returncode == 0, generated.stderr.decode()
+    verified = subprocess.run(
+        [
+            str(installed_cli.parent / "python"),
+            str(scripts / "verify_m3_evidence_bundle.py"),
+            str(output),
+        ],
+        cwd=installed_cli.parent,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+    assert verified.returncode == 0, verified.stderr.decode()
 
 
 def _environment(

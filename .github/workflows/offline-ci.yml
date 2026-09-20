@@ -143,6 +143,7 @@ jobs:
               "coreelec_reconciler/execution/run_store.py",
               "coreelec_reconciler/execution/session_close.py",
               "coreelec_reconciler/execution/verification.py",
+              "coreelec_reconciler/pilot_dry_run.py",
               "coreelec_reconciler/persistence/observation_documents.py",
               "coreelec_reconciler/transports/remote_ownership.py",
           }
@@ -203,6 +204,12 @@ jobs:
             grep -q \
               "apply: capability_unavailable (production.saved-plan-rejected)" \
               <<<"$output"
+            ../.wheel-venv/bin/python \
+              ../scripts/run_m3_pilot_harness.py \
+              --dry-run --output installed-wheel-pilot
+            ../.wheel-venv/bin/python \
+              ../scripts/verify_m3_evidence_bundle.py \
+              installed-wheel-pilot
           )
       - name: Generate and verify deterministic pilot dry run
         shell: bash

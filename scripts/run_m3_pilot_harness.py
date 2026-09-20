@@ -4,62 +4,26 @@
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import subprocess
+import sys
 from pathlib import Path
-from typing import Any
 
-SCHEMA = "coreelec-reconciler-m3-pilot-dry-run-1"
-SYNTHETIC_DEVICE_ID = "synthetic-device"
+from coreelec_reconciler.pilot_dry_run import SCHEMA, execute_dry_run
+
+SYNTHETIC_DEVICE_ID = "synthetic.device"
 CONFIGURATION_PATHS = ("artifacts", "inventory", "profiles", "secret-providers")
 OUTPUT_FILES = frozenset(
-    {"manifest.json", "sequence.json", "digests.json", "bundle.sha256"}
+    {
+        "manifest.json",
+        "execution.json",
+        "artifacts.json",
+        "digests.json",
+        "bundle.sha256",
+    }
 )
 OWNERSHIP_MARKER_SCHEMA = "coreelec-reconciler-m3-pilot-output-1"
-CORE_SEQUENCE: tuple[dict[str, Any], ...] = (
-    {
-        "id": "absent-create",
-        "expected_status": "converged",
-        "expected_trace": ["stage-write", "atomic-replace"],
-    },
-    {
-        "id": "formatting-noop",
-        "expected_status": "noop",
-        "expected_trace": [],
-    },
-    {
-        "id": "semantic-drift",
-        "expected_status": "converged",
-        "expected_trace": ["stage-write", "atomic-replace"],
-    },
-    {
-        "id": "mode-drift",
-        "expected_status": "converged",
-        "expected_trace": ["chmod"],
-    },
-    {
-        "id": "malformed-xml",
-        "expected_status": "converged",
-        "expected_trace": ["stage-write", "atomic-replace"],
-    },
-    {
-        "id": "explicit-removal",
-        "expected_status": "converged",
-        "expected_trace": ["remove"],
-        "approval": "reviewed-removal-approval",
-    },
-    {
-        "id": "recreate-and-kodi",
-        "expected_status": "converged",
-        "expected_trace": ["stage-write", "atomic-replace"],
-        "kodi_usability": "operator-attestation-required",
-    },
-    {
-        "id": "immediate-noop",
-        "expected_status": "noop",
-        "expected_trace": [],
-    },
-)
 
 
 def _arguments() -> argparse.Namespace:
@@ -184,6 +148,25 @@ def _prepare_output(root: Path, requested_output: Path) -> Path:
     return resolved_output
 
 
+def _remove_runtime(output: Path, runtime: Path) -> None:
+    if runtime.parent != output or runtime.is_symlink():
+        raise ValueError("synthetic runtime boundary is unsafe")
+    if not runtime.exists():
+        return
+    for path in sorted(
+        runtime.rglob("*"), key=lambda item: len(item.parts), reverse=True
+    ):
+        if path.is_symlink():
+            raise ValueError("synthetic runtime contains a symlink")
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            path.rmdir()
+        else:
+            raise ValueError("synthetic runtime contains unknown content")
+    runtime.rmdir()
+
+
 def generate_bundle(root: Path, output: Path) -> str:
     if _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("source checkout must be clean")
@@ -202,30 +185,44 @@ def generate_bundle(root: Path, output: Path) -> str:
         raise ValueError("uv.lock is missing") from None
 
     output = _prepare_output(root, output)
+    runtime = output / "runtime"
+    runtime.mkdir()
+    try:
+        execution, artifacts = execute_dry_run(runtime)
+    finally:
+        _remove_runtime(output, runtime)
 
     source = {
         "commit": _git(root, "rev-parse", "HEAD"),
         "tree": _git(root, "rev-parse", "HEAD^{tree}"),
     }
-    sequence = {
-        "schema": SCHEMA,
-        "mode": "description-only",
-        "device_contact": False,
-        "secret_resolution": False,
-        "scenarios": [
-            {"ordinal": index, **scenario}
-            for index, scenario in enumerate(CORE_SEQUENCE, start=1)
-        ],
-    }
+    execution_bytes = _canonical(execution)
+    artifacts_bytes = _canonical(artifacts)
     manifest = {
         "schema": SCHEMA,
-        "bundle_kind": "synthetic-core-dry-run",
+        "bundle_kind": "synthetic-core-execution-dry-run",
         "attempts": 1,
         "components": ["core"],
         "source": source,
         "bindings": {
             "configuration_sha256": _configuration_digest(root, "HEAD"),
             "lock_sha256": _sha256(lock_bytes),
+            "scenario_inputs_sha256": _sha256(_canonical(execution["scenario_inputs"])),
+        },
+        "tools": {
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+            "coreelec_reconciler": importlib.metadata.version("coreelec-reconciler"),
+            "uv": subprocess.run(
+                ["uv", "--version"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip(),
+        },
+        "execution": {
+            "artifact": "execution.json",
+            "artifacts": "artifacts.json",
+            "exit_status": execution["exit_status"],
         },
         "identity": {
             "device_id": SYNTHETIC_DEVICE_ID,
@@ -242,11 +239,11 @@ def generate_bundle(root: Path, output: Path) -> str:
             "skin_025_owner": "shell",
             "effects_changed": False,
         },
-        "sequence": "sequence.json",
     }
     files = {
         "manifest.json": _canonical(manifest),
-        "sequence.json": _canonical(sequence),
+        "execution.json": execution_bytes,
+        "artifacts.json": artifacts_bytes,
     }
     for name, content in files.items():
         (output / name).write_bytes(content)
