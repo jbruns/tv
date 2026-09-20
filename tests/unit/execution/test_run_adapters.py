@@ -47,6 +47,7 @@ from coreelec_reconciler.execution.composition import (
     DeviceAuthorityObservation,
     ProductionExecutionFactory,
     RunStoreExecutionFinalizer,
+    SavedPlanExecutionPreflight,
     SavedPlanExecutionRequest,
 )
 from coreelec_reconciler.execution.engine import (
@@ -1495,10 +1496,8 @@ def test_saved_plan_preflight_rejects_locally_without_execution_side_effects(
         store.load_chain(request.execution_run_id)
 
 
-@pytest.mark.parametrize("failure", ("stale", "tampered"))
-def test_saved_plan_preparation_rejects_invalid_preflight_before_side_effects(
+def test_saved_plan_preparation_rejects_stale_preflight_before_live_observation(
     saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
-    failure: str,
 ) -> None:
     request, _, _ = _saved_plan_request()
     store, plans, registry = saved_plan_environment
@@ -1520,22 +1519,137 @@ def test_saved_plan_preparation_rejects_invalid_preflight_before_side_effects(
         cast(RunClock, clock),
     )
     preflight = factory.preflight_saved_plan(request)
-    if failure == "stale":
-        clock.now = "2030-01-01T00:00:00Z"
-    else:
-        preflight = replace(
-            preflight,
-            execution_run_id=RunId("019950f8-4c00-7000-8000-000000000699"),
-        )
+    clock.now = "2030-01-01T00:00:00Z"
 
-    with pytest.raises(ValueError, match=r"stale|altered"):
-        factory.prepare_saved_plan(preflight, device_authority.observation)
+    with pytest.raises(ValueError, match="stale"):
+        factory.prepare_saved_plan(preflight)
 
+    assert device_authority.calls == 0
     assert contexts.bind_calls == 0
     assert contexts.context_calls == 0
     assert authority.calls == 0
     with pytest.raises(FileNotFoundError):
-        store.load_chain(preflight.execution_run_id)
+        store.load_chain(request.execution_run_id)
+
+
+def test_saved_plan_preflight_cannot_be_forged_or_tampered(
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
+) -> None:
+    request, _, _ = _saved_plan_request()
+    store, plans, registry = saved_plan_environment
+    authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
+    device_authority = _DeviceAuthority(device)
+    factory = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
+        cast(RecoveryEnvironment, _Inspections()),
+        device_authority,
+        cast(AuthorityCoordinator, authority),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+    issued = factory.preflight_saved_plan(request)
+    forged = object.__new__(SavedPlanExecutionPreflight)
+
+    with pytest.raises(AttributeError):
+        object.__setattr__(issued, "device_id", DeviceId("other-device"))
+    with pytest.raises(ValueError, match="not issued"):
+        factory.prepare_saved_plan(forged)
+
+    assert device_authority.calls == 0
+    assert authority.calls == 0
+
+
+def test_saved_plan_preflight_is_scoped_to_issuing_factory(
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
+) -> None:
+    request, _, _ = _saved_plan_request()
+    store, plans, registry = saved_plan_environment
+    device = cast(dict[str, object], request.expected_device)
+    device_authority = _DeviceAuthority(device)
+    first = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
+        cast(RecoveryEnvironment, _Inspections()),
+        device_authority,
+        cast(AuthorityCoordinator, _AcquiringAuthority(store)),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+    second_authority = _AcquiringAuthority(store)
+    second = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
+        cast(RecoveryEnvironment, _Inspections()),
+        device_authority,
+        cast(AuthorityCoordinator, second_authority),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+
+    with pytest.raises(ValueError, match="not issued"):
+        second.prepare_saved_plan(first.preflight_saved_plan(request))
+
+    assert device_authority.calls == 0
+    assert second_authority.calls == 0
+
+
+def test_saved_plan_preparation_uses_fresh_internal_device_observation(
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
+) -> None:
+    request, _, _ = _saved_plan_request()
+    store, plans, registry = saved_plan_environment
+    authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
+    device_authority = _DeviceAuthority(device, boot_id="boot.before-preflight")
+    factory = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(
+            ResourceContextProviderFactory,
+            _Contexts(binding_digest=_device_binding(device)),
+        ),
+        cast(RecoveryEnvironment, _Inspections()),
+        device_authority,
+        cast(AuthorityCoordinator, authority),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+    preflight = factory.preflight_saved_plan(request)
+    device_authority.observation = replace(
+        device_authority.observation,
+        boot_id="boot.fresh",
+    )
+
+    prepared = factory.prepare_saved_plan(preflight)
+
+    assert device_authority.calls == 2
+    initial = decode_json_object(
+        store.load_chain(request.execution_run_id).head.payload
+    )
+    assert cast(dict[str, object], initial["authority"])["boot_id"] == "boot.fresh"
+    prepared.services.close()
 
 
 def test_saved_plan_approval_rejects_unknown_plan_before_authority(

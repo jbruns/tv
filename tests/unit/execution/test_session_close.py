@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 from coreelec_reconciler.domain.execution import (
     AllowedRecoveryAction,
@@ -11,6 +13,7 @@ from coreelec_reconciler.execution.run_store import RunStore
 from coreelec_reconciler.execution.runtime import FiniteRuntimeValues
 from coreelec_reconciler.execution.session_close import (
     DurableSessionClose,
+    PreservedRunResult,
     SessionCloseRequest,
 )
 from coreelec_reconciler.execution.verification import (
@@ -21,7 +24,7 @@ from coreelec_reconciler.execution.verification import (
 )
 from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
 
-from .test_verification import _ReadOnlyExecution, _runtime
+from .test_verification import _binding, _ReadOnlyExecution, _runtime
 
 
 def _terminal_run(tmp_path: Path) -> tuple[RunStore, VerificationRunResult]:
@@ -32,6 +35,7 @@ def _terminal_run(tmp_path: Path) -> tuple[RunStore, VerificationRunResult]:
         "KodiSmartPlaylist",
         ("special://profile/playlists/video/resource.xsp",),
         (),
+        _binding("resource"),
         _ReadOnlyExecution("resource", DesiredRelation.SATISFIED, []),
     )
     result = CanonicalVerificationRuns(store, registry, _runtime()).verify(
@@ -123,3 +127,67 @@ def test_unknown_close_after_release_preserves_result_and_guidance(
     assert closed.close.disposition is SessionCloseDisposition.UNKNOWN
     assert closed.close.issue_code == "session_close.unknown"
     assert inspected == closed
+
+
+def test_concurrent_close_for_same_session_attempts_teardown_once(
+    tmp_path: Path,
+) -> None:
+    store, result = _terminal_run(tmp_path)
+    request = SessionCloseRequest(
+        "019950f8-4c00-7000-8000-000000000703",
+        "session.019950f8-4c00-7000-8000-000000000803",
+    )
+    first_attempt_entered = Event()
+    allow_first_attempt = Event()
+    second_call_started = Event()
+    second_attempt_entered = Event()
+
+    def first_attempt() -> SessionCloseDisposition:
+        first_attempt_entered.set()
+        assert allow_first_attempt.wait(timeout=5)
+        return SessionCloseDisposition.COMPLETE
+
+    def second_attempt() -> SessionCloseDisposition:
+        second_attempt_entered.set()
+        return SessionCloseDisposition.COMPLETE
+
+    first_closer = DurableSessionClose(
+        store,
+        FiniteRuntimeValues(utc_instants=("2026-09-20T05:01:00Z",)),
+    )
+    second_closer = DurableSessionClose(
+        store,
+        FiniteRuntimeValues(utc_instants=("2026-09-20T05:02:00Z",)),
+    )
+
+    def second_close() -> PreservedRunResult:
+        second_call_started.set()
+        return second_closer.close(
+            request,
+            result.run_report,
+            (),
+            second_attempt,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            first_closer.close,
+            request,
+            result.run_report,
+            (),
+            first_attempt,
+        )
+        assert first_attempt_entered.wait(timeout=5)
+        second_future = executor.submit(second_close)
+        assert second_call_started.wait(timeout=5)
+        second_attempted_while_first_was_blocked = second_attempt_entered.wait(
+            timeout=1
+        )
+        allow_first_attempt.set()
+        first = first_future.result(timeout=5)
+        second = second_future.result(timeout=5)
+
+    assert not second_attempted_while_first_was_blocked
+    assert not second_attempt_entered.is_set()
+    assert first.close.record is not None
+    assert second.run_report is result.run_report

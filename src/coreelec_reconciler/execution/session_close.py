@@ -56,27 +56,27 @@ class DurableSessionClose:
         lease: RevisionLease | None = None,
     ) -> PreservedRunResult:
         run_id = RunId(run_report.run_id)
-        existing = self._safe_inspect(run_id, request.session_id)
-        if existing.record is not None:
-            if existing.record.record_id != request.record_id:
-                return PreservedRunResult(
-                    run_report,
-                    recovery_guidance,
-                    SessionCloseInspection(
-                        SessionCloseDisposition.UNKNOWN,
-                        None,
-                        "session_close.idempotency-conflict",
-                    ),
-                )
-            return PreservedRunResult(run_report, recovery_guidance, existing)
-        if existing.issue_code == "session_close.corrupt":
-            return PreservedRunResult(run_report, recovery_guidance, existing)
-        disposition, category, code = _attempt_close(attempt)
         owned_lease = lease is None
         active_lease = lease
         try:
             if active_lease is None:
                 active_lease = self._store.acquire_run(run_id)
+            existing = self._safe_inspect(run_id, request.session_id)
+            if existing.record is not None:
+                if existing.record.record_id != request.record_id:
+                    return PreservedRunResult(
+                        run_report,
+                        recovery_guidance,
+                        SessionCloseInspection(
+                            SessionCloseDisposition.UNKNOWN,
+                            None,
+                            "session_close.idempotency-conflict",
+                        ),
+                    )
+                return PreservedRunResult(run_report, recovery_guidance, existing)
+            if existing.issue_code == "session_close.corrupt":
+                return PreservedRunResult(run_report, recovery_guidance, existing)
+            disposition, category, code = _attempt_close(attempt)
             self._store.record_session_close(
                 active_lease,
                 SessionCloseIntent(

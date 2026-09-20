@@ -183,6 +183,18 @@ class _Executor:
         return "executed"
 
 
+class _ExecutorFactory:
+    def __init__(self) -> None:
+        self.handoffs: list[RecoveryHandoff] = []
+        self.executors: list[_Executor] = []
+
+    def __call__(self, handoff: RecoveryHandoff) -> _Executor:
+        self.handoffs.append(handoff)
+        executor = _Executor()
+        self.executors.append(executor)
+        return executor
+
+
 def _identity() -> TrustedRecoveryIdentity:
     return TrustedRecoveryIdentity(
         RUN_ID,
@@ -219,10 +231,11 @@ def test_issues_exact_validated_handoff_before_mutation_execution() -> None:
         reason=None,
     )
     handoff = access.authorize(inspection, request)
-    executor = _Executor()
+    factory = _ExecutorFactory()
 
-    assert access.execute_mutation(handoff, request, executor) == "executed"
-    assert executor.handoffs == [handoff]
+    assert access.execute_mutation(handoff, request, factory) == "executed"
+    assert factory.handoffs == [handoff]
+    assert factory.executors[0].handoffs == [handoff]
     assert handoff.revision == 7
     assert handoff.revision_digest == REVISION_DIGEST
     assert handoff.evidence_digest == inspection.evidence_digest
@@ -265,19 +278,19 @@ def test_rejects_stale_revision_before_opening_mutation_executor() -> None:
     handoff = access.authorize(access.inspect(_identity()), request)
     store.revision += 1
     store.digest = "sha256:" + "1" * 64
-    executor = _Executor()
+    factory = _ExecutorFactory()
 
     with pytest.raises(ValueError, match="stale"):
-        access.execute_mutation(handoff, request, executor)
+        access.execute_mutation(handoff, request, factory)
 
-    assert executor.handoffs == []
+    assert factory.handoffs == []
 
 
 def test_rejects_changed_action_and_tampered_handoff() -> None:
     access, _, _ = _access()
     request = RecoveryActionRequest(RecoveryActionCode.ROLLBACK)
     handoff = access.authorize(access.inspect(_identity()), request)
-    executor = _Executor()
+    factory = _ExecutorFactory()
 
     with pytest.raises(ValueError, match="changed"):
         access.execute_mutation(
@@ -286,16 +299,25 @@ def test_rejects_changed_action_and_tampered_handoff() -> None:
                 RecoveryActionCode.FINALIZE,
                 FinalizeMode.NORMAL,
             ),
-            executor,
+            factory,
         )
     with pytest.raises(ValueError, match="altered"):
         access.execute_mutation(
             replace(handoff, revision_digest="sha256:" + "9" * 64),
             request,
-            executor,
+            factory,
+        )
+    with pytest.raises(ValueError, match="altered"):
+        access.execute_mutation(
+            replace(
+                handoff,
+                evidence=replace(handoff.evidence, chain_valid=False),
+            ),
+            request,
+            factory,
         )
 
-    assert executor.handoffs == []
+    assert factory.handoffs == []
 
 
 def test_corrupt_evidence_allows_only_separately_approved_abandonment() -> None:
@@ -332,7 +354,9 @@ def test_corrupt_evidence_allows_only_separately_approved_abandonment() -> None:
         reason="operator accepted quarantine",
     )
     handoff = access.authorize(inspection, request)
-    assert access.execute_mutation(handoff, request, _Executor()) == "executed"
+    factory = _ExecutorFactory()
+    assert access.execute_mutation(handoff, request, factory) == "executed"
+    assert factory.handoffs == [handoff]
 
 
 def test_recomputes_actions_instead_of_trusting_coordinator_action_list() -> None:
@@ -363,9 +387,9 @@ def test_rejects_changed_remote_evidence_before_mutation_execution() -> None:
     request = RecoveryActionRequest(RecoveryActionCode.ROLLBACK)
     handoff = access.authorize(access.inspect(_identity()), request)
     environment.snapshot = replace(environment.snapshot, generation=4)
-    executor = _Executor()
+    factory = _ExecutorFactory()
 
     with pytest.raises(ValueError, match="remote evidence is stale"):
-        access.execute_mutation(handoff, request, executor)
+        access.execute_mutation(handoff, request, factory)
 
-    assert executor.handoffs == []
+    assert factory.handoffs == []

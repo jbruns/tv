@@ -102,6 +102,16 @@ class RecoveryMutationExecutor(Protocol[T_co]):
     def execute_recovery(self, handoff: RecoveryHandoff) -> T_co: ...
 
 
+class RecoveryMutationExecutorFactory(Protocol[T_co]):
+    """Open an executor bound to an already validated handoff."""
+
+    def __call__(
+        self,
+        handoff: RecoveryHandoff,
+        /,
+    ) -> RecoveryMutationExecutor[T_co]: ...
+
+
 class RecoveryAccess:
     """Deep module joining read-only inspection to one validated mutation."""
 
@@ -227,9 +237,10 @@ class RecoveryAccess:
         self,
         handoff: RecoveryHandoff,
         request: RecoveryActionRequest,
-        executor: RecoveryMutationExecutor[T_co],
+        executor_factory: RecoveryMutationExecutorFactory[T_co],
     ) -> T_co:
         self._validate_handoff(handoff, request)
+        executor = executor_factory(handoff)
         return executor.execute_recovery(handoff)
 
     def _validate_inspection(self, inspection: RecoveryAccessInspection) -> None:

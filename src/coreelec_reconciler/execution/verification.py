@@ -1,5 +1,6 @@
 """Standalone canonical read-only verification Runs."""
 
+import base64
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from coreelec_reconciler.domain.execution import (
     ExecutionEvidenceBindings,
     ExecutionEvidenceKind,
     RunStatus,
+    VerifiedRunChain,
     build_execution_evidence,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
@@ -51,11 +53,56 @@ class ResourceVerifier(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class CanonicalVerificationBinding:
+    desired_state_codec: str
+    desired_state: bytes
+    desired_state_digest: str
+    verification_policy_codec: str
+    verification_policy: bytes
+    verification_policy_digest: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        desired_state_codec: str,
+        desired_state: bytes,
+        verification_policy_codec: str,
+        verification_policy: bytes,
+    ) -> CanonicalVerificationBinding:
+        return cls(
+            desired_state_codec,
+            desired_state,
+            _digest(desired_state),
+            verification_policy_codec,
+            verification_policy,
+            _digest(verification_policy),
+        )
+
+    def validate(self) -> None:
+        if not self.desired_state_codec or not self.verification_policy_codec:
+            raise ValueError("verification binding codecs must be explicit")
+        if (
+            canonical_document_bytes(decode_json_object(self.desired_state))
+            != self.desired_state
+            or canonical_document_bytes(decode_json_object(self.verification_policy))
+            != self.verification_policy
+        ):
+            raise ValueError("verification binding bytes must be canonical")
+        if (
+            _digest(self.desired_state) != self.desired_state_digest
+            or _digest(self.verification_policy) != self.verification_policy_digest
+        ):
+            raise ValueError("verification binding digest mismatch")
+
+
+@dataclass(frozen=True, slots=True)
 class VerificationResource:
     resource_id: str
     resource_type: str
     state_addresses: tuple[str, ...]
     requires: tuple[str, ...]
+    binding: CanonicalVerificationBinding
     execution: ResourceVerifier
 
 
@@ -182,8 +229,6 @@ class CanonicalVerificationRuns:
         if not isinstance(lease, RevisionLease):
             raise TypeError("verification requires a Run revision lease")
         chain = self._store.load_chain(run_id)
-        if chain.terminal:
-            return self.report(run_id)
         value = decode_json_object(chain.head.payload)
         authority = _mapping(value, "authority")
         reference = _mapping(value, "plan_reference")
@@ -198,6 +243,9 @@ class CanonicalVerificationRuns:
             resources,
         ):
             raise ValueError("verification restart scope binding changed")
+        completed = _completed_prefix(chain, resources)
+        if chain.terminal:
+            return self.report(run_id)
         if RunStatus(str(value["status"])) is RunStatus.READY:
             executing = dict(value)
             executing.update(
@@ -223,14 +271,36 @@ class CanonicalVerificationRuns:
             )
             chain = self._store.load_chain(run_id)
             value = decode_json_object(chain.head.payload)
-        observations = tuple(_observe(item) for item in resources)
+            completed = _completed_prefix(chain, resources)
+        for resource in resources[completed:]:
+            observed = _observe(resource)
+            checkpoint = _checkpoint_report(
+                value,
+                chain.head.digest,
+                observed,
+                resource,
+                self._runtime,
+                self._registry,
+            )
+            report = self._documents.build(checkpoint, self._registry)
+            self._store.compare_and_append(
+                lease,
+                chain.head.revision,
+                chain.head.digest,
+                report.canonical_bytes,
+                AppendIntent(
+                    RunStatus.EXECUTING,
+                    False,
+                    DeviceIndexIntent.NO_CHANGE,
+                ),
+            )
+            chain = self._store.load_chain(run_id)
+            value = decode_json_object(chain.head.payload)
+            completed = _completed_prefix(chain, resources)
         terminal = _terminal_report(
             value,
             chain.head.digest,
-            observations,
-            resources,
             self._runtime,
-            self._registry,
         )
         report = self._documents.build(terminal, self._registry)
         self._store.compare_and_append(
@@ -246,7 +316,7 @@ class CanonicalVerificationRuns:
         )
         return VerificationRunResult(
             report,
-            tuple(item.result for item in observations),
+            _reported_resources(report),
         )
 
 
@@ -260,6 +330,7 @@ def _dependency_order(
     if len(by_id) != len(resources):
         raise ValueError("verification Resource IDs must be unique")
     for item in resources:
+        item.binding.validate()
         if registry.descriptor(item.resource_type) is None:
             raise ValueError("verification Resource Type is not registered")
         if not item.state_addresses or tuple(sorted(set(item.state_addresses))) != (
@@ -329,6 +400,22 @@ def _selection_digest(
                         "resource_id": item.resource_id,
                         "resource_type": item.resource_type,
                         "state_addresses": list(item.state_addresses),
+                        "verification_binding": {
+                            "desired_state_base64": base64.b64encode(
+                                item.binding.desired_state
+                            ).decode("ascii"),
+                            "desired_state_codec": item.binding.desired_state_codec,
+                            "desired_state_digest": item.binding.desired_state_digest,
+                            "verification_policy_base64": base64.b64encode(
+                                item.binding.verification_policy
+                            ).decode("ascii"),
+                            "verification_policy_codec": (
+                                item.binding.verification_policy_codec
+                            ),
+                            "verification_policy_digest": (
+                                item.binding.verification_policy_digest
+                            ),
+                        },
                     }
                     for item in resources
                 ],
@@ -405,15 +492,14 @@ def _initial_report(
     }
 
 
-def _terminal_report(
+def _checkpoint_report(
     value: dict[str, object],
     previous_digest: str,
-    results: tuple[_ObservedVerification, ...],
-    resources: tuple[VerificationResource, ...],
+    observed: _ObservedVerification,
+    resource: VerificationResource,
     runtime: RuntimeValues,
     registry: ResourceRegistry,
 ) -> dict[str, object]:
-    resource_by_id = {item.resource_id: item for item in resources}
     authority = _mapping(value, "authority")
     reference = _mapping(value, "plan_reference")
     recovery = _mapping(value, "recovery")
@@ -425,123 +511,141 @@ def _terminal_report(
         "run_id": value["run_id"],
         "workspace_id": recovery["workspace_id"],
     }
-    evidence: list[dict[str, object]] = []
-    resource_results: list[dict[str, object]] = []
-    for observed in results:
-        result = observed.result
-        resource = resource_by_id[result.resource_id]
-        observation = observed.observation
-        evidence_id = f"evidence.{result.resource_id}.observation"
-        bindings = ExecutionEvidenceBindings(
-            str(bindings_base["device_id"]),
-            str(bindings_base["run_id"]),
-            str(bindings_base["workspace_id"]),
-            str(bindings_base["plan_id"]),
-            str(bindings_base["plan_full_digest"]),
-            str(bindings_base["binding_digest"]),
-            result.resource_id,
-            f"verify.{result.resource_id}",
-        )
-        relation = {
-            VerificationRelation.CONVERGED: "post",
-            VerificationRelation.DIVERGENT: "other",
-            VerificationRelation.UNVERIFIABLE: "unknown",
-        }[result.relation]
-        state = observation.state
-        evidence.append(
-            build_execution_evidence(
-                evidence_id=evidence_id,
-                observed_at=runtime.utc_now(),
-                observer=EvidenceObserver("managed-file-observer", 1),
-                subject_kind="resource",
-                subject_id=result.resource_id,
-                resource_type=resource.resource_type,
-                bindings=bindings,
-                state_addresses=resource.state_addresses,
-                attachment_refs=(),
-                attempt=1,
-                kind=ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION,
-                payload={
-                    "content_digest": state.content_digest,
-                    "entry_kind": state.entry_kind,
-                    "managed_mode": state.managed_mode,
-                    "normalized_state_digest": normalized_state_digest(state),
-                    "presence": state.presence.value,
-                    "relation": relation,
-                },
-                resource_registry=registry,
-            )
-        )
-        evidence.append(
-            build_execution_evidence(
-                evidence_id=f"evidence.{result.resource_id}.execution",
-                observed_at=runtime.utc_now(),
-                observer=EvidenceObserver("managed-file-executor", 1),
-                subject_kind="resource",
-                subject_id=result.resource_id,
-                resource_type=resource.resource_type,
-                bindings=bindings,
-                state_addresses=resource.state_addresses,
-                attachment_refs=(),
-                attempt=1,
-                kind=ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT,
-                payload={
-                    "intent_evidence_ref": None,
-                    "mutation_outcome": "not_required",
-                    "outcome_evidence_ref": None,
-                },
-                resource_registry=registry,
-            )
-        )
-        outcome = {
-            VerificationRelation.CONVERGED: "matched",
-            VerificationRelation.DIVERGENT: "mismatch",
-            VerificationRelation.UNVERIFIABLE: "unknown",
-        }[result.relation]
-        evidence.append(
-            build_execution_evidence(
-                evidence_id=f"evidence.{result.resource_id}.verification",
-                observed_at=runtime.utc_now(),
-                observer=EvidenceObserver("managed-file-verifier", 1),
-                subject_kind="resource",
-                subject_id=result.resource_id,
-                resource_type=resource.resource_type,
-                bindings=bindings,
-                state_addresses=resource.state_addresses,
-                attachment_refs=(),
-                attempt=1,
-                kind=ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT,
-                payload={
-                    "observation_evidence_ref": evidence_id,
-                    "outcome": outcome,
-                    "post_effect": False,
-                    "relation": relation,
-                },
-                resource_registry=registry,
-            )
-        )
-        resource_results.append(
-            {
-                "decisive_attempt_id": None,
-                "desired_disposition": "verify",
-                "final_convergence": (
-                    "converged"
-                    if result.relation is VerificationRelation.CONVERGED
-                    else "failed_known"
-                ),
-                "latest_observed_relation": relation,
-                "mutation_outcome": "not_required",
-                "post_effect_verification": "not_applicable",
-                "resource_id": result.resource_id,
-                "rollback_outcome": "not_attempted",
-                "verification_outcome": outcome,
-            }
-        )
-    converged = all(
-        item.result.relation is VerificationRelation.CONVERGED for item in results
+    result = observed.result
+    observation = observed.observation
+    evidence_id = f"evidence.{result.resource_id}.observation"
+    bindings = ExecutionEvidenceBindings(
+        str(bindings_base["device_id"]),
+        str(bindings_base["run_id"]),
+        str(bindings_base["workspace_id"]),
+        str(bindings_base["plan_id"]),
+        str(bindings_base["plan_full_digest"]),
+        str(bindings_base["binding_digest"]),
+        result.resource_id,
+        f"verify.{result.resource_id}",
     )
+    relation = {
+        VerificationRelation.CONVERGED: "post",
+        VerificationRelation.DIVERGENT: "other",
+        VerificationRelation.UNVERIFIABLE: "unknown",
+    }[result.relation]
+    state = observation.state
+    evidence = list(_objects(value, "evidence"))
+    evidence.append(
+        build_execution_evidence(
+            evidence_id=evidence_id,
+            observed_at=runtime.utc_now(),
+            observer=EvidenceObserver("managed-file-observer", 1),
+            subject_kind="resource",
+            subject_id=result.resource_id,
+            resource_type=resource.resource_type,
+            bindings=bindings,
+            state_addresses=resource.state_addresses,
+            attachment_refs=(),
+            attempt=1,
+            kind=ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION,
+            payload={
+                "content_digest": state.content_digest,
+                "entry_kind": state.entry_kind,
+                "managed_mode": state.managed_mode,
+                "normalized_state_digest": normalized_state_digest(state),
+                "presence": state.presence.value,
+                "relation": relation,
+            },
+            resource_registry=registry,
+        )
+    )
+    evidence.append(
+        build_execution_evidence(
+            evidence_id=f"evidence.{result.resource_id}.execution",
+            observed_at=runtime.utc_now(),
+            observer=EvidenceObserver("managed-file-executor", 1),
+            subject_kind="resource",
+            subject_id=result.resource_id,
+            resource_type=resource.resource_type,
+            bindings=bindings,
+            state_addresses=resource.state_addresses,
+            attachment_refs=(),
+            attempt=1,
+            kind=ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT,
+            payload={
+                "intent_evidence_ref": None,
+                "mutation_outcome": "not_required",
+                "outcome_evidence_ref": None,
+            },
+            resource_registry=registry,
+        )
+    )
+    outcome = {
+        VerificationRelation.CONVERGED: "matched",
+        VerificationRelation.DIVERGENT: "mismatch",
+        VerificationRelation.UNVERIFIABLE: "unknown",
+    }[result.relation]
+    evidence.append(
+        build_execution_evidence(
+            evidence_id=f"evidence.{result.resource_id}.verification",
+            observed_at=runtime.utc_now(),
+            observer=EvidenceObserver("managed-file-verifier", 1),
+            subject_kind="resource",
+            subject_id=result.resource_id,
+            resource_type=resource.resource_type,
+            bindings=bindings,
+            state_addresses=resource.state_addresses,
+            attachment_refs=(),
+            attempt=1,
+            kind=ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT,
+            payload={
+                "observation_evidence_ref": evidence_id,
+                "outcome": outcome,
+                "post_effect": False,
+                "relation": relation,
+            },
+            resource_registry=registry,
+        )
+    )
+    resource_results = list(_objects(value, "resource_results"))
+    result_index = next(
+        index
+        for index, item in enumerate(resource_results)
+        if item.get("resource_id") == result.resource_id
+    )
+    resource_results[result_index] = {
+        "decisive_attempt_id": None,
+        "desired_disposition": "verify",
+        "final_convergence": (
+            "converged"
+            if result.relation is VerificationRelation.CONVERGED
+            else "failed_known"
+        ),
+        "latest_observed_relation": relation,
+        "mutation_outcome": "not_required",
+        "post_effect_verification": "not_applicable",
+        "resource_id": result.resource_id,
+        "rollback_outcome": "not_attempted",
+        "verification_outcome": outcome,
+    }
+    checkpoint = dict(value)
+    checkpoint.update(
+        {
+            "current_digest": "",
+            "evidence": evidence,
+            "previous_revision_digest": previous_digest,
+            "resource_results": resource_results,
+            "revision": _integer(value, "revision") + 1,
+        }
+    )
+    return checkpoint
+
+
+def _terminal_report(
+    value: dict[str, object],
+    previous_digest: str,
+    runtime: RuntimeValues,
+) -> dict[str, object]:
+    resources = _objects(value, "resource_results")
+    converged = all(item.get("verification_outcome") == "matched" for item in resources)
     terminal = dict(value)
-    terminal_authority = dict(authority)
+    terminal_authority = dict(_mapping(value, "authority"))
     terminal_authority["cleanup_state"] = "complete"
     terminal.update(
         {
@@ -549,14 +653,12 @@ def _terminal_report(
             "cleanup": {"leftover_count": 0, "state": "complete"},
             "current_digest": "",
             "ended_at": runtime.utc_now(),
-            "evidence": evidence,
             "lifecycle_history": [
                 "ready",
                 "executing",
                 "converged" if converged else "failed_partial",
             ],
             "previous_revision_digest": previous_digest,
-            "resource_results": resource_results,
             "revision": _integer(value, "revision") + 1,
             "status": "converged" if converged else "failed_partial",
         }
@@ -576,6 +678,85 @@ def _reported_resources(report: CanonicalRunReport) -> tuple[ResourceVerificatio
         }.get(str(outcome), VerificationRelation.UNVERIFIABLE)
         result.append(ResourceVerification(str(item["resource_id"]), relation))
     return tuple(result)
+
+
+def _completed_prefix(
+    chain: VerifiedRunChain,
+    resources: tuple[VerificationResource, ...],
+) -> int:
+    expected_ids = tuple(item.resource_id for item in resources)
+    previous_count = 0
+    previous_evidence: tuple[dict[str, object], ...] = ()
+    previous_results: tuple[dict[str, object], ...] | None = None
+    for revision_index, revision in enumerate(chain.revisions):
+        value = decode_json_object(revision.payload)
+        results = _objects(value, "resource_results")
+        if tuple(str(item.get("resource_id")) for item in results) != expected_ids:
+            raise ValueError("verification checkpoint Resource order changed")
+        outcomes = tuple(item.get("verification_outcome") for item in results)
+        completed = 0
+        while completed < len(outcomes) and outcomes[completed] != "not_started":
+            completed += 1
+        if any(outcome != "not_started" for outcome in outcomes[completed:]):
+            raise ValueError("verification checkpoints contain a completed-prefix gap")
+        evidence = _objects(value, "evidence")
+        if len(evidence) != completed * 3:
+            raise ValueError("verification checkpoint evidence count is invalid")
+        for index, resource in enumerate(resources[:completed]):
+            chunk = evidence[index * 3 : index * 3 + 3]
+            expected = (
+                (
+                    f"evidence.{resource.resource_id}.observation",
+                    ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION.value,
+                ),
+                (
+                    f"evidence.{resource.resource_id}.execution",
+                    ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT.value,
+                ),
+                (
+                    f"evidence.{resource.resource_id}.verification",
+                    ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT.value,
+                ),
+            )
+            for record, (evidence_id, kind) in zip(chunk, expected, strict=True):
+                subject = _mapping(record, "subject")
+                bindings = _mapping(record, "bindings")
+                if (
+                    record.get("evidence_id") != evidence_id
+                    or record.get("payload_kind") != kind
+                    or record.get("resource_type") != resource.resource_type
+                    or record.get("state_addresses") != list(resource.state_addresses)
+                    or subject != {"id": resource.resource_id, "kind": "resource"}
+                    or bindings.get("resource_id") != resource.resource_id
+                    or bindings.get("change_id") != f"verify.{resource.resource_id}"
+                ):
+                    raise ValueError("verification checkpoint evidence order changed")
+        if revision_index == 0:
+            if completed != 0:
+                raise ValueError("initial verification revision is already completed")
+        elif completed not in {previous_count, previous_count + 1}:
+            raise ValueError("verification checkpoint prefix is not contiguous")
+        elif completed == previous_count:
+            if evidence != previous_evidence or (
+                previous_results is not None and results != previous_results
+            ):
+                raise ValueError("verification revision changed without a checkpoint")
+        else:
+            if evidence[: len(previous_evidence)] != previous_evidence:
+                raise ValueError("verification checkpoint rewrote prior evidence")
+            if (
+                previous_results is not None
+                and results[:previous_count] != previous_results[:previous_count]
+            ):
+                raise ValueError("verification checkpoint rewrote completed results")
+        previous_count = completed
+        previous_evidence = evidence
+        previous_results = results
+    if chain.terminal and previous_count != len(resources):
+        raise ValueError(
+            "terminal verification Run has an incomplete checkpoint prefix"
+        )
+    return previous_count
 
 
 def _digest(value: bytes) -> str:
