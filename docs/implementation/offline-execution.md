@@ -70,8 +70,11 @@ Canonical Run status records Device-state truth; cleanup is a separate fact.
 Mutation acknowledgements never establish convergence. Fresh observation and
 Verification decide the result, including ambiguous acknowledgements.
 Recovery begins with read-only inspection and exposes only computed legal
-actions. It never retries forward mutation. Abandonment requires its distinct
-approval and reason and leaves durable blocking quarantine.
+actions. Inspection opens only Resource read/stat and remote-ownership
+capabilities; it does not access mutation adapters. A separate mutation-capable
+session is created only after the inspected action and handoff validate. It
+never retries forward mutation. Abandonment requires its distinct approval and
+reason and leaves durable blocking quarantine.
 
 Production-composition integration tests inject deterministic stateful Device,
 managed-file, ownership, host-key, and clock seams at bootstrap. They exercise

@@ -387,6 +387,12 @@ class _VerificationLifecycle:
         raise AssertionError("verification cannot cleanup")
 
 
+class _ReadOnlyLifecycleFactory:
+    def lifecycle(self, *args: object, **kwargs: object) -> ManagedFileLifecycle:
+        del args, kwargs
+        return cast(ManagedFileLifecycle, _VerificationLifecycle())
+
+
 @dataclass(frozen=True, slots=True)
 class _UnverifiableAssessment:
     relation: DesiredRelation = DesiredRelation.UNVERIFIABLE
@@ -1013,6 +1019,43 @@ def _execution_factory(
     ), dependencies.bindings
 
 
+def _recovery_inspection_factory(
+    services: ProductionServices,
+    configuration: ResolvedConfiguration,
+    session: DeviceSession,
+    expected_device: Mapping[str, object],
+    change_ids: Mapping[str, str],
+) -> tuple[ProductionExecutionFactory, _RunBindings]:
+    from coreelec_reconciler.execution.run_adapters import (
+        ConfigurationResourceContexts,
+    )
+
+    production_session = cast(_ProductionDeviceSession, session)
+    backend = _remote_backend(production_session)
+    remote = _RemoteViews(backend, services.run_store())
+    bindings = _RunBindings()
+    contexts = ConfigurationResourceContexts(
+        configuration,
+        cast(ManagedFileCapabilities, production_session.managed_files),
+        _ReadOnlyLifecycleFactory(),
+        dict(change_ids),
+        lambda run_id: _digest_object(expected_device),
+        services.runtime.utc_now,
+    )
+    dependencies = _ExecutionDependencies(
+        contexts,
+        remote,
+        _DeferredLiveDependency(),
+        AuthorityCoordinator(services.run_store(), services.runtime, backend),
+        remote,
+        bindings,
+    )
+    return (
+        _production_execution_factory(services, configuration, dependencies),
+        bindings,
+    )
+
+
 def _execution_dependencies(
     services: ProductionServices,
     configuration: ResolvedConfiguration,
@@ -1201,7 +1244,7 @@ def _execution_factory_for_run(
     session = services.open_device_session(
         device,
         (
-            frozenset({"remote_run_ownership"})
+            frozenset({"managed_file.read", "remote_run_ownership"})
             if inspection_only
             else frozenset(
                 {
@@ -1214,12 +1257,22 @@ def _execution_factory_for_run(
         ),
     )
     try:
-        factory, bindings = _execution_factory(
-            services,
-            configuration,
-            session,
-            device_value,
-            _change_ids(plan_value),
+        factory, bindings = (
+            _recovery_inspection_factory(
+                services,
+                configuration,
+                session,
+                device_value,
+                _change_ids(plan_value),
+            )
+            if inspection_only
+            else _execution_factory(
+                services,
+                configuration,
+                session,
+                device_value,
+                _change_ids(plan_value),
+            )
         )
         return factory, session, bindings
     except Exception:
@@ -1279,7 +1332,7 @@ def _verify_configuration(
             raise ValueError("Resource verification capability is unavailable")
         context = ResourceExecutionContext(
             resource,
-            production_session.managed_file_mutations,
+            cast(ManagedFileCapabilities, production_session.managed_files),
             cast(AttachmentStore, _VerificationAttachments()),
             cast(ManagedFileLifecycle, _VerificationLifecycle()),
             resolve_special_profile_path(

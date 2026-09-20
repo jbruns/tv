@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from coreelec_reconciler.adapters.paramiko_session import (
+    SessionError,
+    SessionFailureCode,
+)
 from coreelec_reconciler.application.commands import (
     ApplyCommand,
     ObserveCommand,
@@ -29,6 +34,7 @@ from coreelec_reconciler.application.outcomes import (
 from coreelec_reconciler.bootstrap import BootstrapSettings, bootstrap
 from coreelec_reconciler.domain.canonical_json import decode_json_object
 from coreelec_reconciler.domain.execution import (
+    FinalizeMode,
     RecoveryActionCode,
     RunStatus,
 )
@@ -91,13 +97,29 @@ class _Session:
 
     @property
     def managed_files(self) -> FakeManagedFiles:
+        if "managed_file.read" not in self.requested:
+            raise SessionError(
+                SessionFailureCode.CAPABILITY,
+                "managed-file reads were not requested",
+            )
         return self.files
 
     @property
     def managed_file_mutations(self) -> FakeManagedFiles:
+        required = {"managed_file.write", "atomic_replace_over_existing"}
+        if not required <= self.requested:
+            raise SessionError(
+                SessionFailureCode.CAPABILITY,
+                "managed-file mutations were not requested",
+            )
         return self.files
 
     def remote_ownership(self, workspace_key: str) -> FakeDevice:
+        if "remote_run_ownership" not in self.requested:
+            raise SessionError(
+                SessionFailureCode.CAPABILITY,
+                "remote ownership was not requested",
+            )
         assert len(workspace_key) == 64
         return self.remote
 
@@ -187,6 +209,9 @@ def test_bootstrap_composes_all_workflows_and_restart_recovery(
     assert isinstance(restart_report, ReportOutcome)
     inspected = restarted.execute(RecoverCommand(str(root), applied.run_id, "inspect"))
     assert isinstance(inspected, RecoveryInspectionOutcome)
+    assert sessions[-1].requested == frozenset(
+        {"managed_file.read", "remote_run_ownership"}
+    )
 
     files.remove(MANAGED_PATH, "test.reset")
     interrupted_plan = restarted.execute(PlanCommand(str(root), DEVICE_ID))
@@ -206,7 +231,16 @@ def test_bootstrap_composes_all_workflows_and_restart_recovery(
         RecoverCommand(str(root), interrupted.run_id, "inspect")
     )
     assert isinstance(interrupted_inspection, RecoveryInspectionOutcome)
-    assert sessions[-1].requested == frozenset({"remote_run_ownership"})
+    inspection_capabilities = frozenset({"managed_file.read", "remote_run_ownership"})
+    mutation_capabilities = frozenset(
+        {
+            "managed_file.read",
+            "managed_file.write",
+            "atomic_replace_over_existing",
+            "remote_run_ownership",
+        }
+    )
+    assert sessions[-1].requested == inspection_capabilities
     rejected_action = next(
         action
         for action in interrupted_inspection.actions
@@ -229,7 +263,39 @@ def test_bootstrap_composes_all_workflows_and_restart_recovery(
             )
         )
     assert len(sessions) == opens_before_rejection + 1
-    assert sessions[-1].requested == frozenset({"remote_run_ownership"})
+    assert sessions[-1].requested == inspection_capabilities
+    assert not any(
+        session.requested == mutation_capabilities
+        for session in sessions[opens_before_rejection:]
+    )
+
+    allowed_action = next(
+        action
+        for action in interrupted_inspection.actions
+        if action.code is RecoveryActionCode.FINALIZE
+        and action.finalize_mode is FinalizeMode.NORMAL
+        and action.allowed
+    )
+    opens_before_recovery = len(sessions)
+    with suppress(RuntimeError):
+        recovery_process.execute(
+            RecoverCommand(
+                str(root),
+                interrupted.run_id,
+                (
+                    f"{allowed_action.code.value}:{allowed_action.finalize_mode.value}"
+                    if allowed_action.finalize_mode is not None
+                    else allowed_action.code.value
+                ),
+                "synthetic-approval" if allowed_action.requires_approval else None,
+                "synthetic reason" if allowed_action.requires_reason else None,
+            )
+        )
+    recovery_sessions = sessions[opens_before_recovery:]
+    assert tuple(session.requested for session in recovery_sessions) == (
+        inspection_capabilities,
+        mutation_capabilities,
+    )
 
     assert all(session.closed for session in sessions)
     assert not any(
