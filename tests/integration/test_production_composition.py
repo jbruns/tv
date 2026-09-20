@@ -199,7 +199,7 @@ def test_bootstrap_composes_all_workflows_and_restart_recovery(
     assert verified.run_report.status is RunStatus.CONVERGED
     assert sessions[-1].requested == frozenset({"managed_file.read"})
 
-    files.remove(MANAGED_PATH, "test.reconcile-reset")
+    files.discard(MANAGED_PATH)
     reconciled = application.execute(ReconcileCommand(str(root), DEVICE_ID, ("apply",)))
     assert isinstance(reconciled, ReconcileOutcome)
     assert reconciled.execution_run_report is not None
@@ -213,7 +213,7 @@ def test_bootstrap_composes_all_workflows_and_restart_recovery(
         {"managed_file.read", "remote_run_ownership"}
     )
 
-    files.remove(MANAGED_PATH, "test.reset")
+    files.discard(MANAGED_PATH)
     interrupted_plan = restarted.execute(PlanCommand(str(root), DEVICE_ID))
     assert isinstance(interrupted_plan, CanonicalPlanOutcome)
     from coreelec_reconciler.domain.execution import MutationDisposition

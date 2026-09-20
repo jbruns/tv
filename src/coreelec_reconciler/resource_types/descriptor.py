@@ -21,6 +21,7 @@ from coreelec_reconciler.domain.observation import ObservationDisposition
 
 if TYPE_CHECKING:
     from coreelec_reconciler.domain.configuration import ProfileRootCapability, Resource
+    from coreelec_reconciler.domain.execution import NormalizedResourceState
     from coreelec_reconciler.domain.identifiers import DeviceId
     from coreelec_reconciler.resource_types.managed_file.observation import (
         ManagedFileObservation,
@@ -198,16 +199,45 @@ class ManagedFileCapabilities(Protocol):
     def read(self, path: str, limit: int) -> ReadResult: ...
 
     def stage_write(
-        self, path: str, content: bytes, mode: int, operation_id: str
+        self,
+        path: str,
+        content: bytes,
+        mode: int,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
     ) -> MutationReceipt: ...
 
-    def chmod(self, path: str, mode: int, operation_id: str) -> MutationReceipt: ...
+    def chmod(
+        self,
+        path: str,
+        mode: int,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
+    ) -> MutationReceipt: ...
 
     def atomic_replace(
-        self, staged_path: str, destination: str, operation_id: str
+        self,
+        staged_path: str,
+        destination: str,
+        operation_id: str,
+        *,
+        expected_staged: NormalizedResourceState,
+        expected_destination: NormalizedResourceState,
+        binding_digest: str,
     ) -> MutationReceipt: ...
 
-    def remove(self, path: str, operation_id: str) -> MutationReceipt: ...
+    def remove(
+        self,
+        path: str,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
+    ) -> MutationReceipt: ...
 
     def restore(
         self,
@@ -215,9 +245,19 @@ class ManagedFileCapabilities(Protocol):
         content: bytes | None,
         mode: int | None,
         operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
     ) -> MutationReceipt: ...
 
-    def cleanup(self, path: str, operation_id: str) -> MutationReceipt: ...
+    def cleanup(
+        self,
+        path: str,
+        operation_id: str,
+        *,
+        expected: NormalizedResourceState,
+        binding_digest: str,
+    ) -> MutationReceipt: ...
 
 
 class ManagedFileVerificationStatus(StrEnum):

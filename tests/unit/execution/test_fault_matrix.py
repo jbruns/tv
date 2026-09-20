@@ -77,7 +77,8 @@ def test_every_primitive_fault_is_observed_through_lifecycle(
         assert (verification.observation.state == before) is applied
     elif primitive == "cleanup":
         stage_path = (
-            "/storage/.kodi/userdata/playlists/video/.NewShows.xsp.stage-change"
+            "/storage/.kodi/userdata/playlists/video/"
+            f".NewShows.xsp.stage-change.{'b' * 64}.stage"
         )
         device.put(stage_path, FakeManagedEntry(0o600, b"stage"))
         _inject(device, "cleanup", disposition, applied)

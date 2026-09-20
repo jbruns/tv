@@ -26,10 +26,29 @@ verified parent using `O_NOFOLLOW`. It rejects empty, dot, and dot-dot
 components, enforces a byte bound on the opened descriptor, rejects incomplete
 reads, and closes every descriptor. If those flags or `dir_fd` support are
 unavailable, the read capability is unavailable.
-Replacement uses only Paramiko's OpenSSH `posix_rename` extension. If that
-extension is absent, mutation is unsupported; there is no ordinary rename or
-remove-plus-rename fallback. Every mutating primitive returns an applied,
-definitely-not-applied, or ambiguous receipt.
+
+Managed-file mutation is not exposed through pathname-based SFTP methods.
+A fixed ephemeral server helper receives a canonical encoded request on
+standard input, walks every parent with pinned no-follow directory descriptors,
+and compares the final regular-file type, mode, and content digest (or exact
+absence) immediately before mutation. Stage, chmod, remove, same-directory
+atomic replacement, restoration, and cleanup all use that helper. Mode-only
+updates stage the verified content with the requested mode and use the same
+atomic exchange protocol; they never mutate a previously opened inode in place.
+Stage paths
+are bound to the Run and their regular-file digest and mode are revalidated
+before replacement. Changed targets, substituted stages, symlinks, and unsafe
+ancestors fail closed without a success-shaped fallback; lost acknowledgements
+remain ambiguous and are followed by fresh observation. The helper command is
+fixed, and paths and payloads exist only in canonical standard-input data.
+Capability negotiation creates collision-resistant owned files beneath the
+resolved Profile filesystem, executes both `RENAME_NOREPLACE` and
+`RENAME_EXCHANGE`, verifies their inode effects, and removes only entries whose
+identity is still proven. Unsupported syscalls/filesystems or incomplete probe
+cleanup make the entire mutation capability unavailable.
+`tests/contracts/test_managed_mutation_helper_contract.py` exercises the real helper
+against ancestor and final symlinks, changed pre-images, stage substitution,
+lost acknowledgements, and command-shaped path/content values.
 
 Remote Run Infrastructure is confined to
 `/storage/.coreelec-reconciler/`. Fixed repository-owned helper operations
