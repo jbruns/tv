@@ -121,9 +121,12 @@ records `SKIN-025` as Python-owned, and `provision-coreelec.sh` no longer
 writes it, verifies it, or backs it up — see
 [the handoff](shell-write-set-permissions.md).
 
-This matters because the shell is run ad hoc. Were both engines still writing
-the address, any `--component skin` run would silently revert whatever the
-Reconciler had converged, and nothing would report it.
+The reason is not that a shell run was likely to clobber the file. Shell runs
+are deliberate, and `apply` follows them, so a reverted playlist would have
+been corrected in seconds. The reason is that two writers mean two definitions
+of one playlist to keep in step, and that
+[ADR 0009](../adr/0009-fail-forward-and-exclusive-execution-ownership.md) makes
+single ownership a design rule rather than a precaution.
 
 The practical consequence is that a shell baseline no longer leaves this
 playlist behind. The home and TV menus still link to it, so after a recovery
