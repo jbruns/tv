@@ -6,7 +6,8 @@ import base64
 import hashlib
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from contextlib import suppress
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -40,6 +41,7 @@ from coreelec_reconciler.domain.configuration import (
     ResolvedDevice,
 )
 from coreelec_reconciler.domain.execution import (
+    AllowedRecoveryAction,
     MarkerCheckpoint,
     MutationIntent,
     MutationTrace,
@@ -48,6 +50,7 @@ from coreelec_reconciler.domain.execution import (
     RemoteMarkerPhase,
     RemoteOwnership,
     RemoteOwnershipSnapshot,
+    RevisionLease,
     SessionCloseDisposition,
 )
 from coreelec_reconciler.domain.identifiers import (
@@ -58,6 +61,7 @@ from coreelec_reconciler.domain.identifiers import (
 )
 from coreelec_reconciler.domain.planning import (
     CanonicalPlan,
+    CanonicalRunReport,
     DesiredRelation,
     PlanningRuntime,
     SuppliedPlanningInput,
@@ -560,6 +564,30 @@ class _LifecycleFactory:
         return _ManagedFileLifecycle(executor, marker)
 
 
+def _durably_close_session(
+    services: ProductionServices,
+    report: CanonicalRunReport,
+    guidance: tuple[AllowedRecoveryAction, ...],
+    session: DeviceSession,
+    *,
+    lease: RevisionLease | None = None,
+) -> None:
+    def close() -> SessionCloseDisposition:
+        session.close()
+        return SessionCloseDisposition.COMPLETE
+
+    DurableSessionClose(services.run_store(), services.runtime).close(
+        SessionCloseRequest(
+            services.runtime.new_uuid7(),
+            f"session.{services.runtime.new_uuid7()}",
+        ),
+        report,
+        guidance,
+        close,
+        lease=lease,
+    )
+
+
 @dataclass(slots=True)
 class _BoundRun:
     prepared: PreparedExecution
@@ -567,7 +595,7 @@ class _BoundRun:
     bindings: _RunBindings
     services: ProductionServices
 
-    def close(self, outcome: ExecutionOutcome) -> ExecutionOutcome:
+    def close(self) -> None:
         from coreelec_reconciler.reporting.execution_documents import (
             decode_execution_run_report,
         )
@@ -580,30 +608,16 @@ class _BoundRun:
             guidance = self.prepared.services.engine.inspect(run_id).actions
         except ValueError, RuntimeError:
             guidance = ()
-        preserved = DurableSessionClose(
-            self.services.run_store(), self.services.runtime
-        ).close(
-            SessionCloseRequest(
-                self.services.runtime.new_uuid7(),
-                f"session.{self.services.runtime.new_uuid7()}",
-            ),
+        _durably_close_session(
+            self.services,
             report,
             guidance,
-            self._close_session,
+            self.session,
             lease=self.prepared.services.persistence.revision_lease,
         )
         self.bindings.remove(run_id)
-        try:
+        with suppress(OSError, RuntimeError, ValueError):
             self.prepared.services.close()
-        except OSError, RuntimeError, ValueError:
-            return replace(outcome, cleanup_complete=False)
-        if preserved.close.disposition is not SessionCloseDisposition.COMPLETE:
-            return replace(outcome, cleanup_complete=False)
-        return outcome
-
-    def _close_session(self) -> SessionCloseDisposition:
-        self.session.close()
-        return SessionCloseDisposition.COMPLETE
 
 
 class _ProductionExecutionRouter:
@@ -638,7 +652,8 @@ class _ProductionExecutionRouter:
             finally:
                 bound.session.close()
             raise
-        return bound.close(outcome)
+        bound.close()
+        return outcome
 
     def inspect(self, run_id: RunId) -> RecoveryInspection:
         return cast(RecoveryInspection, self._with_recovery(run_id, "inspect", None))
@@ -761,30 +776,17 @@ class _RecoveryMutationExecutor:
             guidance = self.services.engine.inspect(handoff.identity.run_id).actions
         except ValueError, RuntimeError:
             guidance = ()
-        preserved = DurableSessionClose(
-            self.production.run_store(), self.production.runtime
-        ).close(
-            SessionCloseRequest(
-                self.production.runtime.new_uuid7(),
-                f"session.{self.production.runtime.new_uuid7()}",
-            ),
+        _durably_close_session(
+            self.production,
             report,
             guidance,
-            self._close_session,
+            self.session,
             lease=self.services.persistence.revision_lease,
         )
         self.bindings.remove(handoff.identity.run_id)
-        try:
+        with suppress(OSError, RuntimeError, ValueError):
             self.services.close()
-        except OSError, RuntimeError, ValueError:
-            return replace(outcome, cleanup_complete=False)
-        if preserved.close.disposition is not SessionCloseDisposition.COMPLETE:
-            return replace(outcome, cleanup_complete=False)
         return outcome
-
-    def _close_session(self) -> SessionCloseDisposition:
-        self.session.close()
-        return SessionCloseDisposition.COMPLETE
 
 
 class _ProductionApplicationData:
@@ -863,11 +865,15 @@ class _ProductionApplicationData:
             return _unavailable("verify", "production.verification-unavailable")
         try:
             result = _verify_configuration(self._services, configuration, session)
+            _durably_close_session(
+                self._services,
+                result.run_report,
+                (),
+                session,
+            )
             return VerifyOutcome(result.run_report)
         except FileNotFoundError, ValueError, RuntimeError:
             return _unavailable("verify", "production.verification-unavailable")
-        finally:
-            session.close()
 
     def report(self, command: ReportCommand) -> ReportOutcome | UnsupportedOutcome:
         if not self._services.state_root_exists():

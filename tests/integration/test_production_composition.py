@@ -358,10 +358,57 @@ def test_session_close_failure_preserves_durable_run_result(tmp_path: Path) -> N
     applied = application.execute(ApplyCommand(str(root), planned.plan_id, ("apply",)))
 
     assert isinstance(applied, ApplyOutcome)
-    assert not applied.cleanup_complete
+    assert applied.cleanup_complete
     assert files.entry(MANAGED_PATH) is not None
     reported = application.execute(ReportCommand(str(root), applied.run_id))
     assert isinstance(reported, ReportOutcome)
     assert reported.run_report.run_id == applied.run_id.value
     chain_files = tuple((state / "runs").rglob("*.json"))
     assert any(b"session_close.transport" in path.read_bytes() for path in chain_files)
+
+
+def test_verification_close_failure_preserves_outcome_and_records_uncertainty(
+    tmp_path: Path,
+) -> None:
+    root = _repository(tmp_path)
+    state = tmp_path / "state"
+    files = FakeManagedFiles()
+    remote = FakeDevice()
+    fail_read_close = False
+
+    def open_session(device: object, capabilities: frozenset[str]) -> _Session:
+        nonlocal fail_read_close
+        del device
+        close_error = (
+            OSError("synthetic verification close failure")
+            if fail_read_close and capabilities == frozenset({"managed_file.read"})
+            else None
+        )
+        return _Session(files, remote, capabilities, close_error=close_error)
+
+    application = bootstrap(
+        BootstrapSettings(
+            str(root),
+            state_root=str(state),
+            session_opener=open_session,
+            runtime_values=_Runtime(),
+            host_key_fingerprint=lambda device: "SHA256:synthetic-host-key",
+        )
+    )
+    planned = application.execute(PlanCommand(str(root), DEVICE_ID))
+    assert isinstance(planned, CanonicalPlanOutcome)
+    applied = application.execute(ApplyCommand(str(root), planned.plan_id, ("apply",)))
+    assert isinstance(applied, ApplyOutcome)
+    fail_read_close = True
+
+    verified = application.execute(VerifyCommand(str(root), DEVICE_ID))
+
+    assert isinstance(verified, VerifyOutcome)
+    assert verified.status is RunStatus.CONVERGED
+    reported = application.execute(ReportCommand(str(root), verified.run_id))
+    assert isinstance(reported, ReportOutcome)
+    assert reported.run_report.current_digest == verified.run_report.current_digest
+    close_records = tuple((state / "runs").rglob("session-closes/*.json"))
+    assert any(
+        b"session_close.transport" in path.read_bytes() for path in close_records
+    )

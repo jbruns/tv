@@ -387,6 +387,54 @@ def test_installed_wheel_uses_genuine_production_composition_offline(
     assert b"not_implemented" not in result.stderr
 
 
+def test_installed_wheel_runs_real_production_graph_with_adapter_seams(
+    installed_cli: Path,
+    tmp_path: Path,
+) -> None:
+    environment = os.environ.copy()
+    environment.pop("COREELEC_RECONCILER_TEST_COMPOSITION", None)
+    environment["PYTHONPATH"] = str(DEPENDENCY_SITE_PACKAGES)
+    script = """
+import socket
+import sys
+from pathlib import Path
+
+import coreelec_reconciler
+
+installed = Path(coreelec_reconciler.__file__).resolve()
+assert "site-packages" in str(installed), installed
+sys.path.insert(0, sys.argv[1])
+from tests.integration.test_production_composition import (
+    test_bootstrap_composes_all_workflows_and_restart_recovery,
+)
+
+def forbidden_socket(*args, **kwargs):
+    raise AssertionError("installed production scenario attempted a socket")
+
+socket.socket = forbidden_socket
+test_bootstrap_composes_all_workflows_and_restart_recovery(Path(sys.argv[2]))
+print("installed production composition: passed")
+"""
+
+    result = subprocess.run(
+        [
+            str(installed_cli.parent / "python"),
+            "-c",
+            script,
+            str(REPOSITORY_ROOT),
+            str(tmp_path / "scenario"),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == b"installed production composition: passed\n"
+    assert b"Traceback" not in result.stderr
+
+
 def test_installed_non_tty_disables_color_with_normal_term(
     installed_cli: Path,
 ) -> None:

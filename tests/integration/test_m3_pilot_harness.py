@@ -140,6 +140,74 @@ def test_dry_run_allows_irrelevant_untracked_files(source_checkout: Path) -> Non
     assert VERIFIER.verify_bundle(source_checkout / "bundle", source_checkout) == digest
 
 
+@pytest.mark.parametrize("target", ("dot", "root", "parent", "home"))
+def test_dry_run_rejects_destructive_output_paths(
+    source_checkout: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    monkeypatch.setenv("HOME", str(source_checkout.parent / "home"))
+    home = Path.home()
+    home.mkdir()
+    output = {
+        "dot": source_checkout,
+        "root": Path("/"),
+        "parent": source_checkout.parent,
+        "home": home,
+    }[target]
+
+    with pytest.raises(ValueError, match="safe dedicated output"):
+        HARNESS.generate_bundle(source_checkout, output)
+
+
+def test_dry_run_rejects_symlink_and_arbitrary_existing_directory(
+    source_checkout: Path,
+) -> None:
+    existing = source_checkout / "existing"
+    existing.mkdir()
+    symlink = source_checkout / "symlink"
+    symlink.symlink_to(existing, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="harness-owned"):
+        HARNESS.generate_bundle(source_checkout, existing)
+    with pytest.raises(ValueError, match="symlink"):
+        HARNESS.generate_bundle(source_checkout, symlink)
+
+
+def test_dry_run_rejects_repository_and_session_internal_roots(
+    source_checkout: Path,
+) -> None:
+    session_root = Path.home() / ".copilot" / "session-state"
+
+    with pytest.raises(ValueError, match="repository or session root"):
+        HARNESS.generate_bundle(source_checkout, source_checkout / ".git" / "bundle")
+    with pytest.raises(ValueError, match="repository or session root"):
+        HARNESS.generate_bundle(source_checkout, session_root / "bundle")
+
+
+def test_dry_run_regenerates_only_owned_bundle(source_checkout: Path) -> None:
+    bundle = source_checkout / "bundle"
+    first = HARNESS.generate_bundle(source_checkout, bundle)
+    (bundle / "manifest.json").write_text("stale")
+
+    second = HARNESS.generate_bundle(source_checkout, bundle)
+
+    assert second == first
+    assert VERIFIER.verify_bundle(bundle, source_checkout) == first
+
+
+def test_dry_run_rejects_unknown_content_in_owned_bundle(
+    source_checkout: Path,
+) -> None:
+    bundle = source_checkout / "bundle"
+    HARNESS.generate_bundle(source_checkout, bundle)
+    (bundle / "user-file.txt").write_text("preserve me")
+
+    with pytest.raises(ValueError, match="unknown content"):
+        HARNESS.generate_bundle(source_checkout, bundle)
+    assert (bundle / "user-file.txt").read_text() == "preserve me"
+
+
 @pytest.mark.parametrize(
     "case",
     [

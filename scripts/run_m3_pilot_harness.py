@@ -5,7 +5,6 @@
 import argparse
 import hashlib
 import json
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -13,6 +12,10 @@ from typing import Any
 SCHEMA = "coreelec-reconciler-m3-pilot-dry-run-1"
 SYNTHETIC_DEVICE_ID = "synthetic-device"
 CONFIGURATION_PATHS = ("artifacts", "inventory", "profiles", "secret-providers")
+OUTPUT_FILES = frozenset(
+    {"manifest.json", "sequence.json", "digests.json", "bundle.sha256"}
+)
+OWNERSHIP_MARKER_SCHEMA = "coreelec-reconciler-m3-pilot-output-1"
 CORE_SEQUENCE: tuple[dict[str, Any], ...] = (
     {
         "id": "absent-create",
@@ -109,6 +112,78 @@ def _configuration_digest(root: Path, revision: str) -> str:
     return digest.hexdigest()
 
 
+def _path_contains_symlink(path: Path) -> bool:
+    absolute = path.absolute()
+    return any(candidate.is_symlink() for candidate in (absolute, *absolute.parents))
+
+
+def _is_equal_or_ancestor(candidate: Path, protected: Path) -> bool:
+    return candidate == protected or candidate in protected.parents
+
+
+def _ownership_marker(root: Path, output: Path) -> tuple[Path, bytes]:
+    marker = output.parent / f".{output.name}.m3-pilot-owner"
+    content = _canonical(
+        {
+            "schema": OWNERSHIP_MARKER_SCHEMA,
+            "repository": str(root),
+            "output": str(output),
+        }
+    )
+    return marker, content
+
+
+def _prepare_output(root: Path, requested_output: Path) -> Path:
+    if _path_contains_symlink(requested_output):
+        raise ValueError("output path must not contain a symlink")
+    root = root.resolve(strict=True)
+    output = requested_output.absolute()
+    resolved_output = output.resolve(strict=False)
+    if output != resolved_output:
+        raise ValueError("output path must not contain a symlink")
+
+    home = Path.home().resolve()
+    protected = (Path("/"), home, root)
+    if any(_is_equal_or_ancestor(resolved_output, item) for item in protected):
+        raise ValueError("output must be a safe dedicated output path")
+    internal_roots = (
+        root / ".git",
+        root / ".worktrees",
+        home / ".copilot" / "session-state",
+    )
+    if any(
+        resolved_output == item or item in resolved_output.parents
+        for item in internal_roots
+    ):
+        raise ValueError("output must not use a repository or session root")
+    if not output.parent.is_dir():
+        raise ValueError("safe dedicated output parent must already exist")
+
+    marker, expected_marker = _ownership_marker(root, resolved_output)
+    if output.exists():
+        if not output.is_dir() or not marker.is_file():
+            raise ValueError("existing output is not harness-owned")
+        if marker.read_bytes() != expected_marker:
+            raise ValueError("existing output ownership marker does not match")
+        entries = {entry.name for entry in output.iterdir()}
+        unknown = entries - OUTPUT_FILES
+        if unknown:
+            raise ValueError("harness-owned output contains unknown content")
+        for name in sorted(entries):
+            path = output / name
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("harness-owned output contains unknown content")
+            path.unlink()
+    else:
+        if marker.exists():
+            if not marker.is_file() or marker.read_bytes() != expected_marker:
+                raise ValueError("output ownership marker does not match")
+        else:
+            marker.write_bytes(expected_marker)
+        output.mkdir()
+    return resolved_output
+
+
 def generate_bundle(root: Path, output: Path) -> str:
     if _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("source checkout must be clean")
@@ -126,9 +201,7 @@ def generate_bundle(root: Path, output: Path) -> str:
     except subprocess.CalledProcessError:
         raise ValueError("uv.lock is missing") from None
 
-    if output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
+    output = _prepare_output(root, output)
 
     source = {
         "commit": _git(root, "rev-parse", "HEAD"),
@@ -192,7 +265,7 @@ def main() -> int:
     arguments = _arguments()
     root = Path(__file__).resolve().parents[1]
     try:
-        digest = generate_bundle(root, arguments.output.resolve())
+        digest = generate_bundle(root, arguments.output)
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         print(f"pilot dry run refused: {error}")
         return 2
