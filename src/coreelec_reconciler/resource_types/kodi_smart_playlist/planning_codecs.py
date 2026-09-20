@@ -185,6 +185,100 @@ def decode_assessment(value: Mapping[str, object]) -> PlaylistAssessment:
     return assessment
 
 
+def decode_plan_evidence(
+    payload_kind: str,
+    payload_schema_version: int,
+    payload_value: Mapping[str, object],
+) -> tuple[Mapping[str, object], str]:
+    if payload_kind != "KodiSmartPlaylistObservation" or payload_schema_version != 2:
+        raise ValueError("unsupported Plan evidence payload")
+    payload = _object(
+        payload_value,
+        {"normalized_state_digest", "summary"},
+        "Plan evidence payload",
+    )
+    normalized_state_digest = require_sha256(
+        payload["normalized_state_digest"],
+        "Plan evidence normalized_state_digest",
+    )
+    summary = _object_any(payload["summary"], "Plan evidence summary")
+    _validate_plan_evidence_summary(summary)
+    return summary, normalized_state_digest
+
+
+def _validate_plan_evidence_summary(summary: Mapping[str, object]) -> None:
+    presence = summary.get("presence")
+    if presence == "absent":
+        if set(summary) != {"presence"}:
+            raise ValueError("unknown absent Plan evidence summary fields")
+        return
+    if presence != "present":
+        raise ValueError("unknown Plan evidence presence")
+    if set(summary) == {"kind", "presence"}:
+        if summary["kind"] not in {"directory", "other", "symlink"}:
+            raise ValueError("unknown unsafe Plan evidence kind")
+        return
+    if set(summary) == {"presence", "readable"}:
+        if summary["readable"] is not False:
+            raise ValueError("invalid unreadable Plan evidence")
+        return
+    if set(summary) == {"mode", "presence"}:
+        _plan_mode(summary["mode"])
+        return
+    expected = {"mode", "playlist", "presence"}
+    malformed = expected | {"content_digest"}
+    if set(summary) not in {frozenset(expected), frozenset(malformed)}:
+        raise ValueError("unknown or missing Plan evidence summary fields")
+    _plan_mode(summary["mode"])
+    playlist = _object_any(summary["playlist"], "Plan evidence playlist")
+    if set(summary) == malformed:
+        if playlist != {"parse_status": "malformed"}:
+            raise ValueError("invalid malformed Plan evidence summary")
+        require_sha256(summary["content_digest"], "Plan evidence content digest")
+        return
+    if set(playlist) != {
+        "display_name",
+        "limit",
+        "match",
+        "media_type",
+        "order",
+        "rules",
+    }:
+        raise ValueError("unknown or missing Plan evidence playlist fields")
+    if not _nonempty_string(playlist["display_name"], "playlist display name"):
+        raise ValueError("playlist display name must not be empty")
+    if (
+        type(playlist["limit"]) is not int
+        or playlist["limit"] < 0
+        or playlist["match"] not in {"all", "one"}
+        or not _nonempty_string(playlist["media_type"], "playlist media type")
+    ):
+        raise ValueError("invalid Plan evidence playlist")
+    order = _object(playlist["order"], {"by", "direction"}, "playlist order")
+    _nonempty_string(order["by"], "playlist order field")
+    if order["direction"] not in {"ascending", "descending"}:
+        raise ValueError("invalid playlist order direction")
+    rules = playlist["rules"]
+    if not isinstance(rules, list):
+        raise ValueError("playlist rules must be an array")
+    for rule_value in rules:
+        rule = _object(
+            rule_value,
+            {"field", "operator", "value"},
+            "playlist rule",
+        )
+        _nonempty_string(rule["field"], "playlist rule field")
+        _nonempty_string(rule["operator"], "playlist rule operator")
+        if not isinstance(rule["value"], (str, int)) or isinstance(rule["value"], bool):
+            raise ValueError("invalid playlist rule value")
+
+
+def _plan_mode(value: object) -> int:
+    if type(value) is not int or not 0 <= value <= 0o7777:
+        raise ValueError("invalid Plan evidence mode")
+    return value
+
+
 def _object(
     value: object,
     fields: set[str],

@@ -12,16 +12,22 @@ from coreelec_reconciler.domain.configuration import (
     KodiSmartPlaylistIntent,
 )
 from coreelec_reconciler.domain.execution import (
+    AttachmentRef,
     MutationDisposition,
     MutationReceipt,
     MutationTrace,
 )
 
 if TYPE_CHECKING:
+    from coreelec_reconciler.domain.configuration import Resource
     from coreelec_reconciler.resource_types.managed_file.observation import (
         ManagedFileObservation,
     )
+    from coreelec_reconciler.resource_types.managed_file.paths import (
+        ResolvedManagedAddress,
+    )
     from coreelec_reconciler.resource_types.managed_file.preparation import (
+        PreparationBinding,
         PreparedManagedFile,
     )
     from coreelec_reconciler.transports.interfaces import ReadResult
@@ -43,6 +49,10 @@ type StateAddressResolver = Callable[
 ]
 type IntentEncoder = Callable[[KodiSmartPlaylistIntent], Mapping[str, object]]
 type IntentDecoder = Callable[[Mapping[str, object]], KodiSmartPlaylistIntent]
+type PlanEvidenceDecoder = Callable[
+    [str, int, Mapping[str, object]],
+    tuple[Mapping[str, object], str],
+]
 
 
 class ErasedResourceExecution(Protocol):
@@ -59,6 +69,12 @@ class ErasedResourceExecution(Protocol):
     def rollback(self, prepared: object) -> object: ...
 
     def cleanup(self, prepared: object, terminal_evidence_ref: str) -> object: ...
+
+
+class AttachmentStore(Protocol):
+    def attach(self, kind: str, codec: str, payload: bytes) -> AttachmentRef: ...
+
+    def read_attachment(self, reference: AttachmentRef) -> bytes: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,10 +222,40 @@ class ManagedFileLifecycle(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceExecutionContext:
+    """Capability-scoped inputs for one Device/Run Resource execution."""
+
+    resource: Resource
+    files: ManagedFileCapabilities
+    attachments: AttachmentStore
+    lifecycle: ManagedFileLifecycle
+    address: ResolvedManagedAddress
+    binding: PreparationBinding
+    observed_at: Callable[[], str]
+
+
+type ResourceExecutionFactory = Callable[
+    [ResourceExecutionContext],
+    ErasedResourceExecution,
+]
+type PreparedEncoder = Callable[[object], bytes]
+type PreparedDecoder = Callable[[bytes, AttachmentStore], object]
+type PlannedChangeDecoder = Callable[
+    [Mapping[str, object], ResourceExecutionContext, bool],
+    object,
+]
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceDescriptor:
     type_code: str
     parse_intent: IntentParser
     state_addresses: StateAddressResolver
     encode_intent: IntentEncoder
     decode_intent: IntentDecoder
+    decode_plan_evidence: PlanEvidenceDecoder
     execution: ErasedResourceExecution | None = None
+    execution_factory: ResourceExecutionFactory | None = None
+    encode_prepared: PreparedEncoder | None = None
+    decode_prepared: PreparedDecoder | None = None
+    decode_planned_change: PlannedChangeDecoder | None = None

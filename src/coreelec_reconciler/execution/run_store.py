@@ -5,8 +5,13 @@ import hashlib
 import os
 import secrets
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.execution import (
     TERMINAL_RUN_STATUSES,
     ActiveDeviceRun,
@@ -15,6 +20,7 @@ from coreelec_reconciler.domain.execution import (
     AuthorityPhase,
     DeviceIndexIntent,
     DeviceLease,
+    ExecutionEvidenceKind,
     LoadedAttachment,
     RevisionLease,
     RunStatus,
@@ -22,15 +28,15 @@ from coreelec_reconciler.domain.execution import (
     StoredRevision,
     VerifiedRunChain,
     WorkspaceId,
+    decode_execution_evidence,
+    evidence_proves_terminal_cleanup,
+    execution_run_identity,
+    is_post_terminal_cleanup_successor,
+    validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
-from coreelec_reconciler.reporting.canonical_json import (
-    canonical_document_bytes,
-    decode_json_object,
-)
-from coreelec_reconciler.reporting.execution_documents import (
-    execution_run_identity,
-)
+from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
+from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
 from .local_durability import (
     AcknowledgementLost,
@@ -57,6 +63,15 @@ class CorruptRunStore(RunStoreError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class OperationalReceipt:
+    digest: str
+    kind: str
+    resource_id: str
+    attachment: AttachmentRef
+    payload: bytes
+
+
 _IDENTITY_FIELDS = {
     "binding_digest",
     "boot_id",
@@ -81,9 +96,11 @@ class RunStore:
         self,
         root: Path,
         durability: LocalDurability | None = None,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self._root = root
         self._durability = durability or PosixLocalDurability()
+        self._resource_registry = resource_registry or built_in_resource_registry()
         self._device_descriptors: dict[str, int] = {}
         self._run_descriptors: dict[str, int] = {}
         self._initialize()
@@ -171,7 +188,7 @@ class RunStore:
         directory = self._root / "runs" / _opaque_key(workspace_id.value)
         directory.mkdir(mode=0o700)
         os.chmod(directory, 0o700)
-        for name in ("revisions", "attachments"):
+        for name in ("revisions", "attachments", "receipts"):
             child = directory / name
             child.mkdir(mode=0o700)
             os.chmod(child, 0o700)
@@ -241,6 +258,8 @@ class RunStore:
         head_revision = _required_int(head, "revision")
         revisions: list[StoredRevision] = []
         previous_digest: str | None = None
+        previous_value: dict[str, object] | None = None
+        terminal_seen = False
         for number in range(1, head_revision + 1):
             path = workspace / "revisions" / f"{number:08d}.json"
             try:
@@ -263,7 +282,35 @@ class RunStore:
             actual_previous = value.get("previous_revision_digest")
             if actual_previous != previous_digest:
                 raise CorruptRunStore("Run revision chain digest mismatch")
+            try:
+                status = RunStatus(_required_string(value, "status"))
+                evidence = value.get("evidence")
+                if not isinstance(evidence, list):
+                    raise ValueError("Run evidence is not an array")
+                validate_execution_evidence_sequence(
+                    tuple(evidence),
+                    status=status,
+                    resource_registry=self._resource_registry,
+                )
+            except (TypeError, ValueError) as error:
+                raise CorruptRunStore("Run evidence chain is invalid") from error
+            if terminal_seen and (
+                previous_value is None
+                or not is_post_terminal_cleanup_successor(
+                    previous_value,
+                    value,
+                    resource_registry=self._resource_registry,
+                )
+            ):
+                raise CorruptRunStore("terminal Run has an invalid successor")
+            if status in TERMINAL_RUN_STATUSES and not evidence_proves_terminal_cleanup(
+                value,
+                resource_registry=self._resource_registry,
+            ):
+                raise CorruptRunStore("terminal Run summary is not evidence-backed")
             previous_digest = stored.digest
+            previous_value = value
+            terminal_seen = status in TERMINAL_RUN_STATUSES
             revisions.append(stored)
         if not revisions or (
             head.get("digest") != revisions[-1].digest
@@ -272,7 +319,24 @@ class RunStore:
             raise CorruptRunStore("Run head does not match revision chain")
         state = self._read_object(workspace / "state.json")
         terminal = _required_bool(state, "terminal")
+        if terminal != terminal_seen:
+            raise CorruptRunStore("Run terminal state does not match canonical head")
         return VerifiedRunChain(tuple(revisions), revisions[-1], terminal)
+
+    def load_identity(self, run_id: RunId) -> dict[str, object]:
+        workspace = self._workspace_for_run(run_id)
+        identity = self._read_object(workspace / "identity.json")
+        if set(identity) != _IDENTITY_FIELDS:
+            raise CorruptRunStore("workspace identity fields are incomplete")
+        if _required_string(identity, "run_id") != run_id.value:
+            raise CorruptRunStore("workspace identity does not match Run")
+        try:
+            token = self._read_bytes(workspace / "ownership-token.bin")
+        except FileNotFoundError as error:
+            raise CorruptRunStore("ownership token is absent") from error
+        if _sha256(token) != identity.get("ownership_token_digest"):
+            raise CorruptRunStore("ownership token verification failed")
+        return identity
 
     def compare_and_append(
         self,
@@ -284,8 +348,6 @@ class RunStore:
     ) -> StoredRevision:
         self._require_run_lease(lease)
         chain = self.load_chain(lease.run_id)
-        if chain.terminal:
-            raise CompareConflict("terminal Run cannot be appended")
         if (
             chain.head.revision != expected_revision
             or chain.head.digest != expected_digest
@@ -307,6 +369,12 @@ class RunStore:
             decode_json_object(chain.head.payload)
         ):
             raise RunStoreError("Run immutable identity bindings changed")
+        if chain.terminal and not is_post_terminal_cleanup_successor(
+            decode_json_object(chain.head.payload),
+            value,
+            resource_registry=self._resource_registry,
+        ):
+            raise CompareConflict("terminal Run only accepts cleanup receipts")
         try:
             return self._complete_append(
                 lease,
@@ -348,7 +416,6 @@ class RunStore:
         elif (
             chain.head.revision == expected_revision
             and chain.head.digest == expected_digest
-            and not chain.terminal
         ):
             revision_path = workspace / "revisions" / f"{proposed.revision:08d}.json"
             try:
@@ -452,7 +519,14 @@ class RunStore:
         reference: AttachmentRef,
     ) -> LoadedAttachment:
         self._require_run_lease(lease)
-        workspace = self._workspace_for_run(lease.run_id)
+        return self._read_attachment(lease.run_id, reference)
+
+    def _read_attachment(
+        self,
+        run_id: RunId,
+        reference: AttachmentRef,
+    ) -> LoadedAttachment:
+        workspace = self._workspace_for_run(run_id)
         digest_hex = reference.digest.removeprefix("sha256:")
         path = workspace / "attachments" / digest_hex
         metadata = self._read_object(workspace / "attachments" / f"{digest_hex}.json")
@@ -465,6 +539,180 @@ class RunStore:
         if metadata != expected or _sha256(payload) != reference.digest:
             raise CorruptRunStore("attachment verification failed")
         return LoadedAttachment(reference, payload)
+
+    def record_operational_receipt(
+        self,
+        lease: RevisionLease,
+        kind: str,
+        resource_id: str,
+        payload: bytes,
+    ) -> str:
+        """Persist post-terminal operational evidence without revising truth."""
+        self._require_run_lease(lease)
+        _require_safe_code(kind, "receipt kind")
+        _require_safe_code(resource_id, "receipt Resource ID")
+        attachment = self.attach(lease, kind, f"{kind}-v1", payload)
+        receipt = canonical_document_bytes(
+            {
+                "attachment": {
+                    "codec": attachment.codec,
+                    "digest": attachment.digest,
+                    "kind": attachment.kind,
+                },
+                "kind": kind,
+                "resource_id": resource_id,
+                "schema_version": 1,
+            }
+        )
+        digest = _sha256(receipt)
+        directory = self._workspace_for_run(lease.run_id) / "receipts"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+        self._publish(
+            directory / f"{digest.removeprefix('sha256:')}.json",
+            receipt,
+            f"receipt:{digest}",
+        )
+        return digest
+
+    def record_corrupt_recovery_evidence(
+        self,
+        lease: RevisionLease,
+        value: dict[str, object],
+    ) -> StoredRevision:
+        """Persist a closed abandonment/quarantine record beside a corrupt chain."""
+        self._require_run_lease(lease)
+        try:
+            record = decode_execution_evidence(
+                value,
+                resource_registry=self._resource_registry,
+            )
+        except ValueError as error:
+            raise RunStoreError("corrupt recovery evidence is invalid") from error
+        if record.kind not in {
+            ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL,
+            ExecutionEvidenceKind.AUTHORITY_EVIDENCE,
+        }:
+            raise RunStoreError("corrupt recovery evidence kind is not allowed")
+        identity = self.load_identity(lease.run_id)
+        if (
+            record.bindings.run_id != lease.run_id.value
+            or record.bindings.workspace_id != lease.workspace_id.value
+            or record.bindings.device_id != identity["device_id"]
+            or record.bindings.plan_id != identity["plan_id"]
+            or record.bindings.plan_full_digest != identity["plan_full_digest"]
+            or record.bindings.binding_digest != identity["binding_digest"]
+        ):
+            raise RunStoreError("corrupt recovery evidence binding changed")
+        payload = canonical_document_bytes(value)
+        digest = _sha256(payload)
+        directory = self._workspace_for_run(lease.run_id) / "receipts"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+        path = directory / f"{record.kind.value}.{digest.removeprefix('sha256:')}.json"
+        self._publish(path, payload, f"corrupt-recovery:{record.kind.value}")
+        return StoredRevision(0, digest, payload)
+
+    def seal_corrupt_quarantine(
+        self,
+        lease: RevisionLease,
+        abandonment_digest: str,
+        quarantine_digest: str,
+    ) -> None:
+        """Seal a corrupt Run only after typed abandonment and quarantine receipts."""
+        self._require_run_lease(lease)
+        workspace = self._workspace_for_run(lease.run_id)
+        receipts = workspace / "receipts"
+        expected = {
+            ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL: abandonment_digest,
+            ExecutionEvidenceKind.AUTHORITY_EVIDENCE: quarantine_digest,
+        }
+        for kind, digest in expected.items():
+            path = receipts / f"{kind.value}.{digest.removeprefix('sha256:')}.json"
+            value = decode_json_object(self._read_bytes(path))
+            record = decode_execution_evidence(
+                value,
+                resource_registry=self._resource_registry,
+            )
+            if (
+                record.kind is not kind
+                or _sha256(canonical_document_bytes(value)) != digest
+            ):
+                raise RunStoreError("corrupt recovery receipt verification failed")
+        identity = self.load_identity(lease.run_id)
+        self._publish(
+            workspace / "seal.json",
+            canonical_document_bytes(
+                {
+                    "ownership_released_or_quarantined": True,
+                    "terminal_digest": abandonment_digest,
+                    "terminal_revision": 0,
+                }
+            ),
+            "seal-corrupt-quarantine",
+        )
+        self._publish(
+            workspace / "state.json",
+            canonical_document_bytes(
+                {
+                    "authority_phase": AuthorityPhase.RELEASE_PENDING.value,
+                    "status": RunStatus.FAILED_RECOVERY_REQUIRED.value,
+                    "terminal": True,
+                }
+            ),
+            "state-corrupt-quarantine",
+        )
+        self._remove_index_entry(
+            DeviceId(_required_string(identity, "device_id")),
+            lease.run_id,
+        )
+
+    def load_operational_receipts(
+        self,
+        run_id: RunId,
+        kind: str,
+    ) -> tuple[OperationalReceipt, ...]:
+        _require_safe_code(kind, "receipt kind")
+        directory = self._workspace_for_run(run_id) / "receipts"
+        if not directory.exists():
+            return ()
+        receipts: list[OperationalReceipt] = []
+        for path in sorted(directory.iterdir()):
+            receipt_bytes = self._read_bytes(path)
+            if _sha256(receipt_bytes) != "sha256:" + path.stem:
+                raise CorruptRunStore("operational receipt digest mismatch")
+            try:
+                value = decode_json_object(receipt_bytes)
+            except ValueError as error:
+                raise CorruptRunStore("operational receipt is malformed") from error
+            if set(value) != {
+                "attachment",
+                "kind",
+                "resource_id",
+                "schema_version",
+            }:
+                raise CorruptRunStore("operational receipt is malformed")
+            if value["kind"] != kind or value["schema_version"] != 1:
+                continue
+            attachment = value["attachment"]
+            if not isinstance(attachment, dict):
+                raise CorruptRunStore("operational receipt attachment is malformed")
+            reference = AttachmentRef(
+                _required_string(attachment, "digest"),
+                _required_string(attachment, "kind"),
+                _required_string(attachment, "codec"),
+            )
+            loaded = self._read_attachment(run_id, reference)
+            receipts.append(
+                OperationalReceipt(
+                    "sha256:" + path.stem,
+                    kind,
+                    _required_string(value, "resource_id"),
+                    reference,
+                    loaded.payload,
+                )
+            )
+        return tuple(receipts)
 
     def load_ownership_token(self, lease: RevisionLease) -> bytes:
         self._require_run_lease(lease)
@@ -487,6 +735,35 @@ class RunStore:
         chain = self.load_chain(lease.run_id)
         if not chain.terminal or chain.head.revision != intent.terminal_revision:
             raise RunStoreError("seal requires the durable terminal head")
+        head_value = decode_json_object(chain.head.payload)
+        cleanup = head_value.get("cleanup")
+        authority = head_value.get("authority")
+        ownership_state = (
+            authority.get("ownership_state") if isinstance(authority, dict) else None
+        )
+        cleanup_allows_seal = isinstance(cleanup, dict) and (
+            (
+                ownership_state == "released"
+                and cleanup.get("state") == "complete"
+                and cleanup.get("leftover_count") == 0
+            )
+            or ownership_state == "quarantined"
+        )
+        if (
+            not cleanup_allows_seal
+            or not isinstance(authority, dict)
+            or ownership_state not in {"released", "quarantined"}
+            or authority.get("device_index_intent")
+            != "remove_after_release_or_quarantine"
+            or not intent.ownership_released_or_quarantined
+            or not evidence_proves_terminal_cleanup(
+                head_value,
+                resource_registry=self._resource_registry,
+            )
+        ):
+            raise RunStoreError(
+                "seal requires completed cleanup for release or quarantine truth"
+            )
         workspace = self._workspace_for_run(lease.run_id)
         identity = self._read_object(workspace / "identity.json")
         seal = {
@@ -729,6 +1006,23 @@ class RunStore:
         without_digest.pop("current_digest", None)
         if digest != _sha256(canonical_document_bytes(without_digest)):
             raise CorruptRunStore("Run revision digest mismatch")
+        try:
+            status = RunStatus(_required_string(value, "status"))
+            evidence = value.get("evidence")
+            if not isinstance(evidence, list):
+                raise ValueError("Run evidence is not an array")
+            validate_execution_evidence_sequence(
+                tuple(evidence),
+                status=status,
+                resource_registry=self._resource_registry,
+            )
+            if status in TERMINAL_RUN_STATUSES and not evidence_proves_terminal_cleanup(
+                value,
+                resource_registry=self._resource_registry,
+            ):
+                raise ValueError("terminal summary is not evidence-backed")
+        except (TypeError, ValueError) as error:
+            raise CorruptRunStore("Run evidence is invalid") from error
         return StoredRevision(revision, digest, payload)
 
     def _publish(self, path: Path, payload: bytes, operation_id: str) -> None:

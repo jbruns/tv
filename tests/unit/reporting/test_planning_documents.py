@@ -1,5 +1,6 @@
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -7,12 +8,30 @@ import pytest
 
 from coreelec_reconciler.application.commands import PlanCommand
 from coreelec_reconciler.application.outcomes import PlanOutcome
+from coreelec_reconciler.application.supplied_observations import (
+    load_supplied_planning_input,
+)
 from coreelec_reconciler.bootstrap import BootstrapSettings, bootstrap
-from coreelec_reconciler.domain.identifiers import DeviceId
-from coreelec_reconciler.reporting.canonical_json import canonical_document_bytes
+from coreelec_reconciler.config.load import load_configuration
+from coreelec_reconciler.domain.identifiers import DeviceId, ResourceId, SelectorId
+from coreelec_reconciler.domain.planning import (
+    CanonicalPlan,
+    CanonicalRunReport,
+    PlanDisposition,
+)
+from coreelec_reconciler.reporting.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.reporting.planning_documents import (
+    build_multi_resource_plan_and_run,
+    check_plan_invariants,
     decode_plan,
     decode_run_report,
+    reconstruct_plan_dependency_graph,
+)
+from coreelec_reconciler.resource_types.kodi_smart_playlist.planning import (
+    assess_playlist,
 )
 from tests.unit.planning_support import FIXTURE_ROOT, desired_xml, supplied_document
 
@@ -40,6 +59,88 @@ def _plan(tmp_path: Path, content: bytes) -> PlanOutcome:
     assert outcome.plan is not None
     assert outcome.run_report is not None
     return outcome
+
+
+def _multi_plan(
+    tmp_path: Path,
+    *,
+    satisfied_prerequisite: bool = False,
+) -> tuple[CanonicalPlan, CanonicalRunReport]:
+    loaded = load_configuration(
+        FIXTURE_ROOT,
+        DeviceId("living-room.ugoos-am6b-plus"),
+        (SelectorId("selector.skin"),),
+    )
+    assert loaded.configuration is not None
+    base = loaded.configuration.resources[0]
+    prerequisite = replace(
+        base,
+        id=ResourceId("skin.playlist.alpha"),
+        requires=(),
+        state_addresses=("special://profile/playlists/video/Alpha.xsp",),
+    )
+    dependent = replace(
+        base,
+        id=ResourceId("skin.playlist.beta"),
+        requires=(prerequisite.id,),
+        state_addresses=("special://profile/playlists/video/Beta.xsp",),
+    )
+    configuration = replace(
+        loaded.configuration,
+        resources=(dependent, prerequisite),
+        dependency_order=(prerequisite.id, dependent.id),
+    )
+    supplied_path = tmp_path / "multi-observations.json"
+    supplied_path.write_bytes(
+        supplied_document(
+            desired_xml().replace(b"<limit>50</limit>", b"<limit>25</limit>")
+        )
+    )
+    base_input = load_supplied_planning_input(supplied_path)
+    desired_path = tmp_path / "desired-multi-observations.json"
+    desired_path.write_bytes(supplied_document(desired_xml()))
+    desired_input = load_supplied_planning_input(desired_path)
+    entries = []
+    for resource in (dependent, prerequisite):
+        source = (
+            desired_input
+            if satisfied_prerequisite and resource is prerequisite
+            else base_input
+        )
+        observation = replace(
+            source.observation,
+            resource_id=resource.id.value,
+            state_address=resource.state_addresses[0],
+        )
+        inputs = replace(source, observation=observation)
+        assessment = assess_playlist(
+            resource.intent,
+            resource.desired,
+            resource.management,
+            observation,
+        )
+        entries.append((resource, inputs, assessment))
+    return build_multi_resource_plan_and_run(configuration, tuple(entries))
+
+
+def test_actionable_multi_plan_preserves_satisfied_resource_result(
+    tmp_path: Path,
+) -> None:
+    plan, run = _multi_plan(tmp_path, satisfied_prerequisite=True)
+
+    assert plan.disposition is PlanDisposition.ACTIONABLE
+    results = {
+        cast(str, result["resource_id"]): result
+        for result in cast(
+            list[dict[str, object]],
+            decode_json_object(run.canonical_bytes)["resource_results"],
+        )
+    }
+    unchanged = results["skin.playlist.alpha"]
+    assert unchanged["latest_observed_relation"] == "satisfied"
+    assert unchanged["mutation_outcome"] == "not_required"
+    assert unchanged["verification_outcome"] == "fresh_match"
+    assert unchanged["final_convergence"] == "converged"
 
 
 def _sha256(value: dict[str, object]) -> str:
@@ -116,6 +217,289 @@ def test_plan_and_run_match_canonical_goldens(
     assert not outcome.run_report.canonical_bytes.endswith(b"\n")
     assert decode_plan(outcome.plan.canonical_bytes) == outcome.plan
     assert decode_run_report(outcome.run_report.canonical_bytes) == outcome.run_report
+
+
+def test_multi_resource_plan_round_trips_dependencies_from_canonical_bytes(
+    tmp_path: Path,
+) -> None:
+    plan, run = _multi_plan(tmp_path)
+    value = json.loads(plan.canonical_bytes)
+
+    assert value["schema_version"] == 2
+    assert [item["resource_id"] for item in value["resources"]] == [
+        "skin.playlist.alpha",
+        "skin.playlist.beta",
+    ]
+    assert [item["requires"] for item in value["resources"]] == [
+        [],
+        ["skin.playlist.alpha"],
+    ]
+    assert len(value["evidence"]) == 2
+    assert sum(len(item["changes"]) for item in value["resources"]) == 2
+    assert (
+        plan.canonical_bytes
+        == (GOLDEN_ROOT / "plan-actionable-multi.json").read_bytes()
+    )
+    assert (
+        run.canonical_bytes
+        == (GOLDEN_ROOT / "run-awaiting-approval-multi.json").read_bytes()
+    )
+    assert decode_plan(plan.canonical_bytes).resource_dependencies == (
+        ("skin.playlist.alpha", ()),
+        ("skin.playlist.beta", ("skin.playlist.alpha",)),
+    )
+    assert decode_run_report(run.canonical_bytes, plan) == run
+    assert check_plan_invariants(plan.canonical_bytes) == ()
+
+
+def _mutate_multi_plan(
+    value: dict[str, object],
+    mutation: str,
+) -> None:
+    resources = cast(list[dict[str, object]], value["resources"])
+    evidence = cast(list[dict[str, object]], value["evidence"])
+    if mutation == "unknown-field":
+        resources[0]["dependencies"] = []
+    elif mutation == "missing-requires":
+        resources[0].pop("requires")
+    elif mutation == "cycle":
+        resources[0]["requires"] = ["skin.playlist.beta"]
+    elif mutation == "self-dependency":
+        resources[0]["requires"] = ["skin.playlist.alpha"]
+    elif mutation == "dangling":
+        resources[1]["requires"] = ["skin.playlist.missing"]
+    elif mutation == "duplicate-edge":
+        resources[1]["requires"] = [
+            "skin.playlist.alpha",
+            "skin.playlist.alpha",
+        ]
+    elif mutation == "unstable-order":
+        resources.reverse()
+        evidence.reverse()
+    elif mutation == "duplicate-resource":
+        resources[1]["resource_id"] = "skin.playlist.alpha"
+    elif mutation == "duplicate-change":
+        first_changes = cast(list[dict[str, object]], resources[0]["changes"])
+        second_changes = cast(list[dict[str, object]], resources[1]["changes"])
+        second_changes[0]["change_id"] = first_changes[0]["change_id"]
+    elif mutation == "duplicate-evidence":
+        evidence[1]["evidence_id"] = evidence[0]["evidence_id"]
+    elif mutation == "change-binding":
+        changes = cast(list[dict[str, object]], resources[1]["changes"])
+        changes[0]["resource_id"] = "skin.playlist.alpha"
+    elif mutation == "evidence-binding":
+        subject = cast(dict[str, object], evidence[1]["subject"])
+        subject["id"] = "skin.playlist.alpha"
+    elif mutation == "unknown-resource-type":
+        resources[1]["resource_type"] = "InventedResource"
+    elif mutation == "requires-type":
+        resources[1]["requires"] = "skin.playlist.alpha"
+    elif mutation == "schema-version":
+        value["schema_version"] = 999
+    else:
+        raise AssertionError(f"unknown test mutation: {mutation}")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unknown-field",
+        "missing-requires",
+        "cycle",
+        "self-dependency",
+        "dangling",
+        "duplicate-edge",
+        "unstable-order",
+        "duplicate-resource",
+        "duplicate-change",
+        "duplicate-evidence",
+        "change-binding",
+        "evidence-binding",
+        "unknown-resource-type",
+        "requires-type",
+        "schema-version",
+    ],
+)
+def test_multi_resource_plan_rejects_closed_graph_and_reference_mutations(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    value = json.loads(plan.canonical_bytes)
+    _mutate_multi_plan(value, mutation)
+    content = _canonical_plan(value)
+
+    with pytest.raises(ValueError):
+        decode_plan(content)
+    assert check_plan_invariants(content)
+
+
+def test_plan_dependency_tampering_changes_full_and_semantic_digests(
+    tmp_path: Path,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    value = json.loads(plan.canonical_bytes)
+    resources = cast(list[dict[str, object]], value["resources"])
+    resources[1]["requires"] = []
+    without_full = dict(value)
+    without_full.pop("full_digest")
+    value["full_digest"] = _sha256(without_full)
+
+    with pytest.raises(ValueError, match="semantic digest mismatch"):
+        decode_plan(canonical_document_bytes(value))
+
+    value = json.loads(plan.canonical_bytes)
+    resources = cast(list[dict[str, object]], value["resources"])
+    changes = cast(list[dict[str, object]], resources[1]["changes"])
+    desired = cast(dict[str, object], changes[0]["desired"])
+    desired["normalized_state_digest"] = "sha256:" + "0" * 64
+    without_full = dict(value)
+    without_full.pop("full_digest")
+    value["full_digest"] = _sha256(without_full)
+    with pytest.raises(ValueError, match="semantic digest mismatch"):
+        decode_plan(canonical_document_bytes(value))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "payload-value",
+        "payload-digest",
+        "payload-unknown-field",
+        "payload-kind",
+        "payload-version",
+        "change-before-mismatch",
+    ],
+)
+def test_multi_resource_plan_rejects_evidence_before_state_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    value = json.loads(plan.canonical_bytes)
+    evidence = cast(list[dict[str, object]], value["evidence"])
+    resources = cast(list[dict[str, object]], value["resources"])
+    payload = cast(dict[str, object], evidence[1]["payload"])
+    summary = cast(dict[str, object], payload["summary"])
+    if mutation == "payload-value":
+        playlist = cast(dict[str, object], summary["playlist"])
+        playlist["limit"] = 999
+    elif mutation == "payload-digest":
+        payload["normalized_state_digest"] = "sha256:" + "0" * 64
+    elif mutation == "payload-unknown-field":
+        payload["invented"] = True
+    elif mutation == "payload-kind":
+        evidence[1]["payload_kind"] = "InventedObservation"
+    elif mutation == "payload-version":
+        evidence[1]["payload_schema_version"] = 999
+    else:
+        changes = cast(list[dict[str, object]], resources[1]["changes"])
+        before = cast(dict[str, object], changes[0]["before"])
+        before_summary = cast(dict[str, object], before["summary"])
+        playlist = cast(dict[str, object], before_summary["playlist"])
+        playlist["limit"] = 999
+    content = _canonical_plan(value)
+
+    with pytest.raises(ValueError):
+        decode_plan(content)
+    assert check_plan_invariants(content)
+
+
+@pytest.mark.parametrize(
+    ("management", "relation", "blocker_code", "with_change", "valid"),
+    [
+        ("enforce", "divergent", None, True, True),
+        ("enforce", "divergent", None, False, False),
+        ("enforce", "divergent", "resource.observe-only-divergence", True, False),
+        ("observe_only", "divergent", "resource.observe-only-divergence", False, True),
+        ("observe_only", "divergent", None, False, False),
+        ("observe_only", "divergent", "resource.observe-only-divergence", True, False),
+        ("enforce", "satisfied", None, False, True),
+        ("enforce", "satisfied", None, True, False),
+        ("observe_only", "satisfied", None, False, True),
+        ("observe_only", "satisfied", "resource.observe-only-divergence", False, False),
+        ("enforce", "unverifiable", "resource.unsafe-symlink", False, True),
+        ("observe_only", "unverifiable", "resource.unsafe-symlink", False, True),
+        ("enforce", "unverifiable", "resource.observe-only-divergence", False, False),
+        ("enforce", "unverifiable", "resource.unsafe-symlink", True, False),
+        ("enforce", "not_applicable", None, False, True),
+        ("observe_only", "not_applicable", None, False, True),
+        ("unmanaged", "divergent", None, True, False),
+    ],
+)
+def test_multi_resource_plan_enforces_per_resource_assessment_matrix(
+    tmp_path: Path,
+    management: str,
+    relation: str,
+    blocker_code: str | None,
+    with_change: bool,
+    valid: bool,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    value = json.loads(plan.canonical_bytes)
+    resources = cast(list[dict[str, object]], value["resources"])
+    resource = resources[1]
+    resource["management"] = management
+    resource["desired_relation"] = relation
+    original_changes = cast(list[dict[str, object]], resource["changes"])
+    resource["changes"] = original_changes if with_change else []
+    blockers: list[dict[str, object]] = []
+    if blocker_code is not None:
+        blockers.append(
+            {
+                "code": blocker_code,
+                "evidence_refs": ["evidence.skin.playlist.beta.before"],
+                "subject": {"id": "skin.playlist.beta", "kind": "resource"},
+            }
+        )
+    resource["blockers"] = blockers
+    value["blockers"] = blockers
+    if blockers:
+        value["disposition"] = "blocked"
+        value["approval_requirements"] = []
+        value.pop("expires_at")
+        value.pop("valid_from")
+    content = _canonical_plan(value)
+
+    if valid:
+        assert decode_plan(content).canonical_bytes == content
+        assert check_plan_invariants(content) == ()
+    else:
+        with pytest.raises(ValueError):
+            decode_plan(content)
+        assert check_plan_invariants(content)
+
+
+def test_dependency_graph_reconstructs_from_saved_plan_not_current_config(
+    tmp_path: Path,
+) -> None:
+    plan, _ = _multi_plan(tmp_path)
+    current = load_configuration(
+        FIXTURE_ROOT,
+        DeviceId("living-room.ugoos-am6b-plus"),
+        (SelectorId("selector.skin"),),
+    )
+    assert current.configuration is not None
+    current_configuration_requires = tuple(
+        (
+            resource.id.value,
+            tuple(required.value for required in resource.requires),
+        )
+        for resource in current.configuration.resources
+    )
+
+    graph = reconstruct_plan_dependency_graph(plan.canonical_bytes)
+
+    assert graph.requires_by_resource != current_configuration_requires
+    assert graph.requires("skin.playlist.beta") == ("skin.playlist.alpha",)
+    assert graph.execution_order == (
+        "skin.playlist.alpha",
+        "skin.playlist.beta",
+    )
+    assert graph.reverse_dependency_order == (
+        "skin.playlist.beta",
+        "skin.playlist.alpha",
+    )
 
 
 def test_identical_inputs_produce_identical_documents_and_digests(

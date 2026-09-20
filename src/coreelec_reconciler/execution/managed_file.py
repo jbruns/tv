@@ -17,6 +17,7 @@ from coreelec_reconciler.domain.execution import (
     ResourceMutationIntent,
 )
 from coreelec_reconciler.resource_types.descriptor import (
+    AttachmentStore,
     ManagedFileCapabilities,
     ManagedFileExecutionResult,
     ManagedFileVerification,
@@ -31,7 +32,6 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
     ResolvedManagedAddress,
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
-    AttachmentStore,
     PreparedManagedFile,
 )
 

@@ -59,3 +59,92 @@ scheduling, or fake Device state.
 Execution follows deterministic Plan order. A known Resource failure skips
 its dependents while safe independent, non-disruptive Changes continue.
 Ambiguity and disruptive failure stop further mutation.
+
+## Restart-safe production contracts
+
+`PlanStore` durably stores the exact canonical Plan beside its originating
+planning Run. Every load reruns the persistence codecs and verifies the Plan
+ID, full and semantic digests, Device and originating-Run binding, approval
+requirements, and input/source digests. A partial, changed, noncanonical, or
+unsafe saved entry fails closed.
+
+`ProductionExecutionFactory.approve_saved_plan` is the restart-safe apply
+boundary. It loads that saved pair, checks the complete Device object and all
+input/origin bindings, rejects expired Plans and invalid, missing, duplicate,
+or extraneous approval grants, and asks each registered Resource Type to
+decode only the Changes present in the canonical Plan. Those checks and fresh
+precondition observations complete before authority acquisition creates the
+execution Run. The returned `ApprovedPlan` is already bound to the acquired
+RunStore lease and concrete execution services; production composition cannot
+substitute unrelated hand-built Changes.
+
+Plan schema v2 owns the Resource dependency graph. Composition reconstructs
+and validates that graph from the immutable saved canonical Plan bytes, uses
+its deterministic execution order, and projects it onto only Resources with
+encoded Changes. Unchanged Resources are satisfied dependency barriers:
+dependencies through them collapse to the nearest executable prerequisites.
+Independent unchanged Resources require no preparation. Restart loads and
+projects the same saved graph rather than current configuration, so a changed
+configuration cannot alter dependent skipping or reverse-dependency rollback
+order.
+
+The Device authority probe supplies fresh boot, platform, and pinned host-key
+identity. Composition performs two equal observations, derives the binding
+digest from the canonical accepted Device object, and requires every observed
+and Resource-context identity to match before remote authority acquisition.
+Callers cannot assert a binding digest or boot identity. Plan validity and
+approval-grant timestamps are checked against the injected trusted Run clock;
+the request timestamp has no authority over execution time.
+
+`RunStoreExecutionPersistence` is the concrete `ExecutionJournal`,
+`RecoveryPersistence`, and bound `AttachmentStore` adapter. Preparation
+documents are content-addressed attachments referenced by canonical Run
+evidence. Intent, primitive outcome, Verification, rollback, and terminal
+transitions append validated canonical revisions with RunStore CAS ordering.
+Every record uses the Resource Type registry and the closed v1 execution
+evidence codecs; unknown kinds, versions, fields, observers, attachments, or
+sequence transitions are rejected. Cleanup intent, marker, and receipt records
+are terminal cleanup-only successors written after terminal truth. Authority
+release, quarantine, and abandonment evidence are likewise canonical
+successors. Normal sealing requires verified cleanup and release. Separately
+approved abandonment attempts and records cleanup when local evidence remains
+valid. Corrupt revision, codec, manifest, or attachment evidence instead
+produces an inspect-only result and persists closed typed abandonment and
+quarantine records without attempting unsafe managed-state cleanup. A
+quarantined seal may close the active authority index while cleanup remains
+unknown; it never claims release or cleanup success. Remote release remains
+authorized by the original terminal digest rather than a cleanup successor
+digest.
+
+Playlist preparation has a strict canonical codec. It reconstructs
+`PreparedPlaylistChange` and `PreparedManagedFile` from the manifest and
+verified content-addressed attachments. Restart checks exact Run, Device, Plan,
+Resource, Change, binding digest, logical address, normalized Device path,
+manifest, and attachment identity before reconstruction. Altered bindings,
+cross-Run preparation, missing attachments, and corrupt codecs fail closed,
+and no controller-local path, lease, or ownership token enters a report.
+
+Bound authority restart reconstructs the expected remote ownership identity
+from verified local Run, Plan, workspace, and token state. It requires exact
+Device, Run, workspace, Plan ID, Plan full digest, binding digest, boot ID, and
+ownership-token digest equality before returning mutating authority; any
+mismatch leaves only inspection available. A mismatch releases a Run revision
+lease acquired locally by the authority loader, but never releases an injected
+shared lease that still protects inspection, attachments, and orderly service
+shutdown.
+
+Built-in Resource Type descriptors expose a lazy execution factory instead of
+a process-bound execution instance. `ConfigurationResourceContexts` supplies
+the resolved Device capability, per-Run binding, attachment store, lifecycle,
+and clock without reversing the Resource Type dependency. Composition binds
+each lifecycle's intent and freshly observed primitive-outcome checkpoints to
+the same RunStore journal before reconstructing any prepared Resource.
+Recovery rebuilds all prepared Resources in saved Plan dependency order,
+observes each
+freshly, rolls back in reverse order, and performs terminal cleanup in Plan
+order. `ProductionExecutionFactory` binds these concrete stores and authority
+adapters for one Run without opening a Device session itself.
+
+Canonical JSON and Plan/Run document codecs live in domain/persistence modules.
+Reporting re-exports those implementations for compatibility and remains a
+presentation consumer; execution does not import reporting implementations.

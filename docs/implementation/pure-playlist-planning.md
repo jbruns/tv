@@ -71,6 +71,41 @@ versions, malformed digests, and digest tampering.
 No Plan or Run contains supplied XML, credentials, transport exception text,
 controller-local paths, staging names, or secret values.
 
+### Plan schema version 2 dependency amendment
+
+Plan schema version 2 supports a complete selected Resource set rather than
+the original single-Resource slice. Every Resource carries a closed
+`requires` array containing sorted, unique Resource IDs. The Resources and
+their evidence records are ordered by a stable topological sort: all currently
+ready Resources are ordered by Resource ID before the next dependency layer.
+The decoder rejects missing or unknown fields, unregistered Resource Types,
+duplicate Resource/evidence/Change IDs, self/dangling/duplicate dependencies,
+cycles, unstable ordering, and any Resource/Change/evidence binding mismatch.
+
+Dependencies, every Resource, every evidence record, and every Change are
+covered by both the full and semantic Plan digests. A decoded
+`CanonicalPlan.resource_dependencies` therefore reconstructs the exact
+`requires` graph from saved canonical Plan bytes without consulting mutable
+authored or resolved configuration.
+`reconstruct_plan_dependency_graph()` is the persistence-boundary API for
+execution consumers; it exposes deterministic execution and reverse-dependency
+orders without accepting current configuration as input.
+
+Version 2 evidence uses the owning Resource Type's closed observation codec.
+The Kodi Smart Playlist payload carries exactly `summary` and
+`normalized_state_digest`; both must match every Change before-state that
+references the evidence. Unknown payload fields, kinds, and versions fail
+closed. Per-Resource management, desired relation, blockers, and Changes must
+also form one accepted assessment state. The reporting-side
+`check_plan_invariants()` oracle independently checks these rules, canonical
+bytes, digests, graph ordering, and cross-record references rather than calling
+the production Plan validator or Resource Type evidence decoder.
+
+Schema version 1 remains accepted only for its original single Resource and
+single evidence shape, with an implicit empty dependency set. Its existing
+canonical golden bytes and digests are unchanged. The multi-Resource golden is
+explicitly schema version 2.
+
 ## Exclusions
 
 This slice does not implement SSH/SFTP, live Device observation, durable Run

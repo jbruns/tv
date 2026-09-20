@@ -1,9 +1,14 @@
 """Typed Kodi Smart Playlist execution kept inside the Resource Type."""
 
+import base64
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from coreelec_reconciler.domain.canonical_json import (
+    canonical_document_bytes,
+    decode_json_object,
+)
 from coreelec_reconciler.domain.configuration import (
     DesiredPresence,
     KodiSmartPlaylistIntent,
@@ -20,9 +25,17 @@ from coreelec_reconciler.domain.planning import (
     PlaylistAssessment,
 )
 from coreelec_reconciler.resource_types.descriptor import (
+    AttachmentStore,
+    ErasedResourceExecution,
+    ErasedResourceExecutionAdapter,
     ManagedFileCapabilities,
     ManagedFileExecutionResult,
     ManagedFileLifecycle,
+    ResourceExecutionContext,
+)
+from coreelec_reconciler.resource_types.kodi_smart_playlist.codecs import (
+    decode_intent,
+    encode_intent,
 )
 from coreelec_reconciler.resource_types.kodi_smart_playlist.planning import (
     assess_playlist,
@@ -39,10 +52,12 @@ from coreelec_reconciler.resource_types.managed_file.paths import (
     ResolvedManagedAddress,
 )
 from coreelec_reconciler.resource_types.managed_file.preparation import (
-    AttachmentStore,
     PreparationBinding,
+    PreparationError,
     PreparationObject,
     PreparedManagedFile,
+    decode_prepared_managed_file,
+    normalized_state_digest,
     prepare_managed_file,
 )
 
@@ -61,6 +76,198 @@ class PlaylistChange:
 class PreparedPlaylistChange:
     change: PlaylistChange
     managed_file: PreparedManagedFile
+
+
+def execution_factory(context: ResourceExecutionContext) -> ErasedResourceExecution:
+    resource = context.resource
+    if not isinstance(resource.intent, KodiSmartPlaylistIntent):
+        raise TypeError("KodiSmartPlaylist execution requires playlist Intent")
+    runtime = KodiSmartPlaylistExecution(
+        context.files,
+        context.attachments,
+        context.lifecycle,
+        context.address,
+        context.binding,
+        resource.intent,
+        resource.desired,
+        context.observed_at,
+    )
+    return ErasedResourceExecutionAdapter(
+        ManagedFileObservation,
+        PlaylistChange,
+        PreparedPlaylistChange,
+        runtime.observe,
+        runtime.assess,
+        runtime.prepare,
+        runtime.apply,
+        runtime.rollback,
+        runtime.cleanup,
+    )
+
+
+def decode_planned_change(
+    value: Mapping[str, object],
+    context: ResourceExecutionContext,
+    rollback_approved: bool,
+) -> PlaylistChange:
+    if set(value) != {
+        "affected_state_addresses",
+        "before",
+        "change_id",
+        "desired",
+        "effects",
+        "impact_codes",
+        "operation_code",
+        "operation_key",
+        "preconditions",
+        "reason_codes",
+        "resource_id",
+        "resource_type",
+        "rollback",
+    }:
+        raise ValueError("unknown or missing planned Change fields")
+    if (
+        value["resource_type"] != "KodiSmartPlaylist"
+        or value["resource_id"] != context.resource.id.value
+        or value["affected_state_addresses"] != [context.address.logical_address]
+        or value["operation_key"] != context.address.logical_address
+    ):
+        raise ValueError("planned Change does not match Resource context")
+    before = value["before"]
+    if not isinstance(before, dict):
+        raise ValueError("planned Change before-state is malformed")
+    expected_digest = before.get("normalized_state_digest")
+    observation = observe_managed_file(
+        context.files,
+        context.address,
+        read_limit=65536,
+    )
+    if (
+        not isinstance(expected_digest, str)
+        or normalized_state_digest(observation.state) != expected_digest
+    ):
+        raise ValueError("planned Change precondition is stale")
+    rollback = value["rollback"]
+    if not isinstance(rollback, dict):
+        raise ValueError("planned Change rollback is malformed")
+    if rollback.get("capability") == "verified_supported" and not rollback_approved:
+        raise ValueError("planned rollback capability is not approved")
+    desired = value["desired"]
+    if not isinstance(desired, dict):
+        raise ValueError("planned Change desired state is malformed")
+    planned_desired_digest = desired.get("normalized_state_digest")
+    current_desired, _ = desired_state(
+        context.resource.intent,
+        context.resource.desired,
+    )
+    if (
+        not isinstance(planned_desired_digest, str)
+        or normalized_state_digest(current_desired) != planned_desired_digest
+    ):
+        raise ValueError("resolved configuration differs from approved Plan")
+    return PlaylistChange(
+        context.resource.id.value,
+        _required_text(value["change_id"]),
+        context.resource.intent,
+        context.resource.desired,
+        observation.state,
+        rollback_approved,
+    )
+
+
+def encode_prepared_playlist_change(prepared: PreparedPlaylistChange) -> bytes:
+    """Encode restart-safe typed preparation without controller-local state."""
+    return canonical_document_bytes(
+        {
+            "change": {
+                "change_id": prepared.change.change_id,
+                "desired_presence": prepared.change.desired_presence.value,
+                "intent": dict(encode_intent(prepared.change.intent)),
+                "resource_id": prepared.change.resource_id,
+                "rollback_approved": prepared.change.rollback_approved,
+            },
+            "kind": "KodiSmartPlaylistPreparation",
+            "managed_file_manifest_base64": base64.b64encode(
+                prepared.managed_file.manifest_bytes
+            ).decode("ascii"),
+            "managed_file_manifest_digest": prepared.managed_file.manifest_digest,
+            "schema_version": 1,
+        }
+    )
+
+
+def decode_prepared_playlist_change(
+    content: bytes,
+    attachments: AttachmentStore,
+) -> PreparedPlaylistChange:
+    try:
+        value = decode_json_object(content)
+        if set(value) != {
+            "change",
+            "kind",
+            "managed_file_manifest_base64",
+            "managed_file_manifest_digest",
+            "schema_version",
+        }:
+            raise ValueError("unknown or missing playlist preparation fields")
+        if (
+            value["kind"] != "KodiSmartPlaylistPreparation"
+            or value["schema_version"] != 1
+        ):
+            raise ValueError("unsupported playlist preparation")
+        encoded_manifest = value["managed_file_manifest_base64"]
+        if not isinstance(encoded_manifest, str):
+            raise ValueError("managed-file manifest must be base64 text")
+        manifest = base64.b64decode(encoded_manifest, validate=True)
+        digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+        if digest != value["managed_file_manifest_digest"]:
+            raise ValueError("managed-file manifest digest mismatch")
+        managed = decode_prepared_managed_file(manifest, attachments)
+        change_value = value["change"]
+        if not isinstance(change_value, dict) or set(change_value) != {
+            "change_id",
+            "desired_presence",
+            "intent",
+            "resource_id",
+            "rollback_approved",
+        }:
+            raise ValueError("playlist Change is malformed")
+        intent_value = change_value["intent"]
+        if not isinstance(intent_value, dict):
+            raise ValueError("playlist Intent is malformed")
+        rollback = change_value["rollback_approved"]
+        if type(rollback) is not bool:
+            raise ValueError("rollback approval must be boolean")
+        change = PlaylistChange(
+            _required_text(change_value["resource_id"]),
+            _required_text(change_value["change_id"]),
+            decode_intent(intent_value),
+            DesiredPresence(_required_text(change_value["desired_presence"])),
+            managed.before,
+            rollback,
+        )
+        manifest_value = decode_json_object(manifest)
+        if (
+            manifest_value.get("resource_id") != change.resource_id
+            or manifest_value.get("change_id") != change.change_id
+        ):
+            raise ValueError("playlist Change does not bind to managed-file evidence")
+        return PreparedPlaylistChange(change, managed)
+    except (KeyError, TypeError, ValueError) as error:
+        raise PreparationError("playlist preparation evidence is invalid") from error
+
+
+def encode_erased_prepared(value: object) -> bytes:
+    if not isinstance(value, PreparedPlaylistChange):
+        raise TypeError("prepared Resource type does not match descriptor")
+    return encode_prepared_playlist_change(value)
+
+
+def decode_erased_prepared(
+    content: bytes,
+    attachments: AttachmentStore,
+) -> object:
+    return decode_prepared_playlist_change(content, attachments)
 
 
 def desired_state(
@@ -240,3 +447,9 @@ def _assessment_match(assessment: PlaylistAssessment) -> bool | None:
     if assessment.relation.value == "unverifiable":
         return None
     return False
+
+
+def _required_text(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("expected non-empty text")
+    return value
