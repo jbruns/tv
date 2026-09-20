@@ -459,6 +459,27 @@ class _PlanContexts(_Contexts):
         )
 
 
+class _CountingContexts(_Contexts):
+    def __init__(self, **kwargs: str) -> None:
+        super().__init__(**kwargs)
+        self.bind_calls = 0
+        self.context_calls = 0
+
+    def bind(self, journal: object) -> ResourceContextProvider:
+        self.bind_calls += 1
+        return cast(ResourceContextProvider, self)
+
+    def context(
+        self,
+        run_id: RunId,
+        resource_id: str,
+        type_code: str,
+        attachments: AttachmentStore,
+    ) -> ResourceExecutionContext:
+        self.context_calls += 1
+        return super().context(run_id, resource_id, type_code, attachments)
+
+
 class _Inspections:
     def read_remote_ownership(self, run_id: RunId) -> RemoteOwnershipSnapshot:
         return RemoteOwnershipSnapshot(
@@ -1435,6 +1456,86 @@ def test_saved_plan_approval_fails_before_run_creation_on_mismatch(
         factory.approve_saved_plan(request)
 
     assert authority.calls == 0
+
+
+def test_saved_plan_preflight_rejects_locally_without_execution_side_effects(
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
+) -> None:
+    request, _, _ = _saved_plan_request()
+    request = replace(
+        request,
+        originating_run_id=RunId("019950f8-4c00-7000-8000-000000000699"),
+    )
+    store, plans, registry = saved_plan_environment
+    authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
+    device_authority = _DeviceAuthority(device)
+    contexts = _CountingContexts(binding_digest=_device_binding(device))
+    factory = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(ResourceContextProviderFactory, contexts),
+        cast(RecoveryEnvironment, _Inspections()),
+        device_authority,
+        cast(AuthorityCoordinator, authority),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, _Clock()),
+    )
+
+    with pytest.raises(ValueError, match="origin binding"):
+        factory.preflight_saved_plan(request)
+
+    assert device_authority.calls == 0
+    assert contexts.bind_calls == 0
+    assert contexts.context_calls == 0
+    assert authority.calls == 0
+    with pytest.raises(FileNotFoundError):
+        store.load_chain(request.execution_run_id)
+
+
+@pytest.mark.parametrize("failure", ("stale", "tampered"))
+def test_saved_plan_preparation_rejects_invalid_preflight_before_side_effects(
+    saved_plan_environment: tuple[RunStore, PlanStore, ResourceRegistry],
+    failure: str,
+) -> None:
+    request, _, _ = _saved_plan_request()
+    store, plans, registry = saved_plan_environment
+    authority = _AcquiringAuthority(store)
+    device = cast(dict[str, object], request.expected_device)
+    device_authority = _DeviceAuthority(device)
+    contexts = _CountingContexts(binding_digest=_device_binding(device))
+    clock = _Clock()
+    factory = ProductionExecutionFactory(
+        plans,
+        store,
+        registry,
+        {"skin.playlist.new-shows": "KodiSmartPlaylist"},
+        cast(ResourceContextProviderFactory, contexts),
+        cast(RecoveryEnvironment, _Inspections()),
+        device_authority,
+        cast(AuthorityCoordinator, authority),
+        cast(RemoteOwnershipReader, object()),
+        cast(RunClock, clock),
+    )
+    preflight = factory.preflight_saved_plan(request)
+    if failure == "stale":
+        clock.now = "2030-01-01T00:00:00Z"
+    else:
+        preflight = replace(
+            preflight,
+            execution_run_id=RunId("019950f8-4c00-7000-8000-000000000699"),
+        )
+
+    with pytest.raises(ValueError, match=r"stale|altered"):
+        factory.prepare_saved_plan(preflight, device_authority.observation)
+
+    assert contexts.bind_calls == 0
+    assert contexts.context_calls == 0
+    assert authority.calls == 0
+    with pytest.raises(FileNotFoundError):
+        store.load_chain(preflight.execution_run_id)
 
 
 def test_saved_plan_approval_rejects_unknown_plan_before_authority(

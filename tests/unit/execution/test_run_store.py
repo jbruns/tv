@@ -158,6 +158,7 @@ def test_run_store_persists_verified_chain_token_attachment_and_index(
     device_lease, revision_lease, workspace_id = create(run_store)
     chain = run_store.load_chain(RunId(RUN_ID))
     assert chain.head.revision == 1
+    assert run_store.inspect_head(RunId(RUN_ID)) == chain.head
     assert not chain.terminal
     assert run_store.load_ownership_token(revision_lease) == b"ownership-token"
 

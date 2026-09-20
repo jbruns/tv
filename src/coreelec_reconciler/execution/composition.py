@@ -1,8 +1,9 @@
 """Production-composition-ready execution services without Device access."""
 
 import hashlib
+import hmac
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol, cast
 
@@ -114,6 +115,26 @@ class SavedPlanExecutionRequest:
     input_digests: Mapping[str, str]
     approval_grants: tuple[ApprovalGrant, ...]
     now: str
+
+
+@dataclass(frozen=True, slots=True)
+class SavedPlanExecutionPreflight:
+    plan_id: PlanId
+    execution_run_id: RunId
+    device_id: DeviceId
+    originating_run_id: RunId
+    expected_device_bytes: bytes
+    input_digests: tuple[tuple[str, str], ...]
+    approval_grants: tuple[ApprovalGrant, ...]
+    requested_at: str
+    validated_at: str
+    valid_from: str
+    expires_at: str
+    plan_full_digest: str
+    planning_run_digest: str
+    binding_digest: str
+    dependency_graph: PlanDependencyGraph
+    digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,6 +300,17 @@ class ProductionExecutionFactory:
         self,
         request: SavedPlanExecutionRequest,
     ) -> PreparedExecution:
+        preflight = self.preflight_saved_plan(request)
+        observed_device = self._device_authority.observe_authority(request.device_id)
+        reobserved_device = self._device_authority.observe_authority(request.device_id)
+        if reobserved_device != observed_device:
+            raise ValueError("observed Device authority identity changed")
+        return self.prepare_saved_plan(preflight, observed_device)
+
+    def preflight_saved_plan(
+        self,
+        request: SavedPlanExecutionRequest,
+    ) -> SavedPlanExecutionPreflight:
         trusted_now = self._clock.utc_now()
         trusted_instant = _timestamp(trusted_now)
         saved = self.load_plan(request.plan_id)
@@ -292,20 +324,7 @@ class ProductionExecutionFactory:
         device = value.get("device")
         if not isinstance(device, dict) or device != dict(request.expected_device):
             raise ValueError("saved Plan Device identity changed")
-        observed_device = self._device_authority.observe_authority(request.device_id)
-        reobserved_device = self._device_authority.observe_authority(request.device_id)
         binding_digest = _device_binding_digest(device)
-        if (
-            reobserved_device != observed_device
-            or observed_device.device_id != request.device_id
-            or observed_device.binding_digest != binding_digest
-            or observed_device.platform_identity_fingerprint
-            != _required_text(device, "observed_platform_identity_fingerprint")
-            or observed_device.ssh_host_key_fingerprint
-            != _required_text(device, "ssh_host_key_fingerprint")
-            or not observed_device.boot_id
-        ):
-            raise ValueError("observed Device authority identity changed")
         expires_at = value.get("expires_at")
         if not isinstance(expires_at, str) or trusted_instant > _timestamp(expires_at):
             raise ValueError("saved Plan expired")
@@ -333,8 +352,76 @@ class ProductionExecutionFactory:
             for grant in request.approval_grants
         ):
             raise ValueError("approval grant is not required by saved Plan")
-        resources = _objects(value, "resources")
         dependency_graph = _saved_plan_execution_graph(saved.plan, self._registry)
+        preflight = SavedPlanExecutionPreflight(
+            request.plan_id,
+            request.execution_run_id,
+            request.device_id,
+            request.originating_run_id,
+            canonical_document_bytes(device),
+            tuple(sorted(request.input_digests.items())),
+            request.approval_grants,
+            request.now,
+            trusted_now,
+            valid_from,
+            expires_at,
+            saved.plan.full_digest,
+            saved.planning_run.current_digest,
+            binding_digest,
+            dependency_graph,
+            "",
+        )
+        return replace(
+            preflight,
+            digest=_preflight_digest(preflight),
+        )
+
+    def prepare_saved_plan(
+        self,
+        preflight: SavedPlanExecutionPreflight,
+        observed_device: DeviceAuthorityObservation,
+    ) -> PreparedExecution:
+        if not hmac.compare_digest(
+            preflight.digest,
+            _preflight_digest(preflight),
+        ):
+            raise ValueError("saved Plan preflight was altered")
+        trusted_now = self._clock.utc_now()
+        trusted_instant = _timestamp(trusted_now)
+        if (
+            trusted_instant < _timestamp(preflight.validated_at)
+            or trusted_instant < _timestamp(preflight.valid_from)
+            or trusted_instant > _timestamp(preflight.expires_at)
+        ):
+            raise ValueError("saved Plan preflight is stale")
+        saved = self.load_plan(preflight.plan_id)
+        value = decode_json_object(saved.plan.canonical_bytes)
+        device = value.get("device")
+        if (
+            saved.plan.full_digest != preflight.plan_full_digest
+            or saved.planning_run.current_digest != preflight.planning_run_digest
+            or saved.device_id != preflight.device_id
+            or saved.originating_run_id != preflight.originating_run_id
+            or tuple(saved.input_digests) != preflight.input_digests
+            or not isinstance(device, dict)
+            or canonical_document_bytes(device) != preflight.expected_device_bytes
+            or _device_binding_digest(device) != preflight.binding_digest
+            or _saved_plan_execution_graph(saved.plan, self._registry)
+            != preflight.dependency_graph
+        ):
+            raise ValueError("saved Plan preflight identity changed")
+        if (
+            observed_device.device_id != preflight.device_id
+            or observed_device.binding_digest != preflight.binding_digest
+            or observed_device.platform_identity_fingerprint
+            != _required_text(device, "observed_platform_identity_fingerprint")
+            or observed_device.ssh_host_key_fingerprint
+            != _required_text(device, "ssh_host_key_fingerprint")
+            or not observed_device.boot_id
+        ):
+            raise ValueError("observed Device authority identity changed")
+        resources = _objects(value, "resources")
+        dependency_graph = preflight.dependency_graph
         resources_by_id = {
             _required_text(resource, "resource_id"): resource for resource in resources
         }
@@ -353,14 +440,14 @@ class ProductionExecutionFactory:
             ):
                 raise ValueError("saved Plan Resource Type is not executable")
             context = execution_contexts.context(
-                request.execution_run_id,
+                preflight.execution_run_id,
                 resource_id,
                 type_code,
                 deferred_attachments,
             )
             if (
-                context.binding.device_id != request.device_id.value
-                or context.binding.binding_digest != binding_digest
+                context.binding.device_id != preflight.device_id.value
+                or context.binding.binding_digest != preflight.binding_digest
             ):
                 raise ValueError("Resource context Device binding changed")
             runtime = descriptor.execution_factory(context)
@@ -374,7 +461,10 @@ class ProductionExecutionFactory:
                         descriptor.decode_planned_change(
                             change,
                             context,
-                            "apply" in grants,
+                            any(
+                                grant.scope == "apply"
+                                for grant in preflight.approval_grants
+                            ),
                         ),
                     )
                 )
@@ -383,9 +473,9 @@ class ProductionExecutionFactory:
             report = self._documents.build(
                 _initial_execution_run(
                     saved,
-                    request,
+                    preflight,
                     token_digest,
-                    binding_digest,
+                    preflight.binding_digest,
                     observed_device.boot_id,
                     trusted_now,
                     resources,
@@ -396,23 +486,23 @@ class ProductionExecutionFactory:
 
         acquired = self._authority.acquire(
             AuthorityAcquisitionRequest(
-                request.device_id,
-                request.execution_run_id,
+                preflight.device_id,
+                preflight.execution_run_id,
                 initial_revision,
                 lambda workspace_id: RemoteOwnershipIdentity(
-                    request.device_id,
-                    request.execution_run_id,
+                    preflight.device_id,
+                    preflight.execution_run_id,
                     workspace_id,
                     saved.plan.plan_id,
                     saved.plan.full_digest,
-                    binding_digest,
+                    preflight.binding_digest,
                     observed_device.boot_id,
                 ),
                 trusted_now,
             )
         )
         services = self._bind(
-            request.execution_run_id,
+            preflight.execution_run_id,
             acquired,
             execution_contexts,
             deferred_journal,
@@ -420,7 +510,7 @@ class ProductionExecutionFactory:
             dependency_graph,
         )
         return PreparedExecution(
-            ApprovedPlan(request.execution_run_id, tuple(changes)),
+            ApprovedPlan(preflight.execution_run_id, tuple(changes)),
             services,
         )
 
@@ -483,7 +573,7 @@ class ProductionExecutionFactory:
 
 def _initial_execution_run(
     saved: SavedPlan,
-    request: SavedPlanExecutionRequest,
+    preflight: SavedPlanExecutionPreflight,
     token_digest: str,
     binding_digest: str,
     boot_id: str,
@@ -500,7 +590,7 @@ def _initial_execution_run(
                 "plan_id": saved.plan.plan_id,
                 "scope": grant.scope,
             }
-            for grant in request.approval_grants
+            for grant in preflight.approval_grants
         ],
         "attachments": [],
         "attempts": [],
@@ -517,7 +607,7 @@ def _initial_execution_run(
         },
         "cleanup": {"leftover_count": 0, "state": "not_started"},
         "current_digest": "",
-        "device_id": request.device_id.value,
+        "device_id": preflight.device_id.value,
         "ended_at": None,
         "evidence": [],
         "failures": [],
@@ -551,13 +641,13 @@ def _initial_execution_run(
                 },
             ],
             "required": False,
-            "workspace_id": f"workspace:{request.execution_run_id.value}",
+            "workspace_id": f"workspace:{preflight.execution_run_id.value}",
         },
         "resource_results": [
             _initial_resource_result(resource) for resource in resources
         ],
         "revision": 1,
-        "run_id": request.execution_run_id.value,
+        "run_id": preflight.execution_run_id.value,
         "schema_version": 1,
         "started_at": started_at,
         "status": "ready",
@@ -601,6 +691,41 @@ def _desired_disposition(resource: Mapping[str, object]) -> str:
 
 def _device_binding_digest(device: Mapping[str, object]) -> str:
     return "sha256:" + hashlib.sha256(canonical_document_bytes(device)).hexdigest()
+
+
+def _preflight_digest(preflight: SavedPlanExecutionPreflight) -> str:
+    value = {
+        "approval_grants": [
+            {
+                "actor": grant.actor,
+                "granted_at": grant.granted_at,
+                "mechanism": grant.mechanism,
+                "scope": grant.scope,
+            }
+            for grant in preflight.approval_grants
+        ],
+        "binding_digest": preflight.binding_digest,
+        "dependency_graph": [
+            {
+                "requires": list(requires),
+                "resource_id": resource_id,
+            }
+            for resource_id, requires in preflight.dependency_graph.requires_by_resource
+        ],
+        "device_id": preflight.device_id.value,
+        "execution_run_id": preflight.execution_run_id.value,
+        "expected_device": decode_json_object(preflight.expected_device_bytes),
+        "expires_at": preflight.expires_at,
+        "input_digests": dict(preflight.input_digests),
+        "originating_run_id": preflight.originating_run_id.value,
+        "plan_full_digest": preflight.plan_full_digest,
+        "plan_id": preflight.plan_id.value,
+        "planning_run_digest": preflight.planning_run_digest,
+        "requested_at": preflight.requested_at,
+        "validated_at": preflight.validated_at,
+        "valid_from": preflight.valid_from,
+    }
+    return "sha256:" + hashlib.sha256(canonical_document_bytes(value)).hexdigest()
 
 
 def _executable_dependency_graph(
