@@ -52,7 +52,7 @@ accepted payload kinds are:
 - `ResourceSkipResult`;
 - `RecoveryVerificationResult`;
 - `ResourceCleanupReceipt`;
-- `EffectIntent` and `EffectOutcome`;
+- `EffectIntent`, `EffectReadinessObservation`, and `EffectOutcome`;
 - `AuthorityEvidence`; and
 - `RunAbandonmentApproval`.
 
@@ -60,9 +60,18 @@ Each kind has one exact field set, observer code/version, subject kind, and
 schema version. `ResourcePrimitiveIntent` is a closed primitive-discriminated
 union: state primitives carry exact before/after and marker bindings, cleanup
 carries the manifest object and terminal revision binding, and Effects use
-their dedicated intent. Unknown kinds, Resource Types, versions, observers,
-fields, primitive combinations, unsafe content, unresolved or forward
-references, duplicate IDs/operations, and out-of-order timestamps fail closed.
+their dedicated intent. Effect intent carries its operation ID, exact marker
+generation/digest/phase/token tuple, approval and readiness references, and
+the complete affected Resource/State Address set. Its immediately following
+marker checkpoint must match that tuple. An Effect outcome requires that
+checkpoint, fresh positive readiness, and exactly one correctly bound fresh
+Observation for every affected Resource.
+
+Unknown kinds, unregistered Resource Types, versions, observers, fields,
+primitive combinations, unsafe content, unresolved or forward references,
+duplicate IDs/operations, and out-of-order timestamps fail closed. Resource
+Type membership comes from the immutable Resource Type registry; adding a
+registered type does not require editing the domain evidence codec.
 
 Every Resource-bound record carries `KodiSmartPlaylist`, Resource and Change
 IDs, Run/workspace/Device/Plan/full-digest/binding identity, observer identity,
@@ -72,9 +81,12 @@ reason. Attempts represent write-ahead state explicitly: `pending` has a
 durable intent reference and no end time or outcome reference; completion
 requires both.
 
-The codec and independent invariant checker live at the domain/reporting
-persistence boundary. Execution code can construct and decode this vocabulary
-without importing reporting implementations.
+The production codec and the independent invariant checker are separate
+algorithms at the domain/reporting persistence boundary. They share only
+immutable schema constants and domain types, preventing one validator defect
+from making the other accept the same malformed record. Execution code can
+construct and decode this vocabulary without importing reporting
+implementations.
 
 Recovery exposes `inspect`, `resume_verification`, `rollback`, and two
 separate `finalize` variants: `normal` and `abandon`. Abandonment always
@@ -139,11 +151,14 @@ same fact:
 - post-terminal revisions may append only the bound write-ahead
   intent/checkpoint/receipt sequence and monotonic cleanup/authority truth;
   they cannot revise terminal status or prior evidence;
+- each preparation manifest declares its required cleanup objects; a complete
+  summary requires a matching non-ambiguous receipt proving no leftover for
+  every object;
 - cleanup failure cannot change `converged` or a terminal failure status;
 - the active index is removed only after terminal truth and verified ownership
   release or quarantine are durable;
 - sealing requires complete zero-leftover cleanup plus durable release or
-  quarantine truth;
+  quarantine evidence whose marker/token tuple matches the summary;
 - abandonment records `failed_recovery_required` and remains blocking through
   quarantine.
 
@@ -155,8 +170,9 @@ recovery-required Runs are never implicitly removable.
 ## Validation fixtures
 
 Committed positive fixtures cover ready execution, converged execution,
-interrupted recovery, and every accepted execution-evidence v1 kind. Negative
-fixtures independently exercise digest, identity, terminal-time,
+interrupted recovery, and a complete Resource/Effect execution sequence;
+parameterized codec tests cover every accepted execution-evidence v1 kind.
+Negative fixtures independently exercise digest, identity, terminal-time,
 cleanup-order, index-release, Resource-convergence, abandonment-approval,
 workspace-opacity, unknown evidence kinds/versions, and arbitrary evidence
 fields. The amendment changes no prior canonical fixture bytes or digests; it

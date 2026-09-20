@@ -22,14 +22,18 @@ from coreelec_reconciler.domain.execution import (
     StoredRevision,
     VerifiedRunChain,
     WorkspaceId,
+    evidence_proves_terminal_cleanup,
     execution_run_identity,
     is_post_terminal_cleanup_successor,
+    validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.reporting.canonical_json import (
     canonical_document_bytes,
     decode_json_object,
 )
+from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
+from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
 from .local_durability import (
     AcknowledgementLost,
@@ -80,9 +84,11 @@ class RunStore:
         self,
         root: Path,
         durability: LocalDurability | None = None,
+        resource_registry: ResourceRegistry | None = None,
     ) -> None:
         self._root = root
         self._durability = durability or PosixLocalDurability()
+        self._resource_registry = resource_registry or built_in_resource_registry()
         self._device_descriptors: dict[str, int] = {}
         self._run_descriptors: dict[str, int] = {}
         self._initialize()
@@ -240,6 +246,8 @@ class RunStore:
         head_revision = _required_int(head, "revision")
         revisions: list[StoredRevision] = []
         previous_digest: str | None = None
+        previous_value: dict[str, object] | None = None
+        terminal_seen = False
         for number in range(1, head_revision + 1):
             path = workspace / "revisions" / f"{number:08d}.json"
             try:
@@ -262,7 +270,35 @@ class RunStore:
             actual_previous = value.get("previous_revision_digest")
             if actual_previous != previous_digest:
                 raise CorruptRunStore("Run revision chain digest mismatch")
+            try:
+                status = RunStatus(_required_string(value, "status"))
+                evidence = value.get("evidence")
+                if not isinstance(evidence, list):
+                    raise ValueError("Run evidence is not an array")
+                validate_execution_evidence_sequence(
+                    tuple(evidence),
+                    status=status,
+                    resource_registry=self._resource_registry,
+                )
+            except (TypeError, ValueError) as error:
+                raise CorruptRunStore("Run evidence chain is invalid") from error
+            if terminal_seen and (
+                previous_value is None
+                or not is_post_terminal_cleanup_successor(
+                    previous_value,
+                    value,
+                    resource_registry=self._resource_registry,
+                )
+            ):
+                raise CorruptRunStore("terminal Run has an invalid successor")
+            if status in TERMINAL_RUN_STATUSES and not evidence_proves_terminal_cleanup(
+                value,
+                resource_registry=self._resource_registry,
+            ):
+                raise CorruptRunStore("terminal Run summary is not evidence-backed")
             previous_digest = stored.digest
+            previous_value = value
+            terminal_seen = status in TERMINAL_RUN_STATUSES
             revisions.append(stored)
         if not revisions or (
             head.get("digest") != revisions[-1].digest
@@ -271,6 +307,8 @@ class RunStore:
             raise CorruptRunStore("Run head does not match revision chain")
         state = self._read_object(workspace / "state.json")
         terminal = _required_bool(state, "terminal")
+        if terminal != terminal_seen:
+            raise CorruptRunStore("Run terminal state does not match canonical head")
         return VerifiedRunChain(tuple(revisions), revisions[-1], terminal)
 
     def compare_and_append(
@@ -307,6 +345,7 @@ class RunStore:
         if chain.terminal and not is_post_terminal_cleanup_successor(
             decode_json_object(chain.head.payload),
             value,
+            resource_registry=self._resource_registry,
         ):
             raise CompareConflict("terminal Run only accepts cleanup receipts")
         try:
@@ -500,6 +539,10 @@ class RunStore:
             or authority.get("device_index_intent")
             != "remove_after_release_or_quarantine"
             or not intent.ownership_released_or_quarantined
+            or not evidence_proves_terminal_cleanup(
+                head_value,
+                resource_registry=self._resource_registry,
+            )
         ):
             raise RunStoreError(
                 "seal requires completed cleanup and release or quarantine truth"
@@ -746,6 +789,23 @@ class RunStore:
         without_digest.pop("current_digest", None)
         if digest != _sha256(canonical_document_bytes(without_digest)):
             raise CorruptRunStore("Run revision digest mismatch")
+        try:
+            status = RunStatus(_required_string(value, "status"))
+            evidence = value.get("evidence")
+            if not isinstance(evidence, list):
+                raise ValueError("Run evidence is not an array")
+            validate_execution_evidence_sequence(
+                tuple(evidence),
+                status=status,
+                resource_registry=self._resource_registry,
+            )
+            if status in TERMINAL_RUN_STATUSES and not evidence_proves_terminal_cleanup(
+                value,
+                resource_registry=self._resource_registry,
+            ):
+                raise ValueError("terminal summary is not evidence-backed")
+        except (TypeError, ValueError) as error:
+            raise CorruptRunStore("Run evidence is invalid") from error
         return StoredRevision(revision, digest, payload)
 
     def _publish(self, path: Path, payload: bytes, operation_id: str) -> None:

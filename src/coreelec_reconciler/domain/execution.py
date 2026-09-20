@@ -1,8 +1,11 @@
 """Closed execution, persistence, and recovery vocabulary."""
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Protocol
 
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.domain.validation import (
@@ -220,6 +223,7 @@ class ExecutionEvidenceKind(StrEnum):
     RECOVERY_VERIFICATION_RESULT = "RecoveryVerificationResult"
     RESOURCE_CLEANUP_RECEIPT = "ResourceCleanupReceipt"
     EFFECT_INTENT = "EffectIntent"
+    EFFECT_READINESS_OBSERVATION = "EffectReadinessObservation"
     EFFECT_OUTCOME = "EffectOutcome"
     AUTHORITY_EVIDENCE = "AuthorityEvidence"
     RUN_ABANDONMENT_APPROVAL = "RunAbandonmentApproval"
@@ -537,16 +541,20 @@ class ExecutionEvidenceRecord:
     raw_attachment_digest: str | None
 
 
+class ExecutionResourceRegistry(Protocol):
+    @property
+    def type_codes(self) -> frozenset[str]: ...
+
+
 EXECUTION_EVIDENCE_SCHEMA_VERSION = 1
-EXECUTION_RESOURCE_TYPES = frozenset({"KodiSmartPlaylist"})
 _EVIDENCE_CODE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_RESOURCE_TYPE_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,127}$")
 _WORKSPACE_ID = re.compile(r"^workspace:[a-zA-Z0-9_-]{8,128}$")
-_RESOURCE_EVIDENCE_KINDS = frozenset(
+EXECUTION_RESOURCE_EVIDENCE_KINDS = frozenset(
     {
         ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION,
         ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED,
         ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT,
-        ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT,
         ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME,
         ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT,
         ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT,
@@ -556,133 +564,154 @@ _RESOURCE_EVIDENCE_KINDS = frozenset(
         ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT,
     }
 )
-_OBSERVER_BY_KIND = {
-    ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION: "managed-file-observer",
-    ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED: "managed-file-preparer",
-    ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT: "managed-file-executor",
-    ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT: "remote-run-ownership",
-    ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME: "managed-file-executor",
-    ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT: "managed-file-executor",
-    ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT: "managed-file-verifier",
-    ExecutionEvidenceKind.RESOURCE_ROLLBACK_RESULT: "managed-file-verifier",
-    ExecutionEvidenceKind.RESOURCE_SKIP_RESULT: "execution-controller",
-    ExecutionEvidenceKind.RECOVERY_VERIFICATION_RESULT: "recovery-controller",
-    ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT: "managed-file-executor",
-    ExecutionEvidenceKind.EFFECT_INTENT: "effect-executor",
-    ExecutionEvidenceKind.EFFECT_OUTCOME: "effect-executor",
-    ExecutionEvidenceKind.AUTHORITY_EVIDENCE: "remote-run-ownership",
-    ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL: "recovery-controller",
-}
-_PAYLOAD_FIELDS = {
-    ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION: {
-        "content_digest",
-        "entry_kind",
-        "managed_mode",
-        "normalized_state_digest",
-        "presence",
-        "relation",
-    },
-    ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED: {
-        "allowed_intermediate_state_digests",
-        "before_state_attachment_digest",
-        "desired_state_digest",
-        "manifest_digest",
-        "preparation_manifest_attachment_digest",
-        "rollback_capable",
-    },
-    ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT: {
-        "allowed_intermediate_state_digests",
-        "content_attachment_digest",
-        "expected_after_digest",
-        "expected_before_digest",
-        "manifest_object_ref",
-        "marker_digest",
-        "marker_generation",
-        "marker_phase",
-        "operation_id",
-        "preparation_manifest_digest",
-        "primitive",
-        "terminal_revision_digest",
-        "token_digest",
-    },
-    ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT: {
-        "generation",
-        "manifest_digest",
-        "marker_digest",
-        "operation_id",
-        "phase",
-        "token_digest",
-    },
-    ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME: {
-        "disposition",
-        "observation_evidence_ref",
-        "observed_state_digest",
-        "operation_id",
-        "receipt_sequence",
-    },
-    ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT: {
-        "intent_evidence_ref",
-        "mutation_outcome",
-        "outcome_evidence_ref",
-    },
-    ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT: {
-        "observation_evidence_ref",
-        "outcome",
-        "post_effect",
-        "relation",
-    },
-    ExecutionEvidenceKind.RESOURCE_ROLLBACK_RESULT: {
-        "observation_evidence_ref",
-        "original_failure_code",
-        "outcome",
-        "relation",
-    },
-    ExecutionEvidenceKind.RESOURCE_SKIP_RESULT: {
-        "final_convergence",
-        "reason_code",
-        "stop_scope",
-    },
-    ExecutionEvidenceKind.RECOVERY_VERIFICATION_RESULT: {
-        "action",
-        "observation_evidence_ref",
-        "outcome",
-        "relation",
-    },
-    ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT: {
-        "disposition",
-        "leftover",
-        "manifest_object_ref",
-        "operation_id",
-        "terminal_revision_digest",
-    },
-    ExecutionEvidenceKind.EFFECT_INTENT: {
-        "approval_evidence_ref",
-        "descriptor_digest",
-        "effect_code",
-        "readiness_evidence_ref",
-    },
-    ExecutionEvidenceKind.EFFECT_OUTCOME: {
-        "disposition",
-        "effect_code",
-        "post_effect_evidence_refs",
-        "readiness_evidence_ref",
-    },
-    ExecutionEvidenceKind.AUTHORITY_EVIDENCE: {
-        "generation",
-        "manifest_digest",
-        "marker_digest",
-        "ownership_state",
-        "phase",
-        "quarantine_receipt_digest",
-        "token_digest",
-    },
-    ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL: {
-        "actor",
-        "approved_at",
-        "mechanism",
-        "reason",
-    },
-}
+EXECUTION_EVIDENCE_OBSERVERS = MappingProxyType(
+    {
+        ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION: "managed-file-observer",
+        ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED: "managed-file-preparer",
+        ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT: "managed-file-executor",
+        ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT: "remote-run-ownership",
+        ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME: "managed-file-executor",
+        ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT: "managed-file-executor",
+        ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT: "managed-file-verifier",
+        ExecutionEvidenceKind.RESOURCE_ROLLBACK_RESULT: "managed-file-verifier",
+        ExecutionEvidenceKind.RESOURCE_SKIP_RESULT: "execution-controller",
+        ExecutionEvidenceKind.RECOVERY_VERIFICATION_RESULT: "recovery-controller",
+        ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT: "managed-file-executor",
+        ExecutionEvidenceKind.EFFECT_INTENT: "effect-executor",
+        ExecutionEvidenceKind.EFFECT_READINESS_OBSERVATION: "effect-readiness-observer",
+        ExecutionEvidenceKind.EFFECT_OUTCOME: "effect-executor",
+        ExecutionEvidenceKind.AUTHORITY_EVIDENCE: "remote-run-ownership",
+        ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL: "recovery-controller",
+    }
+)
+EXECUTION_EVIDENCE_PAYLOAD_FIELDS = MappingProxyType(
+    {
+        kind: frozenset(fields)
+        for kind, fields in {
+            ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION: {
+                "content_digest",
+                "entry_kind",
+                "managed_mode",
+                "normalized_state_digest",
+                "presence",
+                "relation",
+            },
+            ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED: {
+                "allowed_intermediate_state_digests",
+                "before_state_attachment_digest",
+                "cleanup_object_refs",
+                "desired_state_digest",
+                "manifest_digest",
+                "preparation_manifest_attachment_digest",
+                "rollback_capable",
+            },
+            ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT: {
+                "allowed_intermediate_state_digests",
+                "content_attachment_digest",
+                "expected_after_digest",
+                "expected_before_digest",
+                "manifest_object_ref",
+                "marker_digest",
+                "marker_generation",
+                "marker_phase",
+                "operation_id",
+                "preparation_manifest_digest",
+                "primitive",
+                "terminal_revision_digest",
+                "token_digest",
+            },
+            ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT: {
+                "generation",
+                "manifest_digest",
+                "marker_digest",
+                "operation_id",
+                "phase",
+                "token_digest",
+            },
+            ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME: {
+                "disposition",
+                "observation_evidence_ref",
+                "observed_state_digest",
+                "operation_id",
+                "receipt_sequence",
+            },
+            ExecutionEvidenceKind.RESOURCE_EXECUTION_RESULT: {
+                "intent_evidence_ref",
+                "mutation_outcome",
+                "outcome_evidence_ref",
+            },
+            ExecutionEvidenceKind.RESOURCE_VERIFICATION_RESULT: {
+                "observation_evidence_ref",
+                "outcome",
+                "post_effect",
+                "relation",
+            },
+            ExecutionEvidenceKind.RESOURCE_ROLLBACK_RESULT: {
+                "observation_evidence_ref",
+                "original_failure_code",
+                "outcome",
+                "relation",
+            },
+            ExecutionEvidenceKind.RESOURCE_SKIP_RESULT: {
+                "final_convergence",
+                "reason_code",
+                "stop_scope",
+            },
+            ExecutionEvidenceKind.RECOVERY_VERIFICATION_RESULT: {
+                "action",
+                "observation_evidence_ref",
+                "outcome",
+                "relation",
+            },
+            ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT: {
+                "disposition",
+                "leftover",
+                "manifest_object_ref",
+                "operation_id",
+                "terminal_revision_digest",
+            },
+            ExecutionEvidenceKind.EFFECT_INTENT: {
+                "affected_resources",
+                "approval_evidence_ref",
+                "descriptor_digest",
+                "effect_code",
+                "marker_digest",
+                "marker_generation",
+                "marker_phase",
+                "operation_id",
+                "readiness_evidence_ref",
+                "token_digest",
+            },
+            ExecutionEvidenceKind.EFFECT_READINESS_OBSERVATION: {
+                "effect_code",
+                "positive",
+                "readiness_code",
+            },
+            ExecutionEvidenceKind.EFFECT_OUTCOME: {
+                "disposition",
+                "effect_code",
+                "operation_id",
+                "post_effect_evidence_refs",
+                "readiness_evidence_ref",
+            },
+            ExecutionEvidenceKind.AUTHORITY_EVIDENCE: {
+                "generation",
+                "manifest_digest",
+                "marker_digest",
+                "ownership_state",
+                "phase",
+                "quarantine_receipt_digest",
+                "token_digest",
+            },
+            ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL: {
+                "actor",
+                "approved_at",
+                "mechanism",
+                "reason",
+            },
+        }.items()
+    }
+)
 
 
 def build_execution_evidence(
@@ -699,6 +728,7 @@ def build_execution_evidence(
     attempt: int | None,
     kind: ExecutionEvidenceKind,
     payload: dict[str, object],
+    resource_registry: ExecutionResourceRegistry,
     raw_attachment_digest: str | None = None,
 ) -> dict[str, object]:
     value: dict[str, object] = {
@@ -728,11 +758,18 @@ def build_execution_evidence(
         "state_addresses": list(state_addresses),
         "subject": {"id": subject_id, "kind": subject_kind},
     }
-    decode_execution_evidence(value)
+    decode_execution_evidence(
+        value,
+        resource_registry=resource_registry,
+    )
     return value
 
 
-def decode_execution_evidence(value: object) -> ExecutionEvidenceRecord:
+def decode_execution_evidence(
+    value: object,
+    *,
+    resource_registry: ExecutionResourceRegistry,
+) -> ExecutionEvidenceRecord:
     if not isinstance(value, dict) or set(value) != {
         "attachment_refs",
         "attempt",
@@ -759,14 +796,17 @@ def decode_execution_evidence(value: object) -> ExecutionEvidenceRecord:
     ):
         raise ValueError("unsupported execution evidence schema version")
     payload = value["payload"]
-    if not isinstance(payload, dict) or set(payload) != _PAYLOAD_FIELDS[kind]:
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != EXECUTION_EVIDENCE_PAYLOAD_FIELDS[kind]
+    ):
         raise ValueError("unknown or missing execution evidence payload fields")
     observer_value = _evidence_mapping(value, "observer", {"code", "version"})
     observer = EvidenceObserver(
         _evidence_string(observer_value, "code"),
         _evidence_positive_int(observer_value, "version"),
     )
-    if observer.code != _OBSERVER_BY_KIND[kind] or observer.version != 1:
+    if observer.code != EXECUTION_EVIDENCE_OBSERVERS[kind] or observer.version != 1:
         raise ValueError("unsupported execution evidence observer")
     subject = _evidence_mapping(value, "subject", {"id", "kind"})
     bindings_value = _evidence_mapping(
@@ -796,8 +836,15 @@ def decode_execution_evidence(value: object) -> ExecutionEvidenceRecord:
     resource_type = value["resource_type"]
     state_addresses = _evidence_string_tuple(value["state_addresses"], "state address")
     attempt = value["attempt"]
-    if kind in _RESOURCE_EVIDENCE_KINDS:
-        if resource_type not in EXECUTION_RESOURCE_TYPES:
+    resource_bound = kind in EXECUTION_RESOURCE_EVIDENCE_KINDS or (
+        kind is ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT
+        and resource_type is not None
+    )
+    if resource_bound:
+        if (
+            not isinstance(resource_type, str)
+            or resource_type not in resource_registry.type_codes
+        ):
             raise ValueError("unknown execution evidence Resource Type")
         if bindings.resource_id is None or bindings.change_id is None:
             raise ValueError("Resource evidence bindings are incomplete")
@@ -821,10 +868,18 @@ def decode_execution_evidence(value: object) -> ExecutionEvidenceRecord:
             raise ValueError("non-Resource evidence cannot claim a Resource Type")
         if bindings.change_id is not None or state_addresses:
             raise ValueError("non-Resource evidence has Resource-only bindings")
-        if attempt is not None and (type(attempt) is not int or attempt != 1):
-            raise ValueError("execution evidence attempt must be null or 1")
+        operation_evidence = kind in {
+            ExecutionEvidenceKind.EFFECT_INTENT,
+            ExecutionEvidenceKind.EFFECT_OUTCOME,
+            ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT,
+        }
+        if operation_evidence and (type(attempt) is not int or attempt != 1):
+            raise ValueError("Effect operation evidence attempt must be 1")
+        if not operation_evidence and attempt is not None:
+            raise ValueError("non-operation evidence attempt must be null")
         expected_subject = {
             ExecutionEvidenceKind.EFFECT_INTENT: ("effect", None),
+            ExecutionEvidenceKind.EFFECT_READINESS_OBSERVATION: ("effect", None),
             ExecutionEvidenceKind.EFFECT_OUTCOME: ("effect", None),
             ExecutionEvidenceKind.AUTHORITY_EVIDENCE: (
                 "device",
@@ -834,6 +889,7 @@ def decode_execution_evidence(value: object) -> ExecutionEvidenceRecord:
                 "run",
                 bindings.run_id,
             ),
+            ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT: ("effect", None),
         }[kind]
         if subject.get("kind") != expected_subject[0] or (
             expected_subject[1] is not None and subject.get("id") != expected_subject[1]
@@ -867,11 +923,12 @@ def decode_execution_evidence(value: object) -> ExecutionEvidenceRecord:
     if raw_attachment is not None:
         require_sha256(raw_attachment, "raw attachment digest")
     parse_rfc3339_utc(value["observed_at"], "evidence observed_at")
-    _validate_evidence_payload(kind, payload)
+    _validate_evidence_payload(kind, payload, resource_registry.type_codes)
     if (
         kind
         in {
             ExecutionEvidenceKind.EFFECT_INTENT,
+            ExecutionEvidenceKind.EFFECT_READINESS_OBSERVATION,
             ExecutionEvidenceKind.EFFECT_OUTCOME,
         }
         and subject["id"] != payload["effect_code"]
@@ -900,8 +957,15 @@ def validate_execution_evidence_sequence(
     values: tuple[object, ...],
     *,
     status: RunStatus,
+    resource_registry: ExecutionResourceRegistry,
 ) -> tuple[ExecutionEvidenceRecord, ...]:
-    records = tuple(decode_execution_evidence(value) for value in values)
+    records = tuple(
+        decode_execution_evidence(
+            value,
+            resource_registry=resource_registry,
+        )
+        for value in values
+    )
     identifiers: set[str] = set()
     records_by_id: dict[str, ExecutionEvidenceRecord] = {}
     last_observed_at: str | None = None
@@ -909,11 +973,12 @@ def validate_execution_evidence_sequence(
     operations: dict[
         str,
         tuple[
-            tuple[str | None, str | None],
+            tuple[object, ...],
             dict[ExecutionEvidenceKind, ExecutionEvidenceRecord],
         ],
     ] = {}
     result_signatures: set[tuple[object, ...]] = set()
+    previous_record: ExecutionEvidenceRecord | None = None
     for record in records:
         if record.evidence_id in identifiers:
             raise ValueError("execution evidence IDs are duplicated")
@@ -965,17 +1030,32 @@ def validate_execution_evidence_sequence(
         payload = dict(record.payload)
         operation_id = payload.get("operation_id")
         if isinstance(operation_id, str):
-            operation = operations.setdefault(operation_id, (key, {}))
-            if operation[0] != key:
+            operation_binding = (
+                record.subject_kind,
+                record.subject_id,
+                record.bindings,
+            )
+            operation = operations.setdefault(operation_id, (operation_binding, {}))
+            if operation[0] != operation_binding:
                 raise ValueError("execution operation bindings changed")
             seen = operation[1]
             if record.kind in seen:
                 raise ValueError("execution operation evidence is duplicated")
-            if (
-                record.kind is ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT
-                and ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT not in seen
+            if record.kind is ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT and not {
+                ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT,
+                ExecutionEvidenceKind.EFFECT_INTENT,
+            } & set(seen):
+                raise ValueError("marker checkpoint precedes operation intent")
+            if record.kind is ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT and (
+                previous_record is None
+                or previous_record.kind
+                not in {
+                    ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT,
+                    ExecutionEvidenceKind.EFFECT_INTENT,
+                }
+                or dict(previous_record.payload).get("operation_id") != operation_id
             ):
-                raise ValueError("marker checkpoint precedes primitive intent")
+                raise ValueError("marker checkpoint is not immediate")
             if record.kind is ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME and not {
                 ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT,
                 ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT,
@@ -990,10 +1070,17 @@ def validate_execution_evidence_sequence(
                 != PrimitiveKind.CLEANUP.value
             ):
                 raise ValueError("cleanup receipt lacks intent/checkpoint")
+            if record.kind is ExecutionEvidenceKind.EFFECT_OUTCOME and not {
+                ExecutionEvidenceKind.EFFECT_INTENT,
+                ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT,
+            } <= set(seen):
+                raise ValueError("Effect outcome lacks intent/checkpoint")
             if record.kind is ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT:
-                intent = dict(
-                    seen[ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT].payload
-                )
+                intent_record = seen.get(
+                    ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT
+                ) or seen.get(ExecutionEvidenceKind.EFFECT_INTENT)
+                assert intent_record is not None
+                intent = dict(intent_record.payload)
                 if (
                     payload["marker_digest"] != intent["marker_digest"]
                     or payload["generation"] != intent["marker_generation"]
@@ -1018,10 +1105,15 @@ def validate_execution_evidence_sequence(
             not in {RunStatus.INTERRUPTED, RunStatus.FAILED_RECOVERY_REQUIRED}
         ):
             raise ValueError("abandonment approval is invalid for Run status")
-        _validate_evidence_references(record, records_by_id)
+        _validate_evidence_references(
+            record,
+            records_by_id,
+            resource_registry.type_codes,
+        )
         identifiers.add(record.evidence_id)
         records_by_id[record.evidence_id] = record
         seen_resource_kinds.add(record.kind)
+        previous_record = record
     return records
 
 
@@ -1053,9 +1145,131 @@ def execution_run_identity(value: dict[str, object]) -> dict[str, object]:
     }
 
 
+def evidence_proves_terminal_cleanup(
+    value: dict[str, object],
+    *,
+    resource_registry: ExecutionResourceRegistry,
+) -> bool:
+    """Return whether canonical evidence proves cleanup and authority summaries."""
+    try:
+        status = RunStatus(_evidence_string(value, "status"))
+        evidence = value.get("evidence")
+        cleanup = value.get("cleanup")
+        authority = value.get("authority")
+        if (
+            status not in TERMINAL_RUN_STATUSES
+            or not isinstance(evidence, list)
+            or not isinstance(cleanup, dict)
+            or not isinstance(authority, dict)
+        ):
+            return False
+        records = validate_execution_evidence_sequence(
+            tuple(evidence),
+            status=status,
+            resource_registry=resource_registry,
+        )
+        required: set[tuple[str, str, str]] = set()
+        intents: dict[str, ExecutionEvidenceRecord] = {}
+        checkpoints: set[str] = set()
+        receipts: dict[tuple[str, str, str], ExecutionEvidenceRecord] = {}
+        latest_authority: ExecutionEvidenceRecord | None = None
+        for record in records:
+            payload = dict(record.payload)
+            if record.kind is ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED:
+                assert record.bindings.resource_id is not None
+                assert record.bindings.change_id is not None
+                for object_ref in _evidence_string_tuple(
+                    payload["cleanup_object_refs"],
+                    "cleanup object reference",
+                ):
+                    required.add(
+                        (
+                            record.bindings.resource_id,
+                            record.bindings.change_id,
+                            object_ref,
+                        )
+                    )
+            elif (
+                record.kind is ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT
+                and payload["primitive"] == PrimitiveKind.CLEANUP.value
+            ):
+                intents[str(payload["operation_id"])] = record
+            elif record.kind is ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT:
+                checkpoints.add(str(payload["operation_id"]))
+            elif record.kind is ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT:
+                operation_id = str(payload["operation_id"])
+                intent = intents.get(operation_id)
+                if (
+                    intent is None
+                    or operation_id not in checkpoints
+                    or intent.bindings.resource_id != record.bindings.resource_id
+                    or intent.bindings.change_id != record.bindings.change_id
+                    or dict(intent.payload)["manifest_object_ref"]
+                    != payload["manifest_object_ref"]
+                    or payload["disposition"]
+                    not in {
+                        MutationDisposition.APPLIED.value,
+                        MutationDisposition.DEFINITELY_NOT_APPLIED.value,
+                    }
+                ):
+                    return False
+                assert record.bindings.resource_id is not None
+                assert record.bindings.change_id is not None
+                receipt_key = (
+                    record.bindings.resource_id,
+                    record.bindings.change_id,
+                    str(payload["manifest_object_ref"]),
+                )
+                if receipt_key in receipts:
+                    return False
+                receipts[receipt_key] = record
+            elif record.kind is ExecutionEvidenceKind.AUTHORITY_EVIDENCE:
+                latest_authority = record
+        leftovers = sum(
+            dict(record.payload)["leftover"] is True for record in receipts.values()
+        )
+        if cleanup.get("leftover_count") != leftovers:
+            return False
+        if cleanup.get("state") == "complete" and (
+            set(receipts) != required or leftovers != 0
+        ):
+            return False
+        ownership = authority.get("ownership_state")
+        if ownership == "released" and cleanup.get("state") != "complete":
+            return False
+        if latest_authority is not None:
+            authority_payload = dict(latest_authority.payload)
+            if (
+                authority_payload["ownership_state"] != ownership
+                or authority_payload["token_digest"]
+                != authority.get("ownership_token_digest")
+                or authority_payload["generation"] != authority.get("marker_generation")
+                or authority_payload["marker_digest"] != authority.get("marker_digest")
+                or authority_payload["phase"] != authority.get("marker_phase")
+                or (
+                    ownership == "quarantined"
+                    and authority_payload["quarantine_receipt_digest"] is None
+                )
+            ):
+                return False
+        elif ownership in {"released", "quarantined"}:
+            return False
+        if ownership in {"released", "quarantined"}:
+            assert latest_authority is not None
+            if receipts and records.index(latest_authority) < max(
+                records.index(receipt) for receipt in receipts.values()
+            ):
+                return False
+        return True
+    except AssertionError, KeyError, TypeError, ValueError:
+        return False
+
+
 def is_post_terminal_cleanup_successor(
     previous: dict[str, object],
     current: dict[str, object],
+    *,
+    resource_registry: ExecutionResourceRegistry,
 ) -> bool:
     """Return whether current only advances cleanup after immutable terminal truth."""
     try:
@@ -1088,7 +1302,11 @@ def is_post_terminal_cleanup_successor(
         if not additions:
             return False
         current_records = tuple(
-            decode_execution_evidence(item) for item in current_evidence
+            decode_execution_evidence(
+                item,
+                resource_registry=resource_registry,
+            )
+            for item in current_evidence
         )
         records = current_records[len(previous_evidence) :]
         cleanup_operations = {
@@ -1105,6 +1323,7 @@ def is_post_terminal_cleanup_successor(
         terminal_digest = _terminal_evidence_digest(
             previous_evidence,
             _evidence_string(previous, "current_digest"),
+            resource_registry,
         )
         if any(
             item.kind
@@ -1121,15 +1340,25 @@ def is_post_terminal_cleanup_successor(
             current.get("authority"),
             previous.get("cleanup"),
             current.get("cleanup"),
+        ) and evidence_proves_terminal_cleanup(
+            current,
+            resource_registry=resource_registry,
         )
     except KeyError, TypeError, ValueError:
         return False
 
 
-def _terminal_evidence_digest(evidence: list[object], fallback: str) -> str:
+def _terminal_evidence_digest(
+    evidence: list[object],
+    fallback: str,
+    resource_registry: ExecutionResourceRegistry,
+) -> str:
     for item in evidence:
         try:
-            record = decode_execution_evidence(item)
+            record = decode_execution_evidence(
+                item,
+                resource_registry=resource_registry,
+            )
         except ValueError:
             continue
         if record.kind is ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT or (
@@ -1154,6 +1383,8 @@ def _is_cleanup_progress_record(
         ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT,
     }:
         return payload["operation_id"] in cleanup_operations
+    if record.kind is ExecutionEvidenceKind.AUTHORITY_EVIDENCE:
+        return payload["ownership_state"] in {"released", "quarantined"}
     return False
 
 
@@ -1222,6 +1453,7 @@ def _cleanup_transition_valid(
 def _validate_evidence_payload(
     kind: ExecutionEvidenceKind,
     payload: dict[str, object],
+    registered_resource_types: Collection[str],
 ) -> None:
     digest_fields = {
         key for key in payload if key.endswith("_digest") and payload[key] is not None
@@ -1343,13 +1575,33 @@ def _validate_evidence_payload(
             raise ValueError("cleanup leftover must be boolean")
     elif kind is ExecutionEvidenceKind.EFFECT_INTENT:
         _evidence_code(payload["effect_code"], "Effect code")
+        _evidence_code(payload["operation_id"], "operation ID")
+        _evidence_code(payload["approval_evidence_ref"], "approval evidence reference")
+        _evidence_positive_int(payload, "marker_generation")
+        marker_phase = RemoteMarkerPhase(_evidence_string(payload, "marker_phase"))
+        if marker_phase is not RemoteMarkerPhase.EFFECT:
+            raise ValueError("Effect intent marker phase must be effect")
+        _effect_affected_resources(
+            payload["affected_resources"],
+            registered_resource_types,
+        )
+    elif kind is ExecutionEvidenceKind.EFFECT_READINESS_OBSERVATION:
+        _evidence_code(payload["effect_code"], "Effect code")
+        _evidence_code(payload["readiness_code"], "readiness code")
+        if type(payload["positive"]) is not bool:
+            raise ValueError("Effect readiness positive must be boolean")
     elif kind is ExecutionEvidenceKind.EFFECT_OUTCOME:
         _evidence_code(payload["effect_code"], "Effect code")
-        EffectDisposition(_evidence_string(payload, "disposition"))
-        _evidence_string_tuple(
+        _evidence_code(payload["operation_id"], "operation ID")
+        disposition = EffectDisposition(_evidence_string(payload, "disposition"))
+        if disposition is EffectDisposition.NOT_STARTED:
+            raise ValueError("Effect outcome disposition is invalid")
+        references = _evidence_string_tuple(
             payload["post_effect_evidence_refs"],
             "post-Effect evidence reference",
         )
+        if not references or len(set(references)) != len(references):
+            raise ValueError("post-Effect evidence references are incomplete")
     elif kind is ExecutionEvidenceKind.AUTHORITY_EVIDENCE:
         if payload["ownership_state"] not in {
             "acquisition_pending",
@@ -1375,11 +1627,20 @@ def _validate_evidence_payload(
     elif kind is ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED:
         if type(payload["rollback_capable"]) is not bool:
             raise ValueError("rollback_capable must be boolean")
+        cleanup_objects = _evidence_string_tuple(
+            payload["cleanup_object_refs"],
+            "cleanup object reference",
+        )
+        if not cleanup_objects or len(set(cleanup_objects)) != len(cleanup_objects):
+            raise ValueError("cleanup object references are incomplete")
+        for item in cleanup_objects:
+            _evidence_code(item, "cleanup object reference")
 
 
 def _validate_evidence_references(
     record: ExecutionEvidenceRecord,
     records_by_id: dict[str, ExecutionEvidenceRecord],
+    registered_resource_types: Collection[str],
 ) -> None:
     payload = dict(record.payload)
     for key, item in payload.items():
@@ -1396,11 +1657,16 @@ def _validate_evidence_references(
                 raise ValueError(
                     "execution evidence reference is unresolved or forward"
                 )
+    readiness_kind = (
+        ExecutionEvidenceKind.EFFECT_READINESS_OBSERVATION
+        if record.kind is ExecutionEvidenceKind.EFFECT_OUTCOME
+        else ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION
+    )
     expected_kinds = {
         "intent_evidence_ref": {ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT},
         "observation_evidence_ref": {ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION},
         "outcome_evidence_ref": {ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME},
-        "readiness_evidence_ref": {ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION},
+        "readiness_evidence_ref": {readiness_kind},
     }
     for key, kinds in expected_kinds.items():
         reference = payload.get(key)
@@ -1421,6 +1687,137 @@ def _validate_evidence_references(
             != payload["observed_state_digest"]
         ):
             raise ValueError("primitive outcome does not match fresh Observation")
+    if record.kind is ExecutionEvidenceKind.EFFECT_OUTCOME:
+        _validate_post_effect_observations(
+            record,
+            records_by_id,
+            registered_resource_types,
+        )
+
+
+def _effect_affected_resources(
+    value: object,
+    registered_resource_types: Collection[str],
+) -> tuple[tuple[str, str, str, tuple[str, ...]], ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("Effect affected Resources must be a non-empty array")
+    result: list[tuple[str, str, str, tuple[str, ...]]] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {
+            "change_id",
+            "resource_id",
+            "resource_type",
+            "state_addresses",
+        }:
+            raise ValueError("Effect affected Resource fields are invalid")
+        resource_type = item["resource_type"]
+        if (
+            not isinstance(resource_type, str)
+            or _RESOURCE_TYPE_CODE.fullmatch(resource_type) is None
+            or resource_type not in registered_resource_types
+        ):
+            raise ValueError("unknown execution evidence Resource Type")
+        resource_id = _evidence_code(item["resource_id"], "Resource ID")
+        change_id = _evidence_code(item["change_id"], "Change ID")
+        state_addresses = _evidence_string_tuple(
+            item["state_addresses"],
+            "affected Resource State Address",
+        )
+        if (
+            not state_addresses
+            or tuple(sorted(set(state_addresses))) != state_addresses
+            or any(
+                not address.startswith("special://")
+                or any(token in address for token in ("\n", "\r", "\\", ".."))
+                for address in state_addresses
+            )
+        ):
+            raise ValueError("Effect affected Resource State Addresses are invalid")
+        result.append((resource_type, resource_id, change_id, state_addresses))
+    if len(set(result)) != len(result):
+        raise ValueError("Effect affected Resources are duplicated")
+    return tuple(result)
+
+
+def _validate_post_effect_observations(
+    outcome: ExecutionEvidenceRecord,
+    records_by_id: dict[str, ExecutionEvidenceRecord],
+    registered_resource_types: Collection[str],
+) -> None:
+    payload = dict(outcome.payload)
+    operation = payload["operation_id"]
+    intent = next(
+        (
+            record
+            for record in records_by_id.values()
+            if record.kind is ExecutionEvidenceKind.EFFECT_INTENT
+            and dict(record.payload)["operation_id"] == operation
+        ),
+        None,
+    )
+    checkpoint = next(
+        (
+            record
+            for record in records_by_id.values()
+            if record.kind is ExecutionEvidenceKind.REMOTE_MARKER_CHECKPOINT
+            and dict(record.payload)["operation_id"] == operation
+        ),
+        None,
+    )
+    if intent is None or checkpoint is None:
+        raise ValueError("Effect outcome lacks intent/checkpoint")
+    readiness = records_by_id.get(str(payload["readiness_evidence_ref"]))
+    if (
+        readiness is None
+        or readiness.kind is not ExecutionEvidenceKind.EFFECT_READINESS_OBSERVATION
+        or readiness.observed_at <= checkpoint.observed_at
+        or dict(readiness.payload)["positive"] is not True
+        or readiness.bindings != outcome.bindings
+        or readiness.subject_id != outcome.subject_id
+    ):
+        raise ValueError("Effect outcome lacks fresh positive readiness")
+    expected = set(
+        _effect_affected_resources(
+            dict(intent.payload)["affected_resources"],
+            registered_resource_types,
+        )
+    )
+    references = _evidence_string_tuple(
+        payload["post_effect_evidence_refs"],
+        "post-Effect evidence reference",
+    )
+    actual: set[tuple[str, str, str, tuple[str, ...]]] = set()
+    for reference in references:
+        observation = records_by_id.get(reference)
+        if (
+            observation is None
+            or observation.kind is not ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION
+            or observation.observed_at <= checkpoint.observed_at
+            or observation.observed_at <= readiness.observed_at
+            or observation.bindings.run_id != outcome.bindings.run_id
+            or observation.bindings.workspace_id != outcome.bindings.workspace_id
+            or observation.bindings.device_id != outcome.bindings.device_id
+            or observation.bindings.plan_id != outcome.bindings.plan_id
+            or observation.bindings.plan_full_digest
+            != outcome.bindings.plan_full_digest
+            or observation.bindings.binding_digest != outcome.bindings.binding_digest
+            or observation.resource_type is None
+            or observation.bindings.resource_id is None
+            or observation.bindings.change_id is None
+        ):
+            raise ValueError(
+                "post-Effect evidence reference is not a fresh Observation"
+            )
+        actual.add(
+            (
+                observation.resource_type,
+                observation.bindings.resource_id,
+                observation.bindings.change_id,
+                observation.state_addresses,
+            )
+        )
+    if actual != expected or len(actual) != len(references):
+        raise ValueError("post-Effect observations do not cover affected Resources")
 
 
 def _evidence_result_signature(
