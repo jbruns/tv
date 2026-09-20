@@ -52,14 +52,22 @@ configuration and lock bytes from the claimed commit object. It then checks:
 - secret-bearing fields, private controller paths, real Device identity, or
   raw exception/traceback content;
 - canonical Plan/Run identities, revision links, cross-document references,
-  attachments, command results, operation ordering, recovery actions, final
-  state, safety boundaries, and other semantic consistency;
+  independently recomputed Run and session-close digests, attachments,
+  command results, primitive intent/checkpoint/outcome ordering, derived
+  recovery policy, session-close identity/terminal/head/authority/cleanup/seal
+  bindings, final state, safety boundaries, and other semantic consistency;
 - resealed evidence whose JSON and outer digests are valid but whose claimed
   execution is inconsistent.
 
 Generate the bundle twice and compare all bytes before accepting it. The
 installed-wheel workflow repeats the same real harness path from an unrelated
 working directory. The core bundle is a single unstitched attempt.
+
+The output directory is protected by an adjacent, exclusively created
+ownership marker held under a nonblocking file lock for the complete
+generation. Symlinked, hard-linked, non-regular, orphaned, or concurrently
+locked markers are rejected; the harness never overwrites a conflicting
+marker or recursively removes a caller-supplied directory.
 
 ## Authorization boundary
 

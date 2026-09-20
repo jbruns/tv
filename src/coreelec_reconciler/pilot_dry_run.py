@@ -8,6 +8,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 from coreelec_reconciler.application.commands import (
     ApplyCommand,
@@ -780,10 +781,20 @@ def execute_dry_run(workspace: Path) -> tuple[dict[str, object], dict[str, objec
         planned = execute(f"{name}.plan", PlanCommand(str(repository), DEVICE_ID))
         if not isinstance(planned, CanonicalPlanOutcome):
             raise RuntimeError(f"{name} did not produce a canonical Plan")
+        plan_value = json.loads(planned.plan.canonical_bytes)
+        changes = [
+            change
+            for resource in plan_value["resources"]
+            for change in resource["changes"]
+        ]
+        change_id = (
+            str(changes[0]["change_id"])
+            if isinstance(changes, list) and changes
+            else None
+        )
         applied = None
         approval_scopes: tuple[str, ...] = ()
         if planned.disposition == "actionable":
-            plan_value = json.loads(planned.plan.canonical_bytes)
             approval_scopes = tuple(
                 str(item["scope"]) for item in plan_value["approval_requirements"]
             )
@@ -818,7 +829,17 @@ def execute_dry_run(workspace: Path) -> tuple[dict[str, object], dict[str, objec
                 ),
                 "verification_run_id": getattr(verified.run_id, "value", None),
                 "status": getattr(verified.status, "value", None),
-                "operations": [dict(item) for item in scenario_operations],
+                "operations": [
+                    {
+                        **dict(item),
+                        "ordinal": operation_ordinal,
+                        "resource_id": RESOURCE_ID,
+                        "change_id": change_id,
+                    }
+                    for operation_ordinal, item in enumerate(
+                        scenario_operations, start=1
+                    )
+                ],
                 "final_presence": "present" if entry is not None else "absent",
                 "final_mode": entry.mode if entry is not None else None,
                 "final_content_sha256": (
@@ -952,6 +973,23 @@ def execute_dry_run(workspace: Path) -> tuple[dict[str, object], dict[str, objec
         },
     }
     artifacts = _state_artifacts((("state", state),))
+    artifact_documents = cast(list[dict[str, object]], artifacts["documents"])
+    session_closes: list[dict[str, object]] = []
+    for item in artifact_documents:
+        content = item.get("content")
+        if (
+            isinstance(content, dict)
+            and content.get("kind") == "CoreElecReconcilerSessionClose"
+        ):
+            session_closes.append(
+                {
+                    "artifact_id": item["artifact_id"],
+                    "sha256": item["sha256"],
+                    "record_id": content["record_id"],
+                    "session_id": content["session_id"],
+                }
+            )
+    execution["session_closes"] = session_closes
     return execution, artifacts
 
 

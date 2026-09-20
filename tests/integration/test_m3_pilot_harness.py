@@ -1,3 +1,4 @@
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -79,6 +80,18 @@ def _reseal(bundle: Path) -> None:
     (bundle / "bundle.sha256").write_text(
         VERIFIER._sha256(digest_bytes) + "\n", encoding="ascii"
     )
+
+
+def _reseal_artifacts(bundle: Path, artifacts: dict[str, object]) -> None:
+    _write_canonical(bundle / "artifacts.json", artifacts)
+    _reseal(bundle)
+
+
+def _recompute_artifact(item: dict[str, object]) -> None:
+    content = item["content"]
+    assert isinstance(content, dict)
+    content["current_digest"] = VERIFIER._canonical_current_digest(content)
+    item["sha256"] = VERIFIER._sha256(VERIFIER._canonical(content))
 
 
 def _working_configuration_digest(root: Path) -> str:
@@ -242,6 +255,188 @@ def test_dry_run_rejects_unknown_content_in_owned_bundle(
     assert (bundle / "user-file.txt").read_text() == "preserve me"
 
 
+@pytest.mark.parametrize("dangling", [False, True])
+def test_dry_run_rejects_ownership_marker_symlink(
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+    dangling: bool,
+) -> None:
+    source_checkout, valid, _ = valid_bundle
+    bundle = tmp_path / f"marker-symlink-{dangling}"
+    shutil.copytree(valid, bundle)
+    marker, _ = HARNESS._ownership_marker(source_checkout, bundle)
+    target = tmp_path / "missing" if dangling else tmp_path / "marker-target"
+    if not dangling:
+        target.write_text("not an ownership marker")
+    marker.symlink_to(target)
+
+    with pytest.raises(ValueError, match="marker"):
+        HARNESS.generate_bundle(source_checkout, bundle)
+
+
+def test_dry_run_rejects_hardlinked_ownership_marker(
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+) -> None:
+    source_checkout, valid, _ = valid_bundle
+    bundle = tmp_path / "marker-hardlink"
+    shutil.copytree(valid, bundle)
+    marker, marker_content = HARNESS._ownership_marker(source_checkout, bundle)
+    target = tmp_path / "marker-target"
+    target.write_bytes(marker_content)
+    marker.hardlink_to(target)
+
+    with pytest.raises(ValueError, match="private regular file"):
+        HARNESS.generate_bundle(source_checkout, bundle)
+
+
+def test_dry_run_rejects_concurrent_marker_owner(
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+) -> None:
+    source_checkout, valid, _ = valid_bundle
+    bundle = tmp_path / "marker-locked"
+    shutil.copytree(valid, bundle)
+    marker, marker_content = HARNESS._ownership_marker(source_checkout, bundle)
+    marker.write_bytes(marker_content)
+    with marker.open("rb") as marker_stream:
+        fcntl.flock(marker_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(ValueError, match="already locked"):
+            HARNESS.generate_bundle(source_checkout, bundle)
+
+
+def test_dry_run_rejects_orphaned_marker_creation_conflict(
+    source_checkout: Path,
+) -> None:
+    bundle = source_checkout / "marker-conflict"
+    marker, marker_content = HARNESS._ownership_marker(source_checkout, bundle)
+    marker.write_bytes(marker_content)
+
+    with pytest.raises(ValueError, match="conflicts"):
+        HARNESS.generate_bundle(source_checkout, bundle)
+    assert not bundle.exists()
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "authority_state",
+        "current_digest",
+        "device_id",
+        "disposition",
+        "failure",
+        "kind",
+        "observed_at",
+        "observed_head_digest",
+        "observed_head_revision",
+        "producer",
+        "record_id",
+        "run_id",
+        "schema_version",
+        "seal_digest",
+        "session_id",
+        "terminal_digest",
+        "terminal_revision",
+        "workspace_id",
+    ],
+)
+def test_verifier_rejects_resealed_session_close_field_changes(
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+    field: str,
+) -> None:
+    source, original, _ = valid_bundle
+    bundle = tmp_path / field
+    shutil.copytree(original, bundle)
+    artifacts = json.loads((bundle / "artifacts.json").read_bytes())
+    close = next(
+        item
+        for item in artifacts["documents"]
+        if isinstance(item["content"], dict)
+        and item["content"].get("kind") == "CoreElecReconcilerSessionClose"
+        and item["content"].get("authority_state") == "released"
+    )
+    value = close["content"]
+    replacements: dict[str, object] = {
+        "authority_state": "owned",
+        "current_digest": "sha256:" + "0" * 64,
+        "device_id": "synthetic.other",
+        "disposition": "failed",
+        "failure": {"category": "transport", "code": "session_close.transport"},
+        "kind": "OtherSessionClose",
+        "observed_at": "2026-09-20T07:00:00Z",
+        "observed_head_digest": "sha256:" + "0" * 64,
+        "observed_head_revision": value["observed_head_revision"] - 1,
+        "producer": {"name": "other", "version": "0.1.0"},
+        "record_id": "019950f8-4c00-7000-8001-999999999999",
+        "run_id": "019950f8-4c00-7000-8001-999999999999",
+        "schema_version": 2,
+        "seal_digest": "sha256:" + "0" * 64,
+        "session_id": "session.other",
+        "terminal_digest": "sha256:" + "0" * 64,
+        "terminal_revision": value["terminal_revision"] - 1,
+        "workspace_id": "workspace:other-session",
+    }
+    if field == "failure":
+        value["disposition"] = "failed"
+    value[field] = replacements[field]
+    if field != "current_digest":
+        _recompute_artifact(close)
+    else:
+        close["sha256"] = VERIFIER._sha256(VERIFIER._canonical(value))
+    _reseal_artifacts(bundle, artifacts)
+
+    with pytest.raises(VERIFIER.VerificationError):
+        VERIFIER.verify_bundle(bundle, source)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("action", "rollback"),
+        ("mode", "abandon"),
+        ("allowed", False),
+        ("requires_approval", True),
+        ("requires_reason", True),
+        ("reason_code", "recovery.changed"),
+    ],
+)
+def test_verifier_rejects_every_resealed_recovery_policy_field(
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+    field: str,
+    replacement: object,
+) -> None:
+    source, original, _ = valid_bundle
+    bundle = tmp_path / f"recovery-{field}"
+    shutil.copytree(original, bundle)
+    execution = json.loads((bundle / "execution.json").read_bytes())
+    execution["recovery"]["actions"][0][field] = replacement
+    _write_canonical(bundle / "execution.json", execution)
+    _reseal(bundle)
+
+    with pytest.raises(VERIFIER.VerificationError):
+        VERIFIER.verify_bundle(bundle, source)
+
+
+def test_verifier_rejects_resealed_recovery_policy_reordering(
+    valid_bundle: tuple[Path, Path, str],
+    tmp_path: Path,
+) -> None:
+    source, original, _ = valid_bundle
+    bundle = tmp_path / "recovery-order"
+    shutil.copytree(original, bundle)
+    execution = json.loads((bundle / "execution.json").read_bytes())
+    execution["recovery"]["actions"][0:2] = reversed(
+        execution["recovery"]["actions"][0:2]
+    )
+    _write_canonical(bundle / "execution.json", execution)
+    _reseal(bundle)
+
+    with pytest.raises(VERIFIER.VerificationError):
+        VERIFIER.verify_bundle(bundle, source)
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -264,6 +459,10 @@ def test_dry_run_rejects_unknown_content_in_owned_bundle(
         "plan-binding",
         "final-state",
         "revision-link",
+        "run-current-digest",
+        "observation-current-digest",
+        "session-close-current-digest",
+        "primitive-recomputed-digest",
     ],
 )
 def test_independent_verifier_rejects_invalid_bundles(
@@ -362,7 +561,7 @@ def test_independent_verifier_rejects_invalid_bundles(
         execution["scenarios"][0]["final_content_sha256"] = "0" * 64
         _write_canonical(execution_path, execution)
         _reseal(bundle)
-    else:
+    elif case == "revision-link":
         revision = next(
             item
             for item in artifacts["documents"]
@@ -373,6 +572,105 @@ def test_independent_verifier_rejects_invalid_bundles(
         revision["sha256"] = VERIFIER._sha256(VERIFIER._canonical(revision["content"]))
         _write_canonical(bundle / "artifacts.json", artifacts)
         _reseal(bundle)
+    elif case in {"run-current-digest", "observation-current-digest"}:
+        kind = (
+            "CoreElecReconcilerRunReport"
+            if case == "run-current-digest"
+            else "CoreElecReconcilerObservationRun"
+        )
+        revision = next(
+            item
+            for item in artifacts["documents"]
+            if "/revisions/" in item["artifact_id"]
+            and isinstance(item["content"], dict)
+            and item["content"].get("kind") == kind
+        )
+        revision["content"]["status"] = "tampered"
+        revision["sha256"] = VERIFIER._sha256(VERIFIER._canonical(revision["content"]))
+        _reseal_artifacts(bundle, artifacts)
+    elif case == "session-close-current-digest":
+        close = next(
+            item
+            for item in artifacts["documents"]
+            if isinstance(item["content"], dict)
+            and item["content"].get("kind") == "CoreElecReconcilerSessionClose"
+        )
+        close["content"]["current_digest"] = "sha256:" + "0" * 64
+        close["sha256"] = VERIFIER._sha256(VERIFIER._canonical(close["content"]))
+        _reseal_artifacts(bundle, artifacts)
+    else:
+        run_id = execution["scenarios"][0]["execution_run_id"]
+        revisions = [
+            item
+            for item in artifacts["documents"]
+            if "/revisions/" in item["artifact_id"]
+            and isinstance(item["content"], dict)
+            and item["content"].get("run_id") == run_id
+        ]
+        revisions.sort(key=lambda item: item["content"]["revision"])
+        target_operation = execution["scenarios"][0]["operations"][0]["operation_id"]
+        previous = None
+        for revision in revisions:
+            revision["content"]["previous_revision_digest"] = previous
+            for evidence in revision["content"]["evidence"]:
+                if (
+                    evidence.get("payload_kind") == "ResourcePrimitiveIntent"
+                    and evidence.get("payload", {}).get("operation_id")
+                    == target_operation
+                ):
+                    evidence["payload"]["primitive"] = "chmod"
+            _recompute_artifact(revision)
+            previous = revision["content"]["current_digest"]
+        prefix = revisions[0]["artifact_id"].rsplit("/revisions/", 1)[0]
+        head = next(
+            item
+            for item in artifacts["documents"]
+            if item["artifact_id"] == prefix + "/head.json"
+        )
+        head["content"] = {
+            "digest": revisions[-1]["content"]["current_digest"],
+            "revision": revisions[-1]["content"]["revision"],
+        }
+        head["sha256"] = VERIFIER._sha256(VERIFIER._canonical(head["content"]))
+        seal = next(
+            item
+            for item in artifacts["documents"]
+            if item["artifact_id"] == prefix + "/seal.json"
+        )
+        seal["content"]["terminal_digest"] = revisions[-1]["content"]["current_digest"]
+        seal["sha256"] = VERIFIER._sha256(VERIFIER._canonical(seal["content"]))
+        close = next(
+            item
+            for item in artifacts["documents"]
+            if item["artifact_id"].startswith(prefix + "/session-closes/")
+        )
+        terminal = next(
+            revision
+            for revision in revisions
+            if revision["content"]["status"] in VERIFIER.EXECUTION_TERMINAL_STATUSES
+        )
+        close["content"]["terminal_digest"] = terminal["content"]["current_digest"]
+        close["content"]["observed_head_digest"] = revisions[-1]["content"][
+            "current_digest"
+        ]
+        close["content"]["seal_digest"] = "sha256:" + seal["sha256"]
+        _recompute_artifact(close)
+        execution["session_closes"] = [
+            {
+                "artifact_id": item["artifact_id"],
+                "sha256": item["sha256"],
+                "record_id": item["content"]["record_id"],
+                "session_id": item["content"]["session_id"],
+            }
+            for item in artifacts["documents"]
+            if isinstance(item["content"], dict)
+            and item["content"].get("kind") == "CoreElecReconcilerSessionClose"
+        ]
+        _write_canonical(execution_path, execution)
+        _reseal_artifacts(bundle, artifacts)
 
-    with pytest.raises(VERIFIER.VerificationError):
+    expected_error = (
+        "operation receipts" if case == "primitive-recomputed-digest" else None
+    )
+    with pytest.raises(VERIFIER.VerificationError, match=expected_error):
         VERIFIER.verify_bundle(bundle, source_checkout)

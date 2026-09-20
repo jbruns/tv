@@ -3,9 +3,13 @@
 """Write deterministic, synthetic M3 pilot-readiness evidence."""
 
 import argparse
+import errno
+import fcntl
 import hashlib
 import importlib.metadata
 import json
+import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -97,7 +101,42 @@ def _ownership_marker(root: Path, output: Path) -> tuple[Path, bytes]:
     return marker, content
 
 
-def _prepare_output(root: Path, requested_output: Path) -> Path:
+def _open_marker(marker: Path, expected: bytes, *, create: bool) -> int:
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    try:
+        descriptor = os.open(marker, flags, 0o600)
+    except OSError as error:
+        if error.errno == errno.ENOENT and not create:
+            raise ValueError("existing output is not harness-owned") from None
+        if error.errno in {errno.EEXIST, errno.ELOOP}:
+            raise ValueError("output ownership marker conflicts or is unsafe") from None
+        raise ValueError("output ownership marker is unsafe") from None
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("output ownership marker is not a private regular file")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("output ownership marker is already locked") from None
+        if create:
+            offset = 0
+            while offset < len(expected):
+                offset += os.write(descriptor, expected[offset:])
+            os.fsync(descriptor)
+        else:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            if os.read(descriptor, len(expected) + 1) != expected:
+                raise ValueError("existing output ownership marker does not match")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _prepare_output(root: Path, requested_output: Path) -> tuple[Path, int]:
     if _path_contains_symlink(requested_output):
         raise ValueError("output path must not contain a symlink")
     root = root.resolve(strict=True)
@@ -125,27 +164,31 @@ def _prepare_output(root: Path, requested_output: Path) -> Path:
 
     marker, expected_marker = _ownership_marker(root, resolved_output)
     if output.exists():
-        if not output.is_dir() or not marker.is_file():
+        if not output.is_dir():
             raise ValueError("existing output is not harness-owned")
-        if marker.read_bytes() != expected_marker:
-            raise ValueError("existing output ownership marker does not match")
+        marker_descriptor = _open_marker(marker, expected_marker, create=False)
         entries = {entry.name for entry in output.iterdir()}
         unknown = entries - OUTPUT_FILES
         if unknown:
+            os.close(marker_descriptor)
             raise ValueError("harness-owned output contains unknown content")
         for name in sorted(entries):
             path = output / name
             if path.is_symlink() or not path.is_file():
+                os.close(marker_descriptor)
                 raise ValueError("harness-owned output contains unknown content")
             path.unlink()
     else:
-        if marker.exists():
-            if not marker.is_file() or marker.read_bytes() != expected_marker:
-                raise ValueError("output ownership marker does not match")
-        else:
-            marker.write_bytes(expected_marker)
-        output.mkdir()
-    return resolved_output
+        try:
+            output.mkdir()
+        except FileExistsError:
+            raise ValueError("output creation raced with another process") from None
+        try:
+            marker_descriptor = _open_marker(marker, expected_marker, create=True)
+        except BaseException:
+            output.rmdir()
+            raise
+    return resolved_output, marker_descriptor
 
 
 def _remove_runtime(output: Path, runtime: Path) -> None:
@@ -184,78 +227,86 @@ def generate_bundle(root: Path, output: Path) -> str:
     except subprocess.CalledProcessError:
         raise ValueError("uv.lock is missing") from None
 
-    output = _prepare_output(root, output)
-    runtime = output / "runtime"
-    runtime.mkdir()
+    output, marker_descriptor = _prepare_output(root, output)
     try:
-        execution, artifacts = execute_dry_run(runtime)
+        runtime = output / "runtime"
+        runtime.mkdir()
+        try:
+            execution, artifacts = execute_dry_run(runtime)
+        finally:
+            _remove_runtime(output, runtime)
+        source = {
+            "commit": _git(root, "rev-parse", "HEAD"),
+            "tree": _git(root, "rev-parse", "HEAD^{tree}"),
+        }
+        execution_bytes = _canonical(execution)
+        artifacts_bytes = _canonical(artifacts)
+        manifest = {
+            "schema": SCHEMA,
+            "bundle_kind": "synthetic-core-execution-dry-run",
+            "attempts": 1,
+            "components": ["core"],
+            "source": source,
+            "bindings": {
+                "configuration_sha256": _configuration_digest(root, "HEAD"),
+                "lock_sha256": _sha256(lock_bytes),
+                "scenario_inputs_sha256": _sha256(
+                    _canonical(execution["scenario_inputs"])
+                ),
+            },
+            "tools": {
+                "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+                "coreelec_reconciler": importlib.metadata.version(
+                    "coreelec-reconciler"
+                ),
+                "uv": subprocess.run(
+                    ["uv", "--version"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+            },
+            "execution": {
+                "artifact": "execution.json",
+                "artifacts": "artifacts.json",
+                "exit_status": execution["exit_status"],
+            },
+            "identity": {
+                "device_id": SYNTHETIC_DEVICE_ID,
+                "resource_id": "skin.playlist.new-shows",
+                "logical_address": ("special://profile/playlists/video/NewShows.xsp"),
+            },
+            "safety": {
+                "dry_run_only": True,
+                "device_contact": False,
+                "secret_resolution": False,
+                "synthetic_values_only": True,
+                "live_use_authorized": False,
+                "ownership_transfer_authorized": False,
+                "skin_025_owner": "shell",
+                "effects_changed": False,
+            },
+        }
+        files = {
+            "manifest.json": _canonical(manifest),
+            "execution.json": execution_bytes,
+            "artifacts.json": artifacts_bytes,
+        }
+        for name, content in files.items():
+            (output / name).write_bytes(content)
+        digests = {
+            "schema": SCHEMA,
+            "files": {
+                name: _sha256(content) for name, content in sorted(files.items())
+            },
+        }
+        digest_bytes = _canonical(digests)
+        (output / "digests.json").write_bytes(digest_bytes)
+        bundle_digest = _sha256(digest_bytes)
+        (output / "bundle.sha256").write_text(bundle_digest + "\n", encoding="ascii")
+        return bundle_digest
     finally:
-        _remove_runtime(output, runtime)
-
-    source = {
-        "commit": _git(root, "rev-parse", "HEAD"),
-        "tree": _git(root, "rev-parse", "HEAD^{tree}"),
-    }
-    execution_bytes = _canonical(execution)
-    artifacts_bytes = _canonical(artifacts)
-    manifest = {
-        "schema": SCHEMA,
-        "bundle_kind": "synthetic-core-execution-dry-run",
-        "attempts": 1,
-        "components": ["core"],
-        "source": source,
-        "bindings": {
-            "configuration_sha256": _configuration_digest(root, "HEAD"),
-            "lock_sha256": _sha256(lock_bytes),
-            "scenario_inputs_sha256": _sha256(_canonical(execution["scenario_inputs"])),
-        },
-        "tools": {
-            "python": f"{sys.version_info.major}.{sys.version_info.minor}",
-            "coreelec_reconciler": importlib.metadata.version("coreelec-reconciler"),
-            "uv": subprocess.run(
-                ["uv", "--version"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip(),
-        },
-        "execution": {
-            "artifact": "execution.json",
-            "artifacts": "artifacts.json",
-            "exit_status": execution["exit_status"],
-        },
-        "identity": {
-            "device_id": SYNTHETIC_DEVICE_ID,
-            "resource_id": "skin.playlist.new-shows",
-            "logical_address": ("special://profile/playlists/video/NewShows.xsp"),
-        },
-        "safety": {
-            "dry_run_only": True,
-            "device_contact": False,
-            "secret_resolution": False,
-            "synthetic_values_only": True,
-            "live_use_authorized": False,
-            "ownership_transfer_authorized": False,
-            "skin_025_owner": "shell",
-            "effects_changed": False,
-        },
-    }
-    files = {
-        "manifest.json": _canonical(manifest),
-        "execution.json": execution_bytes,
-        "artifacts.json": artifacts_bytes,
-    }
-    for name, content in files.items():
-        (output / name).write_bytes(content)
-    digests = {
-        "schema": SCHEMA,
-        "files": {name: _sha256(content) for name, content in sorted(files.items())},
-    }
-    digest_bytes = _canonical(digests)
-    (output / "digests.json").write_bytes(digest_bytes)
-    bundle_digest = _sha256(digest_bytes)
-    (output / "bundle.sha256").write_text(bundle_digest + "\n", encoding="ascii")
-    return bundle_digest
+        os.close(marker_descriptor)
 
 
 def main() -> int:
