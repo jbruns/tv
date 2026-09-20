@@ -11,8 +11,19 @@ from .interfaces import (
     ReadFailure,
     ReadResult,
 )
+from .remote_ownership import (
+    AuthorityBlocked,
+    AuthorityConflict,
+    AuthorityError,
+    RemoteAuthorityBackend,
+    RemoteObject,
+    RemoteObjectKind,
+)
 
 __all__ = [
+    "AuthorityBlocked",
+    "AuthorityConflict",
+    "AuthorityError",
     "DeviceCapabilitySnapshot",
     "DeviceIdentity",
     "DeviceSession",
@@ -22,4 +33,7 @@ __all__ = [
     "ManagedFileReader",
     "ReadFailure",
     "ReadResult",
+    "RemoteAuthorityBackend",
+    "RemoteObject",
+    "RemoteObjectKind",
 ]

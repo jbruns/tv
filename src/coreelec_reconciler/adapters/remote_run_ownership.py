@@ -8,14 +8,14 @@ from coreelec_reconciler.domain.execution import (
     MutationDisposition,
     MutationReceipt,
 )
-from coreelec_reconciler.execution.authority import (
+from coreelec_reconciler.transports.interfaces import EntryKind, FileMetadata
+from coreelec_reconciler.transports.remote_ownership import (
     AuthorityBlocked,
     AuthorityConflict,
     RemoteAuthorityBackend,
     RemoteObject,
     RemoteObjectKind,
 )
-from coreelec_reconciler.transports.interfaces import EntryKind, FileMetadata
 
 from .paramiko_managed_file import ParamikoManagedFiles
 from .remote_helpers import (

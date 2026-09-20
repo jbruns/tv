@@ -13,14 +13,18 @@ from coreelec_reconciler.domain.execution import (
     ExecutionEvidenceBindings,
     ExecutionEvidenceKind,
     RunStatus,
+    SessionCloseDisposition,
     build_execution_evidence,
+    build_session_close_record,
     decode_execution_evidence,
+    decode_session_close_record,
     validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.reporting.canonical_json import canonical_document_bytes
 from coreelec_reconciler.reporting.execution_documents import (
     build_execution_run_report,
     check_run_report_invariants,
+    check_session_close_invariants,
     decode_execution_run_report,
     verify_run_revision_chain,
 )
@@ -45,6 +49,36 @@ ATTACHMENT_DIGESTS = {
     "manifest": "sha256:" + "2" * 64,
     "content": "sha256:" + "3" * 64,
 }
+
+
+def session_close_value(
+    disposition: str = "complete",
+) -> dict[str, object]:
+    return {
+        "authority_state": "released",
+        "device_id": "living-room.ugoos-am6b-plus",
+        "disposition": disposition,
+        "failure": (
+            None
+            if disposition == "complete"
+            else {"category": "transport", "code": "transport.close_failed"}
+        ),
+        "kind": "CoreElecReconcilerSessionClose",
+        "observed_at": "2026-09-19T08:11:00Z",
+        "observed_head_digest": "sha256:" + "2" * 64,
+        "observed_head_revision": 5,
+        "producer": {"name": "coreelec-reconciler", "version": "0.1.0"},
+        "record_id": "019950f8-4c00-7000-8000-000000000701",
+        "run_id": RUN_ID,
+        "schema_version": 1,
+        "seal_digest": "sha256:" + "3" * 64,
+        "session_id": "session.019950f8-4c00-7000-8000-000000000801",
+        "terminal_digest": "sha256:" + "1" * 64,
+        "terminal_revision": 2,
+        "workspace_id": WORKSPACE_ID,
+    }
+
+
 OBSERVER_CODES = {
     ExecutionEvidenceKind.MANAGED_FILE_OBSERVATION: "managed-file-observer",
     ExecutionEvidenceKind.RESOURCE_PREPARATION_COMPLETED: "managed-file-preparer",
@@ -1347,3 +1381,107 @@ def test_every_negative_fixture_breaks_an_independent_invariant() -> None:
     assert len(fixtures) == 11
     for fixture in fixtures:
         assert check_run_report_invariants(fixture.read_bytes()), fixture.name
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    [item.value for item in SessionCloseDisposition],
+)
+def test_session_close_record_round_trips_closed_dispositions(
+    disposition: str,
+) -> None:
+    record = build_session_close_record(session_close_value(disposition))
+
+    assert decode_session_close_record(record.canonical_bytes) == record
+    assert check_session_close_invariants(record.canonical_bytes) == ()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda value: value.update(extra=True), "fields"),
+        (lambda value: value.update(kind="InventedClose"), "kind"),
+        (lambda value: value.update(schema_version=999), "version"),
+        (lambda value: value.update(terminal_revision=6), "terminal"),
+        (
+            lambda value: value.update(
+                failure={"category": "transport", "code": "raw exception: secret"}
+            ),
+            "failure",
+        ),
+        (
+            lambda value: value.update(
+                failure={"category": "invented", "code": "transport.close_failed"}
+            ),
+            "category",
+        ),
+        (
+            lambda value: value.update(
+                disposition="complete",
+                failure={"category": "transport", "code": "transport.close_failed"},
+            ),
+            "complete",
+        ),
+    ],
+)
+def test_session_close_codec_and_oracle_reject_tampering(
+    mutation: object,
+    message: str,
+) -> None:
+    value = session_close_value("failed")
+    mutation(value)  # type: ignore[operator]
+    candidate = dict(value)
+    candidate["current_digest"] = ""
+    without_digest = {
+        key: item for key, item in candidate.items() if key != "current_digest"
+    }
+    candidate["current_digest"] = (
+        "sha256:" + hashlib.sha256(canonical_document_bytes(without_digest)).hexdigest()
+    )
+    content = canonical_document_bytes(candidate)
+
+    with pytest.raises(ValueError):
+        decode_session_close_record(content)
+    assert any(
+        message in error.lower() for error in check_session_close_invariants(content)
+    )
+
+
+def test_session_close_positive_fixture_is_canonical_and_independently_valid() -> None:
+    content = (FIXTURE_ROOT / "execution-session-close-v1.json").read_bytes()
+    record = decode_session_close_record(content)
+
+    assert record.disposition is SessionCloseDisposition.FAILED
+    assert check_session_close_invariants(content) == ()
+
+
+def test_session_close_oracle_is_total_for_non_string_enum_fields() -> None:
+    cases: tuple[tuple[tuple[str, ...], object], ...] = (
+        (("authority_state",), []),
+        (("authority_state",), {}),
+        (("disposition",), []),
+        (("disposition",), {}),
+        (("failure", "category"), []),
+        (("failure", "category"), {}),
+    )
+    for path, invalid in cases:
+        value = session_close_value("failed")
+        target = value
+        for component in path[:-1]:
+            nested = target[component]
+            assert isinstance(nested, dict)
+            target = nested
+        target[path[-1]] = invalid
+        candidate = dict(value)
+        candidate["current_digest"] = ""
+        without_digest = {
+            key: item for key, item in candidate.items() if key != "current_digest"
+        }
+        candidate["current_digest"] = (
+            "sha256:"
+            + hashlib.sha256(canonical_document_bytes(without_digest)).hexdigest()
+        )
+
+        errors = check_session_close_invariants(canonical_document_bytes(candidate))
+
+        assert errors

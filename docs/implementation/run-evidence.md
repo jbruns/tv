@@ -162,10 +162,79 @@ same fact:
 - abandonment records `failed_recovery_required` and remains blocking through
   quarantine.
 
+## Session and transport close outcomes
+
+Session/transport teardown is neither managed-Resource cleanup nor Device
+authority release. A close result therefore never enters the Run revision
+chain and cannot change terminal status, cleanup truth, authority truth, the
+active index, or seal eligibility.
+
+`CoreElecReconcilerSessionClose` schema version 1 is a separate canonical,
+append-only workspace record. It binds:
+
+- one UUIDv7 record/idempotency identity and one safe session identity;
+- Device, Run, and opaque workspace identity;
+- the first immutable terminal revision/digest;
+- the terminal head revision/digest and authority state observed at recording;
+- the exact seal digest when recorded after sealing, or explicit `null` when
+  recorded before sealing;
+- an RFC 3339 UTC observation time; and
+- `complete`, `failed`, or `unknown` disposition.
+
+`failed` and `unknown` require a closed failure category plus a sanitized safe
+code. Raw exceptions, transport text, credentials, and secrets are forbidden.
+Repeating the same record identity and values is idempotent. A differing value
+for that identity, or a second identity for the same session, conflicts.
+
+RunStore may record close outcomes after terminal truth both before and after
+release/seal. Sealed bytes remain immutable. Strict loading verifies canonical
+bytes, digest, identity, terminal/head/authority binding, and optional seal
+binding. Inspection treats a missing or corrupt close record as `unknown`
+without invalidating an otherwise verified canonical Run result.
+
 Version 1 automatically prunes nothing. Revisions, attachments, markers, and
 evidence are retained until a future explicit retention procedure is accepted.
 Active, interrupted, unsealed, corrupt, ownership-bearing, or
 recovery-required Runs are never implicitly removable.
+
+## Standalone read-only Verification
+
+`CanonicalVerificationRuns` is the standalone Verification module. Its small
+interface creates a canonical Run, restarts an incomplete Run, or reports a
+durable result. It does not create or save a `CanonicalPlan`, acquire remote
+ownership, or receive preparation, mutation, rollback, cleanup, or Effect
+capabilities.
+
+The caller supplies only selected Resource observation/assessment
+implementations. The module validates the immutable Resource registry,
+requires every selected dependency to be present, computes dependency order,
+and observes each Resource once in that order. Existing typed Resource
+`observe` and `assess` behavior determines `converged`, `divergent`, or
+`unverifiable`; the module translates those facts into the existing canonical
+execution evidence and persists the revision chain in `RunStore`.
+
+Because execution schema version 1 requires an immutable Plan-reference-shaped
+binding, Verification stores a digest of the selected Resource scope and two
+opaque UUIDv7 correlation identities in those existing fields. No Plan
+document is constructed or persisted. Restart verifies that digest before
+resuming. Read-only workspaces never enter the active Device mutation index.
+
+## Durable close uncertainty
+
+`DurableSessionClose` owns the post-result teardown seam. It accepts the
+already-produced canonical Run report and recovery guidance, attempts close,
+and records the outcome through `RunStore.record_session_close`. Its returned
+value always preserves that exact report and guidance; close failure cannot
+rewrite terminal Run truth.
+
+Timeout, transport, and local-runtime exceptions are reduced to closed
+categories and safe codes. Exception messages are never persisted. Explicit
+`failed` and `unknown` outcomes receive equally bounded metadata. The same
+record/session identity is idempotent and does not repeat teardown. The module
+works with a still-held revision lease before release or can reacquire the Run
+lease after release and sealing. Missing, corrupt, conflicting, or failed
+recording is reported conservatively as close `unknown`, while the canonical
+Run result remains available through both close and inspection.
 
 ## Validation fixtures
 

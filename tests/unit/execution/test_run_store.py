@@ -14,12 +14,18 @@ from coreelec_reconciler.domain.execution import (
     RevisionLease,
     RunStatus,
     SealIntent,
+    SessionCloseDisposition,
+    SessionCloseFailureCategory,
+    SessionCloseIntent,
+    StoredRevision,
     WorkspaceId,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.execution.local_durability import (
     DurabilityError,
     DurabilityOperation,
+    LocalDurability,
+    PosixLocalDurability,
     ScriptedFault,
     ScriptedLocalDurability,
 )
@@ -47,7 +53,7 @@ from tests.unit.execution.test_execution_documents import (
 
 def store(
     tmp_path: Path,
-    durability: ScriptedLocalDurability | None = None,
+    durability: LocalDurability | None = None,
 ) -> RunStore:
     return RunStore(tmp_path / "store", durability)
 
@@ -70,6 +76,81 @@ def create(
     return device_lease, revision_lease, workspace_id
 
 
+def terminalize(
+    run_store: RunStore,
+    lease: RevisionLease,
+) -> StoredRevision:
+    head = run_store.load_chain(lease.run_id).head
+    terminal = build_execution_run_report(
+        run_value(
+            RunStatus.FAILED_PARTIAL,
+            revision=head.revision + 1,
+            previous=head.digest,
+        )
+    )
+    terminal_value = json.loads(terminal.canonical_bytes)
+    terminal_value["run_id"] = lease.run_id.value
+    recovery = terminal_value["recovery"]
+    assert isinstance(recovery, dict)
+    recovery["workspace_id"] = lease.workspace_id.value
+    terminal = build_execution_run_report(terminal_value)
+    return run_store.compare_and_append(
+        lease,
+        head.revision,
+        head.digest,
+        terminal.canonical_bytes,
+        AppendIntent(
+            RunStatus.FAILED_PARTIAL,
+            True,
+            DeviceIndexIntent.ADD_OR_RETAIN_ACTIVE,
+            AuthorityPhase.RELEASE_PENDING,
+        ),
+    )
+
+
+def close_intent(
+    *,
+    record_id: str = "019950f8-4c00-7000-8000-000000000701",
+    session_id: str = "session.019950f8-4c00-7000-8000-000000000801",
+    disposition: SessionCloseDisposition = SessionCloseDisposition.FAILED,
+) -> SessionCloseIntent:
+    return SessionCloseIntent(
+        record_id=record_id,
+        session_id=session_id,
+        observed_at="2026-09-19T08:11:00Z",
+        disposition=disposition,
+        failure_category=(
+            None
+            if disposition is SessionCloseDisposition.COMPLETE
+            else SessionCloseFailureCategory.TRANSPORT
+        ),
+        failure_code=(
+            None
+            if disposition is SessionCloseDisposition.COMPLETE
+            else "transport.close_failed"
+        ),
+    )
+
+
+class RacingCloseDurability(PosixLocalDurability):
+    def __init__(self, conflicting: bool) -> None:
+        self._conflicting = conflicting
+        self._injected = False
+
+    def atomic_create(self, source_id: str, destination_id: str) -> None:
+        destination = Path(destination_id)
+        if destination.parent.name == "session-closes" and not self._injected:
+            self._injected = True
+            destination.write_bytes(
+                b"{}" if self._conflicting else Path(source_id).read_bytes()
+            )
+        super().atomic_create(source_id, destination_id)
+
+    def reset(self, *, conflicting: bool) -> None:
+        self._conflicting = conflicting
+        self._injected = False
+
+
 def test_run_store_persists_verified_chain_token_attachment_and_index(
     tmp_path: Path,
 ) -> None:
@@ -77,6 +158,7 @@ def test_run_store_persists_verified_chain_token_attachment_and_index(
     device_lease, revision_lease, workspace_id = create(run_store)
     chain = run_store.load_chain(RunId(RUN_ID))
     assert chain.head.revision == 1
+    assert run_store.inspect_head(RunId(RUN_ID)) == chain.head
     assert not chain.terminal
     assert run_store.load_ownership_token(revision_lease) == b"ownership-token"
 
@@ -159,6 +241,200 @@ def test_operational_receipt_corruption_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(CorruptRunStore, match="receipt digest mismatch"):
         RunStore(tmp_path / "store").load_operational_receipts(RunId(RUN_ID), "cleanup")
+
+
+def test_session_close_requires_terminal_truth_and_does_not_authorize_seal(
+    tmp_path: Path,
+) -> None:
+    run_store = store(tmp_path)
+    _, lease, _ = create(run_store)
+    with pytest.raises(RunStoreError, match="terminal"):
+        run_store.record_session_close(lease, close_intent())
+
+    terminal = terminalize(run_store, lease)
+    recorded = run_store.record_session_close(lease, close_intent())
+
+    assert run_store.load_chain(lease.run_id).head == terminal
+    assert recorded.terminal_digest == terminal.digest
+    assert recorded.seal_digest is None
+    with pytest.raises(RunStoreError, match="completed cleanup"):
+        run_store.finalize_and_seal(lease, SealIntent(terminal.revision, True))
+
+
+def test_session_close_recording_is_idempotent_and_conflicts_fail_closed(
+    tmp_path: Path,
+) -> None:
+    run_store = store(tmp_path)
+    _, lease, _ = create(run_store)
+    terminalize(run_store, lease)
+    intent = close_intent()
+
+    first = run_store.record_session_close(lease, intent)
+    second = run_store.record_session_close(lease, intent)
+
+    assert second == first
+    with pytest.raises(CompareConflict, match="idempotency"):
+        run_store.record_session_close(
+            lease,
+            close_intent(disposition=SessionCloseDisposition.UNKNOWN),
+        )
+    with pytest.raises(CompareConflict, match="already has"):
+        run_store.record_session_close(
+            lease,
+            close_intent(
+                record_id="019950f8-4c00-7000-8000-000000000702",
+            ),
+        )
+
+
+def test_session_close_concurrent_destination_creation_is_cas(
+    tmp_path: Path,
+) -> None:
+    durability = RacingCloseDurability(False)
+    run_store = store(tmp_path, durability)
+    _, lease, _ = create(run_store)
+    terminalize(run_store, lease)
+
+    recorded = run_store.record_session_close(lease, close_intent())
+    assert run_store.load_session_close_records(lease.run_id) == (recorded,)
+
+    durability.reset(conflicting=True)
+    conflicting_intent = close_intent(
+        record_id="019950f8-4c00-7000-8000-000000000702",
+        session_id="session.019950f8-4c00-7000-8000-000000000802",
+    )
+    with pytest.raises(CompareConflict):
+        run_store.record_session_close(lease, conflicting_intent)
+    workspace = next((tmp_path / "store" / "runs").iterdir())
+    records = tuple((workspace / "session-closes").glob("*.json"))
+    assert len(records) == 2
+    assert any(path.read_bytes() == b"{}" for path in records)
+
+
+def test_session_close_recording_rejects_symlink_substitution(tmp_path: Path) -> None:
+    run_store = store(tmp_path)
+    _, lease, _ = create(run_store)
+    terminalize(run_store, lease)
+    workspace = next((tmp_path / "store" / "runs").iterdir())
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"unchanged")
+
+    close_directory = workspace / "session-closes"
+    close_directory.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(CorruptRunStore, match="directory is unsafe"):
+        run_store.record_session_close(lease, close_intent())
+    close_directory.unlink()
+
+    close_directory.mkdir()
+    intent = close_intent()
+    destination = close_directory / (
+        hashlib.sha256(intent.record_id.encode()).hexdigest() + ".json"
+    )
+    destination.symlink_to(outside)
+
+    with pytest.raises(CorruptRunStore):
+        run_store.record_session_close(lease, intent)
+
+    assert outside.read_bytes() == b"unchanged"
+    destination.unlink()
+
+    original = workspace.with_name(f"{workspace.name}-original")
+    workspace.rename(original)
+    workspace.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(CorruptRunStore):
+        run_store.record_session_close(lease, intent)
+    assert outside.read_bytes() == b"unchanged"
+
+
+def test_run_store_persists_each_session_close_disposition(
+    tmp_path: Path,
+) -> None:
+    run_store = store(tmp_path)
+    _, lease, _ = create(run_store)
+    terminalize(run_store, lease)
+    for suffix, disposition in (
+        ("1", SessionCloseDisposition.COMPLETE),
+        ("2", SessionCloseDisposition.FAILED),
+        ("3", SessionCloseDisposition.UNKNOWN),
+    ):
+        intent = close_intent(
+            record_id=f"019950f8-4c00-7000-8000-00000000070{suffix}",
+            session_id=f"session.close-{suffix}",
+            disposition=disposition,
+        )
+
+        recorded = run_store.record_session_close(lease, intent)
+        inspection = run_store.inspect_session_close(lease.run_id, intent.session_id)
+
+        assert recorded.disposition is disposition
+        assert inspection.disposition is disposition
+        assert inspection.record == recorded
+
+
+def test_session_close_missing_and_corrupt_inspection_is_unknown(
+    tmp_path: Path,
+) -> None:
+    run_store = store(tmp_path)
+    _, lease, _ = create(run_store)
+    terminal = terminalize(run_store, lease)
+    missing = run_store.inspect_session_close(lease.run_id, close_intent().session_id)
+    assert missing.disposition is SessionCloseDisposition.UNKNOWN
+    assert missing.issue_code == "session_close.missing"
+    assert run_store.load_chain(lease.run_id).head == terminal
+
+    record = run_store.record_session_close(lease, close_intent())
+    workspace = next((tmp_path / "store" / "runs").iterdir())
+    close_path = next((workspace / "session-closes").iterdir())
+    close_path.write_bytes(record.canonical_bytes + b" ")
+    corrupt = run_store.inspect_session_close(lease.run_id, record.session_id)
+
+    assert corrupt.disposition is SessionCloseDisposition.UNKNOWN
+    assert corrupt.issue_code == "session_close.corrupt"
+    assert run_store.load_chain(lease.run_id).head == terminal
+
+
+def test_session_close_cross_run_replay_is_rejected(tmp_path: Path) -> None:
+    first_store = RunStore(tmp_path / "first")
+    _, first_lease, _ = create(first_store)
+    terminalize(first_store, first_lease)
+    record = first_store.record_session_close(first_lease, close_intent())
+
+    second_store = RunStore(tmp_path / "second")
+    device_id = DeviceId("living-room.ugoos-am6b-plus")
+    second_run_id = RunId("019950f8-4c00-7000-8000-000000000602")
+    device_lease = second_store.acquire_device(device_id)
+    value = run_value()
+    value["run_id"] = second_run_id.value
+    recovery = value["recovery"]
+    assert isinstance(recovery, dict)
+    recovery["workspace_id"] = f"workspace:{second_run_id.value}"
+    report = build_execution_run_report(value)
+    second_lease, _ = second_store.create_run(
+        device_lease,
+        second_run_id,
+        device_id,
+        b"ownership-token",
+        "sha256:" + hashlib.sha256(b"ownership-token").hexdigest(),
+        report.canonical_bytes,
+    )
+    terminalize(second_store, second_lease)
+    workspace = next((tmp_path / "second" / "runs").iterdir())
+    (workspace / "session-closes").mkdir()
+    replay_path = (
+        workspace
+        / "session-closes"
+        / (hashlib.sha256(record.record_id.encode()).hexdigest() + ".json")
+    )
+    replay_path.write_bytes(record.canonical_bytes)
+
+    with pytest.raises(CorruptRunStore, match="another Run"):
+        second_store.load_session_close_records(second_run_id)
+    inspection = second_store.inspect_session_close(
+        second_run_id,
+        record.session_id,
+    )
+    assert inspection.disposition is SessionCloseDisposition.UNKNOWN
+    assert inspection.issue_code == "session_close.corrupt"
 
 
 def test_compare_append_seal_and_index_ordering(tmp_path: Path) -> None:
@@ -318,11 +594,32 @@ def test_compare_append_seal_and_index_ordering(tmp_path: Path) -> None:
             AuthorityPhase.RELEASE_PENDING,
         ),
     )
+    released_close = run_store.record_session_close(
+        revision_lease,
+        close_intent(
+            record_id="019950f8-4c00-7000-8000-000000000704",
+            session_id="session.released-before-seal",
+            disposition=SessionCloseDisposition.COMPLETE,
+        ),
+    )
+    assert released_close.authority_state == "released"
+    assert released_close.seal_digest is None
     run_store.finalize_and_seal(
         revision_lease,
         SealIntent(released.revision, True),
     )
     assert run_store.find_active_by_device(device_lease.device_id) == ()
+    workspace = next((tmp_path / "store" / "runs").iterdir())
+    seal_bytes = (workspace / "seal.json").read_bytes()
+    close_record = run_store.record_session_close(
+        revision_lease,
+        close_intent(disposition=SessionCloseDisposition.COMPLETE),
+    )
+    assert close_record.seal_digest == (
+        "sha256:" + hashlib.sha256(seal_bytes).hexdigest()
+    )
+    assert (workspace / "seal.json").read_bytes() == seal_bytes
+    assert run_store.load_chain(RunId(RUN_ID)).head == released
     illegal_successor = cleanup_value
     illegal_successor["revision"] = 6
     illegal_successor["previous_revision_digest"] = released.digest
@@ -339,6 +636,14 @@ def test_compare_append_seal_and_index_ordering(tmp_path: Path) -> None:
                 DeviceIndexIntent.NO_CHANGE,
             ),
         )
+    (workspace / "seal.json").write_bytes(seal_bytes + b" ")
+    inspection = run_store.inspect_session_close(
+        revision_lease.run_id,
+        close_record.session_id,
+    )
+    assert inspection.disposition is SessionCloseDisposition.UNKNOWN
+    assert inspection.issue_code == "session_close.corrupt"
+    assert run_store.load_chain(RunId(RUN_ID)).head == released
 
 
 def test_acknowledgement_loss_reconciles_matching_append_once(

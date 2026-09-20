@@ -3,7 +3,6 @@
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Protocol
 
 from coreelec_reconciler.domain.canonical_json import (
@@ -25,69 +24,7 @@ from coreelec_reconciler.domain.execution import (
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.execution.run_store import CorruptRunStore
-
-
-class RemoteObjectKind(StrEnum):
-    ABSENT = "absent"
-    REGULAR = "regular"
-    DIRECTORY = "directory"
-    SYMLINK = "symlink"
-    OTHER = "other"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True, slots=True)
-class RemoteObject:
-    kind: RemoteObjectKind
-    payload: bytes | None = None
-
-
-class RemoteAuthorityBackend(Protocol):
-    def inspect_ownership(self, device_key: str) -> RemoteObject: ...
-
-    def inspect_quarantine(self, device_key: str) -> RemoteObject: ...
-
-    def create_ownership_if_unowned_and_not_quarantined(
-        self,
-        device_key: str,
-        payload: bytes,
-        expected_digest: str,
-    ) -> None: ...
-
-    def replace_ownership(
-        self,
-        device_key: str,
-        expected_digest: str,
-        payload: bytes,
-        next_digest: str,
-    ) -> None: ...
-
-    def remove_ownership(
-        self,
-        device_key: str,
-        expected_digest: str,
-        terminal_receipt_digest: str,
-    ) -> MutationReceipt: ...
-
-    def convert_to_quarantine(
-        self,
-        device_key: str,
-        expected_digest: str,
-        payload: bytes,
-        next_digest: str,
-    ) -> None: ...
-
-
-class AuthorityError(RuntimeError):
-    pass
-
-
-class AuthorityBlocked(AuthorityError):
-    pass
-
-
-class AuthorityConflict(AuthorityError):
-    pass
+from coreelec_reconciler.transports import remote_ownership as remote_port
 
 
 class OwnershipTokenSource(Protocol):
@@ -144,7 +81,7 @@ class AuthorityCoordinator:
         self,
         run_store: AuthorityRunStore,
         runtime: OwnershipTokenSource,
-        backend: RemoteAuthorityBackend,
+        backend: remote_port.RemoteAuthorityBackend,
     ) -> None:
         self._run_store = run_store
         self._runtime = runtime
@@ -156,7 +93,9 @@ class AuthorityCoordinator:
         try:
             active = self._find_active_fail_closed(request.device_id)
             if active:
-                raise AuthorityBlocked("another local authority Run is active")
+                raise remote_port.AuthorityBlocked(
+                    "another local authority Run is active"
+                )
             token = self._runtime.new_ownership_token()
             token_digest = _digest(token)
             initial_payload = request.initial_revision(token_digest)
@@ -174,7 +113,9 @@ class AuthorityCoordinator:
                 or identity.run_id != request.run_id
                 or identity.workspace_id != workspace_id
             ):
-                raise AuthorityConflict("remote identity does not match local Run")
+                raise remote_port.AuthorityConflict(
+                    "remote identity does not match local Run"
+                )
             ownership = self._remote.acquire_exclusive(
                 identity, token, updated_at=request.updated_at
             )
@@ -306,24 +247,27 @@ _LEGAL_PHASE_TRANSITIONS: dict[RemoteMarkerPhase, frozenset[RemoteMarkerPhase]] 
 
 
 class _RemoteAuthority:
-    def __init__(self, backend: RemoteAuthorityBackend) -> None:
+    def __init__(self, backend: remote_port.RemoteAuthorityBackend) -> None:
         self._backend = backend
 
     def inspect(self, device_id: str) -> RemoteOwnershipSnapshot:
         device_key = _device_key(device_id)
         quarantine = self._backend.inspect_quarantine(device_key)
-        if quarantine.kind is RemoteObjectKind.UNKNOWN:
+        if quarantine.kind is remote_port.RemoteObjectKind.UNKNOWN:
             return _unknown_snapshot()
-        if quarantine.kind is not RemoteObjectKind.ABSENT:
+        if quarantine.kind is not remote_port.RemoteObjectKind.ABSENT:
             return _unknown_snapshot()
         record = self._backend.inspect_ownership(device_key)
-        if record.kind is RemoteObjectKind.ABSENT:
+        if record.kind is remote_port.RemoteObjectKind.ABSENT:
             return RemoteOwnershipSnapshot(
                 Presence.ABSENT, None, None, None, None, None, None
             )
-        if record.kind is RemoteObjectKind.UNKNOWN:
+        if record.kind is remote_port.RemoteObjectKind.UNKNOWN:
             return _unknown_snapshot()
-        if record.kind is not RemoteObjectKind.REGULAR or record.payload is None:
+        if (
+            record.kind is not remote_port.RemoteObjectKind.REGULAR
+            or record.payload is None
+        ):
             return _unknown_snapshot()
         try:
             return _decode_marker(record.payload)
@@ -332,9 +276,12 @@ class _RemoteAuthority:
 
     def inspect_quarantine(self, device_id: str) -> Presence:
         record = self._backend.inspect_quarantine(_device_key(device_id))
-        if record.kind is RemoteObjectKind.ABSENT:
+        if record.kind is remote_port.RemoteObjectKind.ABSENT:
             return Presence.ABSENT
-        if record.kind is RemoteObjectKind.REGULAR and record.payload is not None:
+        if (
+            record.kind is remote_port.RemoteObjectKind.REGULAR
+            and record.payload is not None
+        ):
             return Presence.PRESENT
         return Presence.UNKNOWN
 
@@ -348,9 +295,9 @@ class _RemoteAuthority:
         token_digest = _digest(ownership_token)
         if (
             self._backend.inspect_quarantine(_device_key(identity.device_id.value)).kind
-            is not RemoteObjectKind.ABSENT
+            is not remote_port.RemoteObjectKind.ABSENT
         ):
-            raise AuthorityBlocked("remote quarantine blocks acquisition")
+            raise remote_port.AuthorityBlocked("remote quarantine blocks acquisition")
         marker = _marker_value(
             identity, token_digest, 1, RemoteMarkerPhase.ACQUIRED, None, updated_at
         )
@@ -360,10 +307,10 @@ class _RemoteAuthority:
             self._backend.create_ownership_if_unowned_and_not_quarantined(
                 _device_key(identity.device_id.value), payload, digest
             )
-        except AuthorityConflict:
+        except remote_port.AuthorityConflict:
             raise
         except Exception as error:
-            raise AuthorityBlocked(
+            raise remote_port.AuthorityBlocked(
                 "remote ownership durability was not proven"
             ) from error
         snapshot = self.inspect(identity.device_id.value)
@@ -385,14 +332,18 @@ class _RemoteAuthority:
     ) -> RemoteOwnership:
         self.verify_checkpoint(ownership, expected_phase)
         if _digest(ownership_token) != ownership.token_digest:
-            raise AuthorityConflict("ownership token does not match")
+            raise remote_port.AuthorityConflict("ownership token does not match")
         if next_phase not in _LEGAL_PHASE_TRANSITIONS[expected_phase]:
-            raise AuthorityConflict("remote marker phase transition is illegal")
+            raise remote_port.AuthorityConflict(
+                "remote marker phase transition is illegal"
+            )
         if (
             next_phase is RemoteMarkerPhase.TERMINAL_RELEASE_PENDING
             and not _is_evidence_digest(manifest_digest)
         ):
-            raise AuthorityConflict("release requires durable terminal evidence")
+            raise remote_port.AuthorityConflict(
+                "release requires durable terminal evidence"
+            )
         next_ownership = RemoteOwnership(
             ownership.identity,
             ownership.token_digest,
@@ -424,9 +375,11 @@ class _RemoteAuthority:
                 next_ownership.marker_digest,
             )
         except Exception as error:
-            if isinstance(error, AuthorityConflict):
+            if isinstance(error, remote_port.AuthorityConflict):
                 raise
-            raise AuthorityBlocked("remote marker durability was not proven") from error
+            raise remote_port.AuthorityBlocked(
+                "remote marker durability was not proven"
+            ) from error
         _require_snapshot(
             self.inspect(ownership.identity.device_id.value), next_ownership
         )
@@ -438,7 +391,9 @@ class _RemoteAuthority:
         expected_phase: RemoteMarkerPhase,
     ) -> RemoteOwnershipSnapshot:
         if ownership.phase is not expected_phase:
-            raise AuthorityConflict("expected marker phase does not match handle")
+            raise remote_port.AuthorityConflict(
+                "expected marker phase does not match handle"
+            )
         snapshot = self.inspect(ownership.identity.device_id.value)
         _require_snapshot(snapshot, ownership)
         return snapshot
@@ -453,12 +408,14 @@ class _RemoteAuthority:
             ownership, RemoteMarkerPhase.TERMINAL_RELEASE_PENDING
         )
         if _digest(ownership_token) != ownership.token_digest:
-            raise AuthorityConflict("ownership token does not match")
+            raise remote_port.AuthorityConflict("ownership token does not match")
         if (
             not _is_evidence_digest(terminal_receipt_digest)
             or snapshot.manifest_digest != terminal_receipt_digest
         ):
-            raise AuthorityConflict("terminal release evidence does not match")
+            raise remote_port.AuthorityConflict(
+                "terminal release evidence does not match"
+            )
         return self._backend.remove_ownership(
             _device_key(ownership.identity.device_id.value),
             ownership.marker_digest,
@@ -475,7 +432,7 @@ class _RemoteAuthority:
     ) -> RemoteQuarantine:
         self.verify_checkpoint(ownership, RemoteMarkerPhase.QUARANTINE_PENDING)
         if _digest(ownership_token) != ownership.token_digest:
-            raise AuthorityConflict("ownership token does not match")
+            raise remote_port.AuthorityConflict("ownership token does not match")
         value = {
             "binding_digest": ownership.identity.binding_digest,
             "boot_id": ownership.identity.boot_id,
@@ -590,7 +547,7 @@ def _require_snapshot(
         or snapshot.phase is not ownership.phase
         or snapshot.marker_digest != ownership.marker_digest
     ):
-        raise AuthorityConflict("remote marker checkpoint does not match")
+        raise remote_port.AuthorityConflict("remote marker checkpoint does not match")
 
 
 def _unknown_snapshot() -> RemoteOwnershipSnapshot:

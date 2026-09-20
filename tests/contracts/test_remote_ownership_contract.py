@@ -23,10 +23,12 @@ from coreelec_reconciler.domain.execution import (
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.execution.authority import (
+    _RemoteAuthority,
+)
+from coreelec_reconciler.transports.remote_ownership import (
     AuthorityBlocked,
     AuthorityConflict,
     RemoteAuthorityBackend,
-    _RemoteAuthority,
 )
 from tests.adapters.scripted import Entry, ScriptedNoFollowReader, ScriptedSFTP
 from tests.fakes.device import FakeDevice

@@ -25,21 +25,29 @@ from coreelec_reconciler.domain.execution import (
     RevisionLease,
     RunStatus,
     SealIntent,
+    SessionCloseDisposition,
+    SessionCloseInspection,
+    SessionCloseIntent,
+    SessionCloseRecord,
     StoredRevision,
     VerifiedRunChain,
     WorkspaceId,
+    build_session_close_record,
     decode_execution_evidence,
+    decode_session_close_record,
     evidence_proves_terminal_cleanup,
     execution_run_identity,
     is_post_terminal_cleanup_successor,
     validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
+from coreelec_reconciler.domain.validation import parse_rfc3339_utc
 from coreelec_reconciler.resource_types.builtins import built_in_resource_registry
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
 
 from .local_durability import (
     AcknowledgementLost,
+    DestinationExists,
     DurabilityError,
     LocalDurability,
     PosixLocalDurability,
@@ -151,6 +159,47 @@ class RunStore:
         ownership_token_digest: str,
         initial_payload: bytes,
     ) -> tuple[RevisionLease, WorkspaceId]:
+        return self._create_run(
+            device_lease,
+            run_id,
+            device_id,
+            ownership_token,
+            ownership_token_digest,
+            initial_payload,
+            active=True,
+        )
+
+    def create_read_only_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: RunId,
+        device_id: DeviceId,
+        ownership_token: bytes,
+        ownership_token_digest: str,
+        initial_payload: bytes,
+    ) -> tuple[RevisionLease, WorkspaceId]:
+        """Create a canonical Run workspace without claiming mutation authority."""
+        return self._create_run(
+            device_lease,
+            run_id,
+            device_id,
+            ownership_token,
+            ownership_token_digest,
+            initial_payload,
+            active=False,
+        )
+
+    def _create_run(
+        self,
+        device_lease: DeviceLease,
+        run_id: RunId,
+        device_id: DeviceId,
+        ownership_token: bytes,
+        ownership_token_digest: str,
+        initial_payload: bytes,
+        *,
+        active: bool,
+    ) -> tuple[RevisionLease, WorkspaceId]:
         self._require_device_lease(device_lease, device_id)
         if _sha256(ownership_token) != ownership_token_digest:
             raise RunStoreError("ownership token digest mismatch")
@@ -221,26 +270,29 @@ class RunStore:
                 directory / "state.json",
                 canonical_document_bytes(
                     {
-                        "authority_phase": AuthorityPhase.ACQUISITION_PENDING.value,
+                        "authority_phase": (
+                            AuthorityPhase.ACQUISITION_PENDING.value if active else None
+                        ),
                         "status": initial_status.value,
                         "terminal": False,
                     }
                 ),
                 "create-run-state",
             )
-            self._write_index(
-                device_id,
-                (
-                    ActiveDeviceRun(
-                        run_id,
-                        workspace_id,
-                        1,
-                        initial.digest,
-                        initial_status,
-                        AuthorityPhase.ACQUISITION_PENDING,
+            if active:
+                self._write_index(
+                    device_id,
+                    (
+                        ActiveDeviceRun(
+                            run_id,
+                            workspace_id,
+                            1,
+                            initial.digest,
+                            initial_status,
+                            AuthorityPhase.ACQUISITION_PENDING,
+                        ),
                     ),
-                ),
-            )
+                )
         except Exception:
             self._remove_unpublished_workspace(directory)
             raise
@@ -322,6 +374,34 @@ class RunStore:
         if terminal != terminal_seen:
             raise CorruptRunStore("Run terminal state does not match canonical head")
         return VerifiedRunChain(tuple(revisions), revisions[-1], terminal)
+
+    def inspect_head(self, run_id: RunId) -> StoredRevision:
+        """Read the exact canonical head without trusting the evidence chain."""
+        workspace = self._workspace_for_run(run_id)
+        identity = self._read_object(workspace / "identity.json")
+        if set(identity) != _IDENTITY_FIELDS:
+            raise CorruptRunStore("workspace identity fields are incomplete")
+        if _required_string(identity, "run_id") != run_id.value:
+            raise CorruptRunStore("workspace identity does not match Run")
+        head = self._read_object(workspace / "head.json")
+        revision = _required_int(head, "revision")
+        stored = self._validate_revision(
+            self._read_bytes(workspace / "revisions" / f"{revision:08d}.json")
+        )
+        if stored.revision != revision or head.get("digest") != stored.digest:
+            raise CorruptRunStore("Run head does not match referenced revision")
+        value = decode_json_object(stored.payload)
+        if _required_string(value, "run_id") != run_id.value:
+            raise CorruptRunStore("Run revision identity mismatch")
+        try:
+            revision_identity = execution_run_identity(value)
+        except ValueError as error:
+            raise CorruptRunStore(
+                "Run immutable identity bindings are malformed"
+            ) from error
+        if revision_identity != identity:
+            raise CorruptRunStore("Run immutable identity bindings changed")
+        return stored
 
     def load_identity(self, run_id: RunId) -> dict[str, object]:
         workspace = self._workspace_for_run(run_id)
@@ -714,6 +794,255 @@ class RunStore:
             )
         return tuple(receipts)
 
+    def record_session_close(
+        self,
+        lease: RevisionLease,
+        intent: SessionCloseIntent,
+    ) -> SessionCloseRecord:
+        """Persist one idempotent transport/session close outcome."""
+        self._require_run_lease(lease)
+        chain = self.load_chain(lease.run_id)
+        if not chain.terminal:
+            raise RunStoreError("session close requires durable terminal Run truth")
+        workspace = self._workspace_for_run(lease.run_id)
+        directory = workspace / "session-closes"
+        try:
+            self._durability.create_private_directory(str(directory))
+            self._durability.sync_directory(str(workspace))
+        except DurabilityError as error:
+            raise CorruptRunStore("session close directory is unsafe") from error
+        path = directory / f"{_opaque_key(intent.record_id)}.json"
+        try:
+            existing_bytes = self._read_bytes(path)
+        except FileNotFoundError:
+            pass
+        else:
+            try:
+                existing = decode_session_close_record(existing_bytes)
+            except ValueError as error:
+                raise CorruptRunStore("session close record is malformed") from error
+            self._validate_session_close_binding(existing, chain, workspace)
+            if not _session_close_matches_intent(existing, intent):
+                raise CompareConflict("session close idempotency identity conflicts")
+            return existing
+        existing_records = self._load_session_close_records(
+            lease.run_id,
+            chain,
+            workspace,
+        )
+        if any(item.session_id == intent.session_id for item in existing_records):
+            raise CompareConflict("session already has a close outcome")
+        identity = self._read_object(workspace / "identity.json")
+        terminal = _first_terminal_revision(chain)
+        head_value = decode_json_object(chain.head.payload)
+        authority = head_value.get("authority")
+        if not isinstance(authority, dict):
+            raise CorruptRunStore("terminal Run authority is malformed")
+        authority_state = _required_string(authority, "ownership_state")
+        seal_digest = self._current_seal_digest(workspace, chain)
+        failure: dict[str, str] | None = None
+        if intent.disposition is not SessionCloseDisposition.COMPLETE:
+            if intent.failure_category is None or intent.failure_code is None:
+                raise RunStoreError(
+                    "failed or unknown session close requires safe failure metadata"
+                )
+            failure = {
+                "category": intent.failure_category.value,
+                "code": intent.failure_code,
+            }
+        elif intent.failure_category is not None or intent.failure_code is not None:
+            raise RunStoreError("complete session close cannot contain failure")
+        record = build_session_close_record(
+            {
+                "authority_state": authority_state,
+                "device_id": _required_string(identity, "device_id"),
+                "disposition": intent.disposition.value,
+                "failure": failure,
+                "kind": "CoreElecReconcilerSessionClose",
+                "observed_at": intent.observed_at,
+                "observed_head_digest": chain.head.digest,
+                "observed_head_revision": chain.head.revision,
+                "producer": {"name": "coreelec-reconciler", "version": "0.1.0"},
+                "record_id": intent.record_id,
+                "run_id": lease.run_id.value,
+                "schema_version": 1,
+                "seal_digest": seal_digest,
+                "session_id": intent.session_id,
+                "terminal_digest": terminal.digest,
+                "terminal_revision": terminal.revision,
+                "workspace_id": lease.workspace_id.value,
+            }
+        )
+        self._validate_session_close_binding(record, chain, workspace)
+        self._publish_new(
+            path,
+            record.canonical_bytes,
+            f"session-close:{record.record_id}",
+        )
+        loaded = decode_session_close_record(self._read_bytes(path))
+        self._validate_session_close_binding(loaded, chain, workspace)
+        return loaded
+
+    def load_session_close_records(
+        self,
+        run_id: RunId,
+    ) -> tuple[SessionCloseRecord, ...]:
+        """Strictly load close records without changing canonical Run truth."""
+        chain = self.load_chain(run_id)
+        workspace = self._workspace_for_run(run_id)
+        return self._load_session_close_records(run_id, chain, workspace)
+
+    def inspect_session_close(
+        self,
+        run_id: RunId,
+        session_id: str,
+    ) -> SessionCloseInspection:
+        """Return conservative close state while preserving a valid Run result."""
+        _require_safe_code(session_id, "session ID")
+        chain = self.load_chain(run_id)
+        workspace = self._workspace_for_run(run_id)
+        try:
+            records = self._load_session_close_records(run_id, chain, workspace)
+        except CorruptRunStore:
+            return SessionCloseInspection(
+                SessionCloseDisposition.UNKNOWN,
+                None,
+                "session_close.corrupt",
+            )
+        matching = tuple(item for item in records if item.session_id == session_id)
+        if not matching:
+            return SessionCloseInspection(
+                SessionCloseDisposition.UNKNOWN,
+                None,
+                "session_close.missing",
+            )
+        record = matching[0]
+        return SessionCloseInspection(
+            record.disposition,
+            record,
+            (
+                None
+                if record.disposition is SessionCloseDisposition.COMPLETE
+                else record.failure_code
+            ),
+        )
+
+    def _load_session_close_records(
+        self,
+        run_id: RunId,
+        chain: VerifiedRunChain,
+        workspace: Path,
+    ) -> tuple[SessionCloseRecord, ...]:
+        directory = workspace / "session-closes"
+        if not directory.exists():
+            return ()
+        if directory.is_symlink() or not directory.is_dir():
+            raise CorruptRunStore("session close directory is unsafe")
+        records: list[SessionCloseRecord] = []
+        record_ids: set[str] = set()
+        session_ids: set[str] = set()
+        for path in sorted(directory.iterdir()):
+            if path.is_symlink() or not path.is_file() or path.suffix != ".json":
+                raise CorruptRunStore("session close directory contains unsafe object")
+            try:
+                record = decode_session_close_record(self._read_bytes(path))
+            except (ValueError, DurabilityError) as error:
+                raise CorruptRunStore("session close record is malformed") from error
+            if path.name != f"{_opaque_key(record.record_id)}.json":
+                raise CorruptRunStore("session close record path is invalid")
+            if record.run_id != run_id.value:
+                raise CorruptRunStore("session close record claims another Run")
+            if record.record_id in record_ids or record.session_id in session_ids:
+                raise CorruptRunStore("duplicate session close identity")
+            self._validate_session_close_binding(record, chain, workspace)
+            record_ids.add(record.record_id)
+            session_ids.add(record.session_id)
+            records.append(record)
+        return tuple(
+            sorted(records, key=lambda item: (item.observed_at, item.record_id))
+        )
+
+    def _validate_session_close_binding(
+        self,
+        record: SessionCloseRecord,
+        chain: VerifiedRunChain,
+        workspace: Path,
+    ) -> None:
+        identity = self._read_object(workspace / "identity.json")
+        terminal = _first_terminal_revision(chain)
+        if (
+            record.run_id != _required_string(identity, "run_id")
+            or record.workspace_id != _required_string(identity, "workspace_id")
+            or record.device_id != _required_string(identity, "device_id")
+            or record.terminal_revision != terminal.revision
+            or record.terminal_digest != terminal.digest
+            or record.observed_head_revision > len(chain.revisions)
+        ):
+            raise CorruptRunStore("session close immutable binding is invalid")
+        observed = chain.revisions[record.observed_head_revision - 1]
+        observed_value = decode_json_object(observed.payload)
+        authority = observed_value.get("authority")
+        if (
+            observed.digest != record.observed_head_digest
+            or not isinstance(authority, dict)
+            or authority.get("ownership_state") != record.authority_state
+            or RunStatus(_required_string(observed_value, "status"))
+            not in TERMINAL_RUN_STATUSES
+        ):
+            raise CorruptRunStore("session close head binding is invalid")
+        ended_at = observed_value.get("ended_at")
+        if ended_at is not None and parse_rfc3339_utc(
+            record.observed_at, "session close observed_at"
+        ) < parse_rfc3339_utc(ended_at, "Run ended_at"):
+            raise CorruptRunStore("session close predates terminal Run truth")
+        if record.seal_digest is not None:
+            seal_path = workspace / "seal.json"
+            try:
+                seal_bytes = self._read_bytes(seal_path)
+            except FileNotFoundError as error:
+                raise CorruptRunStore("session close seal binding is absent") from error
+            try:
+                seal = decode_json_object(seal_bytes)
+            except ValueError as error:
+                raise CorruptRunStore(
+                    "session close seal binding is invalid"
+                ) from error
+            if (
+                _sha256(seal_bytes) != record.seal_digest
+                or seal.get("terminal_revision") != record.observed_head_revision
+                or seal.get("terminal_digest") != record.observed_head_digest
+                or seal.get("ownership_released_or_quarantined") is not True
+            ):
+                raise CorruptRunStore("session close seal binding is invalid")
+
+    def _current_seal_digest(
+        self,
+        workspace: Path,
+        chain: VerifiedRunChain,
+    ) -> str | None:
+        path = workspace / "seal.json"
+        try:
+            payload = self._read_bytes(path)
+        except FileNotFoundError:
+            return None
+        try:
+            value = decode_json_object(payload)
+        except ValueError as error:
+            raise CorruptRunStore("Run seal is malformed") from error
+        if (
+            set(value)
+            != {
+                "ownership_released_or_quarantined",
+                "terminal_digest",
+                "terminal_revision",
+            }
+            or value["ownership_released_or_quarantined"] is not True
+            or value["terminal_revision"] != chain.head.revision
+            or value["terminal_digest"] != chain.head.digest
+        ):
+            raise CorruptRunStore("Run seal is malformed")
+        return _sha256(payload)
+
     def load_ownership_token(self, lease: RevisionLease) -> bytes:
         self._require_run_lease(lease)
         workspace = self._workspace_for_run(lease.run_id)
@@ -1055,6 +1384,43 @@ class RunStore:
             if temporary.exists():
                 temporary.unlink()
 
+    def _publish_new(self, path: Path, payload: bytes, operation_id: str) -> None:
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        try:
+            try:
+                self._durability.write_private(str(temporary), payload)
+            except AcknowledgementLost:
+                if not self._matches_payload(temporary, payload):
+                    raise
+            try:
+                self._durability.full_sync_file(str(temporary))
+            except AcknowledgementLost:
+                if not self._matches_payload(temporary, payload):
+                    raise
+            try:
+                self._durability.atomic_create(str(temporary), str(path))
+            except DestinationExists, AcknowledgementLost:
+                try:
+                    existing = self._read_bytes(path)
+                except CorruptRunStore, FileNotFoundError:
+                    raise CompareConflict(
+                        "append-only record publication conflict"
+                    ) from None
+                if existing != payload:
+                    raise CompareConflict(
+                        "append-only record publication conflict"
+                    ) from None
+            try:
+                self._durability.sync_directory(str(path.parent))
+            except AcknowledgementLost:
+                if not self._matches_payload(path, payload):
+                    raise
+            if self._read_bytes(path) != payload:
+                raise CompareConflict("append-only record publication conflict")
+            self._durability.acknowledge(operation_id)
+        finally:
+            self._durability.remove_file(str(temporary))
+
     def _read_object(self, path: Path) -> dict[str, object]:
         try:
             return decode_json_object(self._read_bytes(path))
@@ -1132,6 +1498,28 @@ class RunStore:
 
 def _sha256(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _first_terminal_revision(chain: VerifiedRunChain) -> StoredRevision:
+    for revision in chain.revisions:
+        value = decode_json_object(revision.payload)
+        if RunStatus(_required_string(value, "status")) in TERMINAL_RUN_STATUSES:
+            return revision
+    raise CorruptRunStore("terminal Run has no terminal revision")
+
+
+def _session_close_matches_intent(
+    record: SessionCloseRecord,
+    intent: SessionCloseIntent,
+) -> bool:
+    return (
+        record.record_id == intent.record_id
+        and record.session_id == intent.session_id
+        and record.observed_at == intent.observed_at
+        and record.disposition is intent.disposition
+        and record.failure_category is intent.failure_category
+        and record.failure_code == intent.failure_code
+    )
 
 
 def _opaque_key(value: str) -> str:
