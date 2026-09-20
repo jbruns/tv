@@ -308,7 +308,7 @@ class ManagedFileExecutor:
             CleanupMutationIntent(
                 operation_id,
                 PrimitiveKind.CLEANUP,
-                prepared.cleanup_metadata_attachment.digest,
+                prepared.cleanup_object.object_id,
                 terminal_evidence_ref,
                 marker,
                 1,

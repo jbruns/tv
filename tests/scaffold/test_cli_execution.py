@@ -127,7 +127,9 @@ def _environment(
             "COREELEC_RECONCILER_TEST_COMPOSITION": "1",
             "LC_ALL": "C",
             "PYTHONHASHSEED": "73",
-            "PYTHONPATH": str(COMPOSITION_ROOT),
+            "PYTHONPATH": os.pathsep.join(
+                (str(COMPOSITION_ROOT), str(DEPENDENCY_SITE_PACKAGES))
+            ),
             "TERM": "dumb",
             "TZ": "Pacific/Honolulu",
         }
@@ -357,11 +359,11 @@ def test_installed_output_is_environment_deterministic(installed_cli: Path) -> N
 @pytest.mark.parametrize(
     ("arguments", "diagnostic"),
     [
-        (("observe", "living-room.ugoos-am6b-plus"), b"device-session-unavailable"),
-        (("apply", "plan.missing"), b"approved-plan-unavailable"),
-        (("reconcile", "living-room.ugoos-am6b-plus"), b"observation.missing"),
-        (("verify", "living-room.ugoos-am6b-plus"), b"device-session-unavailable"),
-        (("recover", "run.missing", "inspect"), b"run-not-found"),
+        (("observe", "living-room.ugoos-am6b-plus"), b"observation-unavailable"),
+        (("apply", "plan.missing"), b"saved-plan-rejected"),
+        (("reconcile", "living-room.ugoos-am6b-plus"), b"device.session-unavailable"),
+        (("verify", "living-room.ugoos-am6b-plus"), b"verification-unavailable"),
+        (("recover", "run.missing", "inspect"), b"inspect-unavailable"),
         (("report", "run.missing"), b"run-not-found"),
     ],
 )
@@ -383,7 +385,6 @@ def test_installed_wheel_uses_genuine_production_composition_offline(
     assert result.stdout == b""
     assert diagnostic in result.stderr
     assert b"not_implemented" not in result.stderr
-    assert not (tmp_path / ".local").exists()
 
 
 def test_installed_non_tty_disables_color_with_normal_term(
@@ -470,7 +471,9 @@ def test_installed_broken_pipe_has_no_traceback(installed_cli: Path) -> None:
     environment.update(
         {
             "COREELEC_RECONCILER_TEST_COMPOSITION": "1",
-            "PYTHONPATH": str(COMPOSITION_ROOT),
+            "PYTHONPATH": os.pathsep.join(
+                (str(COMPOSITION_ROOT), str(DEPENDENCY_SITE_PACKAGES))
+            ),
             "TERM": "dumb",
         }
     )

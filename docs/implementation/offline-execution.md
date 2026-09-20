@@ -13,9 +13,17 @@ root builds the real `ApplicationDependencies`,
 lazy production SSH/SFTP, host-key, secret, and filesystem RunStore
 construction. CLI and application modules depend on typed seams and
 instantiate no concrete adapter. Bootstrap construction itself has no socket,
-secret-resolution, or local-state side effect. Missing approved Plans, Device
-sessions, and Runs produce typed capability-unavailable outcomes, not
-`not_implemented`.
+secret-resolution, or local-state side effect.
+
+Planning persists the canonical Plan and planning Run through `PlanStore`.
+Apply reloads and validates those exact bytes, resolves approvals against a
+trusted clock, revalidates Device/boot/host-key identity, and asks
+`ProductionExecutionFactory` to bind the Resource registry, RunStore journal,
+authority coordinator, managed-file lifecycle, and recovery services. Session
+and secret resolution remain lazy until observation or execution requires
+them. Report remains local-only. Missing or rejected inputs produce typed
+capability-unavailable outcomes rather than implementing a workflow as an
+unavailable stub.
 
 ## Exact offline partition
 
@@ -55,6 +63,12 @@ Verification decide the result, including ambiguous acknowledgements.
 Recovery begins with read-only inspection and exposes only computed legal
 actions. It never retries forward mutation. Abandonment requires its distinct
 approval and reason and leaves durable blocking quarantine.
+
+Production-composition integration tests inject deterministic stateful Device,
+managed-file, ownership, host-key, and clock seams at bootstrap. They exercise
+observe, Plan persistence, approval-gated reconcile, apply, verify, report,
+process restart, inspection, cleanup uncertainty, and Run reconstruction
+without opening a socket or resolving a real secret.
 
 Canonical Plan and Run bytes, revision linkage, attachment bindings, terminal
 immutability, active-index release order, and workspace opacity are tested

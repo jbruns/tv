@@ -48,7 +48,9 @@ SEMANTIC_EXCLUSIONS = {
 def _plan(tmp_path: Path, content: bytes) -> PlanOutcome:
     supplied = tmp_path / "observations.json"
     supplied.write_bytes(supplied_document(content))
-    outcome = bootstrap(BootstrapSettings(str(FIXTURE_ROOT))).execute(
+    outcome = bootstrap(
+        BootstrapSettings(str(FIXTURE_ROOT), state_root=str(tmp_path / "state"))
+    ).execute(
         PlanCommand(
             str(FIXTURE_ROOT),
             DeviceId("living-room.ugoos-am6b-plus"),

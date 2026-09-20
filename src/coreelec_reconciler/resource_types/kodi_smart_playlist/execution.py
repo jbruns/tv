@@ -57,7 +57,6 @@ from coreelec_reconciler.resource_types.managed_file.preparation import (
     PreparationObject,
     PreparedManagedFile,
     decode_prepared_managed_file,
-    normalized_state_digest,
     prepare_managed_file,
 )
 
@@ -142,9 +141,19 @@ def decode_planned_change(
         context.address,
         read_limit=65536,
     )
+    assessment = assess_playlist(
+        context.resource.intent,
+        context.resource.desired,
+        context.resource.management,
+        planning_observation(
+            context.resource.id.value,
+            context.observed_at(),
+            observation,
+        ),
+    )
     if (
         not isinstance(expected_digest, str)
-        or normalized_state_digest(observation.state) != expected_digest
+        or assessment.before_digest != expected_digest
     ):
         raise ValueError("planned Change precondition is stale")
     rollback = value["rollback"]
@@ -156,13 +165,9 @@ def decode_planned_change(
     if not isinstance(desired, dict):
         raise ValueError("planned Change desired state is malformed")
     planned_desired_digest = desired.get("normalized_state_digest")
-    current_desired, _ = desired_state(
-        context.resource.intent,
-        context.resource.desired,
-    )
     if (
         not isinstance(planned_desired_digest, str)
-        or normalized_state_digest(current_desired) != planned_desired_digest
+        or assessment.desired_digest != planned_desired_digest
     ):
         raise ValueError("resolved configuration differs from approved Plan")
     return PlaylistChange(
