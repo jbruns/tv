@@ -17,3 +17,7 @@ coreelec-lifecycle-reports/
 dist/
 __pycache__/
 *.py[cod]
+
+# Agent skills, restored from the pin in skills-lock.json rather than vendored.
+# See docs/agents/skills.md.
+.agents/skills/

@@ -21,13 +21,17 @@ HTML_ANCHOR_ATTRIBUTE_RE = re.compile(
 )
 ATTRIBUTE_ANCHOR_RE = re.compile(r"\{#([A-Za-z][A-Za-z0-9_.:-]*)\}")
 IGNORED_DIRECTORIES = {".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", "__pycache__"}
+# Third-party content restored from skills-lock.json; its links resolve against
+# its own upstream repository, not this one. See docs/agents/skills.md.
+VENDORED_DIRECTORIES = {".agents"}
 
 
 def markdown_files(root: Path) -> list[Path]:
+    skipped = IGNORED_DIRECTORIES | VENDORED_DIRECTORIES | {".worktrees"}
     files: list[Path] = []
     for candidate in root.rglob("*.md"):
         relative_parts = candidate.relative_to(root).parts
-        if any(part in IGNORED_DIRECTORIES or part == ".worktrees" for part in relative_parts):
+        if any(part in skipped for part in relative_parts):
             continue
         files.append(candidate)
     return sorted(files)
