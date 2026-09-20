@@ -33,6 +33,7 @@ from coreelec_reconciler.application.outcomes import (
     ReconcileResult,
     RecoverOutcome,
     RecoverResult,
+    RecoveryInspectionOutcome,
     ReportOutcome,
     ReportResult,
     UnsupportedOutcome,
@@ -42,8 +43,13 @@ from coreelec_reconciler.application.outcomes import (
     VerifyOutcome,
     VerifyResult,
 )
-from coreelec_reconciler.domain.execution import FinalizeMode, RecoveryActionCode
-from coreelec_reconciler.domain.identifiers import PlanId
+from coreelec_reconciler.domain.execution import (
+    FinalizeMode,
+    RecoveryActionCode,
+    RunStatus,
+)
+from coreelec_reconciler.domain.identifiers import PlanId, RunId
+from coreelec_reconciler.domain.planning import CanonicalRunReport
 
 if TYPE_CHECKING:
     from coreelec_reconciler.execution.engine import (
@@ -62,7 +68,9 @@ class ApplicationWorkflows(Protocol):
 
     def verify(self, command: VerifyCommand) -> VerifyOutcome: ...
 
-    def recover(self, command: RecoverCommand) -> RecoverOutcome: ...
+    def recover(
+        self, command: RecoverCommand
+    ) -> RecoverOutcome | RecoveryInspectionOutcome: ...
 
     def report(self, command: ReportCommand) -> ReportOutcome: ...
 
@@ -97,31 +105,65 @@ class ExecutionApplicationWorkflows:
     def apply(self, command: ApplyCommand) -> ApplyOutcome:
         plan = self._data.approved_plan(command.plan_id, command.approval_scopes)
         result = self._engine.start(plan)
-        return ApplyOutcome(result.run_id, result.status.value)
+        report = self._run_report(command.repository_root, result.run_id)
+        _require_execution_result_binding(result.run_id, result.status, report)
+        return ApplyOutcome(report, result.cleanup_complete)
 
     def reconcile(self, command: ReconcileCommand) -> ReconcileOutcome:
         planned = self._data.plan(
             PlanCommand(command.repository_root, command.device_id)
         )
+        planning_report = _require_planning_report(planned)
         if planned.plan_id is None or planned.disposition != "actionable":
-            return ReconcileOutcome(planned.run_id, None, planned.disposition)
+            return ReconcileOutcome(planning_report, planned.plan, None, None)
         plan = self._data.approved_plan(planned.plan_id, command.approval_scopes)
         result = self._engine.start(plan)
-        return ReconcileOutcome(planned.run_id, result.run_id, result.status.value)
+        report = self._run_report(command.repository_root, result.run_id)
+        _require_execution_result_binding(result.run_id, result.status, report)
+        return ReconcileOutcome(
+            planning_report,
+            planned.plan,
+            report,
+            result.cleanup_complete,
+        )
 
     def verify(self, command: VerifyCommand) -> VerifyOutcome:
         return self._data.verify(command)
 
-    def recover(self, command: RecoverCommand) -> RecoverOutcome:
+    def recover(
+        self, command: RecoverCommand
+    ) -> RecoverOutcome | RecoveryInspectionOutcome:
         request = _recovery_request(command)
         if request.action is RecoveryActionCode.INSPECT:
-            self._engine.inspect(command.run_id)
-            return RecoverOutcome(command.run_id, "inspected")
+            inspection = self._engine.inspect(command.run_id)
+            report = self._run_report(command.repository_root, command.run_id)
+            if inspection.evidence.run_id != command.run_id:
+                raise ValueError("recovery inspection does not bind to the Run")
+            if report.status is not inspection.evidence.canonical_status:
+                raise ValueError(
+                    "canonical Run Report does not bind to recovery inspection truth"
+                )
+            return RecoveryInspectionOutcome(
+                report,
+                inspection.evidence,
+                inspection.actions,
+            )
         result = self._engine.recover(command.run_id, request)
-        return RecoverOutcome(result.run_id, result.status.value)
+        report = self._run_report(command.repository_root, result.run_id)
+        _require_execution_result_binding(result.run_id, result.status, report)
+        return RecoverOutcome(report, result.cleanup_complete)
 
     def report(self, command: ReportCommand) -> ReportOutcome:
-        return self._data.report(command)
+        outcome = self._data.report(command)
+        if outcome.run_id != command.run_id:
+            raise ValueError("canonical Run Report does not bind to the requested Run")
+        return outcome
+
+    def _run_report(self, repository_root: str, run_id: RunId) -> CanonicalRunReport:
+        outcome = self._data.report(ReportCommand(repository_root, run_id))
+        if outcome.run_id != run_id:
+            raise ValueError("canonical Run Report does not bind to the requested Run")
+        return outcome.run_report
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,3 +323,21 @@ def _recovery_request(command: RecoverCommand) -> RecoveryRequest:
     if code is not RecoveryActionCode.FINALIZE and mode is not None:
         raise ValueError("only finalize accepts a recovery mode")
     return RecoveryRequest(code, mode, command.approval, command.reason)
+
+
+def _require_planning_report(outcome: PlanOutcome) -> CanonicalRunReport:
+    report = outcome.run_report
+    if report is None:
+        raise RuntimeError("planning workflow omitted its canonical Run Report")
+    if report.run_id != outcome.run_id.value:
+        raise ValueError("planning Run Report does not bind to the planning outcome")
+    return report
+
+
+def _require_execution_result_binding(
+    run_id: RunId,
+    status: RunStatus,
+    report: CanonicalRunReport,
+) -> None:
+    if report.run_id != run_id.value or report.status is not status:
+        raise ValueError("canonical Run Report does not bind to execution truth")

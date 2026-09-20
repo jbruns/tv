@@ -6,6 +6,17 @@ workflow dependencies; `inventory` and `action` remain explicit
 `not_implemented` results, and `provision` remains CLI-only syntax for
 `reconcile`.
 
+Modeled application outcomes carry the authoritative `CanonicalRunReport`
+rather than asking presentation code to reconstruct a document from IDs and
+status strings. Reconcile retains both its planning Run and Plan and, when
+execution occurs, its execution Run; this preserves the `awaiting_approval`
+planning document. Recovery inspection returns the stable `RecoveryEvidence`
+and the complete computed `AllowedRecoveryAction` tuple. Mutating recovery
+returns the resulting current terminal Run report. Cleanup completion remains
+separate metadata, so cleanup uncertainty cannot change Device convergence or
+failure truth. Missing or mismatched canonical reports fail at the application
+boundary instead of being fabricated by the CLI.
+
 Managed-file execution uses least-authority fake capabilities. Every
 state-changing primitive follows the same durable boundary: persist its typed
 intent, reread and match the remote marker, invoke the primitive once, freshly
