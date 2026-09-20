@@ -46,7 +46,7 @@ resolved Profile filesystem, executes both `RENAME_NOREPLACE` and
 `RENAME_EXCHANGE`, verifies their inode effects, and removes only entries whose
 identity is still proven. Unsupported syscalls/filesystems or incomplete probe
 cleanup make the entire mutation capability unavailable.
-`tests/unit/adapters/test_managed_mutation_helper.py` exercises the real helper
+`tests/contracts/test_managed_mutation_helper_contract.py` exercises the real helper
 against ancestor and final symlinks, changed pre-images, stage substitution,
 lost acknowledgements, and command-shaped path/content values.
 
