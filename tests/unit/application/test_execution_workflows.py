@@ -94,9 +94,6 @@ RECOVERY_REPORT = _report("recover", RunStatus.FAILED_ROLLED_BACK, revision=9)
 
 
 class _Workflows:
-    def observe(self, command: ObserveCommand) -> ObservationOutcome:
-        return ObservationOutcome(OBSERVE_REPORT)
-
     def apply(self, command: ApplyCommand) -> ApplyOutcome:
         return ApplyOutcome(EXECUTION_REPORT, True)
 
@@ -127,7 +124,8 @@ def _application() -> ApplicationReconciler:
                 PLAN,
                 PLANNING_REPORT,
             ),
-        )
+        ),
+        observe_repository=lambda command: ObservationOutcome(OBSERVE_REPORT),
     )
 
 
@@ -143,9 +141,6 @@ class _Data:
             RunId("execute"): EXECUTION_REPORT,
             RunId("recover"): RECOVERY_REPORT,
         }
-
-    def observe(self, command: ObserveCommand) -> ObservationOutcome:
-        return ObservationOutcome(OBSERVE_REPORT)
 
     def plan(self, command: PlanCommand) -> PlanOutcome:
         return self.planned
@@ -282,7 +277,7 @@ def test_plan_results_are_classified_into_a_closed_public_algebra() -> None:
     assert failed.diagnostics == ("observation.missing",)
 
 
-def test_observe_verify_and_report_preserve_canonical_run_documents() -> None:
+def test_verify_and_report_preserve_canonical_run_documents() -> None:
     workflows = _concrete_workflows(
         PlanOutcome(
             RunId("planning"),
@@ -293,13 +288,9 @@ def test_observe_verify_and_report_preserve_canonical_run_documents() -> None:
         )
     )
 
-    observed = workflows.observe(ObserveCommand(".", DeviceId("device")))
     verified = workflows.verify(VerifyCommand(".", DeviceId("device")))
     reported = workflows.report(ReportCommand(".", RunId("recover")))
 
-    assert observed.run_report is OBSERVE_REPORT
-    assert observed.run_report.canonical_bytes == OBSERVE_REPORT.canonical_bytes
-    assert observed.status is RunStatus.NOOP
     assert verified.run_report is VERIFY_REPORT
     assert verified.status is RunStatus.CONVERGED
     assert reported.run_report is RECOVERY_REPORT

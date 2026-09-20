@@ -1,15 +1,12 @@
-import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from coreelec_reconciler.application.observation import ObservationApplication
+from coreelec_reconciler.domain.configuration import ProfileRootCapability
 from coreelec_reconciler.domain.execution import (
     DeviceLease,
-    NormalizedResourceState,
-    Presence,
     RevisionLease,
     SessionCloseDisposition,
     StoredRevision,
@@ -24,6 +21,7 @@ from coreelec_reconciler.execution.observation import (
     CanonicalObservationRuns,
     ObservationInputDigests,
     ObservationResource,
+    ObservationResourceContext,
     ObservationRunRequest,
 )
 from coreelec_reconciler.execution.run_store import CorruptRunStore, RunStore
@@ -38,17 +36,24 @@ from coreelec_reconciler.persistence.observation_documents import (
 from coreelec_reconciler.resource_types.builtins import (
     built_in_resource_registry,
 )
+from coreelec_reconciler.resource_types.descriptor import (
+    ErasedResourceObserverAdapter,
+    ResourceObservationContext,
+)
 from coreelec_reconciler.resource_types.managed_file.observation import (
     ManagedFileObservation,
+    observe_managed_file,
 )
 from coreelec_reconciler.resource_types.managed_file.paths import (
-    ManagedPath,
-    ResolvedManagedAddress,
+    resolve_special_profile_path,
 )
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
 from coreelec_reconciler.transports.interfaces import (
+    EntryKind,
+    FileMetadata,
     ReadFailure,
     ReadFailureCode,
+    ReadResult,
 )
 
 RUN_ID = RunId("019950f8-4c00-7000-8000-000000000901")
@@ -56,7 +61,7 @@ DEVICE_ID = DeviceId("device.test")
 SHA = "sha256:" + "a" * 64
 
 
-class _Observer:
+class _HostileReadContext:
     def __init__(
         self,
         resource_id: str,
@@ -67,31 +72,27 @@ class _Observer:
         self._resource_id = resource_id
         self._calls = calls
         self._failure = failure
+        self.write_attempts: list[str] = []
 
-    def observe(self) -> object:
+    def lstat(self, path: str) -> ReadResult:
         self._calls.append(self._resource_id)
-        address = ResolvedManagedAddress(
-            f"special://profile/playlists/video/{self._resource_id}.xsp",
-            ManagedPath(f"/storage/{self._resource_id}.xsp"),
-        )
         if self._failure is not None:
-            return ManagedFileObservation(
-                address,
-                NormalizedResourceState(Presence.UNKNOWN, None, None, None),
-                None,
-                self._failure,
-            )
+            return ReadResult(None, self._failure)
         content = self._resource_id.encode()
-        return ManagedFileObservation(
-            address,
-            NormalizedResourceState(
-                Presence.PRESENT,
-                "regular",
-                "sha256:" + hashlib.sha256(content).hexdigest(),
-                0o644,
-            ),
-            content,
+        return ReadResult(
+            FileMetadata(EntryKind.REGULAR, 0o644, len(content)),
         )
+
+    def read(self, path: str, limit: int) -> ReadResult:
+        return ReadResult(self._resource_id.encode())
+
+    def stage_write(self, *args: object) -> object:
+        self.write_attempts.append("stage_write")
+        raise AssertionError("observation attempted a write")
+
+    def remove(self, *args: object) -> object:
+        self.write_attempts.append("remove")
+        raise AssertionError("observation attempted a write")
 
 
 class _InterruptingStore(RunStore):
@@ -172,14 +173,30 @@ def _request(
             "KodiSmartPlaylist",
             ("special://profile/playlists/video/resource.base.xsp",),
             (),
-            _Observer("resource.base", calls),
+            ObservationResourceContext(
+                DEVICE_ID,
+                "resource.base",
+                "KodiSmartPlaylist",
+                ("special://profile/playlists/video/resource.base.xsp",),
+                ProfileRootCapability("/storage"),
+                _HostileReadContext("resource.base", calls),
+            ),
         ),
         ObservationResource(
             "resource.dependent",
             "KodiSmartPlaylist",
             ("special://profile/playlists/video/resource.dependent.xsp",),
             ("resource.base",),
-            _Observer("resource.dependent", calls, failure=second_failure),
+            ObservationResourceContext(
+                DEVICE_ID,
+                "resource.dependent",
+                "KodiSmartPlaylist",
+                ("special://profile/playlists/video/resource.dependent.xsp",),
+                ProfileRootCapability("/storage"),
+                _HostileReadContext(
+                    "resource.dependent", calls, failure=second_failure
+                ),
+            ),
         ),
     )
     return ObservationRunRequest(
@@ -347,6 +364,7 @@ def test_report_rejects_tampered_or_gapped_chain(
 
 
 def test_rejects_missing_codec_and_invalid_selection(tmp_path: Path) -> None:
+    calls: list[str] = []
     registry = built_in_resource_registry()
     descriptor = registry.descriptor("KodiSmartPlaylist")
     assert descriptor is not None
@@ -359,9 +377,9 @@ def test_rejects_missing_codec_and_invalid_selection(tmp_path: Path) -> None:
         _runtime(),
     )
     with pytest.raises(ValueError, match="complete observation codec"):
-        service.start(_request([]))
+        service.start(_request(calls))
 
-    duplicate = _request([])
+    duplicate = _request(calls)
     with pytest.raises(ValueError, match="unique"):
         CanonicalObservationRuns(
             _store(tmp_path / "duplicate", registry),
@@ -371,38 +389,142 @@ def test_rejects_missing_codec_and_invalid_selection(tmp_path: Path) -> None:
 
     wrong_address = replace(
         duplicate.resources[0],
-        state_addresses=("special://profile/playlists/video/wrong.xsp",),
+        state_addresses=("special://profile/../wrong.xsp",),
+        context=replace(
+            duplicate.resources[0].context,
+            state_addresses=("special://profile/../wrong.xsp",),
+        ),
     )
-    with pytest.raises(ValueError, match="outside selected"):
+    with pytest.raises(ValueError, match="State Address"):
         CanonicalObservationRuns(
             _store(tmp_path / "address", registry),
             registry,
             _runtime(),
         ).start(replace(duplicate, resources=(wrong_address,)))
+    assert calls == []
 
 
-def test_application_close_failure_preserves_terminal_observation(
+def test_resource_type_mismatch_fails_before_observation(tmp_path: Path) -> None:
+    calls: list[str] = []
+    request = _request(calls)
+    selected = request.resources[0]
+    wrong_type = replace(
+        selected,
+        resource_type="WrongType",
+        context=replace(selected.context, resource_type="WrongType"),
+    )
+    registry = built_in_resource_registry()
+
+    with pytest.raises(ValueError, match="complete observation codec"):
+        CanonicalObservationRuns(
+            _store(tmp_path / "wrong-type", registry),
+            registry,
+            _runtime(),
+        ).start(replace(request, resources=(wrong_type,)))
+
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("resource_type", "WrongType"),
+        ("state_addresses", ("special://profile/playlists/video/wrong.xsp",)),
+        ("device_id", DeviceId("other-device")),
+    ],
+)
+def test_context_binding_mismatch_fails_before_observation(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    calls: list[str] = []
+    request = _request(calls)
+    selected = request.resources[0]
+    if field == "resource_type":
+        assert isinstance(value, str)
+        mismatched = replace(selected.context, resource_type=value)
+    elif field == "state_addresses":
+        mismatched = replace(
+            selected.context,
+            state_addresses=("special://profile/playlists/video/wrong.xsp",),
+        )
+    else:
+        assert isinstance(value, DeviceId)
+        mismatched = replace(selected.context, device_id=value)
+    registry = built_in_resource_registry()
+
+    with pytest.raises(ValueError, match="context binding"):
+        CanonicalObservationRuns(
+            _store(tmp_path / "mismatch", registry),
+            registry,
+            _runtime(),
+        ).start(replace(request, resources=(replace(selected, context=mismatched),)))
+
+    assert calls == []
+
+
+def test_observation_factory_receives_no_write_capabilities(tmp_path: Path) -> None:
+    calls: list[str] = []
+    request = _request(calls)
+    hostile = request.resources[0].context.reader
+    registry = built_in_resource_registry()
+    descriptor = registry.descriptor("KodiSmartPlaylist")
+    assert descriptor is not None
+    received_capabilities: list[tuple[bool, bool]] = []
+
+    def factory(
+        context: ResourceObservationContext,
+    ) -> ErasedResourceObserverAdapter[ManagedFileObservation]:
+        received_capabilities.append(
+            (hasattr(context, "stage_write"), hasattr(context, "reader"))
+        )
+        address = resolve_special_profile_path(
+            context.state_addresses[0], context.profile_root
+        )
+        return ErasedResourceObserverAdapter(
+            ManagedFileObservation,
+            lambda: observe_managed_file(context, address, read_limit=1_048_576),
+        )
+
+    registry = ResourceRegistry.create(
+        (replace(descriptor, _observation_factory=factory),)
+    )
+
+    result = CanonicalObservationRuns(
+        _store(tmp_path / "readonly", registry),
+        registry,
+        _runtime(),
+    ).start(replace(request, resources=request.resources[:1]))
+
+    assert result.status is ObservationRunStatus.OBSERVED
+    assert not hasattr(result, "plan")
+    assert not hasattr(request.resources[0].context, "stage_write")
+    assert isinstance(hostile, _HostileReadContext)
+    assert received_capabilities == [(False, False)]
+    assert hostile.write_attempts == []
+
+
+def test_session_close_failure_preserves_terminal_observation(
     tmp_path: Path,
 ) -> None:
     registry = built_in_resource_registry()
     store = _store(tmp_path / "runs", registry)
     runs = CanonicalObservationRuns(store, registry, _runtime())
-    app = ObservationApplication(
-        runs,
-        DurableSessionClose(
-            store,
-            FiniteRuntimeValues(utc_instants=("2026-09-20T06:01:00Z",)),
-        ),
+    session_close = DurableSessionClose(
+        store,
+        FiniteRuntimeValues(utc_instants=("2026-09-20T06:01:00Z",)),
     )
-    result = app.observe(_request([]))
+    result = runs.start(_request([]))
     request = SessionCloseRequest(
         "019950f8-4c00-7000-8000-000000000902",
         "session.019950f8-4c00-7000-8000-000000000903",
     )
 
-    closed = app.close(
+    closed = session_close.close(
         request,
         result,
+        (),
         lambda: (_ for _ in ()).throw(TimeoutError("secret")),
     )
 
@@ -410,4 +532,4 @@ def test_application_close_failure_preserves_terminal_observation(
     assert closed.run_id == RUN_ID
     assert closed.close.disposition is SessionCloseDisposition.FAILED
     assert closed.close.issue_code == "session_close.timeout"
-    assert app.inspect_close(request, result) == closed
+    assert session_close.inspect(request, result, ()) == closed

@@ -2,9 +2,10 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import cast
 
 from coreelec_reconciler.domain.canonical_json import decode_json_object
+from coreelec_reconciler.domain.configuration import ProfileRootCapability
 from coreelec_reconciler.domain.execution import AttachmentRef, RevisionLease
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.domain.observation import (
@@ -19,10 +20,7 @@ from coreelec_reconciler.persistence.observation_documents import (
     build_observation_run,
 )
 from coreelec_reconciler.resource_types.registry import ResourceRegistry
-
-
-class ReadOnlyResourceObserver(Protocol):
-    def observe(self) -> object: ...
+from coreelec_reconciler.transports.interfaces import ManagedFileReader, ReadResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,12 +33,22 @@ class ObservationInputDigests:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservationResourceContext:
+    device_id: DeviceId
+    resource_id: str
+    resource_type: str
+    state_addresses: tuple[str, ...]
+    profile_root: ProfileRootCapability | None
+    reader: ManagedFileReader
+
+
+@dataclass(frozen=True, slots=True)
 class ObservationResource:
     resource_id: str
     resource_type: str
     state_addresses: tuple[str, ...]
     requires: tuple[str, ...]
-    observer: ReadOnlyResourceObserver
+    context: ObservationResourceContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +174,7 @@ class CanonicalObservationRuns:
             if descriptor is None or descriptor.encode_observation_evidence is None:
                 raise ValueError("Resource Type has no registered observation encoder")
             encoded = descriptor.encode_observation_evidence(
-                resource.observer.observe()
+                descriptor.observe(_scoped_context(resource.context))
             )
             if encoded.state_addresses != resource.state_addresses:
                 raise ValueError(
@@ -271,8 +279,12 @@ def _scope(
             or descriptor.observation_payload_version is None
             or descriptor.observation_policy_digest is None
             or descriptor.encode_observation_evidence is None
+            or descriptor.validate_observation_addresses is None
+            or descriptor._observation_factory is None
         ):
             raise ValueError("Resource Type has no complete observation codec")
+        descriptor.validate_observation_addresses(resource.state_addresses)
+        _validate_context_binding(request, resource)
         resources.append(
             {
                 "observation_codec": {
@@ -315,6 +327,47 @@ def _scope(
         resource_registry=registry,
     )
     return scope
+
+
+@dataclass(frozen=True, slots=True)
+class _ScopedObservationContext:
+    device_id: DeviceId
+    resource_id: str
+    resource_type: str
+    state_addresses: tuple[str, ...]
+    profile_root: ProfileRootCapability | None
+    _reader: ManagedFileReader
+
+    def lstat(self, path: str) -> ReadResult:
+        return self._reader.lstat(path)
+
+    def read(self, path: str, limit: int) -> ReadResult:
+        return self._reader.read(path, limit)
+
+
+def _scoped_context(context: ObservationResourceContext) -> _ScopedObservationContext:
+    return _ScopedObservationContext(
+        context.device_id,
+        context.resource_id,
+        context.resource_type,
+        context.state_addresses,
+        context.profile_root,
+        context.reader,
+    )
+
+
+def _validate_context_binding(
+    request: ObservationRunRequest,
+    resource: ObservationResource,
+) -> None:
+    context = resource.context
+    if (
+        context.device_id != request.device_id
+        or context.resource_id != resource.resource_id
+        or context.resource_type != resource.resource_type
+        or context.state_addresses != resource.state_addresses
+    ):
+        raise ValueError("observation Resource context binding changed")
 
 
 def _terminal_status(

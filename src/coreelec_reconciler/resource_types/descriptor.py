@@ -20,7 +20,8 @@ from coreelec_reconciler.domain.execution import (
 from coreelec_reconciler.domain.observation import ObservationDisposition
 
 if TYPE_CHECKING:
-    from coreelec_reconciler.domain.configuration import Resource
+    from coreelec_reconciler.domain.configuration import ProfileRootCapability, Resource
+    from coreelec_reconciler.domain.identifiers import DeviceId
     from coreelec_reconciler.resource_types.managed_file.observation import (
         ManagedFileObservation,
     )
@@ -77,6 +78,51 @@ type ObservationEvidenceChecker = Callable[
 ]
 type ObservationAddressValidator = Callable[[tuple[str, ...]], None]
 type ObservationAddressChecker = Callable[[tuple[str, ...]], tuple[str, ...]]
+
+
+class ResourceObservationContext(Protocol):
+    """Read-only, identity-bound capabilities available during observation."""
+
+    @property
+    def device_id(self) -> DeviceId: ...
+
+    @property
+    def resource_id(self) -> str: ...
+
+    @property
+    def resource_type(self) -> str: ...
+
+    @property
+    def state_addresses(self) -> tuple[str, ...]: ...
+
+    @property
+    def profile_root(self) -> ProfileRootCapability | None: ...
+
+    def lstat(self, path: str) -> ReadResult: ...
+
+    def read(self, path: str, limit: int) -> ReadResult: ...
+
+
+class ErasedResourceObserver(Protocol):
+    def observe(self) -> object: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ErasedResourceObserverAdapter[ObservationT]:
+    observation_type: type[ObservationT]
+    observe_typed: Callable[[], ObservationT]
+
+    def observe(self) -> object:
+        observation = self.observe_typed()
+        if not isinstance(observation, self.observation_type):
+            raise TypeError("Resource Observation type does not match descriptor")
+        return observation
+
+
+type ResourceObservationFactory = Callable[
+    [ResourceObservationContext],
+    ErasedResourceObserver,
+]
 
 
 class ErasedResourceExecution(Protocol):
@@ -291,3 +337,9 @@ class ResourceDescriptor:
     check_observation_evidence: ObservationEvidenceChecker | None = None
     validate_observation_addresses: ObservationAddressValidator | None = None
     check_observation_addresses: ObservationAddressChecker | None = None
+    _observation_factory: ResourceObservationFactory | None = None
+
+    def observe(self, context: ResourceObservationContext) -> object:
+        if self._observation_factory is None:
+            raise ValueError("Resource Type has no observation factory")
+        return self._observation_factory(context).observe()
