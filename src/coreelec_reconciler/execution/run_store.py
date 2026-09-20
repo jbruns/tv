@@ -22,14 +22,13 @@ from coreelec_reconciler.domain.execution import (
     StoredRevision,
     VerifiedRunChain,
     WorkspaceId,
+    execution_run_identity,
+    is_post_terminal_cleanup_successor,
 )
 from coreelec_reconciler.domain.identifiers import DeviceId, RunId
 from coreelec_reconciler.reporting.canonical_json import (
     canonical_document_bytes,
     decode_json_object,
-)
-from coreelec_reconciler.reporting.execution_documents import (
-    execution_run_identity,
 )
 
 from .local_durability import (
@@ -284,8 +283,6 @@ class RunStore:
     ) -> StoredRevision:
         self._require_run_lease(lease)
         chain = self.load_chain(lease.run_id)
-        if chain.terminal:
-            raise CompareConflict("terminal Run cannot be appended")
         if (
             chain.head.revision != expected_revision
             or chain.head.digest != expected_digest
@@ -307,6 +304,11 @@ class RunStore:
             decode_json_object(chain.head.payload)
         ):
             raise RunStoreError("Run immutable identity bindings changed")
+        if chain.terminal and not is_post_terminal_cleanup_successor(
+            decode_json_object(chain.head.payload),
+            value,
+        ):
+            raise CompareConflict("terminal Run only accepts cleanup receipts")
         try:
             return self._complete_append(
                 lease,
@@ -348,7 +350,6 @@ class RunStore:
         elif (
             chain.head.revision == expected_revision
             and chain.head.digest == expected_digest
-            and not chain.terminal
         ):
             revision_path = workspace / "revisions" / f"{proposed.revision:08d}.json"
             try:
@@ -487,6 +488,22 @@ class RunStore:
         chain = self.load_chain(lease.run_id)
         if not chain.terminal or chain.head.revision != intent.terminal_revision:
             raise RunStoreError("seal requires the durable terminal head")
+        head_value = decode_json_object(chain.head.payload)
+        cleanup = head_value.get("cleanup")
+        authority = head_value.get("authority")
+        if (
+            not isinstance(cleanup, dict)
+            or cleanup.get("state") != "complete"
+            or cleanup.get("leftover_count") != 0
+            or not isinstance(authority, dict)
+            or authority.get("ownership_state") not in {"released", "quarantined"}
+            or authority.get("device_index_intent")
+            != "remove_after_release_or_quarantine"
+            or not intent.ownership_released_or_quarantined
+        ):
+            raise RunStoreError(
+                "seal requires completed cleanup and release or quarantine truth"
+            )
         workspace = self._workspace_for_run(lease.run_id)
         identity = self._read_object(workspace / "identity.json")
         seal = {

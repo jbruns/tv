@@ -35,7 +35,10 @@ from coreelec_reconciler.reporting.execution_documents import (
     build_execution_run_report,
 )
 from tests.unit.execution.test_execution_documents import (
+    ATTACHMENT_DIGESTS,
     RUN_ID,
+    cleanup_evidence,
+    complete_evidence,
     run_value,
 )
 
@@ -99,13 +102,17 @@ def test_compare_append_seal_and_index_ordering(tmp_path: Path) -> None:
     run_store = store(tmp_path)
     device_lease, revision_lease, _ = create(run_store)
     first = run_store.load_chain(RunId(RUN_ID)).head
-    terminal_report = build_execution_run_report(
-        run_value(
-            RunStatus.FAILED_PARTIAL,
-            revision=2,
-            previous=first.digest,
-        )
+    terminal_value = run_value(
+        RunStatus.FAILED_PARTIAL,
+        revision=2,
+        previous=first.digest,
     )
+    terminal_value["evidence"] = complete_evidence()[:3]
+    terminal_value["attachments"] = [
+        {"codec": "managed-file-v1", "digest": digest, "kind": f"{name}-state"}
+        for name, digest in ATTACHMENT_DIGESTS.items()
+    ]
+    terminal_report = build_execution_run_report(terminal_value)
     terminal = run_store.compare_and_append(
         revision_lease,
         1,
@@ -119,17 +126,80 @@ def test_compare_append_seal_and_index_ordering(tmp_path: Path) -> None:
         ),
     )
     assert run_store.find_active_by_device(device_lease.device_id)
+    with pytest.raises(RunStoreError, match="completed cleanup"):
+        run_store.finalize_and_seal(
+            revision_lease,
+            SealIntent(terminal.revision, True),
+        )
+    intent, checkpoint, receipt = cleanup_evidence(terminal.digest)
+    pending_value = json.loads(terminal.payload)
+    pending_value["revision"] = 3
+    pending_value["previous_revision_digest"] = terminal.digest
+    authority = pending_value["authority"]
+    cleanup_state = pending_value["cleanup"]
+    assert isinstance(authority, dict)
+    assert isinstance(cleanup_state, dict)
+    authority.update(
+        cleanup_state="pending",
+        ownership_state="owned",
+    )
+    cleanup_state["state"] = "pending"
+    pending_value["evidence"] = [*pending_value["evidence"], intent, checkpoint]
+    pending_report = build_execution_run_report(pending_value)
+    pending = run_store.compare_and_append(
+        revision_lease,
+        2,
+        terminal.digest,
+        pending_report.canonical_bytes,
+        AppendIntent(
+            RunStatus.FAILED_PARTIAL,
+            True,
+            DeviceIndexIntent.NO_CHANGE,
+            AuthorityPhase.RELEASE_PENDING,
+        ),
+    )
+    cleanup_value = json.loads(pending.payload)
+    cleanup_value["revision"] = 4
+    cleanup_value["previous_revision_digest"] = pending.digest
+    authority = cleanup_value["authority"]
+    cleanup_state = cleanup_value["cleanup"]
+    assert isinstance(authority, dict)
+    assert isinstance(cleanup_state, dict)
+    authority.update(
+        cleanup_state="complete",
+        device_index_intent="remove_after_release_or_quarantine",
+        ownership_state="released",
+    )
+    cleanup_state.update(state="complete", leftover_count=0)
+    cleanup_value["evidence"] = [*cleanup_value["evidence"], receipt]
+    cleanup_report = build_execution_run_report(cleanup_value)
+    cleaned = run_store.compare_and_append(
+        revision_lease,
+        3,
+        pending.digest,
+        cleanup_report.canonical_bytes,
+        AppendIntent(
+            RunStatus.FAILED_PARTIAL,
+            True,
+            DeviceIndexIntent.NO_CHANGE,
+            AuthorityPhase.RELEASE_PENDING,
+        ),
+    )
     run_store.finalize_and_seal(
         revision_lease,
-        SealIntent(terminal.revision, True),
+        SealIntent(cleaned.revision, True),
     )
     assert run_store.find_active_by_device(device_lease.device_id) == ()
+    illegal_successor = cleanup_value
+    illegal_successor["revision"] = 5
+    illegal_successor["previous_revision_digest"] = cleaned.digest
+    illegal_report = build_execution_run_report(illegal_successor)
     with pytest.raises(CompareConflict):
         run_store.compare_and_append(
             revision_lease,
-            2,
-            terminal.digest,
-            terminal.payload,
+            4,
+            cleaned.digest,
+            illegal_report.canonical_bytes,
             AppendIntent(
                 RunStatus.FAILED_PARTIAL,
                 True,

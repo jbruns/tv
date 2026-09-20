@@ -6,12 +6,16 @@ from collections.abc import Iterable
 
 from coreelec_reconciler.domain.execution import (
     TERMINAL_RUN_STATUSES,
+    ExecutionEvidenceKind,
     FinalConvergence,
     MutationOutcome,
     PostEffectVerification,
     RollbackOutcome,
     RunStatus,
     VerificationOutcome,
+    execution_run_identity,
+    is_post_terminal_cleanup_successor,
+    validate_execution_evidence_sequence,
 )
 from coreelec_reconciler.domain.planning import CanonicalPlan, CanonicalRunReport
 from coreelec_reconciler.domain.validation import (
@@ -135,8 +139,20 @@ def verify_run_revision_chain(
             and value["previous_revision_digest"] != decoded[index - 1].current_digest
         ):
             raise ValueError("Run revision chain digest mismatch")
-        if terminal_seen:
-            raise ValueError("terminal Run revision has a successor")
+        if terminal_seen and not is_post_terminal_cleanup_successor(
+            decode_json_object(decoded[index - 1].canonical_bytes),
+            value,
+        ):
+            raise ValueError("terminal Run has a non-cleanup successor")
+        evidence = value.get("evidence")
+        has_cleanup = isinstance(evidence, list) and any(
+            isinstance(item, dict)
+            and item.get("payload_kind")
+            == ExecutionEvidenceKind.RESOURCE_CLEANUP_RECEIPT.value
+            for item in evidence
+        )
+        if has_cleanup and (index == 0 or previous_status not in TERMINAL_RUN_STATUSES):
+            raise ValueError("cleanup receipt requires a prior terminal revision")
         if previous_status is not None and report.status != previous_status:
             allowed = _LIFECYCLE_TRANSITIONS.get(previous_status, set())
             if report.status not in allowed:
@@ -144,34 +160,6 @@ def verify_run_revision_chain(
         terminal_seen = report.status in TERMINAL_RUN_STATUSES
         previous_status = report.status
     return decoded
-
-
-def execution_run_identity(value: dict[str, object]) -> dict[str, object]:
-    """Return the complete immutable identity projection for one execution Run."""
-    reference = value.get("plan_reference")
-    authority = value.get("authority")
-    recovery = value.get("recovery")
-    if (
-        not isinstance(reference, dict)
-        or not isinstance(authority, dict)
-        or not isinstance(recovery, dict)
-    ):
-        raise ValueError("Run immutable identity bindings are malformed")
-    return {
-        "binding_digest": authority.get("binding_digest"),
-        "boot_id": authority.get("boot_id"),
-        "created_at": value.get("started_at"),
-        "device_id": value.get("device_id"),
-        "kind": value.get("kind"),
-        "originating_planning_run_id": value.get("originating_planning_run_id"),
-        "ownership_token_digest": authority.get("ownership_token_digest"),
-        "plan_full_digest": reference.get("plan_full_digest"),
-        "plan_id": reference.get("plan_id"),
-        "producer": value.get("producer"),
-        "run_id": value.get("run_id"),
-        "schema_version": value.get("schema_version"),
-        "workspace_id": recovery.get("workspace_id"),
-    }
 
 
 def check_run_report_invariants(
@@ -190,7 +178,7 @@ def check_run_report_invariants(
         errors.append("execution Run Report bytes are not canonical")
     if value["kind"] != "CoreElecReconcilerRunReport":
         errors.append("unsupported Run Report kind")
-    if value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         errors.append("unsupported Run Report schema version")
     if value["producer"] != _PRODUCER:
         errors.append("unsupported Run Report producer")
@@ -277,13 +265,30 @@ def check_run_report_invariants(
     if run_id == origin_id:
         errors.append("execution Run ID must differ from originating planning Run")
     _check_approvals(value["approvals"], reference, errors)
-    evidence_ids = _check_evidence(value["evidence"], errors)
-    attempt_ids = _check_attempts(value["attempts"], evidence_ids, errors)
-    _check_failures(value["failures"], evidence_ids, errors)
-    _check_attachments(value["attachments"], errors)
+    attachment_digests = _check_attachments(value["attachments"], errors)
+    evidence_kinds = _check_evidence(
+        value,
+        status,
+        attachment_digests,
+        errors,
+    )
+    attempt_ids = _check_attempts(
+        value,
+        evidence_kinds,
+        errors,
+    )
+    _check_failures(value["failures"], set(evidence_kinds), errors)
     _check_authority(value["authority"], status, errors)
     _check_recovery(value["recovery"], status, errors)
     _check_cleanup(value["cleanup"], status, errors)
+    authority_value = value["authority"]
+    cleanup_value = value["cleanup"]
+    if (
+        isinstance(authority_value, dict)
+        and isinstance(cleanup_value, dict)
+        and authority_value.get("cleanup_state") != cleanup_value.get("state")
+    ):
+        errors.append("authority and cleanup state disagree")
     _check_resources(
         value["resource_results"],
         status,
@@ -338,53 +343,61 @@ def _check_approvals(
                 errors.append(f"approval {key} is invalid")
 
 
-def _check_evidence(raw: object, errors: list[str]) -> set[str]:
-    identifiers: set[str] = set()
-    for item in _array(raw, "evidence", errors):
-        evidence = _mapping(
-            item,
-            {
-                "evidence_id",
-                "observed_at",
-                "payload",
-                "payload_kind",
-                "payload_schema_version",
-                "raw_attachment_digest",
-                "subject",
-            },
-            "evidence",
-            errors,
-        )
-        if not evidence:
-            continue
-        identifier = evidence.get("evidence_id")
-        if not isinstance(identifier, str) or not _SAFE_CODE.fullmatch(identifier):
-            errors.append("evidence ID is invalid")
-        elif identifier in identifiers:
-            errors.append("evidence IDs must be unique")
-        else:
-            identifiers.add(identifier)
-        try:
-            parse_rfc3339_utc(evidence.get("observed_at"), "evidence observed_at")
-        except (TypeError, ValueError) as error:
-            errors.append(str(error))
-        attachment = evidence.get("raw_attachment_digest")
-        if attachment is not None:
-            try:
-                require_sha256(attachment, "raw attachment digest")
-            except (TypeError, ValueError) as error:
-                errors.append(str(error))
-        if not isinstance(evidence.get("payload"), dict):
-            errors.append("evidence payload must be an object")
-        _check_subject(evidence.get("subject"), errors)
+def _check_evidence(
+    report: dict[str, object],
+    status: RunStatus,
+    attachment_digests: set[str],
+    errors: list[str],
+) -> dict[str, ExecutionEvidenceKind]:
+    raw = report["evidence"]
+    values = _array(raw, "evidence", errors)
+    try:
+        records = validate_execution_evidence_sequence(tuple(values), status=status)
+    except (TypeError, ValueError) as error:
+        errors.append(str(error))
+        return {}
+    identifiers: dict[str, ExecutionEvidenceKind] = {}
+    reference = report["plan_reference"]
+    authority = report["authority"]
+    recovery = report["recovery"]
+    if not isinstance(reference, dict) or not isinstance(authority, dict):
+        return identifiers
+    if not isinstance(recovery, dict):
+        return identifiers
+    for record in records:
+        identifiers[record.evidence_id] = record.kind
+        if (
+            record.bindings.device_id != report["device_id"]
+            or record.bindings.run_id != report["run_id"]
+            or record.bindings.workspace_id != recovery.get("workspace_id")
+            or record.bindings.plan_id != reference.get("plan_id")
+            or record.bindings.plan_full_digest != reference.get("plan_full_digest")
+            or record.bindings.binding_digest != authority.get("binding_digest")
+        ):
+            errors.append("execution evidence bindings do not match Run")
+        for attachment in record.attachment_refs:
+            if attachment.digest not in attachment_digests:
+                errors.append("execution evidence attachment reference is unresolved")
+        if (
+            record.raw_attachment_digest is not None
+            and record.raw_attachment_digest not in attachment_digests
+        ):
+            errors.append("execution evidence raw attachment is unresolved")
+        if (
+            record.kind is ExecutionEvidenceKind.RUN_ABANDONMENT_APPROVAL
+            and status
+            not in {RunStatus.INTERRUPTED, RunStatus.FAILED_RECOVERY_REQUIRED}
+        ):
+            errors.append("abandonment approval is invalid for Run status")
     return identifiers
 
 
 def _check_attempts(
-    raw: object,
-    evidence_ids: set[str],
+    report: dict[str, object],
+    evidence_kinds: dict[str, ExecutionEvidenceKind],
     errors: list[str],
 ) -> set[str]:
+    raw = report["attempts"]
     identifiers: set[str] = set()
     valid_phases = {
         "precondition_recheck",
@@ -401,6 +414,7 @@ def _check_attempts(
         "completed",
         "matched",
         "mismatch",
+        "pending",
         "stale_no_mutation",
         "definitely_not_applied",
         "ambiguous",
@@ -411,13 +425,18 @@ def _check_attempts(
         attempt = _mapping(
             item,
             {
+                "attempt",
                 "attempt_id",
+                "bindings",
                 "ended_at",
-                "evidence_refs",
+                "intent_evidence_ref",
                 "operation_code",
                 "outcome",
+                "outcome_evidence_ref",
                 "phase",
+                "resource_type",
                 "started_at",
+                "state_addresses",
                 "subject",
             },
             "attempt",
@@ -436,13 +455,116 @@ def _check_attempts(
             errors.append("attempt phase is unknown")
         if attempt.get("outcome") not in valid_outcomes:
             errors.append("attempt outcome is unknown")
-        _check_references(attempt.get("evidence_refs"), evidence_ids, errors)
+        operation_code = attempt.get("operation_code")
+        if not isinstance(operation_code, str) or not _SAFE_CODE.fullmatch(
+            operation_code
+        ):
+            errors.append("attempt operation code is invalid")
         _check_subject(attempt.get("subject"), errors)
+        effect_attempt = attempt.get("phase") == "effect"
+        attempt_number = attempt.get("attempt")
+        if type(attempt_number) is not int or attempt_number != 1:
+            errors.append("attempt number must be 1")
+        state_addresses = _string_array(
+            attempt.get("state_addresses"),
+            "attempt State Address",
+            errors,
+        )
+        if effect_attempt and state_addresses:
+            errors.append("Effect attempt cannot claim Resource State Addresses")
+        if not effect_attempt and (
+            not state_addresses
+            or state_addresses != sorted(set(state_addresses))
+            or any(not item.startswith("special://") for item in state_addresses)
+        ):
+            errors.append("attempt State Addresses are invalid")
+        bindings = _mapping(
+            attempt.get("bindings"),
+            {
+                "binding_digest",
+                "change_id",
+                "device_id",
+                "plan_full_digest",
+                "plan_id",
+                "resource_id",
+                "run_id",
+                "workspace_id",
+            },
+            "attempt bindings",
+            errors,
+        )
+        reference = report["plan_reference"]
+        authority = report["authority"]
+        recovery = report["recovery"]
+        subject = attempt.get("subject")
+        if (
+            not isinstance(reference, dict)
+            or not isinstance(authority, dict)
+            or not isinstance(recovery, dict)
+            or not isinstance(subject, dict)
+            or not bindings
+            or bindings.get("device_id") != report["device_id"]
+            or bindings.get("run_id") != report["run_id"]
+            or bindings.get("workspace_id") != recovery.get("workspace_id")
+            or bindings.get("plan_id") != reference.get("plan_id")
+            or bindings.get("plan_full_digest") != reference.get("plan_full_digest")
+            or bindings.get("binding_digest") != authority.get("binding_digest")
+        ):
+            errors.append("attempt bindings do not match Run")
+        resource_id = bindings.get("resource_id")
+        change_id = bindings.get("change_id")
+        if effect_attempt:
+            if (
+                attempt.get("resource_type") is not None
+                or resource_id is not None
+                or change_id is not None
+                or not isinstance(subject, dict)
+                or subject.get("kind") != "effect"
+            ):
+                errors.append("Effect attempt has Resource-only bindings")
+        elif (
+            attempt.get("resource_type") != "KodiSmartPlaylist"
+            or not isinstance(subject, dict)
+            or subject.get("kind") != "resource"
+            or resource_id != subject.get("id")
+            or not isinstance(change_id, str)
+            or not _SAFE_CODE.fullmatch(change_id)
+        ):
+            errors.append("attempt bindings do not match Run and Resource")
+        intent_ref = attempt.get("intent_evidence_ref")
+        expected_intent = (
+            ExecutionEvidenceKind.EFFECT_INTENT
+            if effect_attempt
+            else ExecutionEvidenceKind.RESOURCE_PRIMITIVE_INTENT
+        )
+        if (
+            not isinstance(intent_ref, str)
+            or evidence_kinds.get(intent_ref) is not expected_intent
+        ):
+            errors.append("attempt intent evidence reference is invalid")
+        outcome = attempt.get("outcome")
+        ended_value = attempt.get("ended_at")
+        outcome_ref = attempt.get("outcome_evidence_ref")
+        expected_outcome = (
+            ExecutionEvidenceKind.EFFECT_OUTCOME
+            if effect_attempt
+            else ExecutionEvidenceKind.RESOURCE_PRIMITIVE_OUTCOME
+        )
+        if outcome == "pending":
+            if ended_value is not None or outcome_ref is not None:
+                errors.append("pending attempt cannot have outcome completion")
+        elif (
+            ended_value is None
+            or not isinstance(outcome_ref, str)
+            or evidence_kinds.get(outcome_ref) is not expected_outcome
+        ):
+            errors.append("completed attempt requires typed outcome evidence")
         try:
             began = parse_rfc3339_utc(attempt.get("started_at"), "attempt started_at")
-            ended = parse_rfc3339_utc(attempt.get("ended_at"), "attempt ended_at")
-            if ended < began:
-                errors.append("attempt ended before it started")
+            if ended_value is not None:
+                ended = parse_rfc3339_utc(ended_value, "attempt ended_at")
+                if ended < began:
+                    errors.append("attempt ended before it started")
         except (TypeError, ValueError) as error:
             errors.append(str(error))
     return identifiers
@@ -494,7 +616,7 @@ def _check_failures(
         _check_subject(failure.get("subject"), errors)
 
 
-def _check_attachments(raw: object, errors: list[str]) -> None:
+def _check_attachments(raw: object, errors: list[str]) -> set[str]:
     seen: set[str] = set()
     for item in _array(raw, "attachments", errors):
         attachment = _mapping(
@@ -518,6 +640,7 @@ def _check_attachments(raw: object, errors: list[str]) -> None:
                 str(attachment.get(key))
             ):
                 errors.append(f"attachment {key} is invalid")
+    return seen
 
 
 def _check_authority(raw: object, status: RunStatus, errors: list[str]) -> None:
@@ -657,6 +780,8 @@ def _check_cleanup(raw: object, status: RunStatus, errors: list[str]) -> None:
     count = cleanup.get("leftover_count")
     if type(count) is not int or count < 0:
         errors.append("cleanup leftover count is invalid")
+    if cleanup.get("state") == "complete" and count != 0:
+        errors.append("complete cleanup cannot retain leftovers")
     if status not in TERMINAL_RUN_STATUSES and cleanup.get("state") != "not_started":
         errors.append("cleanup cannot begin before terminal truth")
 
@@ -761,6 +886,17 @@ def _array(value: object, label: str, errors: list[str]) -> list[object]:
 def _string(value: object, label: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{label} must be a string")
+    return value
+
+
+def _string_array(
+    value: object,
+    label: str,
+    errors: list[str],
+) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        errors.append(f"{label} must be a string array")
+        return []
     return value
 
 
