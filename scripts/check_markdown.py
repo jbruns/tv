@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import html
 import re
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -26,15 +27,36 @@ IGNORED_DIRECTORIES = {".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", "_
 VENDORED_DIRECTORIES = {".agents"}
 
 
+def ignored_by_git(paths: list[Path], root: Path) -> set[Path]:
+    """Paths git ignores. Keeps validation independent of .venv and local scratch."""
+    if not paths:
+        return set()
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "--stdin"],
+            input="\n".join(str(path) for path in paths),
+            capture_output=True,
+            text=True,
+            cwd=root,
+            check=False,
+        )
+    except OSError:
+        return set()
+    if result.returncode not in (0, 1):
+        return set()
+    return {Path(line) for line in result.stdout.splitlines() if line}
+
+
 def markdown_files(root: Path) -> list[Path]:
     skipped = IGNORED_DIRECTORIES | VENDORED_DIRECTORIES | {".worktrees"}
-    files: list[Path] = []
+    candidates: list[Path] = []
     for candidate in root.rglob("*.md"):
         relative_parts = candidate.relative_to(root).parts
         if any(part in skipped for part in relative_parts):
             continue
-        files.append(candidate)
-    return sorted(files)
+        candidates.append(candidate)
+    ignored = ignored_by_git(candidates, root)
+    return sorted(path for path in candidates if path not in ignored)
 
 
 def read_repository_file(path: Path, root: Path) -> str:

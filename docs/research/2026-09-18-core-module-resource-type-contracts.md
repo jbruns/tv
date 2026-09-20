@@ -5,7 +5,7 @@ Date: 2026-09-18
 Ticket: [Prototype the core module and Resource Type contracts](https://github.com/jbruns/tv/issues/41)
 
 Interactive evidence:
-[Throwaway module-contract prototype](../../prototypes/coreelec-reconciler-module-contracts-prototype.html)
+A throwaway module-contract prototype, deleted with the superseded design (ADR 0008).
 
 Status: **Accepted contract-level implementation decision**
 
