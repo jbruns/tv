@@ -4,24 +4,49 @@ Date: 2026-09-20
 
 Status: **Accepted candidate for merge through issue
 [#87](https://github.com/jbruns/tv/issues/87).** This record seals the M3
-implementation already merged through pull request
-[#94](https://github.com/jbruns/tv/pull/94). It does not authorize Device
-access, deployment, pilot mutation, shell freeze or retirement, ownership
-transfer, an Effect change, or M4 work.
+implementation merged through pull request
+[#104](https://github.com/jbruns/tv/pull/104) under the owner-approved
+trusted-appliance threat model. It does not authorize Device access,
+deployment, pilot mutation, shell freeze or retirement, ownership transfer,
+an Effect change, or M4 work.
+
+## Threat model and evidence standard
+
+M3 targets a trusted, single-user home streaming appliance. Acceptance
+requires functional, reproducible evidence rather than enterprise or
+adversarial audit evidence. The implementation protects against operator
+mistakes, stale or interrupted Runs, malformed inputs, accidental path
+escape, secret leakage, obvious injection, and normal failure modes.
+
+Malicious concurrent processes on the CoreELEC Device, a compromised
+root/SFTP server, and adversarial rewriting or resealing of evidence are out
+of scope. The no-follow, parent-pinned compare-and-swap mutation fix from
+PR #104 remains part of the accepted implementation.
+
+The pilot harness is procedural and readiness evidence. It proves that a
+deterministic bundle can be generated from and bound to source,
+configuration, and lock bytes, and that ordinary contamination and malformed
+bundles are rejected. It does **not** independently prove that its described
+scenarios executed, or preserve semantic integrity against an adversary who
+can rewrite and reseal the bundle. Functional execution evidence comes from
+the production-bootstrap integration tests and installed-wheel workflows.
+This separation is an accepted residual limitation, not a known acceptance
+failure.
 
 ## Bound source
 
-The verified merged source is `main` commit
-`02eea6376aa40b35de1ac07ed75dfe4e9bec3bb3`, tree
-`a758833e6395d7aab391df7342282617555aac6c`. The merge commit has the same
-tree as reviewed M3.6 head
-`c101036328d042bcf1bda81aeb597007b0408cc9`, so the hosted M3.6 artifacts
-verify the exact bytes merged to `main`, not a synthetic pull-request merge
-tree.
+The verified merged M3 source is current `main` commit
+`c2540ed5c9aa1b535e78fdef1ffebbb3d5da94e0`, tree
+`ba9c633beaa4572ef8f53c67005983970f1b2e99`. This is the merge of PR #104
+and includes its managed-mutation compare-and-swap fix.
 
-The clean local seal worktree was created directly from that merge commit on
-branch `build/87-seal-m3`. It was clean before acceptance outputs were written
-under ignored `.ci-evidence/`.
+The existing clean seal worktree on branch `build/87-seal-m3` merged that
+commit without rewriting history. Acceptance ran at merge commit
+`b3ca30c0d282591a1fe11ce8bb0bd137ada765e6`, tree
+`1017e258f0899942bb1e562319aa2453517c9b41`. Relative to the bound M3
+source, that tree contains only this exit record. Generated outputs remained
+under ignored `.ci-evidence/`; the tracked worktree was clean before the
+record was revised.
 
 ## Issue and pull-request chain
 
@@ -45,63 +70,55 @@ record's pull request merges.
 | #81 amendment | [#101](https://github.com/jbruns/tv/pull/101) | `e665eab96f142982ce3ac7c14dba961375161a46` | `4ce876c5ce8b8a8688fab98d183bcf46a8417a33` |
 | #83 amendment | [#102](https://github.com/jbruns/tv/pull/102) | `3e9632e3866c59da916ec90e7467f4f2d9d3306d` | `c10bad209d71122e77717530fa20b72d6d4072bb` |
 | [#86](https://github.com/jbruns/tv/issues/86) | [#94](https://github.com/jbruns/tv/pull/94) | `c101036328d042bcf1bda81aeb597007b0408cc9` | `02eea6376aa40b35de1ac07ed75dfe4e9bec3bb3` |
+| #84 security amendment | [#104](https://github.com/jbruns/tv/pull/104) | `f95789f6377bc5404b85cc6dbf4e2c3d2b7d45cf` | `c2540ed5c9aa1b535e78fdef1ffebbb3d5da94e0` |
 
-Every listed pull request has successful Ubuntu 24.04 and macOS 15 Offline CI
-checks. GitHub records no formal review objects on these pull requests; no
-dedicated security-review workflow or check is configured. Security status is
-therefore represented by the explicit offline, least-authority, no-socket,
-redaction, hostile-bundle, package-boundary, and shell-ownership gates below,
-all of which passed.
+PR #105 was closed unmerged by the owner-approved threat-model decision and
+is not part of the merge chain.
 
-## Hosted Linux and macOS evidence
+## Source-bound security review
 
-[Offline CI run
-35499175972](https://github.com/jbruns/tv/actions/runs/35499175972)
-checked out reviewed head
-`c101036328d042bcf1bda81aeb597007b0408cc9`, verified that exact checkout,
-and produced tree
-`a758833e6395d7aab391df7342282617555aac6c`, which is the merged M3 tree.
+The source-bound security review examined merged commit
+`02eea6376aa40b35de1ac07ed75dfe4e9bec3bb3`, tree
+`a758833e6395d7aab391df7342282617555aac6c`, using a read-only review of the
+merged production mutation paths and the generated pilot evidence/verifier
+contract. It identified two medium findings:
 
-| Job | Platform and tools | Budgets | Result |
-| --- | --- | --- | --- |
-| [Ubuntu job](https://github.com/jbruns/tv/actions/runs/35499175972/job/106047725430) | Ubuntu 24.04, Linux x86_64; Python 3.14.7; uv 0.12.3; Ruff 0.16.8; mypy 2.3.1; pytest 9.1.1 | Pure 7.478 s; remaining 31.526 s; complete 39.004 s | Passed |
-| [macOS job](https://github.com/jbruns/tv/actions/runs/35499175972/job/106047725142) | macOS 15 arm64; Python 3.14.7; uv 0.12.3; Ruff 0.16.8; mypy 2.3.1; pytest 9.1.1 | Pure 5.475 s; remaining 25.612 s; complete 31.087 s | Passed |
+1. Managed-file mutation checked preconditions before later pathname-based
+   SFTP mutation, leaving a TOCTOU window. PR #104 remediated this with a
+   fixed server-side helper, no-follow parent pinning, exact expected-state
+   validation, and atomic compare-and-swap mutation. PR #104's hosted run
+   [35520422714](https://github.com/jbruns/tv/actions/runs/35520422714)
+   passed on Ubuntu 24.04 and macOS 15.
+2. The pilot harness and verifier compare deterministic scenario
+   descriptions; they do not independently establish scenario execution.
+   Under the revised threat model this is accepted as a documented residual.
+   Production-bootstrap integration and installed-wheel workflows are the
+   functional behavior evidence. PR #105 remains closed and unmerged.
 
-Both jobs ran frozen synchronization, Ruff lint and exact formatting paths,
-strict mypy, inventory validation, shell permission audit, the exact
-non-overlapping selectors, package build and inspection, installed-wheel
-smoke workflows, two byte-identical harness generations, and the independent
-verifier. Their source-bound artifact names are:
+## Functional acceptance
 
-- `offline-ci-Linux-X64-c101036328d042bcf1bda81aeb597007b0408cc9`
-- `offline-ci-macOS-ARM64-c101036328d042bcf1bda81aeb597007b0408cc9`
-
-The two platforms produced identical package, wheel-content, inventory,
-shell-permission, lock, source-tree, and pilot-bundle bytes.
-
-## Clean-checkout macOS acceptance
-
-The complete acceptance was repeated from the isolated source worktree on
-macOS 26.6.2 arm64 with Python 3.14.2, uv 0.12.3, Ruff 0.16.8, mypy 2.3.1,
-and pytest 9.1.1.
+The exact M3.6 gates were repeated locally from the clean seal worktree on
+macOS 26.6.2 arm64 with Python 3.14.2 and uv 0.12.3. No legacy shell test was
+run.
 
 | Exact gate | Result | Timing |
 | --- | --- | ---: |
-| `uv sync --frozen` | Passed; 29 locked packages installed | 0.40 s |
-| `uv run ruff check .` | All checks passed | 0.42 s |
-| Exact Ruff format command below | 154 files already formatted | 0.26 s |
-| `uv run mypy` | No issues in 154 source files | 3.62 s |
+| `uv sync --frozen` | Passed; 29 locked packages checked | 0.01 s |
+| `uv run ruff check .` | All checks passed | 0.05 s |
+| Exact Ruff format command below | 156 files already formatted | 0.02 s |
+| `uv run mypy` | No issues in 156 source files | 0.77 s |
 | `uv run python scripts/check_inventory_milestones.py` | 169 valid rows | 0.04 s |
-| `python3 scripts/check_shell_permissions.py --audit` | Valid; 146/146 shell rows covered | 0.15 s |
-| Pure budget command below | 595 passed; 4.768 s | Under 10 s |
-| Remaining budget command below | 236 passed; 26.740 s; 31.509 s cumulative | Under 60 s |
+| `python3 scripts/check_shell_permissions.py --audit` | Valid; 146/146 shell rows covered | 0.14 s |
+| Pure budget command below | 596 passed; 4.248 s | Under 10 s |
+| Remaining budget command below | 258 passed, 12 platform skips; 31.151 s cumulative | Under 60 s |
 | `uv build` | Wheel and source distribution built | 0.28 s |
-| Installed execution/recovery workflows | 32 passed | 10.28 s |
-| Canonical suite, environment variant 1 | 272 passed | 2.24 s |
-| Canonical suite, environment variant 2 | 272 passed | 2.30 s |
-| Pilot harness rejection matrix | 28 passed | 4.84 s |
-| Harness generation | Passed | 0.15 s |
-| Independent bundle verification | Passed | 0.11 s |
+| Installed production-bootstrap workflows | 32 passed | 10.70 s |
+| Canonical suite, Honolulu environment | 272 passed | 1.52 s |
+| Canonical suite, Berlin environment | 272 passed | 1.58 s |
+| Pilot harness rejection matrix | 28 passed | 5.16 s |
+| Each harness generation | Passed | 0.13 s |
+| Each recursive byte comparison | Identical | 0.00 s |
+| Independent bundle verification | Passed | 0.12 s |
 
 The exact format command was:
 
@@ -114,7 +131,7 @@ uv run ruff format --check \
   tests/contracts tests/integration tests/conftest.py tests/support
 ```
 
-The exact selector commands were:
+The accepted 10/60-second budget commands were unchanged:
 
 ```bash
 uv run python scripts/run_test_budget.py \
@@ -141,87 +158,109 @@ uv run python scripts/run_test_budget.py \
   tests/unit/execution/test_run_adapters.py
 ```
 
-Selector-contract tests enumerate all Python `test_*.py` files and prove the
-two sets are complete and disjoint. The pure selection excludes exactly
-`tests/unit/execution/test_run_adapters.py`; the remaining selection includes
-it exactly once. No legacy shell test was run.
+Selector-contract tests enumerate every Python `test_*.py` file and prove the
+two sets complete and disjoint. Linux-only managed-mutation helper contracts
+account for the 12 expected local macOS skips.
 
-## Determinism and installed package
+The wheel was installed into a virtual environment under the session
+workspace, outside the checkout, and invoked from a separate working
+directory. Version, help, validation, and expected rejected apply workflows
+passed. `tests/scaffold/test_cli_execution.py` independently built and
+installed wheels outside the checkout and exercised production bootstrap,
+observe, plan/apply, reconcile, verify, report, restart recovery, resume,
+rollback, finalization, abandonment, cleanup uncertainty, PTY/color variants,
+modeled exit codes, UTF-8, broken pipes, and contamination redaction.
 
-The canonical reporting, execution-document, configuration, and playlist
-Resource Type suites passed with identical expectations under:
+## Hosted and varied-environment evidence
+
+Ordinary hosted Linux/macOS CI plus local varied-environment determinism is
+the accepted matrix. This record does not claim that the full varied hash,
+timezone, and locale matrix ran on Linux.
+
+PR #104 hosted source-bound CI passed for the code now merged to `main`:
+
+- [Ubuntu 24.04](https://github.com/jbruns/tv/actions/runs/35520422714/job/106103423323):
+  596 pure tests and 270 remaining tests; accepted budgets passed.
+- [macOS 15](https://github.com/jbruns/tv/actions/runs/35520422714/job/106103423452):
+  596 pure tests and 258 remaining tests with 12 Linux-only skips; accepted
+  budgets passed.
+
+PR #103's current head must also pass its ordinary Ubuntu 24.04 and macOS 15
+Offline CI before merge. Those hosted checks repeat frozen sync, lint,
+formatting, strict typing, inventory and shell audits, exact selectors and
+budgets, package inspection and external installation, and two identical
+harness generations.
+
+Local canonical suites passed under:
 
 - `PYTHONHASHSEED=991`, `TZ=Pacific/Honolulu`, `LC_ALL=C.UTF-8`;
 - `PYTHONHASHSEED=37`, `TZ=Europe/Berlin`, `LC_ALL=C`.
 
-The complete installed CLI workflow additionally compares exact output under
-`PYTHONHASHSEED=1`, `TZ=UTC`, `LC_ALL=C` and
-`PYTHONHASHSEED=991`, `TZ=Pacific/Honolulu`, `LC_ALL=C.UTF-8`.
+## Pilot procedural bundle
 
-The wheel was built from the clean checkout, installed into an environment
-outside the checkout, and invoked from a separate working directory.
-`--version`, `--help`, `validate`, and the expected rejected `apply` workflow
-passed. The complete installed workflow test built and installed another
-wheel away from the checkout and exercised observe, plan/apply, reconcile,
-verify, report, recovery inspection, resume Verification, rollback, normal
-finalization, abandonment finalization, cleanup uncertainty, real production
-bootstrap with adapter seams, restart recovery, PTY/color variants, modeled
-exit codes, UTF-8, broken pipes, and contamination redaction.
-
-The installed wheel contained 105 entries, all beneath
-`coreelec_reconciler/` or its distribution metadata. Tests, scripts,
-workflows, Profiles, and inventory were absent. Required bootstrap,
-production adapter, execution, recovery, observation, persistence, and
-transport modules were present.
-
-## Pilot bundle and rejection evidence
-
-The harness command and independent verifier were:
+The three exact generation commands were:
 
 ```bash
-uv run python scripts/run_m3_pilot_harness.py \
-  --dry-run --output .ci-evidence/m3-pilot-dry-run
-uv run python scripts/verify_m3_evidence_bundle.py \
-  .ci-evidence/m3-pilot-dry-run
+env PYTHONHASHSEED=0 TZ=UTC LC_ALL=C \
+  uv run python scripts/run_m3_pilot_harness.py \
+  --dry-run --output .ci-evidence/m3-pilot-default
+env PYTHONHASHSEED=991 TZ=Pacific/Honolulu LC_ALL=C.UTF-8 \
+  uv run python scripts/run_m3_pilot_harness.py \
+  --dry-run --output .ci-evidence/m3-pilot-honolulu
+env PYTHONHASHSEED=37 TZ=Europe/Berlin LC_ALL=C \
+  uv run python scripts/run_m3_pilot_harness.py \
+  --dry-run --output .ci-evidence/m3-pilot-berlin
 ```
 
-Three generations under the default environment and both varied environments
-above were byte-identical. The manifest binds:
+The byte comparisons and independent verification were:
 
-- source commit `02eea6376aa40b35de1ac07ed75dfe4e9bec3bb3`;
-- source tree `a758833e6395d7aab391df7342282617555aac6c`;
-- configuration SHA-256
-  `bad8048786c36e7defaf4bea2cecd909927fe676bd18f1b4959ca7b6fea5140c`;
-- lock SHA-256
-  `0ab5562d697c8d88a3bbf3a3b47bc8b5a010b26f72bf0a3f23d9eac224464d8d`.
+```bash
+diff -r \
+  .ci-evidence/m3-pilot-default \
+  .ci-evidence/m3-pilot-honolulu
+diff -r \
+  .ci-evidence/m3-pilot-default \
+  .ci-evidence/m3-pilot-berlin
+uv run python scripts/verify_m3_evidence_bundle.py \
+  .ci-evidence/m3-pilot-default
+```
 
-The independent verifier rejection matrix passed all 28 tests, including
-missing or unexpected content, duplicate scenarios, stitching, source/tree,
-configuration and lock mismatch, working-byte substitution, artifact and
-bundle digest corruption, secret-bearing content, private paths, real Device
-identity, raw exceptions, and semantic mutation.
+Both comparisons were empty. The verifier accepted bundle digest
+`2e30f2d2b0586736012b8a7bcd378921b55b5aa1b56a39d71d3d1963c52a33b5`.
+The manifest binds acceptance merge commit
+`b3ca30c0d282591a1fe11ce8bb0bd137ada765e6`, tree
+`1017e258f0899942bb1e562319aa2453517c9b41`, configuration SHA-256
+`bad8048786c36e7defaf4bea2cecd909927fe676bd18f1b4959ca7b6fea5140c`,
+and lock SHA-256
+`0ab5562d697c8d88a3bbf3a3b47bc8b5a010b26f72bf0a3f23d9eac224464d8d`.
+
+The 28-test rejection matrix covers missing and unexpected content,
+duplicate scenarios, stitching, source/tree/configuration/lock mismatch,
+working-byte substitution, artifact and bundle corruption, secret-bearing
+content, private paths, real Device identity, raw exceptions, and mutation
+without resealing. These are useful contamination and consistency checks,
+not a claim of adversarial semantic integrity after resealing.
 
 ## Digests
 
 | Artifact or evidence | SHA-256 |
 | --- | --- |
-| Wheel | `a26c86cb1258c8ce3a9d0aea63b7e81830700b2fac0439764ad289659c05a7be` |
-| Source distribution | `40cfd751ebe2b7c2fa1bf2bd885320cfd85a51dd1b0a07eacb095a93c6b21b62` |
+| Wheel | `f49ea70319063f53e9a3b61aca5ce254021883a705b4aeb8a7ae4a85cc79c9dc` |
+| Source distribution | `d48715df5c2e0bdd60c0a458d29872c4669df6aa759c67ba133cb91ccdf0ffe6` |
 | `uv.lock` | `0ab5562d697c8d88a3bbf3a3b47bc8b5a010b26f72bf0a3f23d9eac224464d8d` |
 | Ownership ledger | `7df92594c5d86ec29142d5a758729c0e89a3be1004f66a2a8ab869dfeb1928bc` |
 | Shell write-set map | `a3895b96b64fecfbeeb89dff5c4e19ab86f6209ff19b2b4a40d65764582246c2` |
 | Sorted canonical-fixture digest set | `1bbfb18e2f0729f6f781a3410e0bada0ea698c3985b103e35b2d1db12c995015` |
 | Pilot core-sequence fixture | `56fc34753047c961803b99c47834d874096338822bc254f7430e9696f54fb6dd` |
-| Pilot `manifest.json` | `9c5b084d3d76c294c1afd9d8d15291080ccce2a25a2735f9b4f6a761eba86ac2` |
+| Pilot `manifest.json` | `9e872cdd5e52fd24a87d6ef4adc5f2b27cc66f392716c35571d0a72db2db2b51` |
 | Pilot `sequence.json` | `7393651d6b0d27cdbb623fb3d176ce031c2571267cad9676b3cd5eba62f0f1af` |
-| Pilot `digests.json` and verified bundle digest | `21f191f35fcdbd3e1af2592afb9add68428c3caa0ccff77c98e4f76e39bac3c6` |
-| Pilot `bundle.sha256` file | `2510fee59a21cd681e564bbca0b6a7ee4595732d1f6b2e247bdac77b6a3daa47` |
+| Pilot `digests.json` and verified bundle digest | `2e30f2d2b0586736012b8a7bcd378921b55b5aa1b56a39d71d3d1963c52a33b5` |
+| Pilot `bundle.sha256` file | `fc2da175ff2ae810b7f6c3d84f26b8b889d51d26a3ac2e75208e66fbd9ed9bae` |
 
-The hosted M3.6 bundle digest differs because its manifest binds the reviewed
-head commit rather than the merge commit. Both hosted platforms produced
-verified bundle digest
-`dbb7b54ee859a180701b631a227671c7caefeedd8bfdf5d15e18eef8896bc14e`
-with the same merged tree, configuration, lock, and sequence bytes.
+The package digests changed from the earlier seal because PR #104 added the
+managed-mutation helper and its production integration. Configuration, lock,
+ownership, shell-map, canonical fixtures, and scenario-description bytes did
+not change.
 
 ## Inventory, documentation, and no-live boundary
 
@@ -230,54 +269,48 @@ Inventory validation recorded 169 rows: 153 `migrate`, 11 `outside`, and 5
 the two explicitly documented unknown targets. `SKIN-025` remains owned by
 the shell implementation.
 
-M3.6 made the cohesive documentation transition in
-`docs/development.md`, `docs/implementation/offline-execution.md`, and
-`docs/implementation/pilot-readiness.md`. This seal does not rewrite those
-procedures. They remain authoritative for the exact selectors, production
-composition, package boundary, dry-run harness, and no-live rules.
+All acceptance used synthetic data and the offline socket guard. The harness
+accepts no endpoint or credential and records `device_contact=false`,
+`secret_resolution=false`, `live_use_authorized=false`,
+`ownership_transfer_authorized=false`, and `skin_025_owner=shell`. No Device
+session, real secret resolution, deployment, production restart, ownership
+transfer, shell freeze, pilot mutation, M4 issue generation, or legacy shell
+suite occurred.
 
-All acceptance used synthetic data and an early session-wide socket guard.
-The harness accepts no endpoint or credential and records
-`device_contact=false`, `secret_resolution=false`,
-`live_use_authorized=false`, `ownership_transfer_authorized=false`, and
-`skin_025_owner=shell`. No Device session, real secret resolution, deployment,
-production restart, ownership transfer, shell freeze, pilot mutation, M4 issue
-generation, or legacy shell suite occurred.
+## Decision and residual risks
 
-## Known failures and decision
+Known ordinary functional acceptance failures: **none**.
 
-Known acceptance failures: **none**.
+Accepted residual risks and limitations:
 
-There was no selector omission or duplication, budget overrun,
-nondeterministic byte, package mismatch, verifier gap, secret/privacy
-contamination, real Device access, or unresolved predecessor defect. No
-acceptance fix or capability change was required. M3 is accepted for merge of
-this record only, subject to the same passing hosted checks on its pull
-request.
+- The description-only harness proves deterministic procedural packaging and
+  contamination rejection, not that scenarios executed.
+- A party able to rewrite and reseal evidence can change its semantics.
+- Malicious concurrent Device processes and compromised root/SFTP servers are
+  outside the trusted-appliance threat model.
+- Unsupported Linux kernel or Profile-filesystem compare-and-swap primitives
+  fail capability negotiation closed; they were not exercised against a live
+  Device during M3.
+
+M3 is accepted for merge of this record only, subject to passing PR #103
+Ubuntu and macOS Offline CI. The accepted residuals above do not weaken any
+ordinary functional gate or the 10/60-second budgets.
 
 ## Reproduction
 
-From a genuinely clean checkout of
-`02eea6376aa40b35de1ac07ed75dfe4e9bec3bb3`, run the commands in
-`docs/development.md` exactly, including the two selector commands reproduced
-above, the wheel inspection and external installation, and the pilot commands
-above. Then run:
+From a genuinely clean checkout containing merged commit
+`c2540ed5c9aa1b535e78fdef1ffebbb3d5da94e0`, run the commands in
+`docs/development.md`, the exact selectors above, the installed-wheel
+workflow, the two canonical environment variants, the three harness commands
+and byte comparisons, and:
 
 ```bash
-env PYTHONHASHSEED=991 TZ=Pacific/Honolulu LC_ALL=C.UTF-8 \
-  uv run pytest -q \
-  tests/unit/reporting tests/unit/execution/test_execution_documents.py \
-  tests/unit/config tests/unit/resource_types/kodi_smart_playlist
-env PYTHONHASHSEED=37 TZ=Europe/Berlin LC_ALL=C \
-  uv run pytest -q \
-  tests/unit/reporting tests/unit/execution/test_execution_documents.py \
-  tests/unit/config tests/unit/resource_types/kodi_smart_playlist
 uv run pytest -q tests/scaffold/test_cli_execution.py
 uv run pytest -q tests/integration/test_m3_pilot_harness.py
 python3 scripts/check_markdown.py
 git diff --check
 ```
 
-Compare the resulting source/tree/configuration/lock, package, fixture, and
+Compare source/tree, package, fixture, configuration, lock, and procedural
 bundle digests with this record. Do not run the legacy shell suite or contact
 a Device.
