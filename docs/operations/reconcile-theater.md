@@ -1,24 +1,25 @@
 # Reconcile the theater Ugoos
 
 The Reconciler shadows the shell on two Resource Types on the theater Ugoos:
-the Smart Playlist `NewShows.xsp`, and the Kodi settings the Profile declares
-inside `guisettings.xml`. Both engines still write them, holding the same
-values. Everything else on the Device is the shell provisioner's, and its
-declaration remains the Recovery Baseline
+the Smart Playlist `NewShows.xsp`, and the Kodi settings inside
+`guisettings.xml` — the constants the Profile declares and the nine
+room-scoped addresses the Room Overlay declares. Both engines still write
+them, holding the same values. Everything else on the Device is the shell
+provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
 A Smart Playlist is a document the Reconciler renders whole.
 `guisettings.xml` is not: it is a shared document holding hundreds of
 settings, almost all of them Unmanaged State. The Reconciler changes only the
-State Addresses the Profile declares and preserves every other setting's
-identity and value.
+State Addresses the resolved configuration declares and preserves every other
+setting's identity and value.
 
 ## Configuration
 
 | File | Holds |
 | --- | --- |
 | `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: SSH transport, the declared Smart Playlists, and the declared Kodi settings |
-| `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, and the Profile it uses |
+| `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Kodi settings |
 
 Both files are strict: an unknown or missing key is rejected naming the key,
 before any Device contact. The shell's `provision.conf` and `room.conf` beside
@@ -84,6 +85,68 @@ Kodi resolves a setting ID without regard to case and reads only the direct
 setting to that one node: a differently cased node, or a copy nested under
 `<category>`, is the same setting and does not survive beside it. This is what
 the shell provisioner does, so the two agree on what "set" means.
+
+## Declaring a room-scoped Kodi setting
+
+A setting that describes the room's hardware rather than the class of Device
+belongs in the Room Overlay's `kodi_settings`, which uses the same entry
+schema and names no document of its own — there is one `guisettings.xml` and
+the Profile names it. The Room Overlay declares nine: the Sony's EDID mode
+whitelist, the two Dolby Vision settings, and the six passthrough flags for
+the Sony eARC to OREI to Denon chain.
+
+```yaml
+kodi_settings:
+  - setting: audiooutput.truehdpassthrough
+    value: "true"
+```
+
+The block is required. A room that adds nothing says so with an empty list;
+omitting the key is rejected naming it, like every other strict-schema miss.
+
+The Reconciler concatenates the Profile's settings with the Room Overlay's. A
+room may add an address the Profile does not declare; an address declared on
+both sides is an error naming the address, raised before any Device contact.
+The language says a Room Overlay wins on collision, and that is what a second
+room will need, but nothing needs it yet, so it is not built.
+
+### Transforms
+
+Two of the nine are not written as declared, because what a human states and
+what Kodi stores are different things:
+
+| Transform | Declared | Written |
+| --- | --- | --- |
+| `invert` | `true` | `false` |
+| `dolby_vision_mode` | `tv-led` | `0` |
+| `dolby_vision_mode` | `player-led` | `1` |
+
+```yaml
+  - setting: coreelec.amlogic.disabledolbyvision
+    value: "true"
+    transform: invert
+```
+
+Dolby Vision is on in this room, and Kodi's address states it negatively, so
+declaring `false` there would read as a lie about the room. The declaration
+states the room's fact and the transform carries it to the Device. Each
+transform's domain is closed: a value it cannot read is rejected naming both
+the value and the transform, because passing it through would write something
+Kodi ignores and then verify as converged.
+
+`plan` names the value that will reach the Device, and the declaration it came
+from, so the Room Overlay still reads as the source:
+
+```
+update /storage/.kodi/userdata/guisettings.xml#coreelec.amlogic.dolbyvisionled: 1 -> 0 (dolby_vision_mode of tv-led)
+```
+
+`videoscreen.resolution` and `audiooutput.channels` are room-scoped too and
+are deliberately *not* declared. Both are opaque Kodi enum ordinals the shell
+resolves by probing a running Kodi, and the resolved index is not stable
+across runs against unchanged hardware, so an address declared as a literal
+would report a Change on every Run and fail its own Verification. They wait
+for Intent resolution.
 
 ## The Kodi restart Effect
 
@@ -178,17 +241,27 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater | grep '^create .*guisettings'
    ```
 
-   Expect no output. Run this whenever the Profile declares a new setting.
+   Expect no output. Run this whenever the Profile or the Room Overlay
+   declares a new setting.
 7. **The shell and the Reconciler agree** — the value-parity invariant. One
    mismatched literal (`true` against `1`) gives two engines that revert each
-   other forever. After `apply`, run the shell baseline and re-plan:
+   other forever, and it is the check that proves a transform produces what
+   the shell produces rather than something merely plausible. After `apply`,
+   run the shell and re-plan:
 
    ```console
    ./provision-coreelec.sh --target ugoos-theater --component baseline
    uv run coreelec-reconciler plan --room theater
    ```
 
-   Expect `plan: no changes`.
+   Expect `plan: no changes`. The room component is the narrower form of the
+   same check, and it is the one that exercises the transforms:
+
+   ```console
+   ./provision-coreelec.sh --target ugoos-theater --component room --room theater
+   uv run coreelec-reconciler plan --room theater
+   ```
+
 8. **Usable** — Kodi still starts and the playlist still opens:
 
    ```console
@@ -224,13 +297,14 @@ by `apply` again.
 ## Ownership
 
 `inventory/ownership-ledger.json` records `SKIN-025`
-(`special://profile/playlists/video/NewShows.xsp`) and the twenty
+(`special://profile/playlists/video/NewShows.xsp`), the twenty
 `guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
-`CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — as shell-owned
+`CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — and the nine the
+Room Overlay declares (`ROOM-002`-`ROOM-010`) as shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
-`skin`, `services` or `baseline` run. That is the shadowing model: transferring
-a row freezes
+`skin`, `services`, `room` or `baseline` run. That is the shadowing model:
+transferring a row freezes
 those shell runs
 ([the write-set permission freeze](shell-write-set-permissions.md)), which
 would remove the Recovery Baseline this slice depends on, so ownership moves
@@ -238,8 +312,9 @@ only when the shell is deleted wholesale
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
 The two declarations agree — the Reconciler renders the same Smart Playlist
-document the shell does, and declares the same Kodi setting values — so a
-Device restored from the shell baseline converges with no Change. The
+document the shell does, declares the same Kodi setting values, and its two
+transforms produce exactly what the shell's inversion and mapping produce — so
+a Device restored from the shell baseline converges with no Change. The
 Observation is the file's content, or the setting's value, and nothing else.
 
 The shell writes the Smart Playlist `0600` and the Reconciler writes it

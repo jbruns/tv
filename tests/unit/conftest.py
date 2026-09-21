@@ -95,11 +95,15 @@ kodi_settings:
 
 DEFAULT_SETTINGS = {"videolibrary.flattentvshows": "1"}
 
-ROOM = """\
+ROOM_HEADER = """\
 room: theater
 hostname: ugoos-theater
 profile: ugoos-am6b-plus/coreelec-21.3
 """
+
+# A Room Overlay must state its room-scoped settings even when it has none:
+# the block is required, and an empty list says so out loud.
+ROOM = ROOM_HEADER + "kodi_settings: []\n"
 
 EXPECTED_XSP = """\
 <?xml version='1.0' encoding='UTF-8'?>
@@ -169,6 +173,10 @@ class FakeDevice:
         (self.config_root / "rooms" / "theater" / "room.yaml").write_text(
             body, encoding="utf-8"
         )
+
+    def write_room_settings(self, block: str) -> None:
+        """Writes a Room Overlay whose `kodi_settings` is `block`."""
+        self.write_room(ROOM_HEADER + "kodi_settings:\n" + block)
 
 
 @pytest.fixture

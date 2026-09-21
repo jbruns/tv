@@ -17,6 +17,16 @@ class ConfigError(Exception):
     """A Profile or Room Overlay that cannot be read as Desired State."""
 
 
+# A setting a human declares positively that Kodi stores negatively, or as an
+# ordinal, needs a transform between the declaration and the Device. Each one
+# has a closed domain: a value outside it is a mistake, not a literal to pass
+# through, because Kodi would silently ignore what it wrote.
+TRANSFORMS: dict[str, dict[str, str]] = {
+    "invert": {"true": "false", "false": "true"},
+    "dolby_vision_mode": {"tv-led": "0", "player-led": "1"},
+}
+
+
 @dataclass(frozen=True)
 class Transport:
     user: str
@@ -47,10 +57,16 @@ class SmartPlaylist:
 
 @dataclass(frozen=True)
 class KodiSetting:
-    """One Kodi setting. Its State Address is the ID inside the document."""
+    """One Kodi setting. Its State Address is the ID inside the document.
+
+    `value` is what reaches the Device; `declared` is what the file states.
+    The two differ only where a transform stands between them.
+    """
 
     setting: str
     value: str
+    declared: str
+    transform: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,9 +102,14 @@ def _read(path: Path) -> dict[str, Any]:
 
 
 def _fields(
-    source: Path, where: str, mapping: dict[str, Any], *, required: tuple[str, ...]
+    source: Path,
+    where: str,
+    mapping: dict[str, Any],
+    *,
+    required: tuple[str, ...],
+    optional: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    unknown = sorted(set(mapping) - set(required))
+    unknown = sorted(set(mapping) - set(required) - set(optional))
     if unknown:
         raise ConfigError(f"{source}: unknown key in {where}: {unknown[0]}")
     missing = [key for key in required if key not in mapping]
@@ -120,6 +141,24 @@ def _relative(source: Path, where: str, value: str) -> str:
     if candidate.is_absolute() or ".." in candidate.parts:
         raise ConfigError(f"{source}: {where} must stay inside the tree: {value}")
     return value
+
+
+def _transform(source: Path, name: str | None, value: str) -> str:
+    """The value that reaches the Device for a declaration of `value`."""
+
+    if name is None:
+        return value
+    mapping = TRANSFORMS.get(name)
+    if mapping is None:
+        known = ", ".join(sorted(TRANSFORMS))
+        raise ConfigError(f"{source}: unknown transform: {name} (known: {known})")
+    if value not in mapping:
+        allowed = ", ".join(sorted(mapping))
+        raise ConfigError(
+            f"{source}: the transform {name} cannot read the value {value} "
+            f"(it reads: {allowed})"
+        )
+    return mapping[value]
 
 
 def _rule(source: Path, raw: Any) -> Rule:
@@ -175,11 +214,44 @@ def _kodi_setting(source: Path, raw: Any) -> KodiSetting:
         "a Kodi setting",
         _mapping(source, "a Kodi setting", raw),
         required=("setting", "value"),
+        optional=("transform",),
+    )
+    declared = _text(source, "a Kodi setting value", mapping["value"])
+    transform = (
+        _text(source, "a Kodi setting transform", mapping["transform"])
+        if "transform" in mapping
+        else None
     )
     return KodiSetting(
         setting=_text(source, "a Kodi setting id", mapping["setting"]),
-        value=_text(source, "a Kodi setting value", mapping["value"]),
+        value=_transform(source, transform, declared),
+        declared=declared,
+        transform=transform,
     )
+
+
+def _merge(
+    profile_settings: tuple[KodiSetting, ...],
+    room_settings: tuple[KodiSetting, ...],
+    room_file: Path,
+) -> tuple[KodiSetting, ...]:
+    """The Profile's settings followed by the Room Overlay's.
+
+    A Room Overlay may add a State Address the Profile does not declare. The
+    language says an overlay wins on collision, but nothing needs that yet, so
+    an address declared on both sides is an error naming it — Kodi resolves a
+    setting ID without regard to case, so that is how the two sides are
+    compared.
+    """
+
+    seen = {setting.setting.casefold() for setting in profile_settings}
+    for setting in room_settings:
+        if setting.setting.casefold() in seen:
+            raise ConfigError(
+                f"{room_file}: {setting.setting} is declared by both the "
+                "Profile and the Room Overlay"
+            )
+    return profile_settings + room_settings
 
 
 def load(config_root: Path, room: str) -> DesiredState:
@@ -193,12 +265,18 @@ def load(config_root: Path, room: str) -> DesiredState:
         room_file,
         "the Room Overlay",
         _read(room_file),
-        required=("room", "hostname", "profile"),
+        required=("room", "hostname", "profile", "kodi_settings"),
     )
     hostname = _text(room_file, "hostname", overlay["hostname"])
     declared_profile = _relative(
         room_file, "profile", _text(room_file, "profile", overlay["profile"])
     )
+    room_settings = overlay["kodi_settings"]
+    if not isinstance(room_settings, list):
+        raise ConfigError(
+            f"{room_file}: kodi_settings must be a list of settings, and an "
+            "empty list when the room adds none"
+        )
 
     profile_file = config_root / "shared" / declared_profile / "profile.yaml"
     if not profile_file.is_file():
@@ -264,8 +342,10 @@ def load(config_root: Path, room: str) -> DesiredState:
         playlists=tuple(_playlist(profile_file, directory, raw) for raw in declared),
         kodi_settings=KodiSettings(
             document=document,
-            settings=tuple(
-                _kodi_setting(profile_file, raw) for raw in declared_settings
+            settings=_merge(
+                tuple(_kodi_setting(profile_file, raw) for raw in declared_settings),
+                tuple(_kodi_setting(room_file, raw) for raw in room_settings),
+                room_file,
             ),
         ),
     )

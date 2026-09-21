@@ -68,7 +68,10 @@ class SettingChange:
 
     def report(self) -> Iterator[str]:
         observed = "(unset)" if self.observed is None else self.observed
-        yield f"{self.action} {self.address}: {observed} -> {self.desired}"
+        origin = ""
+        if self.setting.transform is not None:
+            origin = f" ({self.setting.transform} of {self.setting.declared})"
+        yield f"{self.action} {self.address}: {observed} -> {self.desired}{origin}"
 
 
 Change = PlaylistChange | SettingChange
