@@ -2,11 +2,11 @@
 
 The Reconciler shadows the shell on two Resource Types on the theater Ugoos:
 the eight Smart Playlists under `special://profile/playlists/video`, and the
-Kodi settings inside three Settings Documents — `guisettings.xml`, the Home
-Assistant weather add-on's `settings.xml`, and the NextPVR client's
-`instance-settings-1.xml`. Both engines still write them, holding the same
-values. Everything else on the Device is the shell provisioner's, and its
-declaration remains the Recovery Baseline
+Kodi settings inside four Settings Documents — `guisettings.xml`, the Home
+Assistant weather add-on's `settings.xml`, the NextPVR client's
+`instance-settings-1.xml`, and TMDb Helper's `settings.xml`. Both engines
+still write them, holding the same values. Everything else on the Device is
+the shell provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
 A Smart Playlist is a document the Reconciler renders whole. A Settings
@@ -21,10 +21,13 @@ value.
 | --- | --- |
 | `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: SSH transport, the declared Smart Playlists, and the declared Settings Documents |
 | `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Settings Documents |
+| `.env` | The values Desired State names but may not carry, shared with the shell |
 
-Both files are strict: an unknown or missing key is rejected naming the key,
-before any Device contact. The shell's `provision.conf` and `room.conf` beside
-them are untouched and still read only by the shell.
+Both configuration files are strict: an unknown or missing key is rejected
+naming the key, before any Device contact. The shell's `provision.conf` and
+`room.conf` beside them are untouched and still read only by the shell. `.env`
+is the shell's too, and the Reconciler reads the same file; see
+[naming a value the Profile may not hold](#naming-a-value-the-profile-may-not-hold).
 
 The Device is identified by its hostname and nothing more. Every Run asks the
 Device what it calls itself and refuses to continue unless the answer matches
@@ -45,7 +48,9 @@ uv run coreelec-reconciler apply --room theater
 ```
 
 Transport is the system `ssh` client with the existing administrator key
-(`~/.ssh/coreelec_admin_ed25519` by default; change it in the Profile).
+(`~/.ssh/coreelec_admin_ed25519` by default; change it in the Profile). The
+shared `.env` is read from the repository root; `--env-file PATH` names
+another, and a Run that names no value in it never opens it at all.
 
 `plan` mutates nothing, including the Kodi service. It reports one Change per
 Resource: a unified diff for a Smart Playlist, and for a Kodi setting a single
@@ -166,8 +171,8 @@ agree, the Recovery Baseline and Desired State do not diverge, and a shell run
 stays a no-op. Values the shell resolves from `provision.conf` are declared as
 the resolved literal.
 
-The Profile declares twenty-four settings this way and the Reconciler holds no
-list of its own, so the twenty-fifth is an entry here and no code change. Two
+The Profile declares thirty-two settings this way and the Reconciler holds no
+list of its own, so the thirty-third is an entry here and no code change. Two
 checks belong to declaring one: the Device must not plan it as a `create`, and
 the shell must still agree after it lands. Both are acceptance scenarios 7 and
 8 below.
@@ -181,22 +186,55 @@ the shell provisioner does, so the two agree on what "set" means.
 A State Address is the document plus the setting, so the same setting ID in
 two documents is two addresses and not a collision.
 
-### What is not declared
+### Naming a value the Profile may not hold
 
-Four addresses in these documents are credentials and stay the shell's until
-the `.env` slice: `weather.ha`'s `ha_key`, `pvr.nextpvr`'s `pin`, and TMDb
-Helper's `mdblist_apikey` and `omdb_apikey`. Two more go with them —
-`weather.ha`'s `ha_server` and `pvr.nextpvr`'s `host` — because both resolve
-from `HOME_ASSISTANT_URL` and `NEXTPVR_HOST`, which the shell holds in the
-shared `.env` file and refuses to read from `provision.conf`. Declaring them
-in a committed Profile would move that boundary, which is the `.env` slice's
-decision to make, not this one's.
+Six State Addresses hold values a committed file may not carry: `weather.ha`'s
+`ha_server` and `ha_key`, `pvr.nextpvr`'s `host` and `pin`, and TMDb Helper's
+`mdblist_apikey` and `omdb_apikey`. They live in the shared `.env` file, which
+the shell entry points read and `provision.conf` refuses to hold
+([the shared secret boundary](../../config/README.md#shared-secret-boundary)).
 
-The surrounding values are independently meaningful, so the cohort is split
-deliberately rather than held whole — the mistake
-[ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md) records
-for `CORE-020`..`CORE-027` was declaring a cohort *around* a credential while
-leaving the credential behind, not splitting one at all.
+Desired State **names** such a value rather than holding it. A setting states
+`value` or `from_env`, never both, and `from_env` is the `.env` key:
+
+```yaml
+- setting: ha_server
+  from_env: HOME_ASSISTANT_URL
+```
+
+Four of the six are credentials. The other two are the endpoints those
+credentials authenticate to, and they are named too, because the boundary is
+the file rather than a judgement about each key
+([ADR 0014](../adr/0014-desired-state-names-a-value-it-may-not-hold.md)).
+
+A named key that `.env` does not hold — or holds empty, which is what
+`.env.example` ships — is an error naming the key, raised while the
+configuration is read and before the Device is contacted:
+
+```console
+$ uv run coreelec-reconciler plan --room theater
+error: …/profile.yaml names NEXTPVR_PIN, which .env does not hold
+```
+
+`.env` is bash to the shell, which sources it. The Reconciler reads it with a
+strict `KEY=value` grammar instead: blank lines and `#` comments are skipped,
+a value is bare, `'single-quoted'`, or `"double-quoted"`, and anything else —
+an expansion, a command substitution, a duplicate key, an `export` prefix — is
+rejected naming the file and the line. A misread credential would be written
+to the Device and then verified against itself as converged, so a line the
+grammar cannot read is never guessed at.
+
+**A named value is never printed.** `plan` and `apply` report the address and
+the key it is named by, and neither the desired value nor the Observation —
+what the Device holds for `ha_key` is the token, so reporting drift the
+ordinary way would print the credential while reporting it wrong:
+
+```
+update /storage/.kodi/userdata/addon_data/weather.ha/settings.xml#ha_key: named by HOME_ASSISTANT_TOKEN
+```
+
+A named value takes no transform. Nothing needs one, and a transform that
+cannot read its input reports the value it could not read.
 
 ## Declaring a room-scoped Kodi setting
 
@@ -363,18 +401,24 @@ The scenarios are:
    has to prove them. Stop Kodi, put a wrong value into each document in its
    own dialect, start Kodi so the wrong values are loaded into memory, then
    `apply` and confirm both correct — and survive a restart, which is the half
-   that catches a write Kodi discards on exit.
+   that catches a write Kodi discards on exit. TMDb Helper's document is
+   `addon_v2` as well, and every address in it is a named value, so drifting
+   its `omdb_apikey` proves the named path end to end: the wrong value is
+   replaced by one no committed file holds.
 
    ```console
    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
    weather=/storage/.kodi/userdata/addon_data/weather.ha/settings.xml
    nextpvr=/storage/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
+   tmdb=/storage/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
 
    ug systemctl stop kodi
    # addon_v1: the value is an attribute.
    ug "sed -i 's/id=\"ha_sun_entity_id\" value=\"[^\"]*\"/id=\"ha_sun_entity_id\" value=\"sun.wrong\"/' $weather"
    # addon_v2: the value is element text.
    ug "sed -i 's|<setting id=\"hostprotocol\">[^<]*</setting>|<setting id=\"hostprotocol\">http</setting>|' $nextpvr"
+   # A named value: the Reconciler restores it from .env, never from here.
+   ug "sed -i 's|<setting id=\"omdb_apikey\">[^<]*</setting>|<setting id=\"omdb_apikey\">wrong</setting>|' $tmdb"
    ug systemctl start kodi
 
    uv run coreelec-reconciler apply --room theater
@@ -382,9 +426,10 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
-   Expect the `apply` to name both documents and both values, and the `plan`
-   after the restart to report `no changes`. A `plan` that reports the drift
-   again is Kodi having overwritten the write from memory.
+   Expect the `apply` to name all three documents, the two held values, and
+   `omdb_apikey` as `named by OMDB_API_KEY` with no value either side of it,
+   and the `plan` after the restart to report `no changes`. A `plan` that
+   reports the drift again is Kodi having overwritten the write from memory.
 7. **No declared setting or playlist is a `create`** — the shell writes every
    declared setting and every declared playlist, so on a provisioned Device
    none may plan as a `create`. A `create` is a misread or typo'd setting id,
@@ -435,8 +480,11 @@ The scenarios are:
    ```
 
 9. **Usable** — Kodi still starts, every playlist still opens, the weather
-   widget still renders on the home screen, and NextPVR still lists channels.
-   Ask Kodi for each playlist in turn:
+   widget still renders on the home screen, NextPVR still lists channels, and
+   TMDb Helper still returns ratings. The last four are what the six named
+   values buy: each one is a live endpoint or the credential that reaches it,
+   so a value written wrongly shows up as a widget that does not render rather
+   than as a failed Run. Ask Kodi for each playlist in turn:
 
    ```console
    for xsp in InProgressMovies90Days InProgressShows90Days \
@@ -461,6 +509,23 @@ The scenarios are:
 
    A `result` with `files` (or an empty list when nothing is unwatched) means
    Kodi parsed the Smart Playlist. An `error` means it did not.
+10. **No named value is anywhere it should not be** — the whole point of
+    naming. Capture a Run's output and search it for each of the six values,
+    and search what the Reconciler commits:
+
+    ```console
+    set -a && . ./.env && set +a
+    uv run coreelec-reconciler plan --room theater > /tmp/run.log 2>&1
+    for value in "$HOME_ASSISTANT_URL" "$HOME_ASSISTANT_TOKEN" \
+                 "$NEXTPVR_HOST" "$NEXTPVR_PIN" \
+                 "$MDBLIST_API_KEY" "$OMDB_API_KEY"; do
+      grep -qF -- "$value" /tmp/run.log && echo "LEAKED in output"
+      git -C . grep -qF -- "$value" && echo "LEAKED in the tree"
+    done
+    rm -f /tmp/run.log
+    ```
+
+    Expect no output at all. Run it again after an `apply`, which prints more.
 
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
@@ -486,9 +551,8 @@ by `apply` again.
 (`SKIN-019`-`SKIN-026`), the twenty
 `guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
 `CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
-Room Overlay declares (`ROOM-002`-`ROOM-010`), and the six add-on addresses
-the Profile declares (`SVC-004`, `SVC-005`, `SVC-007`-`SVC-009` and
-`SVC-011`) as shell-owned
+Room Overlay declares (`ROOM-002`-`ROOM-010`), and the twelve add-on addresses
+the Profile declares (`SVC-002`-`SVC-013`) as shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
 `skin`, `services`, `room` or `baseline` run. `SKIN-027` and `SKIN-028`, the
@@ -501,10 +565,10 @@ would remove the Recovery Baseline this slice depends on, so ownership moves
 only when the shell is deleted wholesale
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
-`SVC-002`, `SVC-003`, `SVC-006`, `SVC-010`, `SVC-012` and `SVC-013` stay
-`none`: four are credentials and two are the endpoints those credentials
-authenticate to, all six held in `.env`. They go together in the secrets
-slice.
+`SVC-002`, `SVC-003`, `SVC-006`, `SVC-010`, `SVC-012` and `SVC-013` are the
+six named values. Both engines read them from the same `.env`, so the two
+declarations agree there for the same reason they agree everywhere else: there
+is one source.
 
 The two declarations agree — the Reconciler renders the same Smart Playlist
 document the shell does, declares the same Kodi setting values, and its two

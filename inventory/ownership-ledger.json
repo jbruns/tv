@@ -3009,7 +3009,7 @@
       "state_address": "addon_data/weather.ha/settings.xml: ha_server",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3030,7 +3030,7 @@
       "state_address": "Same file: ha_key",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3093,7 +3093,7 @@
       "state_address": "addon_data/pvr.nextpvr/instance-settings-1.xml: host",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3177,7 +3177,7 @@
       "state_address": "Same file: pin",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3219,7 +3219,7 @@
       "state_address": "addon_data/plugin.video.themoviedb.helper/settings.xml: mdblist_apikey",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3240,7 +3240,7 @@
       "state_address": "Same file: omdb_apikey",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [

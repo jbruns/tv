@@ -88,16 +88,51 @@ def test_the_room_overlay_names_the_device_and_the_profile(
 
 
 def test_the_shipped_configuration_is_readable(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The committed config/ tree must parse without a Device."""
+    """The committed config/ tree must parse without a Device.
+
+    It must parse without the fleet's secrets too. The shipped Profile names
+    six values in `.env`, and CI has none of them, so the file this Run reads
+    is a stand-in holding exactly the keys the Profile names. Which six those
+    are is asserted in `test_settings_documents.py`.
+    """
     from coreelec_reconciler import main
 
     config_root = Path(__file__).resolve().parents[2] / "config"
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "".join(
+            f"{key}='a-value'\n"
+            for key in (
+                "HOME_ASSISTANT_URL",
+                "HOME_ASSISTANT_TOKEN",
+                "NEXTPVR_HOST",
+                "NEXTPVR_PIN",
+                "MDBLIST_API_KEY",
+                "OMDB_API_KEY",
+            )
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("PATH", "/nonexistent-for-this-test")
 
-    assert main(["plan", "--room", "theater", "--config-root", str(config_root)]) == 1
+    assert (
+        main(
+            [
+                "plan",
+                "--room",
+                "theater",
+                "--config-root",
+                str(config_root),
+                "--env-file",
+                str(env_file),
+            ]
+        )
+        == 1
+    )
 
     # The shipped Profile and Room Overlay parse; the Run gets as far as the
     # Device, which no CI runner can reach.

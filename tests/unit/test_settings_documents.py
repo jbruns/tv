@@ -55,6 +55,13 @@ NEXTPVR_ON_DEVICE = """\
 </settings>
 """
 
+TMDB_ON_DEVICE = """\
+<settings version="2">
+    <setting id="mdblist_apikey">an-mdblist-key</setting>
+    <setting id="omdb_apikey">a-stale-key</setting>
+</settings>
+"""
+
 
 def text_values(document: Path) -> dict[str, str | None]:
     """Every setting a text-dialect document holds, as id to element text."""
@@ -390,6 +397,21 @@ def test_two_sides_disagreeing_on_a_dialect_are_rejected(
 
 WEATHER_PATH = "/storage/.kodi/userdata/addon_data/weather.ha/settings.xml"
 NEXTPVR_PATH = "/storage/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml"
+TMDB_PATH = (
+    "/storage/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml"
+)
+
+# What `.env` holds for every key the committed Profile names. The values are
+# this test's, not the fleet's; what matters is that the Profile carries none
+# of them.
+SHIPPED_ENV = """\
+HOME_ASSISTANT_URL='https://home-assistant.example'
+HOME_ASSISTANT_TOKEN='a-long-lived-token'
+NEXTPVR_HOST='nextpvr.example'
+NEXTPVR_PIN='0000'
+MDBLIST_API_KEY='an-mdblist-key'
+OMDB_API_KEY='an-omdb-key'
+"""
 
 
 def shipped_addon_documents() -> dict[str, dict[str, Any]]:
@@ -414,14 +436,17 @@ def shipped_addon_documents() -> dict[str, dict[str, Any]]:
 
 def profile_extra(device: FakeDevice, documents: dict[str, dict[str, Any]]) -> str:
     """The committed add-on documents, re-pointed at the fake Device."""
-    local = {WEATHER_PATH: device.weather, NEXTPVR_PATH: device.nextpvr}
+    local = {
+        WEATHER_PATH: device.weather,
+        NEXTPVR_PATH: device.nextpvr,
+        TMDB_PATH: device.tmdb,
+    }
     return "".join(
         document_block(
             local[path],
             str(document["dialect"]),
             "".join(
-                f"      - setting: {entry['setting']}\n"
-                f'        value: "{entry["value"]}"\n'
+                f"      - setting: {entry['setting']}\n" + declaration(entry)
                 for entry in document["settings"]
             ),
         )
@@ -429,10 +454,17 @@ def profile_extra(device: FakeDevice, documents: dict[str, dict[str, Any]]) -> s
     )
 
 
-def test_the_shipped_profile_declares_the_two_addon_documents() -> None:
-    """The nine non-secret `SVC` addresses, less the two endpoints the shell
-    still holds in `.env`. `ha_key`, `pin`, and the two TMDb Helper keys are
-    credentials and wait for the secrets slice."""
+def declaration(entry: dict[str, Any]) -> str:
+    """How the committed Profile states one setting's value."""
+    if "from_env" in entry:
+        return f"        from_env: {entry['from_env']}\n"
+    return f'        value: "{entry["value"]}"\n'
+
+
+def test_the_shipped_profile_declares_the_three_addon_documents() -> None:
+    """Every `SVC` address in the three add-on documents. Six of them name a
+    value in `.env` rather than holding one: four credentials and the two
+    endpoints those credentials authenticate to (ADR 0014)."""
     documents = shipped_addon_documents()
     declared = {
         path: (
@@ -444,18 +476,47 @@ def test_the_shipped_profile_declares_the_two_addon_documents() -> None:
     assert declared == {
         WEATHER_PATH: (
             "addon_v1",
-            ["ha_weather_forecast_entity_id", "ha_sun_entity_id"],
+            [
+                "ha_server",
+                "ha_key",
+                "ha_weather_forecast_entity_id",
+                "ha_sun_entity_id",
+            ],
         ),
         NEXTPVR_PATH: (
             "addon_v2",
             [
+                "host",
                 "hostprotocol",
                 "port",
+                "pin",
                 "kodi_addon_instance_enabled",
                 "kodi_addon_instance_name",
             ],
         ),
+        TMDB_PATH: ("addon_v2", ["mdblist_apikey", "omdb_apikey"]),
     }
+    named = {
+        entry["setting"]: entry.get("from_env")
+        for document in documents.values()
+        for entry in document["settings"]
+        if "from_env" in entry
+    }
+    assert named == {
+        "ha_server": "HOME_ASSISTANT_URL",
+        "ha_key": "HOME_ASSISTANT_TOKEN",
+        "host": "NEXTPVR_HOST",
+        "pin": "NEXTPVR_PIN",
+        "mdblist_apikey": "MDBLIST_API_KEY",
+        "omdb_apikey": "OMDB_API_KEY",
+    }
+    # A named setting carries the key and nothing else.
+    assert all(
+        "value" not in entry
+        for document in documents.values()
+        for entry in document["settings"]
+        if "from_env" in entry
+    )
 
 
 def test_no_declared_addon_setting_plans_as_a_create(
@@ -468,6 +529,7 @@ def test_no_declared_addon_setting_plans_as_a_create(
     wrong dialect, either of which writes a node Kodi ignores and still
     verifies as converged (ADR 0012)."""
     documents = shipped_addon_documents()
+    device.write_env(SHIPPED_ENV)
     device.write_profile(device.profile_body(extra=profile_extra(device, documents)))
     write(
         device.weather,
@@ -487,6 +549,15 @@ def test_no_declared_addon_setting_plans_as_a_create(
         )
         + "</settings>\n",
     )
+    write(
+        device.tmdb,
+        '<settings version="2">\n'
+        + "".join(
+            f'    <setting id="{entry["setting"]}">stale</setting>\n'
+            for entry in documents[TMDB_PATH]["settings"]
+        )
+        + "</settings>\n",
+    )
 
     assert reconcile("plan", "--room", "theater") == 0
 
@@ -494,7 +565,9 @@ def test_no_declared_addon_setting_plans_as_a_create(
     reported = [
         line
         for line in out.splitlines()
-        if str(device.weather) in line or str(device.nextpvr) in line
+        if str(device.weather) in line
+        or str(device.nextpvr) in line
+        or str(device.tmdb) in line
     ]
     assert len(reported) == sum(
         len(document["settings"]) for document in documents.values()
@@ -508,16 +581,22 @@ def test_the_shipped_addon_settings_converge_and_then_plan_clean(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     documents = shipped_addon_documents()
+    device.write_env(SHIPPED_ENV)
     device.write_profile(device.profile_body(extra=profile_extra(device, documents)))
     write(device.weather, WEATHER_ON_DEVICE)
     write(device.nextpvr, NEXTPVR_ON_DEVICE)
+    write(device.tmdb, TMDB_ON_DEVICE)
 
     assert reconcile("apply", "--room", "theater") == 0
 
     assert attribute_values(device.weather)["ha_sun_entity_id"] == "sun.sun"
     assert text_values(device.nextpvr)["kodi_addon_instance_enabled"] == "true"
+    # A named value reaches the Device and nowhere else.
+    assert text_values(device.tmdb)["omdb_apikey"] == "an-omdb-key"
     assert device.effects == ["stop kodi.service", "start kodi.service"]
-    capsys.readouterr()
+    printed = capsys.readouterr()
+    assert "an-omdb-key" not in printed.out
+    assert "a-long-lived-token" not in printed.out
 
     assert reconcile("plan", "--room", "theater") == 0
 
