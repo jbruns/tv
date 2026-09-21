@@ -67,6 +67,13 @@ class SettingChange:
         return f"{self.document}#{self.setting.setting}"
 
     def report(self) -> Iterator[str]:
+        # A value Desired State names rather than holds is never printed, and
+        # neither is what the Device holds for it: the Observation of a
+        # credential is the credential. The key is what names it, and the key
+        # is documented in the open.
+        if self.setting.named_by is not None:
+            yield f"{self.action} {self.address}: named by {self.setting.named_by}"
+            return
         observed = "(unset)" if self.observed is None else self.observed
         origin = ""
         if self.setting.transform is not None:

@@ -138,6 +138,7 @@ class FakeDevice:
     userdata: Path
     identity: Path
     systemctl_log: Path
+    env_file: Path
 
     @property
     def playlist(self) -> Path:
@@ -160,6 +161,16 @@ class FakeDevice:
     def nextpvr(self) -> Path:
         """The NextPVR instance document, in the addon_v2 form."""
         return self.userdata / "addon_data" / "pvr.nextpvr" / "instance-settings-1.xml"
+
+    @property
+    def tmdb(self) -> Path:
+        """TMDb Helper's document, in the addon_v2 form."""
+        return (
+            self.userdata
+            / "addon_data"
+            / "plugin.video.themoviedb.helper"
+            / "settings.xml"
+        )
 
     @property
     def effects(self) -> list[str]:
@@ -200,6 +211,10 @@ class FakeDevice:
         (self.config_root / "rooms" / "theater" / "room.yaml").write_text(
             body, encoding="utf-8"
         )
+
+    def write_env(self, body: str) -> None:
+        """Writes the shared `.env`, which no Run reads unless one is named."""
+        self.env_file.write_text(body, encoding="utf-8")
 
     def write_room_settings(self, block: str) -> None:
         """Writes a Room Overlay adding `block` to the Profile's guisettings.
@@ -246,6 +261,7 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
         userdata=userdata,
         identity=tmp_path / "id_ed25519",
         systemctl_log=tmp_path / "systemctl.log",
+        env_file=tmp_path / ".env",
     )
     fake.write_profile(fake.profile_body())
     fake.write_room(ROOM)
@@ -259,6 +275,14 @@ def reconcile(device: FakeDevice) -> Callable[..., int]:
     from coreelec_reconciler import main
 
     def run(*argv: str) -> int:
-        return main([*argv, "--config-root", str(device.config_root)])
+        return main(
+            [
+                *argv,
+                "--config-root",
+                str(device.config_root),
+                "--env-file",
+                str(device.env_file),
+            ]
+        )
 
     return run

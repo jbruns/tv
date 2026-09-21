@@ -9,8 +9,12 @@ config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml   Profile
 config/rooms/theater/room.yaml                             Room Overlay
 ```
 
-Neither reader looks at the other's files. The Reconciler's surface is
-documented in
+Neither reader looks at the other's `.conf` or `.yaml` files. The shared
+`.env` below is the one file both read: the Reconciler names a value in it for
+a setting it may not carry, and reads it with its own strict `KEY=value`
+grammar rather than sourcing it
+([ADR 0014](../docs/adr/0014-desired-state-names-a-value-it-may-not-hold.md)).
+The Reconciler's surface is documented in
 [reconciling the theater Ugoos](../docs/operations/reconcile-theater.md).
 
 ## Shell configuration
@@ -65,6 +69,14 @@ Secret requirements:
   `--check-artifacts`.
 - `HOME_ASSISTANT_TOKEN` requires `HOME_ASSISTANT_URL`.
 - `NEXTPVR_PIN` requires `NEXTPVR_HOST`.
+
+Six of these keys are also named by the Reconciler's Profile, which carries
+the key and never the value: `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN`,
+`NEXTPVR_HOST`, `NEXTPVR_PIN`, `MDBLIST_API_KEY` and `OMDB_API_KEY`. The
+shell sources this file as bash; the Reconciler reads it as `KEY=value` with
+a bare, single-quoted, or double-quoted value and rejects any other line
+naming the file and the line. Keep values single-quoted and both readers
+agree.
 
 ## Grammar (strict, never shell)
 

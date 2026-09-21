@@ -36,6 +36,10 @@ _Avoid_: Desired State, fallback profile
 A stable, device-independent expression of Desired State that may be resolved to a device-specific representation using observed capabilities.
 _Avoid_: Raw setting value
 
+**Named Value**:
+A Desired State value that Desired State names rather than holds, resolved from the shared `.env` file on every read. It reaches the Device and nothing else: no committed file carries it, and no Run prints it.
+_Avoid_: Secret, credential, variable
+
 **Resource**:
 An independently observable and reconcilable unit of managed Device state.
 _Avoid_: Component, task, step

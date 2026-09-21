@@ -165,6 +165,11 @@ smart_playlists:
 # (ADR 0012). Adding a setting is an entry here and no code change; the two
 # Device checks that go with it are in docs/operations/reconcile-theater.md.
 #
+# A setting states `value` or `from_env`, never both. `from_env` names a key
+# in the shared .env file, which is where a value this committed file may not
+# carry lives (ADR 0014). The value is read before any Device contact and is
+# never printed.
+#
 # Applying any of these restarts Kodi, because Kodi rewrites a Settings
 # Document from memory when it exits and would otherwise discard the write.
 # The stop belongs to the Resource Type and is never declared here
@@ -230,12 +235,16 @@ settings_documents:
   # version attribute, so Kodi loads and writes this document in the old flat
   # form: the value is an attribute, not element text.
   #
-  # ha_server and ha_key are not declared. ha_key is a credential, and
-  # ha_server is derived from HOME_ASSISTANT_URL, which the shell holds in the
-  # shared .env file; both wait for the secrets slice.
+  # ha_server and ha_key name their values in .env rather than holding them.
+  # The token is a credential; the endpoint sits beside it behind the same
+  # boundary (ADR 0014).
   - document: /storage/.kodi/userdata/addon_data/weather.ha/settings.xml
     dialect: addon_v1
     settings:
+      - setting: ha_server
+        from_env: HOME_ASSISTANT_URL
+      - setting: ha_key
+        from_env: HOME_ASSISTANT_TOKEN
       - setting: ha_weather_forecast_entity_id
         value: weather.openweathermap
       - setting: ha_sun_entity_id
@@ -245,15 +254,30 @@ settings_documents:
   # setting: the PVR manager starts from an enabled client instance, so this
   # document carries the enable.
   #
-  # host and pin are not declared, for the same reason as weather.ha's two.
+  # host and pin name their values, for the same reason as weather.ha's two.
   - document: /storage/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
     dialect: addon_v2
     settings:
+      - setting: host
+        from_env: NEXTPVR_HOST
       - setting: hostprotocol
         value: https
       - setting: port
         value: "443"
+      - setting: pin
+        from_env: NEXTPVR_PIN
       - setting: kodi_addon_instance_enabled
         value: "true"
       - setting: kodi_addon_instance_name
         value: NextPVR
+
+  # TMDb Helper's metadata provider credentials. Both name their values, so
+  # this whole document is named and none of it is held here. The shell writes
+  # these two addresses and nothing else in the file.
+  - document: /storage/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
+    dialect: addon_v2
+    settings:
+      - setting: mdblist_apikey
+        from_env: MDBLIST_API_KEY
+      - setting: omdb_apikey
+        from_env: OMDB_API_KEY

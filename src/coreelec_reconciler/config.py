@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from . import kodi_settings
+from . import env_file, kodi_settings
 
 
 class ConfigError(Exception):
@@ -73,13 +73,16 @@ class KodiSetting:
     """One Kodi setting. Its State Address is the ID inside the document.
 
     `value` is what reaches the Device; `declared` is what the file states.
-    The two differ only where a transform stands between them.
+    The two differ only where a transform stands between them, or where the
+    file names the value rather than holding it, in which case `named_by` is
+    the `.env` key it was read from and `declared` is that key.
     """
 
     setting: str
     value: str
     declared: str
     transform: str | None = None
+    named_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +183,34 @@ def _transform(source: Path, name: str | None, value: str) -> str:
     return mapping[value]
 
 
+class NamedValues:
+    """The shared `.env`, read once and only when Desired State names a value.
+
+    A Run that names nothing never opens the file, so a checkout holding no
+    secrets at all still plans and applies everything else.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._values: dict[str, str] | None = None
+
+    def value(self, source: Path, key: str) -> str:
+        """What `.env` holds for `key`, or an error naming the key."""
+
+        if self._values is None:
+            try:
+                self._values = env_file.read(self._path)
+            except env_file.EnvError as error:
+                raise ConfigError(
+                    f"{source} names {key}, and the shared environment file "
+                    f"cannot be read: {error}"
+                ) from error
+        held = self._values.get(key, "")
+        if not held:
+            raise ConfigError(f"{source} names {key}, which {self._path} does not hold")
+        return held
+
+
 def _rule_value(source: Path, mapping: dict[str, Any]) -> str:
     """The value a rule puts on the Device, resolving a calendar base."""
 
@@ -248,14 +279,34 @@ def _playlist(source: Path, directory: str, raw: Any) -> SmartPlaylist:
     )
 
 
-def _kodi_setting(source: Path, raw: Any) -> KodiSetting:
+def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
     mapping = _fields(
         source,
         "a Kodi setting",
         _mapping(source, "a Kodi setting", raw),
-        required=("setting", "value"),
-        optional=("transform",),
+        required=("setting",),
+        optional=("value", "from_env", "transform"),
     )
+    setting = _text(source, "a Kodi setting id", mapping["setting"])
+    holds = "value" in mapping
+    names = "from_env" in mapping
+    if holds == names:
+        raise ConfigError(
+            f"{source}: {setting} states exactly one of value and from_env"
+        )
+    if names:
+        if "transform" in mapping:
+            raise ConfigError(
+                f"{source}: {setting} names its value in .env, and a named "
+                "value takes no transform"
+            )
+        key = _text(source, f"the from_env of {setting}", mapping["from_env"])
+        return KodiSetting(
+            setting=setting,
+            value=named.value(source, key),
+            declared=key,
+            named_by=key,
+        )
     declared = _text(source, "a Kodi setting value", mapping["value"])
     transform = (
         _text(source, "a Kodi setting transform", mapping["transform"])
@@ -263,14 +314,14 @@ def _kodi_setting(source: Path, raw: Any) -> KodiSetting:
         else None
     )
     return KodiSetting(
-        setting=_text(source, "a Kodi setting id", mapping["setting"]),
+        setting=setting,
         value=_transform(source, transform, declared),
         declared=declared,
         transform=transform,
     )
 
 
-def _document(source: Path, raw: Any) -> SettingsDocument:
+def _document(source: Path, named: NamedValues, raw: Any) -> SettingsDocument:
     mapping = _fields(
         source,
         "a Settings Document",
@@ -294,17 +345,19 @@ def _document(source: Path, raw: Any) -> SettingsDocument:
     return SettingsDocument(
         document=document,
         dialect=dialect,
-        settings=tuple(_kodi_setting(source, entry) for entry in declared),
+        settings=tuple(_kodi_setting(source, named, entry) for entry in declared),
     )
 
 
-def _documents(source: Path, where: str, raw: Any) -> tuple[SettingsDocument, ...]:
+def _documents(
+    source: Path, named: NamedValues, where: str, raw: Any
+) -> tuple[SettingsDocument, ...]:
     if not isinstance(raw, list):
         raise ConfigError(
             f"{source}: {where} must be a list of Settings Documents, and an "
             "empty list when there are none"
         )
-    return tuple(_document(source, entry) for entry in raw)
+    return tuple(_document(source, named, entry) for entry in raw)
 
 
 def _merge(
@@ -355,9 +408,14 @@ def _merge(
     return tuple(merged.values())
 
 
-def load(config_root: Path, room: str) -> DesiredState:
-    """Resolves the Room Overlay for `room` against the Profile it names."""
+def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
+    """Resolves the Room Overlay for `room` against the Profile it names.
 
+    `env_path` is the shared `.env`. It is read only if the resolved
+    configuration names a value in it, and always before any Device contact.
+    """
+
+    named = NamedValues(env_path)
     room_path = config_root / "rooms" / _relative(config_root, "a room", room)
     room_file = room_path / "room.yaml"
     if not room_file.is_file():
@@ -373,7 +431,7 @@ def load(config_root: Path, room: str) -> DesiredState:
         room_file, "profile", _text(room_file, "profile", overlay["profile"])
     )
     room_documents = _documents(
-        room_file, "settings_documents", overlay["settings_documents"]
+        room_file, named, "settings_documents", overlay["settings_documents"]
     )
 
     profile_file = config_root / "shared" / declared_profile / "profile.yaml"
@@ -411,7 +469,9 @@ def load(config_root: Path, room: str) -> DesiredState:
     if not isinstance(declared, list) or not declared:
         raise ConfigError(f"{profile_file}: smart_playlists declares no playlists")
 
-    kodi = _documents(profile_file, "settings_documents", profile["settings_documents"])
+    kodi = _documents(
+        profile_file, named, "settings_documents", profile["settings_documents"]
+    )
     if not kodi:
         raise ConfigError(f"{profile_file}: settings_documents declares no documents")
 

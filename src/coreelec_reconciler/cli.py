@@ -34,6 +34,15 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="the configuration tree to read (default: config)",
     )
+    parser.add_argument(
+        "--env-file",
+        default=".env",
+        type=Path,
+        help=(
+            "the shared .env holding values a Profile names but does not "
+            "carry, read only when one is named (default: .env)"
+        ),
+    )
     return parser
 
 
@@ -49,7 +58,7 @@ def main(
     out = out if out is not None else sys.stdout
     err = err if err is not None else sys.stderr
     try:
-        desired = config.load(arguments.config_root, arguments.room)
+        desired = config.load(arguments.config_root, arguments.room, arguments.env_file)
         reconcile.run(desired, apply=arguments.command == "apply", out=out)
     except config.ConfigError as error:
         print(f"error: {error}", file=err)
