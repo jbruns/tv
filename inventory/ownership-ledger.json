@@ -2883,7 +2883,7 @@
       "state_address": "RecentlyReleasedMovies90Days.xsp absence",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "retired",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2904,7 +2904,7 @@
       "state_address": "RecentlyReleasedMoviesCurrentYear.xsp absence",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "retired",
       "shell_write_set": {
         "status": "audited",
         "items": [

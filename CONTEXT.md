@@ -48,9 +48,18 @@ _Avoid_: Action type, handler
 The unique location or identity of a piece of Device state owned by one Resource.
 _Avoid_: Key, path
 
+**Settings Document**:
+A Device document that holds many State Addresses, each owned independently, rather than one a Resource owns whole.
+_Avoid_: Config file, settings file
+
 **Managed State**:
 Device state whose State Address is owned by a Resource in the resolved Profile.
 _Avoid_: Known state
+
+**Managed Absence**:
+A State Address whose Desired State is that it does not exist.
+_Avoid_: Deletion, cleanup
+_Realised by_: Recovery Baseline. The Reconciler declares no Managed Absence.
 
 **Unmanaged State**:
 Device state that no Resource in the resolved Profile owns and that reconciliation therefore preserves or ignores.

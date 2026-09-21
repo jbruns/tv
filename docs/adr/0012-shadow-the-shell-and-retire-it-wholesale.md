@@ -69,8 +69,10 @@ natural checklist. Progress cannot be tracked in `current_owner_or_executor`:
 `scripts/shell_permissions.py` denies the shell any ID owned by `python`, so
 marking progress there would switch the shell off and destroy the Recovery
 Baseline the slice depends on. The ledger therefore gains a `reconciler_status`
-field alongside it, valued `none`, `deferred`, or `accepted`, where `accepted`
-means converged on the Device and evidenced in a merged pull request. The
+field alongside it, valued `none`, `deferred`, `retired`, or `accepted`, where
+`accepted` means converged on the Device and evidenced in a merged pull request,
+and `retired` means the Reconciler will never own the address because a
+factory-fresh Device does not have the state in the first place. The
 Python-owner guard is left intact and unused. `current_owner_or_executor` does
 not change under shadowing; it changes only when the shell is deleted.
 
@@ -95,3 +97,20 @@ a mechanism rather than waiting their turn:
   resolution. Audio device, passthrough device, screen resolution, and channel
   count cannot be known without observing a live Device's capabilities, so
   they are Intents to resolve rather than literals to declare.
+
+## The two retired addresses
+
+`SKIN-027` and `SKIN-028` are `retired`. Both are Managed Absences: the shell
+deletes `RecentlyReleasedMovies90Days.xsp` and
+`RecentlyReleasedMoviesCurrentYear.xsp` because a newer playlist superseded
+them. A factory-fresh Device has never had either file, so the only Device that
+needs the deletion is the one we already own, and the retirement test — a bare
+box provisioned from a Profile alone — is indifferent to them.
+
+The shell recreates and re-deletes them on every Recovery Baseline run, so they
+cannot be deleted by hand until the shell is gone; at that point they are
+deleted once, by hand, and never thought about again. This does not close the
+door on Managed Absence as a Reconciler capability. It says only that two
+superseded playlists on a single Device do not justify building it, and that
+the first address that genuinely needs absence on a fresh Device is the one
+that should pay for the mechanism.
