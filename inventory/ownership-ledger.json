@@ -2715,7 +2715,7 @@
       "state_address": "playlists/video/InProgressMovies90Days.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2736,7 +2736,7 @@
       "state_address": "InProgressShows90Days.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2757,7 +2757,7 @@
       "state_address": "RecentlyAiredEpisodes30Days.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2778,7 +2778,7 @@
       "state_address": "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2799,7 +2799,7 @@
       "state_address": "TraktPopularTVShows.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2820,7 +2820,7 @@
       "state_address": "TraktWeekendBoxOffice.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2862,7 +2862,7 @@
       "state_address": "NewMovies.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [

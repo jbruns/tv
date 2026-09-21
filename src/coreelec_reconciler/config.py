@@ -6,6 +6,8 @@ the key, so a typo can never be read as a silent default.
 
 from __future__ import annotations
 
+import datetime
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,15 @@ class ConfigError(Exception):
 TRANSFORMS: dict[str, dict[str, str]] = {
     "invert": {"true": "false", "false": "true"},
     "dolby_vision_mode": {"tv-led": "0", "player-led": "1"},
+}
+
+# A rule that selects on the calendar cannot state a literal. A Profile saying
+# `year greaterthan 2024` is true until 1 January and wrong every day after,
+# and the shell renders the same rule from today's date, so the two would
+# disagree annually and never converge. Such a rule declares an offset and the
+# base the offset is measured from, and the base is resolved on every read.
+RELATIVE_BASES: dict[str, Callable[[datetime.date], int]] = {
+    "current_year": lambda today: today.year,
 }
 
 
@@ -169,17 +180,38 @@ def _transform(source: Path, name: str | None, value: str) -> str:
     return mapping[value]
 
 
+def _rule_value(source: Path, mapping: dict[str, Any]) -> str:
+    """The value a rule puts on the Device, resolving a calendar base."""
+
+    if "relative_to" not in mapping:
+        return _text(source, "rule value", mapping["value"])
+
+    name = _text(source, "rule relative_to", mapping["relative_to"])
+    resolve = RELATIVE_BASES.get(name)
+    if resolve is None:
+        known = ", ".join(sorted(RELATIVE_BASES))
+        raise ConfigError(f"{source}: unknown relative_to: {name} (known: {known})")
+    offset = mapping["value"]
+    if isinstance(offset, bool) or not isinstance(offset, int):
+        raise ConfigError(
+            f"{source}: a rule relative to {name} states a whole-number offset, "
+            f"not: {offset}"
+        )
+    return str(resolve(datetime.date.today()) + offset)
+
+
 def _rule(source: Path, raw: Any) -> Rule:
     mapping = _fields(
         source,
         "a rule",
         _mapping(source, "a rule", raw),
         required=("field", "operator", "value"),
+        optional=("relative_to",),
     )
     return Rule(
         field=_text(source, "rule field", mapping["field"]),
         operator=_text(source, "rule operator", mapping["operator"]),
-        value=_text(source, "rule value", mapping["value"]),
+        value=_rule_value(source, mapping),
     )
 
 

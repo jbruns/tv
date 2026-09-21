@@ -1,12 +1,12 @@
 # Reconcile the theater Ugoos
 
 The Reconciler shadows the shell on two Resource Types on the theater Ugoos:
-the Smart Playlist `NewShows.xsp`, and the Kodi settings inside three Settings
-Documents — `guisettings.xml`, the Home Assistant weather add-on's
-`settings.xml`, and the NextPVR client's `instance-settings-1.xml`. Both
-engines still write them, holding the same values. Everything else on the
-Device is the shell provisioner's, and its declaration remains the Recovery
-Baseline
+the eight Smart Playlists under `special://profile/playlists/video`, and the
+Kodi settings inside three Settings Documents — `guisettings.xml`, the Home
+Assistant weather add-on's `settings.xml`, and the NextPVR client's
+`instance-settings-1.xml`. Both engines still write them, holding the same
+values. Everything else on the Device is the shell provisioner's, and its
+declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
 A Smart Playlist is a document the Reconciler renders whole. A Settings
@@ -56,6 +56,64 @@ lines.
 ```
 update /storage/.kodi/userdata/guisettings.xml#videolibrary.flattentvshows: 0 -> 1
 ```
+
+## Declaring a Smart Playlist
+
+A Smart Playlist is an entry in `smart_playlists.playlists`, naming its file
+inside the declared directory, the document Kodi reads, and its rules. Adding
+one is an entry in the Profile and no code change.
+
+```yaml
+smart_playlists:
+  directory: /storage/.kodi/userdata/playlists/video
+  playlists:
+    - file: NewShows.xsp
+      name: New Shows
+      type: tvshows
+      match: all
+      limit: 50
+      order:
+        field: dateadded
+        direction: descending
+      rules:
+        - field: playcount
+          operator: is
+          value: "0"
+```
+
+A rule whose operator carries the whole test — `inprogress` with `true`, for
+instance — declares `value: ""`, and the rendered document then holds no
+`<value>` element, which is what Kodi writes and what the shell renders.
+
+### Rules the calendar moves
+
+A rule that selects on the current year cannot state a literal. The shell
+renders `RecentlyReleasedMoviesCurrentAndPreviousYear.xsp` from today's date,
+so a literal year in the Profile would be right until 1 January and then
+disagree with the shell for the rest of the year, each engine reverting the
+other. Kodi's `year` field is numeric and has no relative operator, so the
+bound is declared as an offset from a named base and resolved on every read.
+
+```yaml
+rules:
+  - field: year
+    operator: greaterthan
+    value: -2
+    relative_to: current_year
+```
+
+`current_year` is the only base, and an unknown one is rejected naming it,
+before any Device contact. `value` is then a whole-number offset, not a
+string; anything else is rejected the same way.
+
+### The two playlists that are absent
+
+`RecentlyReleasedMovies90Days.xsp` and `RecentlyReleasedMoviesCurrentYear.xsp`
+are **not** declared. A newer playlist superseded both, so the shell deletes
+them, but a factory-fresh Device never had either file. Declaring either would
+ask for a Managed Absence the Reconciler does not have and does not yet need;
+they are deleted by hand, once, when the shell is deleted
+([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md#the-two-retired-addresses)).
 
 ## Declaring a Settings Document
 
@@ -286,8 +344,8 @@ scenario fails, turn it off before investigating.
 
 The scenarios are:
 
-1. **Fresh convergence** — remove the file on the Device, `apply`, the file is
-   present and correct.
+1. **Fresh convergence** — remove `NewShows.xsp` on the Device, `apply`, the
+   file is present and correct.
 2. **No-op** — `apply` again, no Changes, the file is unchanged.
 3. **Drift repair** — edit the file on the Device, `apply`, it converges.
 4. **Interruption** — kill a Run mid-`apply` at several points, confirm the
@@ -327,10 +385,11 @@ The scenarios are:
    Expect the `apply` to name both documents and both values, and the `plan`
    after the restart to report `no changes`. A `plan` that reports the drift
    again is Kodi having overwritten the write from memory.
-7. **No declared setting is a `create`** — the shell writes every declared
-   setting, so on a provisioned Device none may plan as a `create`. A `create`
-   is a misread or typo'd setting id, or a document read in the wrong dialect:
-   it writes a node Kodi ignores and then verifies as converged, so nothing
+7. **No declared setting or playlist is a `create`** — the shell writes every
+   declared setting and every declared playlist, so on a provisioned Device
+   none may plan as a `create`. A `create` is a misread or typo'd setting id,
+   a document read in the wrong dialect, or a playlist file named wrongly: it
+   writes a document Kodi ignores and then verifies as converged, so nothing
    else catches it
    ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
@@ -339,12 +398,14 @@ The scenarios are:
    ```
 
    Expect no output. Run this whenever the Profile or the Room Overlay
-   declares a new setting or a new Settings Document.
+   declares a new setting, a new Settings Document, or a new playlist.
 8. **The shell and the Reconciler agree** — the value-parity invariant. One
    mismatched literal (`true` against `1`) gives two engines that revert each
    other forever, and it is the check that proves a transform produces what
-   the shell produces rather than something merely plausible. After `apply`,
-   run the shell and re-plan:
+   the shell produces rather than something merely plausible. For the Smart
+   Playlists it is the whole risk: the Reconciler renders each document whole,
+   so a single differing attribute is a file the two engines rewrite past each
+   other on every Run. After `apply`, run the shell and re-plan:
 
    ```console
    ./provision-coreelec.sh --target ugoos-theater --component baseline
@@ -366,16 +427,30 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
-9. **Usable** — Kodi still starts, the playlist still opens, the weather
-   widget still renders on the home screen, and NextPVR still lists channels:
+   The `skin` component is the one that covers the playlists:
 
    ```console
-   curl -sS --max-time 15 --user "$KODI_USER:$KODI_WEB_PASSWORD" \
-     -H 'Content-Type: application/json' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"Files.GetDirectory","params":
-          {"directory":"special://profile/playlists/video/NewShows.xsp",
-           "media":"video","limits":{"end":5}}}' \
-     http://ugoos-theater:8080/jsonrpc
+   ./provision-coreelec.sh --target ugoos-theater --component skin
+   uv run coreelec-reconciler plan --room theater
+   ```
+
+9. **Usable** — Kodi still starts, every playlist still opens, the weather
+   widget still renders on the home screen, and NextPVR still lists channels.
+   Ask Kodi for each playlist in turn:
+
+   ```console
+   for xsp in InProgressMovies90Days InProgressShows90Days \
+              RecentlyAiredEpisodes30Days \
+              RecentlyReleasedMoviesCurrentAndPreviousYear \
+              TraktPopularTVShows TraktWeekendBoxOffice NewShows NewMovies; do
+     echo "== $xsp"
+     curl -sS --max-time 15 --user "$KODI_USER:$KODI_WEB_PASSWORD" \
+       -H 'Content-Type: application/json' \
+       -d '{"jsonrpc":"2.0","id":1,"method":"Files.GetDirectory","params":
+            {"directory":"special://profile/playlists/video/'"$xsp"'.xsp",
+             "media":"video","limits":{"end":5}}}' \
+       http://ugoos-theater:8080/jsonrpc
+   done
 
    curl -sS --max-time 15 --user "$KODI_USER:$KODI_WEB_PASSWORD" \
      -H 'Content-Type: application/json' \
@@ -407,8 +482,8 @@ by `apply` again.
 
 ## Ownership
 
-`inventory/ownership-ledger.json` records `SKIN-025`
-(`special://profile/playlists/video/NewShows.xsp`), the twenty
+`inventory/ownership-ledger.json` records the eight declared Smart Playlists
+(`SKIN-019`-`SKIN-026`), the twenty
 `guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
 `CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
 Room Overlay declares (`ROOM-002`-`ROOM-010`), and the six add-on addresses
@@ -416,7 +491,9 @@ the Profile declares (`SVC-004`, `SVC-005`, `SVC-007`-`SVC-009` and
 `SVC-011`) as shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
-`skin`, `services`, `room` or `baseline` run. That is the shadowing model:
+`skin`, `services`, `room` or `baseline` run. `SKIN-027` and `SKIN-028`, the
+two superseded playlists, stay `retired` and are not declared anywhere. That
+is the shadowing model:
 transferring a row freezes
 those shell runs
 ([the write-set permission freeze](shell-write-set-permissions.md)), which
