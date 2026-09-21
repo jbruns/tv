@@ -14,13 +14,136 @@ transport:
   identity: ~/.ssh/coreelec_admin_ed25519
 
 # Kodi Smart Playlists. The directory is the physical path behind
-# special://profile/playlists/video on CoreELEC.
+# special://profile/playlists/video on CoreELEC. Each file is one State
+# Address, listed in the order provision-coreelec.sh writes them so the two
+# sides read side by side.
+#
+# RecentlyReleasedMovies90Days.xsp and RecentlyReleasedMoviesCurrentYear.xsp
+# are absent on purpose. The shell deletes both because a newer playlist
+# superseded them, and a factory-fresh Device never had either; declaring
+# either would ask for a Managed Absence the Reconciler does not have and does
+# not yet need (ADR 0012).
 smart_playlists:
   directory: /storage/.kodi/userdata/playlists/video
   playlists:
+    - file: InProgressMovies90Days.xsp
+      name: In-Progress Movies
+      type: movies
+      match: all
+      limit: 50
+      order:
+        field: lastplayed
+        direction: descending
+      rules:
+        # `inprogress` is a boolean field: the operator carries the whole
+        # test and Kodi writes no value element.
+        - field: inprogress
+          operator: "true"
+          value: ""
+        - field: lastplayed
+          operator: inthelast
+          value: 90 days
+
+    - file: InProgressShows90Days.xsp
+      name: In-Progress Shows
+      type: tvshows
+      match: all
+      limit: 50
+      order:
+        field: lastplayed
+        direction: descending
+      rules:
+        - field: inprogress
+          operator: "true"
+          value: ""
+        - field: lastplayed
+          operator: inthelast
+          value: 90 days
+
+    - file: RecentlyAiredEpisodes30Days.xsp
+      name: Recently Aired Shows
+      type: episodes
+      match: all
+      limit: 50
+      order:
+        field: year
+        direction: descending
+      rules:
+        - field: airdate
+          operator: inthelast
+          value: 30 days
+        # A negative window excludes episodes dated in the future, which a
+        # scraper produces for a season already listed but not yet aired.
+        - field: airdate
+          operator: notinthelast
+          value: -1 days
+
+    - file: RecentlyReleasedMoviesCurrentAndPreviousYear.xsp
+      name: Recently Released Movies
+      type: movies
+      match: all
+      limit: 50
+      order:
+        field: year
+        direction: descending
+      rules:
+        # The current and the previous release year. Kodi's `year` field is
+        # numeric and has no relative operator, so the two bounds are offsets
+        # from the current year, resolved on every read. A literal here would
+        # be correct until 1 January and then disagree with the shell, which
+        # renders the same two bounds from today's date, for the rest of the
+        # year.
+        - field: year
+          operator: greaterthan
+          value: -2
+          relative_to: current_year
+        - field: year
+          operator: lessthan
+          value: 1
+          relative_to: current_year
+
+    - file: TraktPopularTVShows.xsp
+      name: Trakt Popular TV Shows
+      type: tvshows
+      match: all
+      limit: 25
+      order:
+        field: dateadded
+        direction: descending
+      rules:
+        - field: tag
+          operator: contains
+          value: trakt-popular
+
+    - file: TraktWeekendBoxOffice.xsp
+      name: Trakt Weekend Box Office
+      type: movies
+      match: all
+      limit: 25
+      order:
+        field: dateadded
+        direction: descending
+      rules:
+        - field: tag
+          operator: contains
+          value: trakt-weekend-box-office
+
     - file: NewShows.xsp
       name: New Shows
       type: tvshows
+      match: all
+      limit: 50
+      order:
+        field: dateadded
+        direction: descending
+      rules:
+        - field: playcount
+          operator: is
+          value: "0"
+
+    - file: NewMovies.xsp
+      name: New Movies
+      type: movies
       match: all
       limit: 50
       order:
