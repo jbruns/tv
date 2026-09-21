@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,6 +130,27 @@ def document_block(path: Path, dialect: str, settings: str) -> str:
     """One entry in a `settings_documents` list."""
 
     return f"  - document: {path}\n    dialect: {dialect}\n    settings:\n{settings}"
+
+
+def write_document(document: Path, body: str) -> None:
+    """Puts `body` on the fake Device, creating the directories it needs."""
+
+    document.parent.mkdir(parents=True, exist_ok=True)
+    document.write_text(body, encoding="utf-8")
+
+
+def text_values(document: Path) -> dict[str, str | None]:
+    """Every setting a text-dialect document holds, as id to element text."""
+
+    root = ElementTree.parse(document).getroot()
+    return {node.get("id") or "": node.text for node in root.findall("setting")}
+
+
+def attribute_values(document: Path) -> dict[str, str | None]:
+    """Every setting an `addon_v1` document holds, as id to value attribute."""
+
+    root = ElementTree.parse(document).getroot()
+    return {node.get("id") or "": node.get("value") for node in root.findall("setting")}
 
 
 def shipped_profile() -> dict[str, Any]:

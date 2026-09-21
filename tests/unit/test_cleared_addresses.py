@@ -18,12 +18,18 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import pytest
 
-from .conftest import EXPECTED_XSP, FakeDevice, document_block, shipped_profile
+from .conftest import (
+    EXPECTED_XSP,
+    FakeDevice,
+    document_block,
+    shipped_profile,
+    text_values,
+    write_document,
+)
 
 # What the shell leaves behind, and what Kodi leaves behind on top of it. The
 # skin document carries no version attribute because the shell provisioner
@@ -56,17 +62,6 @@ CLEARED_SETTINGS = """\
 """
 
 
-def write(document: Path, body: str) -> None:
-    document.parent.mkdir(parents=True, exist_ok=True)
-    document.write_text(body, encoding="utf-8")
-
-
-def nodes(document: Path) -> dict[str, str | None]:
-    """Every setting the document holds, as id to element text."""
-    root = ElementTree.parse(document).getroot()
-    return {node.get("id") or "": node.text for node in root.findall("setting")}
-
-
 def converge_baseline(device: FakeDevice) -> None:
     """Writes what the Profile's other two Resources already declare.
 
@@ -77,7 +72,7 @@ def converge_baseline(device: FakeDevice) -> None:
 
     device.playlists_dir.mkdir(parents=True, exist_ok=True)
     device.playlist.write_text(EXPECTED_XSP, encoding="utf-8")
-    write(
+    write_document(
         device.guisettings,
         '<settings version="2">'
         '<setting id="videolibrary.flattentvshows">1</setting></settings>',
@@ -203,7 +198,7 @@ def test_an_absent_a_self_closing_and_an_empty_node_observe_identically(
     converge. This looks like an accident of ElementTree; it is load-bearing.
     """
 
-    write(
+    write_document(
         device.skin,
         """\
 <settings>
@@ -229,12 +224,12 @@ def test_applying_a_clear_writes_an_empty_node_rather_than_removing_it(
     device: FakeDevice,
     reconcile: Callable[..., int],
 ) -> None:
-    write(device.skin, SKIN_ON_DEVICE)
+    write_document(device.skin, SKIN_ON_DEVICE)
     device.write_profile(with_skin(device))
 
     assert reconcile("apply", "--room", "theater") == 0
 
-    held = nodes(device.skin)
+    held = text_values(device.skin)
     # The node the shell wrote a value into is still there, holding none.
     assert "Hub.1107.DisableSearch" in held
     assert held["Hub.1107.DisableSearch"] is None
@@ -253,12 +248,12 @@ def test_an_already_cleared_address_creates_no_node(
     from, even when another address in the same document is being converged.
     """
 
-    write(device.skin, SKIN_ON_DEVICE)
+    write_document(device.skin, SKIN_ON_DEVICE)
     device.write_profile(with_skin(device))
 
     assert reconcile("apply", "--room", "theater") == 0
 
-    assert "HomeSwitcher.1104.Mode" not in nodes(device.skin)
+    assert "HomeSwitcher.1104.Mode" not in text_values(device.skin)
 
 
 def test_a_clear_plans_as_an_update_and_prints_no_desired_value(
@@ -266,7 +261,7 @@ def test_a_clear_plans_as_an_update_and_prints_no_desired_value(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    write(device.skin, SKIN_ON_DEVICE)
+    write_document(device.skin, SKIN_ON_DEVICE)
     converge_baseline(device)
     device.write_profile(with_skin(device))
 
@@ -284,7 +279,7 @@ def test_a_cleared_address_converges_and_stays_converged(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    write(device.skin, SKIN_ON_DEVICE)
+    write_document(device.skin, SKIN_ON_DEVICE)
     device.write_profile(with_skin(device))
 
     assert reconcile("apply", "--room", "theater") == 0
@@ -306,7 +301,7 @@ def test_no_type_attribute_is_written_and_an_existing_one_survives(
     no-op afterwards.
     """
 
-    write(device.skin, SKIN_ON_DEVICE)
+    write_document(device.skin, SKIN_ON_DEVICE)
     device.write_profile(
         with_skin(
             device,
@@ -334,7 +329,7 @@ def test_a_room_overlay_may_clear_an_address(
     """The third arm is the setting schema's, so both sides read it."""
 
     device.write_room_settings("- setting: videolibrary.showallitems\n  unset: true\n")
-    write(
+    write_document(
         device.guisettings,
         '<settings version="2">'
         '<setting id="videolibrary.showallitems">true</setting></settings>',
@@ -342,7 +337,7 @@ def test_a_room_overlay_may_clear_an_address(
 
     assert reconcile("apply", "--room", "theater") == 0
 
-    assert nodes(device.guisettings)["videolibrary.showallitems"] is None
+    assert text_values(device.guisettings)["videolibrary.showallitems"] is None
 
 
 # --- The committed Profile's Arctic Fuse document ---------------------------
@@ -444,7 +439,7 @@ def test_no_valued_arctic_fuse_setting_plans_as_a_create(
     converge_baseline(device)
     document = shipped_skin()
     device.write_profile(device.profile_body(extra=skin_extra(device)))
-    write(
+    write_document(
         device.skin,
         "<settings>\n"
         + "".join(
@@ -482,7 +477,7 @@ def test_the_shipped_arctic_fuse_document_survives_a_kodi_restart(
     converge_baseline(device)
     document = shipped_skin()
     device.write_profile(device.profile_body(extra=skin_extra(device)))
-    write(
+    write_document(
         device.skin,
         "<settings>\n"
         + "".join(
@@ -495,7 +490,7 @@ def test_the_shipped_arctic_fuse_document_survives_a_kodi_restart(
     assert reconcile("apply", "--room", "theater") == 0
     assert "verification: converged" in capsys.readouterr().out
 
-    held = nodes(device.skin)
+    held = text_values(device.skin)
     assert held["optionstiles.03.include"] == "Weather"
     assert all(held[setting] is None for setting in CLEARED_IDS)
 
