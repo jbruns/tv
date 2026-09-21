@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0012
 ---
 
 # Retire the shell by attrition, not on a schedule

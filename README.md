@@ -40,33 +40,51 @@ integrations.
 
 ```text
 README.md                     Stable repository index
-.env.example                 Shared secret template; copy to .env locally
-provision-coreelec.sh        Shared CoreELEC baseline deployment
-configure-coreelec-addons.sh Shared add-on validation and workflows
-configure-kodi-lifecycle.sh  Shared lifecycle gateway deployment
+AGENTS.md                     Working rules for agents and contributors
+CONTEXT.md                    Domain glossary
+.env.example                  Shared secret template; copy to .env locally
+pyproject.toml                Reconciler package and tooling configuration
+provision-coreelec.sh         Shared CoreELEC baseline deployment
+configure-coreelec-addons.sh  Shared add-on validation and workflows
+configure-kodi-lifecycle.sh   Shared lifecycle gateway deployment
+.python-version               Pinned Python version
+uv.lock                       Frozen Python dependency lock
+skills-lock.json              Pinned agent skills, restored into .agents/
+.github/                      CI workflow
+.githooks/                    Local pre-commit checks; enable with core.hooksPath
 docs/
+  adr/                        Architecture decision records
+  agents/                     Agent working procedures
   decisions/                  Durable system decisions
   devices/                    Shared device setup guides
   home-assistant/             Shared Home Assistant and lifecycle guides
   network/                    Shared network onboarding and control rules
-  operations/                 Shared provisioning procedures
+  operations/                 Shared provisioning and reconciliation procedures
+  reference/                  Shell write-set map and other references
+  research/                   Retained historical records
   runbook.md                  Shared room setup workflow
-inventory/                    Accepted inventory ownership ledger
+  development.md              Python development
+src/coreelec_reconciler/      The Reconciler
+config/rooms/                 Room Overlays
+config/shared/                Profiles
+inventory/                    Ownership ledger and shell write-set map
+lib/                          Reusable shell libraries
+scripts/                      Repository and shell write-set guards
+tests/unit/                   Reconciler boundary tests
+tests/                        Legacy shell validation coverage
 rooms/
   theater/                    Installed Theater inventory and device guides
   living/                     Living room template and device-guide index
   guest/                      Guest room template and device-guide index
   master/                     Master room template and device-guide index
 code/                         Reusable automation documentation
-config/                       Shared non-secret provisioning contract
-src/coreelec_reconciler/      The Reconciler
 home-assistant/               Deployed Home Assistant assets
-lib/                          Reusable shell libraries
-tests/unit/                   Reconciler boundary tests
-tests/                        Legacy shell validation coverage
-scripts/                      Repository and shell write-set guards
-inventory/                    Shell write-set map and ownership ledger
 ```
 
-Device provisioning is the shell provisioner. The Python Reconciler does not
-exist yet; see [Python development](docs/development.md).
+`provision-coreelec.sh` provisions a Device end to end and is the Recovery
+Baseline. The Reconciler shadows it on the Smart Playlist and Kodi settings
+Resource Types on the theater Ugoos: both engines write those addresses and
+hold the same values, and the shell keeps ownership until it is deleted
+wholesale. See [Reconciling the theater Ugoos](docs/operations/reconcile-theater.md),
+[Python development](docs/development.md), and
+[ADR 0012](docs/adr/0012-shadow-the-shell-and-retire-it-wholesale.md).

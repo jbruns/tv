@@ -4,6 +4,10 @@ This context describes the desired configuration of the repository's CoreELEC/Ko
 
 ## Language
 
+A term is the Reconciler's unless a `_Realised by_` line names another engine.
+A term realised by the Recovery Baseline describes what the shell provisioner
+does and is not a Reconciler capability.
+
 **Device**:
 A CoreELEC/Kodi installation managed by this repository.
 _Avoid_: Target, host, node
@@ -17,7 +21,7 @@ A versioned declaration of desired state for a class of Devices sharing relevant
 _Avoid_: Baseline, manifest
 
 **Room Overlay**:
-The small set of Desired State values that tailor a Profile to the room a Device is installed in.
+The small set of Desired State values that tailor a Profile to the room a Device is installed in. An overlay value either overrides the Profile's value for a State Address or adds one the Profile does not declare; room values are evaluated last and win.
 _Avoid_: Device profile, local override
 
 **Desired State**:
@@ -80,10 +84,6 @@ _Avoid_: Transaction, deployment
 An independent comparison of a Resource's new Observation with its Desired State after Changes have been applied.
 _Avoid_: Command success, post-check
 
-**Health Check**:
-An observation of whether a configured Resource or its external dependency is currently usable, without determining whether Device state has converged.
-_Avoid_: Verification, drift check
-
 **Convergence**:
 The condition in which Verification finds that a Resource's Observation matches its Desired State.
 _Avoid_: Successful command, completed deployment
@@ -103,6 +103,7 @@ _Avoid_: Provisioner, desired configuration management engine
 **Component**:
 A user-facing group used to select related Resources for a Run; it is not a unit of reconciliation.
 _Avoid_: Resource
+_Realised by_: Recovery Baseline. The Reconciler has no Component selector.
 
 **Artifact**:
 Versioned content referenced by a Profile and installed or used while reconciling a Resource.

@@ -23,6 +23,7 @@
       "state_address": "Enabled flag for each ART-001..041 in Kodi add-on registry",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -115,6 +116,7 @@
       "state_address": "repository.emby.kodi",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -135,6 +137,7 @@
       "state_address": "repository.dontpanic",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -155,6 +158,7 @@
       "state_address": "repository.jurialmunkey",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -175,6 +179,7 @@
       "state_address": "plugin.service.emby-next-gen",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -195,6 +200,7 @@
       "state_address": "plugin.video.themoviedb.helper",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -215,6 +221,7 @@
       "state_address": "pvr.nextpvr",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -235,6 +242,7 @@
       "state_address": "script.plexmod",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -255,6 +263,7 @@
       "state_address": "skin.arctic.fuse.3",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -275,6 +284,7 @@
       "state_address": "weather.ha",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -295,6 +305,7 @@
       "state_address": "resource.language.en_us",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -315,6 +326,7 @@
       "state_address": "script.artistslideshow",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -335,6 +347,7 @@
       "state_address": "resource.images.arctic.waves",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -355,6 +368,7 @@
       "state_address": "resource.images.weatherfanart.multi",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -375,6 +389,7 @@
       "state_address": "resource.images.moviecountryicons.maps",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -395,6 +410,7 @@
       "state_address": "resource.images.studios.white",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -415,6 +431,7 @@
       "state_address": "resource.uisounds.fromashes",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -435,6 +452,7 @@
       "state_address": "inputstream.adaptive",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -455,6 +473,7 @@
       "state_address": "inputstream.ffmpegdirect",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -475,6 +494,7 @@
       "state_address": "resource.font.robotocjksc",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -495,6 +515,7 @@
       "state_address": "resource.images.studios.coloured",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -515,6 +536,7 @@
       "state_address": "resource.images.weathericons.white",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -535,6 +557,7 @@
       "state_address": "script.module.addon.signals",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -555,6 +578,7 @@
       "state_address": "script.module.certifi",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -575,6 +599,7 @@
       "state_address": "script.module.chardet",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -595,6 +620,7 @@
       "state_address": "script.module.defusedxml",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -615,6 +641,7 @@
       "state_address": "script.module.dateutil",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -635,6 +662,7 @@
       "state_address": "script.module.future",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -655,6 +683,7 @@
       "state_address": "script.module.idna",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -675,6 +704,7 @@
       "state_address": "script.module.infotagger",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -695,6 +725,7 @@
       "state_address": "script.module.inputstreamhelper",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -715,6 +746,7 @@
       "state_address": "script.module.iso8601",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -735,6 +767,7 @@
       "state_address": "script.module.jurialmunkey",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -755,6 +788,7 @@
       "state_address": "script.module.kodi-six",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -775,6 +809,7 @@
       "state_address": "script.module.pysocks",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -795,6 +830,7 @@
       "state_address": "script.module.qrcode",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -815,6 +851,7 @@
       "state_address": "script.module.requests",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -835,6 +872,7 @@
       "state_address": "script.module.six",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -855,6 +893,7 @@
       "state_address": "script.module.urllib3",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -875,6 +914,7 @@
       "state_address": "script.module.yaml",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -895,6 +935,7 @@
       "state_address": "script.skinvariables",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -915,6 +956,7 @@
       "state_address": "script.texturemaker",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -935,6 +977,7 @@
       "state_address": "standby_pc_on_tv_standby",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -954,6 +997,7 @@
       "state_address": "activate_source",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -973,6 +1017,7 @@
       "state_address": "wake_devices",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -992,6 +1037,7 @@
       "state_address": "standby_devices",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1011,6 +1057,7 @@
       "state_address": "standby_tv_on_pc_standby",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1030,6 +1077,7 @@
       "state_address": "locale.language",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1049,6 +1097,7 @@
       "state_address": "locale.country",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1068,6 +1117,7 @@
       "state_address": "locale.keyboardlayouts",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1087,6 +1137,7 @@
       "state_address": "locale.timezonecountry",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1106,6 +1157,7 @@
       "state_address": "locale.timezone",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1125,6 +1177,7 @@
       "state_address": "/storage/.cache/timezone (TIMEZONE=\u2026)",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1163,6 +1216,7 @@
       "state_address": "general.addonupdates",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1182,6 +1236,7 @@
       "state_address": "input.enablemouse",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1201,6 +1256,7 @@
       "state_address": "filelists.showaddsourcebuttons",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1220,6 +1276,7 @@
       "state_address": "filelists.showextensions",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1239,6 +1296,7 @@
       "state_address": "filelists.showparentdiritems",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1258,6 +1316,7 @@
       "state_address": "videolibrary.flattentvshows",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1277,6 +1336,7 @@
       "state_address": "videolibrary.ignorevideoextras",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1296,6 +1356,7 @@
       "state_address": "videolibrary.ignorevideoversions",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1315,6 +1376,7 @@
       "state_address": "videolibrary.showallitems",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1334,6 +1396,7 @@
       "state_address": "videolibrary.tvshowsselectfirstunwatcheditem",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1353,6 +1416,7 @@
       "state_address": "videoplayer.adjustrefreshrate",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1372,6 +1436,7 @@
       "state_address": "videoplayer.usedisplayasclock",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1391,6 +1456,7 @@
       "state_address": "services.esallinterfaces",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1410,6 +1476,7 @@
       "state_address": "services.esenabled",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1429,6 +1496,7 @@
       "state_address": "services.webserver",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1448,6 +1516,7 @@
       "state_address": "services.webserverauthentication",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1467,6 +1536,7 @@
       "state_address": "services.webserverpassword",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1486,6 +1556,7 @@
       "state_address": "services.webserverport",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1505,6 +1576,7 @@
       "state_address": "services.webserverssl",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1524,6 +1596,7 @@
       "state_address": "services.webserverusername",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1543,6 +1616,7 @@
       "state_address": "audiooutput.audiodevice",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1562,6 +1636,7 @@
       "state_address": "audiooutput.passthroughdevice",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1581,6 +1656,7 @@
       "state_address": "Provisioning-wide Kodi stop/start",
       "role": "effect",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -1597,6 +1673,7 @@
       "state_address": "tz-data.service restart",
       "role": "effect",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -1613,6 +1690,7 @@
       "state_address": "sshd.service restart",
       "role": "effect",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -1629,6 +1707,7 @@
       "state_address": "Skinvariables buildviews execution and skin reload",
       "role": "effect",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -1855,6 +1934,7 @@
       "state_address": "/storage/.config/kodi-lifecycle, mode 0700",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1873,6 +1953,7 @@
       "state_address": "/storage/.ssh/authorized_keys marked homeassistant-ugoos-kodi-lifecycle entry",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1891,6 +1972,7 @@
       "state_address": "kodi.service running/stopped state during gateway install",
       "role": "effect",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -1963,6 +2045,7 @@
       "state_address": "CoreELEC identity in /etc/os-release and /etc/release",
       "role": "guard",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -1977,6 +2060,7 @@
       "state_address": "Device-tree model /proc/device-tree/model",
       "role": "guard",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -2005,6 +2089,7 @@
       "state_address": "Lifecycle platform guard in /etc/os-release",
       "role": "guard",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -2019,6 +2104,7 @@
       "state_address": "Installed OpenSSH capability (/usr/sbin/sshd -V)",
       "role": "guard",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -2033,6 +2119,7 @@
       "state_address": "videoscreen.resolution",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2052,6 +2139,7 @@
       "state_address": "videoscreen.whitelist",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2071,6 +2159,7 @@
       "state_address": "coreelec.amlogic.disabledolbyvision",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2090,6 +2179,7 @@
       "state_address": "coreelec.amlogic.dolbyvisionled",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2109,6 +2199,7 @@
       "state_address": "audiooutput.passthrough",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2128,6 +2219,7 @@
       "state_address": "audiooutput.ac3passthrough",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2147,6 +2239,7 @@
       "state_address": "audiooutput.eac3passthrough",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2166,6 +2259,7 @@
       "state_address": "audiooutput.dtspassthrough",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2185,6 +2279,7 @@
       "state_address": "audiooutput.truehdpassthrough",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2204,6 +2299,7 @@
       "state_address": "audiooutput.dtshdpassthrough",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2223,6 +2319,7 @@
       "state_address": "audiooutput.channels",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "deferred",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2242,6 +2339,7 @@
       "state_address": "guisettings.xml lookandfeel.skin",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2262,6 +2360,7 @@
       "state_address": "guisettings.xml lookandfeel.soundskin",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2282,6 +2381,7 @@
       "state_address": "addon_data/skin.arctic.fuse.3/settings.xml: TV hub 1101 (Name, Toggle, Icon, Mode, Spotlight.Label, .Path, .Target, Shortcut.Path, .Target)",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2302,6 +2402,7 @@
       "state_address": "Same file: Movies hub 1102, same nine fields",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2322,6 +2423,7 @@
       "state_address": "Same file: Plex hub 1103 (Name, Toggle, Icon, Shortcut.Path; clear Shortcut.Target, three spotlight fields)",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2342,6 +2444,7 @@
       "state_address": "Same file: custom hub 1104 nine fields removed; verifier checks six behaviorally active destination/toggle fields blank",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2362,6 +2465,7 @@
       "state_address": "Same file: PVR hub HomeSwitcher.1107.Toggle; clear Hub.1107.DisableSearch, DisableChannels, DisableGroups, DisableRecordings",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2382,6 +2486,7 @@
       "state_address": "Same file: HomeSwitcher.1108.Toggle",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2402,6 +2507,7 @@
       "state_address": "Same file: option tiles 01.include=NowPlaying, 02.include=Settings, 04.include=SystemInfo",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2422,6 +2528,7 @@
       "state_address": "Same file: Weather tile 03.include; remove 03.path and 03.target",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2442,6 +2549,7 @@
       "state_address": "script.skinvariables/.../skinvariables-shortcut-homewidgets.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2462,6 +2570,7 @@
       "state_address": ".../skinvariables-shortcut-1101widgets.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2482,6 +2591,7 @@
       "state_address": ".../skinvariables-shortcut-1102widgets.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2502,6 +2612,7 @@
       "state_address": ".../skinvariables-shortcut-powermenu.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2522,6 +2633,7 @@
       "state_address": "addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json, library.seasons",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2542,6 +2654,7 @@
       "state_address": "Same, library.episodes",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2602,6 +2715,7 @@
       "state_address": "playlists/video/InProgressMovies90Days.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2622,6 +2736,7 @@
       "state_address": "InProgressShows90Days.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2642,6 +2757,7 @@
       "state_address": "RecentlyAiredEpisodes30Days.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2662,6 +2778,7 @@
       "state_address": "RecentlyReleasedMoviesCurrentAndPreviousYear.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2682,6 +2799,7 @@
       "state_address": "TraktPopularTVShows.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2702,6 +2820,7 @@
       "state_address": "TraktWeekendBoxOffice.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2722,6 +2841,7 @@
       "state_address": "NewShows.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2742,6 +2862,7 @@
       "state_address": "NewMovies.xsp",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2762,6 +2883,7 @@
       "state_address": "RecentlyReleasedMovies90Days.xsp absence",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2782,6 +2904,7 @@
       "state_address": "RecentlyReleasedMoviesCurrentYear.xsp absence",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2830,6 +2953,7 @@
       "state_address": "/storage/.cache/services/sshd.conf with password authentication disabled",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2849,6 +2973,7 @@
       "state_address": "SSH host key acceptance / known-hosts state",
       "role": "guard",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -2863,6 +2988,7 @@
       "state_address": "weather.addon in guisettings.xml",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2883,6 +3009,7 @@
       "state_address": "addon_data/weather.ha/settings.xml: ha_server",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2903,6 +3030,7 @@
       "state_address": "Same file: ha_key",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2923,6 +3051,7 @@
       "state_address": "Same file: ha_weather_forecast_entity_id",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2943,6 +3072,7 @@
       "state_address": "Same file: ha_sun_entity_id",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2963,6 +3093,7 @@
       "state_address": "addon_data/pvr.nextpvr/instance-settings-1.xml: host",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2983,6 +3114,7 @@
       "state_address": "Same file: hostprotocol",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3003,6 +3135,7 @@
       "state_address": "Same file: kodi_addon_instance_enabled",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3023,6 +3156,7 @@
       "state_address": "Same file: kodi_addon_instance_name",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3043,6 +3177,7 @@
       "state_address": "Same file: pin",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3063,6 +3198,7 @@
       "state_address": "Same file: port",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3083,6 +3219,7 @@
       "state_address": "addon_data/plugin.video.themoviedb.helper/settings.xml: mdblist_apikey",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3103,6 +3240,7 @@
       "state_address": "Same file: omdb_apikey",
       "role": "resource",
       "current_owner_or_executor": "shell",
+      "reconciler_status": "none",
       "shell_write_set": {
         "status": "audited",
         "items": [

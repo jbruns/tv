@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR-0012
 ---
 
 # Fail forward and converge on re-run, under exclusive execution ownership

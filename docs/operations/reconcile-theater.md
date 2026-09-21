@@ -1,10 +1,11 @@
 # Reconcile the theater Ugoos
 
-The Reconciler owns two Resource Types on the theater Ugoos: the Smart
-Playlist `NewShows.xsp`, and the Kodi settings the Profile declares inside
-`guisettings.xml`. Everything else on the Device is still the shell
-provisioner's, and its declaration remains the Recovery Baseline
-([ADR 0010](../adr/0010-retire-the-shell-by-attrition.md)).
+The Reconciler shadows the shell on two Resource Types on the theater Ugoos:
+the Smart Playlist `NewShows.xsp`, and the Kodi settings the Profile declares
+inside `guisettings.xml`. Both engines still write them, holding the same
+values. Everything else on the Device is the shell provisioner's, and its
+declaration remains the Recovery Baseline
+([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
 A Smart Playlist is a document the Reconciler renders whole.
 `guisettings.xml` is not: it is a shared document holding hundreds of
@@ -191,13 +192,16 @@ by `apply` again.
 
 ## Ownership
 
-`inventory/ownership-ledger.json` still records `SKIN-025`
+`inventory/ownership-ledger.json` records `SKIN-025`
 (`special://profile/playlists/video/NewShows.xsp`) and `CORE-013`
-(`videolibrary.flattentvshows`) as shell-owned, and the shell still writes
-them during a `skin` or `baseline` run. That is deliberate for now: transferring a row freezes those
-shell runs
+(`videolibrary.flattentvshows`) as shell-owned with
+`reconciler_status: accepted`, and the shell still writes them during a `skin`
+or `baseline` run. That is the shadowing model: transferring a row freezes
+those shell runs
 ([the write-set permission freeze](shell-write-set-permissions.md)), which
-would remove the Recovery Baseline this slice depends on.
+would remove the Recovery Baseline this slice depends on, so ownership moves
+only when the shell is deleted wholesale
+([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
 The two declarations agree — the Reconciler renders the same Smart Playlist
 document the shell does, and declares the same Kodi setting values — so a

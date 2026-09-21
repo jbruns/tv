@@ -12,7 +12,8 @@ Two files drive it:
   writes, through eight mutation primitive families and their reachable call
   paths.
 - [`inventory/ownership-ledger.json`](../../inventory/ownership-ledger.json)
-  records, per ID, which engine owns it.
+  records, per ID, which engine owns it and how far the Reconciler has got
+  with it (`reconciler_status`, which the guard does not read).
 
 The validator checks every operation and scope against that exact topology,
 checks each primitive's IDs against the authoritative per-ID targets, and
@@ -69,27 +70,29 @@ Both operations now fail closed. No target was guessed. They remain residual
 pilot blockers until a separately reviewed exact scope/evidence mechanism
 exists.
 
-## `NewShows.xsp`: the first contested address
+## `NewShows.xsp`: the first shadowed address
 
 `SKIN-025` maps to `special://profile/playlists/video/NewShows.xsp`. Both
 engines write it: the shell through its smart-playlist transformer, and the
-Reconciler as its first working slice. That is a violation of
-[ADR 0009](../adr/0009-fail-forward-and-exclusive-execution-ownership.md), and it is resolved by
-attrition rather than by arbitration: the shell stops writing the address, and
-only then does the ledger hand it to Python.
+Reconciler as its first working slice. That is a bounded exception to
+[ADR 0009](../adr/0009-fail-forward-and-exclusive-execution-ownership.md), and
+it is resolved by shadowing rather than by arbitration: both engines keep
+writing the address and hold the same value, so neither reverts the other, and
+the ledger hands nothing to Python until the shell is deleted wholesale.
 
-The ordering matters because the guard is component-level and all-or-nothing.
-`evaluate_shell_permission` refuses an operation when *any* ID it would reach
-is Python-owned or frozen. Flipping `SKIN-025` to `python` while the shell
-still writes it would therefore block every `--component skin` run, not just
-the one write. The permission test proves the reach: both `skin` and `baseline`
+Ownership could not be transferred early even if that were wanted, because the
+guard is component-level and all-or-nothing. `evaluate_shell_permission`
+refuses an operation when *any* ID it would reach is Python-owned or frozen.
+Flipping `SKIN-025` to `python` while the shell still writes it would block
+every `--component skin` run, not just the one write, and remove the Recovery
+Baseline. The permission test proves the reach: both `skin` and `baseline`
 reach `SKIN-025`, while an `addons`-only run reaches the indirect skin outputs
 `SKIN-017`-`SKIN-018` but not `SKIN-025`.
 
-There is no ownership return. Once an address is Python-owned, the shell cannot
-take it back, and the Recovery Baseline deliberately lags Desired State by
-exactly the set of addresses that have been handed over. See
-[ADR 0010](../adr/0010-retire-the-shell-by-attrition.md).
+Progress is recorded instead in the ledger's `reconciler_status` field, which
+is `accepted` for `SKIN-025` and `CORE-013`. `current_owner_or_executor` stays
+`shell` for every row, and the Python-owner guard stays intact and unused. See
+[ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md).
 
 ## Checking the map
 
