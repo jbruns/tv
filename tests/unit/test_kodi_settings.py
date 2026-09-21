@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+import yaml
 
 from .conftest import FakeDevice
 
@@ -329,3 +330,74 @@ def test_the_document_survives_an_interrupted_write(
     assert reconcile("apply", "--room", "theater") == 0
 
     assert device.guisettings.read_text(encoding="utf-8") == converged
+
+
+def shipped_settings() -> dict[str, str]:
+    """The Kodi settings the committed Profile declares, in file order."""
+    profile = (
+        Path(__file__).resolve().parents[2]
+        / "config"
+        / "shared"
+        / "ugoos-am6b-plus"
+        / "coreelec-21.3"
+        / "profile.yaml"
+    )
+    document = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    declared = document["kodi_settings"]["settings"]
+    settings = {entry["setting"]: entry["value"] for entry in declared}
+    assert len(settings) == len(declared), "a setting is declared twice"
+    return settings
+
+
+def test_the_shipped_settings_converge_in_one_write_and_one_restart(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    declared = shipped_settings()
+    device.write_profile(device.profile_body(declared))
+    write_document(device, UNMANAGED)
+
+    assert reconcile("apply", "--room", "theater") == 0
+
+    assert values(device.guisettings) == {
+        "audiooutput.channels": "2",
+        "locale.audiolanguage": "original",
+        "videoscreen.resolution": "16",
+        **declared,
+    }
+    assert device.effects == ["stop kodi.service", "start kodi.service"]
+    capsys.readouterr()
+
+    assert reconcile("plan", "--room", "theater") == 0
+
+    assert "no changes" in capsys.readouterr().out
+
+
+def test_every_declared_setting_plans_as_an_update_on_a_provisioned_device(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The shell writes all of them, so on a provisioned Device none may plan
+    as a `create`: a create is a misread setting id, which would write a node
+    Kodi ignores and still verify as converged (ADR 0012)."""
+    declared = shipped_settings()
+    device.write_profile(device.profile_body(declared))
+    write_document(
+        device,
+        '<settings version="2">\n'
+        + "".join(
+            f'    <setting id="{setting}">stale</setting>\n' for setting in declared
+        )
+        + "</settings>\n",
+    )
+
+    assert reconcile("plan", "--room", "theater") == 0
+
+    out = capsys.readouterr().out
+    reported = [line for line in out.splitlines() if "guisettings.xml#" in line]
+    assert len(reported) == len(declared)
+    assert all(line.startswith("update ") for line in reported)
+    for setting, value in declared.items():
+        assert f"#{setting}: stale -> {value}" in out

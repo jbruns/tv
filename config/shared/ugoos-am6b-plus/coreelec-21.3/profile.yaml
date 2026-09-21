@@ -34,12 +34,64 @@ smart_playlists:
 # Kodi settings inside guisettings.xml. That document is shared: everything
 # not declared here is Unmanaged State and is preserved. Each value matches
 # what provision-coreelec.sh writes, so the Recovery Baseline and Desired
-# State do not diverge and a shell run remains a no-op (ADR 0010).
+# State do not diverge and a shell run remains a no-op (ADR 0012). Adding a
+# setting is an entry here and no code change; the two Device checks that go
+# with it are in docs/operations/reconcile-theater.md.
 #
 # Applying any of these restarts Kodi, because Kodi rewrites guisettings.xml
 # from memory when it exits and would otherwise discard the write.
 kodi_settings:
   document: /storage/.kodi/userdata/guisettings.xml
   settings:
+    # Region and input.
+    - setting: locale.language
+      value: resource.language.en_us
+    - setting: locale.country
+      value: USA (12h)
+    - setting: locale.keyboardlayouts
+      value: English QWERTY
+    - setting: locale.timezonecountry
+      value: United States
+    - setting: locale.timezone
+      value: America/Los_Angeles
+    # Add-on updates are notified, never installed unattended, so the
+    # appliance never changes underneath a viewer.
+    - setting: general.addonupdates
+      value: "1"
+    - setting: input.enablemouse
+      value: "false"
+    # File lists: a ten-foot interface, not a file manager.
+    - setting: filelists.showaddsourcebuttons
+      value: "false"
+    - setting: filelists.showextensions
+      value: "false"
+    - setting: filelists.showparentdiritems
+      value: "false"
+    # Video library presentation.
     - setting: videolibrary.flattentvshows
       value: "1"
+    - setting: videolibrary.ignorevideoextras
+      value: "true"
+    - setting: videolibrary.ignorevideoversions
+      value: "true"
+    - setting: videolibrary.showallitems
+      value: "false"
+    - setting: videolibrary.tvshowsselectfirstunwatcheditem
+      value: "1"
+    # Playback follows the source frame rate and the display's clock.
+    - setting: videoplayer.adjustrefreshrate
+      value: "2"
+    - setting: videoplayer.usedisplayasclock
+      value: "false"
+    # These three name add-ons the shell installs. The Reconciler never runs
+    # on a bare Device, so nothing here installs them; an add-on that is
+    # missing shows up as a setting Kodi discards, which the hardware
+    # acceptance run catches.
+    - setting: lookandfeel.skin
+      value: skin.arctic.fuse.3
+    - setting: lookandfeel.soundskin
+      value: resource.uisounds.fromashes
+    # The shell writes this one only when weather is configured. It always is
+    # on this fleet, so declaring it unconditionally matches the Device.
+    - setting: weather.addon
+      value: weather.ha

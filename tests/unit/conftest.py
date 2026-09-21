@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,9 +91,9 @@ smart_playlists:
 kodi_settings:
   document: {document}
   settings:
-    - setting: videolibrary.flattentvshows
-      value: "1"
 """
+
+DEFAULT_SETTINGS = {"videolibrary.flattentvshows": "1"}
 
 ROOM = """\
 room: theater
@@ -144,11 +144,15 @@ class FakeDevice:
             return []
         return self.systemctl_log.read_text(encoding="utf-8").splitlines()
 
-    def profile_body(self) -> str:
+    def profile_body(self, settings: Mapping[str, str] | None = None) -> str:
+        declared = DEFAULT_SETTINGS if settings is None else settings
         return PROFILE.format(
             directory=self.playlists_dir,
             identity=self.identity,
             document=self.guisettings,
+        ) + "".join(
+            f'    - setting: {setting}\n      value: "{value}"\n'
+            for setting, value in declared.items()
         )
 
     def write_profile(self, body: str) -> None:

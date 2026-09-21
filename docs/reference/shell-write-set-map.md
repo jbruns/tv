@@ -90,7 +90,8 @@ reach `SKIN-025`, while an `addons`-only run reaches the indirect skin outputs
 `SKIN-017`-`SKIN-018` but not `SKIN-025`.
 
 Progress is recorded instead in the ledger's `reconciler_status` field, which
-is `accepted` for `SKIN-025` and `CORE-013`. `current_owner_or_executor` stays
+is `accepted` for `SKIN-025` and for the twenty `guisettings.xml` addresses the
+Profile declares. `current_owner_or_executor` stays
 `shell` for every row, and the Python-owner guard stays intact and unused. See
 [ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md).
 

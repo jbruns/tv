@@ -56,7 +56,8 @@ update /storage/.kodi/userdata/guisettings.xml#videolibrary.flattentvshows: 0 ->
 
 ## Declaring a Kodi setting
 
-Add an entry to `kodi_settings.settings` in the Profile; nothing else changes.
+Add an entry to `kodi_settings.settings` in the Profile. No code changes; two
+Device checks do.
 
 ```yaml
 kodi_settings:
@@ -66,9 +67,17 @@ kodi_settings:
       value: "1"
 ```
 
-Declare the value `provision-coreelec.sh` already writes. The two declarations
-then agree, the Recovery Baseline and Desired State do not diverge, and a
-shell run stays a no-op.
+Declare the value `provision-coreelec.sh` already writes, exactly as it writes
+it — `true` and `1` are different values to Kodi. The two declarations then
+agree, the Recovery Baseline and Desired State do not diverge, and a shell run
+stays a no-op. Values the shell resolves from `provision.conf` are declared as
+the resolved literal.
+
+The Profile declares twenty settings this way and the Reconciler holds no list
+of its own, so the twenty-first is an entry here and no code change. Two
+checks belong to declaring one: the Device must not plan it as a `create`, and
+the shell must still agree after it lands. Both are acceptance scenarios 6 and
+7 below.
 
 Kodi resolves a setting ID without regard to case and reads only the direct
 `<setting>` children of the document root. The Reconciler resolves a declared
@@ -152,13 +161,35 @@ The scenarios are:
    file is always either the old or the new document and never truncated, then
    `apply` again and reach Convergence. This is the property that replaces
    rollback and is the one that matters most.
-5. **The Kodi setting lands** — set `videolibrary.flattentvshows` to the
+5. **The Kodi settings land** — set `videolibrary.flattentvshows` to the
    wrong value in the Kodi UI (Settings > Media > Videos > Flatten TV show
    seasons), `apply`, and confirm three things: the plan named the State
    Address and both values, Kodi came back up, and the UI shows the declared
    value after the restart. Then confirm unrelated settings are untouched by
-   diffing `guisettings.xml` before and after the Run.
-6. **Usable** — Kodi still starts and the playlist still opens:
+   diffing `guisettings.xml` before and after the Run, and that the skin still
+   loads.
+6. **No declared setting is a `create`** — the shell writes every declared
+   setting, so on a provisioned Device none may plan as a `create`. A `create`
+   is a misread or typo'd setting id: it writes a node Kodi ignores and then
+   verifies as converged, so nothing else catches it
+   ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
+
+   ```console
+   uv run coreelec-reconciler plan --room theater | grep '^create .*guisettings'
+   ```
+
+   Expect no output. Run this whenever the Profile declares a new setting.
+7. **The shell and the Reconciler agree** — the value-parity invariant. One
+   mismatched literal (`true` against `1`) gives two engines that revert each
+   other forever. After `apply`, run the shell baseline and re-plan:
+
+   ```console
+   ./provision-coreelec.sh --target ugoos-theater --component baseline
+   uv run coreelec-reconciler plan --room theater
+   ```
+
+   Expect `plan: no changes`.
+8. **Usable** — Kodi still starts and the playlist still opens:
 
    ```console
    curl -sS --max-time 15 --user "$KODI_USER:$KODI_WEB_PASSWORD" \
@@ -193,10 +224,13 @@ by `apply` again.
 ## Ownership
 
 `inventory/ownership-ledger.json` records `SKIN-025`
-(`special://profile/playlists/video/NewShows.xsp`) and `CORE-013`
-(`videolibrary.flattentvshows`) as shell-owned with
-`reconciler_status: accepted`, and the shell still writes them during a `skin`
-or `baseline` run. That is the shadowing model: transferring a row freezes
+(`special://profile/playlists/video/NewShows.xsp`) and the twenty
+`guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
+`CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — as shell-owned
+with
+`reconciler_status: accepted`, and the shell still writes them during a `core`,
+`skin`, `services` or `baseline` run. That is the shadowing model: transferring
+a row freezes
 those shell runs
 ([the write-set permission freeze](shell-write-set-permissions.md)), which
 would remove the Recovery Baseline this slice depends on, so ownership moves
