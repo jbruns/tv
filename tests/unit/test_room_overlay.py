@@ -34,7 +34,7 @@ def values(document: Path) -> dict[str, str | None]:
 
 
 def shipped_room_settings() -> list[dict[str, str]]:
-    """The Kodi settings the committed Room Overlay declares, in file order."""
+    """The room-scoped guisettings settings the Room Overlay declares."""
     room = (
         Path(__file__).resolve().parents[2]
         / "config"
@@ -42,7 +42,10 @@ def shipped_room_settings() -> list[dict[str, str]]:
         / "theater"
         / "room.yaml"
     )
-    declared = yaml.safe_load(room.read_text(encoding="utf-8"))["kodi_settings"]
+    documents = yaml.safe_load(room.read_text(encoding="utf-8"))["settings_documents"]
+    assert isinstance(documents, list) and len(documents) == 1
+    assert documents[0]["dialect"] == "guisettings"
+    declared = documents[0]["settings"]
     assert isinstance(declared, list)
     return declared
 
@@ -56,7 +59,7 @@ def test_a_room_overlay_without_the_block_is_rejected_naming_the_key(
 
     assert reconcile("apply", "--room", "theater") == 1
 
-    assert "kodi_settings" in capsys.readouterr().err
+    assert "settings_documents" in capsys.readouterr().err
 
 
 def test_a_room_setting_the_profile_does_not_declare_is_added(

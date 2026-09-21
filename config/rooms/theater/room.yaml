@@ -11,11 +11,13 @@ room: theater
 hostname: ugoos-theater
 profile: ugoos-am6b-plus/coreelec-21.3
 
-# Room-scoped Kodi settings inside the Profile's guisettings.xml. These nine
-# State Addresses describe this room's hardware rather than the class of
-# Device, so declaring them in a Profile shared by four rooms would be false.
-# They are concatenated with the Profile's settings; an address declared on
-# both sides is an error naming it.
+# Room-scoped Kodi settings, grouped by the Settings Document that holds them,
+# exactly as the Profile groups its own. These nine State Addresses describe
+# this room's hardware rather than the class of Device, so declaring them in a
+# Profile shared by four rooms would be false. The Profile declares
+# guisettings.xml too, and the two sides' settings merge into one document; an
+# address declared on both sides is an error naming the document and the
+# address.
 #
 # Every value matches what provision-coreelec.sh writes from room.conf beside
 # this file, so the Recovery Baseline and Desired State do not diverge and a
@@ -26,32 +28,35 @@ profile: ugoos-am6b-plus/coreelec-21.3
 # the resolved index is not stable across runs, so an address declared as a
 # literal would report a Change on every Run and fail its own Verification.
 # They wait for Intent resolution.
-kodi_settings:
-  # Every 2160p mode the Sony reports over EDID.
-  - setting: videoscreen.whitelist
-    value: 0409602160024.00000pstd,0409602160023.97602pstd,0384002160060.00000pstd,0384002160059.94006pstd,0384002160050.00000pstd,0384002160030.00000pstd,0384002160029.97003pstd,0384002160025.00000pstd,0384002160024.00000pstd,0384002160023.97602pstd
-  # Dolby Vision is on in this room. Kodi's address states it negatively, so
-  # the declaration is inverted on the way to the Device: `true` here is
-  # disabledolbyvision=false there.
-  - setting: coreelec.amlogic.disabledolbyvision
-    value: "true"
-    transform: invert
-  # Display-led, because the Sony drives Dolby Vision. Kodi stores the mode
-  # as an ordinal, so the mode name is mapped: tv-led is 0.
-  - setting: coreelec.amlogic.dolbyvisionled
-    value: tv-led
-    transform: dolby_vision_mode
-  # Audio passes through the Sony eARC and the OREI link to the Denon. There
-  # is no Atmos flag: Atmos rides on TrueHD and E-AC-3.
-  - setting: audiooutput.passthrough
-    value: "true"
-  - setting: audiooutput.ac3passthrough
-    value: "true"
-  - setting: audiooutput.eac3passthrough
-    value: "true"
-  - setting: audiooutput.dtspassthrough
-    value: "true"
-  - setting: audiooutput.truehdpassthrough
-    value: "true"
-  - setting: audiooutput.dtshdpassthrough
-    value: "true"
+settings_documents:
+  - document: /storage/.kodi/userdata/guisettings.xml
+    dialect: guisettings
+    settings:
+      # Every 2160p mode the Sony reports over EDID.
+      - setting: videoscreen.whitelist
+        value: 0409602160024.00000pstd,0409602160023.97602pstd,0384002160060.00000pstd,0384002160059.94006pstd,0384002160050.00000pstd,0384002160030.00000pstd,0384002160029.97003pstd,0384002160025.00000pstd,0384002160024.00000pstd,0384002160023.97602pstd
+      # Dolby Vision is on in this room. Kodi's address states it negatively,
+      # so the declaration is inverted on the way to the Device: `true` here
+      # is disabledolbyvision=false there.
+      - setting: coreelec.amlogic.disabledolbyvision
+        value: "true"
+        transform: invert
+      # Display-led, because the Sony drives Dolby Vision. Kodi stores the
+      # mode as an ordinal, so the mode name is mapped: tv-led is 0.
+      - setting: coreelec.amlogic.dolbyvisionled
+        value: tv-led
+        transform: dolby_vision_mode
+      # Audio passes through the Sony eARC and the OREI link to the Denon.
+      # There is no Atmos flag: Atmos rides on TrueHD and E-AC-3.
+      - setting: audiooutput.passthrough
+        value: "true"
+      - setting: audiooutput.ac3passthrough
+        value: "true"
+      - setting: audiooutput.eac3passthrough
+        value: "true"
+      - setting: audiooutput.dtspassthrough
+        value: "true"
+      - setting: audiooutput.truehdpassthrough
+        value: "true"
+      - setting: audiooutput.dtshdpassthrough
+        value: "true"

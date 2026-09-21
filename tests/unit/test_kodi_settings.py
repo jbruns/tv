@@ -11,6 +11,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -178,7 +179,7 @@ def test_a_second_setting_needs_no_code_change(
 ) -> None:
     device.write_profile(
         device.profile_body()
-        + '    - setting: videolibrary.showemptytvshows\n      value: "0"\n'
+        + '      - setting: videolibrary.showemptytvshows\n        value: "0"\n'
     )
 
     assert reconcile("apply", "--room", "theater") == 0
@@ -198,7 +199,7 @@ def test_the_restart_effect_is_taken_once_for_many_settings(
 ) -> None:
     device.write_profile(
         device.profile_body()
-        + '    - setting: videolibrary.showemptytvshows\n      value: "0"\n'
+        + '      - setting: videolibrary.showemptytvshows\n        value: "0"\n'
     )
 
     assert reconcile("apply", "--room", "theater") == 0
@@ -285,7 +286,7 @@ def test_a_setting_kodi_reverts_as_it_exits_still_converges(
     settings written, are both taken after the service stopped."""
     device.write_profile(
         device.profile_body()
-        + '    - setting: videolibrary.showemptytvshows\n      value: "0"\n'
+        + '      - setting: videolibrary.showemptytvshows\n        value: "0"\n'
     )
     write_document(
         device,
@@ -332,8 +333,15 @@ def test_the_document_survives_an_interrupted_write(
     assert device.guisettings.read_text(encoding="utf-8") == converged
 
 
+def shipped_documents(path: Path) -> list[dict[str, Any]]:
+    """The Settings Documents a committed configuration file declares."""
+    declared = yaml.safe_load(path.read_text(encoding="utf-8"))["settings_documents"]
+    assert isinstance(declared, list)
+    return declared
+
+
 def shipped_settings() -> dict[str, str]:
-    """The Kodi settings the committed Profile declares, in file order."""
+    """The guisettings settings the committed Profile declares, in file order."""
     profile = (
         Path(__file__).resolve().parents[2]
         / "config"
@@ -342,8 +350,13 @@ def shipped_settings() -> dict[str, str]:
         / "coreelec-21.3"
         / "profile.yaml"
     )
-    document = yaml.safe_load(profile.read_text(encoding="utf-8"))
-    declared = document["kodi_settings"]["settings"]
+    documents = shipped_documents(profile)
+    guisettings = [
+        document for document in documents if document["dialect"] == "guisettings"
+    ]
+    assert len(guisettings) == 1, "the Profile declares guisettings.xml once"
+    declared = guisettings[0]["settings"]
+    assert isinstance(declared, list)
     settings = {entry["setting"]: entry["value"] for entry in declared}
     assert len(settings) == len(declared), "a setting is declared twice"
     return settings

@@ -55,10 +55,10 @@ exec {chmod} "$@"
 SYSTEMCTL_STUB = """#!/bin/sh
 # Records every service Effect the Run takes, in order.
 printf '%s\\n' "$*" >> "$FAKE_DEVICE_SYSTEMCTL_LOG"
-# Kodi rewrites guisettings.xml from memory as it exits, so stopping it can
-# revert a setting that looked converged while it was running.
+# Kodi rewrites a Settings Document from memory as it exits, so stopping it
+# can revert a setting that looked converged while it was running.
 if [ "$1" = "stop" ] && [ -n "$FAKE_DEVICE_KODI_MEMORY" ]; then
-  cat "$FAKE_DEVICE_KODI_MEMORY" > "$FAKE_DEVICE_GUISETTINGS"
+  cat "$FAKE_DEVICE_KODI_MEMORY" > "$FAKE_DEVICE_KODI_DOCUMENT"
 fi
 if [ "$FAKE_DEVICE_SYSTEMCTL_REFUSES" = "$1" ]; then
   echo "systemctl: $1 refused" >&2
@@ -88,9 +88,7 @@ smart_playlists:
         - field: playcount
           operator: is
           value: "0"
-kodi_settings:
-  document: {document}
-  settings:
+settings_documents:
 """
 
 DEFAULT_SETTINGS = {"videolibrary.flattentvshows": "1"}
@@ -101,9 +99,9 @@ hostname: ugoos-theater
 profile: ugoos-am6b-plus/coreelec-21.3
 """
 
-# A Room Overlay must state its room-scoped settings even when it has none:
-# the block is required, and an empty list says so out loud.
-ROOM = ROOM_HEADER + "kodi_settings: []\n"
+# A Room Overlay must state its Settings Documents even when it has none: the
+# block is required, and an empty list says so out loud.
+ROOM = ROOM_HEADER + "settings_documents: []\n"
 
 EXPECTED_XSP = """\
 <?xml version='1.0' encoding='UTF-8'?>
@@ -117,6 +115,18 @@ EXPECTED_XSP = """\
     <order direction="descending">dateadded</order>
 </smartplaylist>
 """
+
+
+def indent(block: str) -> str:
+    """`block` moved four spaces right, into a document's `settings` list."""
+
+    return "".join(f"    {line}\n" if line else "\n" for line in block.splitlines())
+
+
+def document_block(path: Path, dialect: str, settings: str) -> str:
+    """One entry in a `settings_documents` list."""
+
+    return f"  - document: {path}\n    dialect: {dialect}\n    settings:\n{settings}"
 
 
 @dataclass(frozen=True)
@@ -142,21 +152,38 @@ class FakeDevice:
         return self.userdata / "guisettings.xml"
 
     @property
+    def weather(self) -> Path:
+        """The weather.ha document, which Kodi writes in the addon_v1 form."""
+        return self.userdata / "addon_data" / "weather.ha" / "settings.xml"
+
+    @property
+    def nextpvr(self) -> Path:
+        """The NextPVR instance document, in the addon_v2 form."""
+        return self.userdata / "addon_data" / "pvr.nextpvr" / "instance-settings-1.xml"
+
+    @property
     def effects(self) -> list[str]:
         """Every `systemctl` invocation the Run made, in order."""
         if not self.systemctl_log.exists():
             return []
         return self.systemctl_log.read_text(encoding="utf-8").splitlines()
 
-    def profile_body(self, settings: Mapping[str, str] | None = None) -> str:
+    def profile_body(
+        self, settings: Mapping[str, str] | None = None, extra: str = ""
+    ) -> str:
+        """The Profile, declaring guisettings.xml and any `extra` documents."""
         declared = DEFAULT_SETTINGS if settings is None else settings
-        return PROFILE.format(
-            directory=self.playlists_dir,
-            identity=self.identity,
-            document=self.guisettings,
-        ) + "".join(
-            f'    - setting: {setting}\n      value: "{value}"\n'
-            for setting, value in declared.items()
+        return (
+            PROFILE.format(directory=self.playlists_dir, identity=self.identity)
+            + document_block(
+                self.guisettings,
+                "guisettings",
+                "".join(
+                    f'      - setting: {setting}\n        value: "{value}"\n'
+                    for setting, value in declared.items()
+                ),
+            )
+            + extra
         )
 
     def write_profile(self, body: str) -> None:
@@ -175,8 +202,16 @@ class FakeDevice:
         )
 
     def write_room_settings(self, block: str) -> None:
-        """Writes a Room Overlay whose `kodi_settings` is `block`."""
-        self.write_room(ROOM_HEADER + "kodi_settings:\n" + block)
+        """Writes a Room Overlay adding `block` to the Profile's guisettings.
+
+        `block` is a list of settings indented two spaces, the shape a reader
+        of a Room Overlay sees; the document it belongs to is supplied here.
+        """
+        self.write_room(
+            ROOM_HEADER
+            + "settings_documents:\n"
+            + document_block(self.guisettings, "guisettings", indent(block))
+        )
 
 
 @pytest.fixture
@@ -196,7 +231,7 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
     monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_DEVICE_SYSTEMCTL_LOG", str(tmp_path / "systemctl.log"))
     monkeypatch.setenv(
-        "FAKE_DEVICE_GUISETTINGS",
+        "FAKE_DEVICE_KODI_DOCUMENT",
         str(tmp_path / "storage" / ".kodi" / "userdata" / "guisettings.xml"),
     )
 

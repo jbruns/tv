@@ -6,11 +6,13 @@ the key, so a typo can never be read as a silent default.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from . import kodi_settings
 
 
 class ConfigError(Exception):
@@ -70,10 +72,16 @@ class KodiSetting:
 
 
 @dataclass(frozen=True)
-class KodiSettings:
-    """A shared settings document and the State Addresses owned inside it."""
+class SettingsDocument:
+    """One Settings Document and the State Addresses owned inside it.
+
+    `dialect` says how the document is serialised. It is declared, never
+    sniffed: a corrupt or truncated document must fail naming itself rather
+    than read as a plausible other shape.
+    """
 
     document: str
+    dialect: str
     settings: tuple[KodiSetting, ...]
 
 
@@ -84,7 +92,7 @@ class DesiredState:
     profile: str
     transport: Transport
     playlists: tuple[SmartPlaylist, ...]
-    kodi_settings: KodiSettings
+    documents: tuple[SettingsDocument, ...]
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -230,28 +238,89 @@ def _kodi_setting(source: Path, raw: Any) -> KodiSetting:
     )
 
 
-def _merge(
-    profile_settings: tuple[KodiSetting, ...],
-    room_settings: tuple[KodiSetting, ...],
-    room_file: Path,
-) -> tuple[KodiSetting, ...]:
-    """The Profile's settings followed by the Room Overlay's.
+def _document(source: Path, raw: Any) -> SettingsDocument:
+    mapping = _fields(
+        source,
+        "a Settings Document",
+        _mapping(source, "a Settings Document", raw),
+        required=("document", "dialect", "settings"),
+    )
+    document = _text(source, "a Settings Document path", mapping["document"])
+    if not document.startswith("/"):
+        raise ConfigError(
+            f"{source}: a Settings Document path must be absolute: {document}"
+        )
+    dialect = _text(source, f"the dialect of {document}", mapping["dialect"])
+    if dialect not in kodi_settings.DIALECTS:
+        known = ", ".join(kodi_settings.DIALECTS)
+        raise ConfigError(
+            f"{source}: unknown dialect for {document}: {dialect} (known: {known})"
+        )
+    declared = mapping["settings"]
+    if not isinstance(declared, list) or not declared:
+        raise ConfigError(f"{source}: {document} declares no settings")
+    return SettingsDocument(
+        document=document,
+        dialect=dialect,
+        settings=tuple(_kodi_setting(source, entry) for entry in declared),
+    )
 
-    A Room Overlay may add a State Address the Profile does not declare. The
-    language says an overlay wins on collision, but nothing needs that yet, so
-    an address declared on both sides is an error naming it — Kodi resolves a
-    setting ID without regard to case, so that is how the two sides are
-    compared.
+
+def _documents(source: Path, where: str, raw: Any) -> tuple[SettingsDocument, ...]:
+    if not isinstance(raw, list):
+        raise ConfigError(
+            f"{source}: {where} must be a list of Settings Documents, and an "
+            "empty list when there are none"
+        )
+    return tuple(_document(source, entry) for entry in raw)
+
+
+def _merge(
+    sides: tuple[tuple[Path, tuple[SettingsDocument, ...]], ...],
+) -> tuple[SettingsDocument, ...]:
+    """Every side's Settings Documents, merged by document path.
+
+    A document declared on more than one side contributes the settings of
+    each, in the order the sides are given, so a Room Overlay may add a State
+    Address to a document the Profile names. The two sides must agree on the
+    document's dialect, because they describe one file.
+
+    The language says a Room Overlay wins on collision, but nothing needs that
+    yet, so a `(document, setting)` collision is an error naming both instead.
+    Merging per document keeps each side's contribution separable, so the
+    winning rule can be added here later without reshaping anything.
     """
 
-    seen = {setting.setting.casefold() for setting in profile_settings}
-    for setting in room_settings:
-        if setting.setting.casefold() in seen:
-            raise ConfigError(
-                f"{room_file}: {setting.setting} is declared by both the "
-                "Profile and the Room Overlay"
+    merged: dict[str, SettingsDocument] = {}
+    origins: dict[tuple[str, str], Path] = {}
+    for source, documents in sides:
+        for document in documents:
+            path = document.document
+            existing = merged.get(path)
+            if existing is not None and existing.dialect != document.dialect:
+                raise ConfigError(
+                    f"{source}: {path} is declared as {document.dialect} here "
+                    f"and as {existing.dialect} elsewhere"
+                )
+            for setting in document.settings:
+                key = (path, setting.setting.casefold())
+                origin = origins.get(key)
+                if origin == source:
+                    raise ConfigError(
+                        f"{source}: {path} declares {setting.setting} twice"
+                    )
+                if origin is not None:
+                    raise ConfigError(
+                        f"{source}: {setting.setting} in {path} is declared by "
+                        f"both {origin} and {source}"
+                    )
+                origins[key] = source
+            merged[path] = (
+                document
+                if existing is None
+                else replace(existing, settings=existing.settings + document.settings)
             )
-    return profile_settings + room_settings
+    return tuple(merged.values())
 
 
 def load(config_root: Path, room: str) -> DesiredState:
@@ -265,18 +334,15 @@ def load(config_root: Path, room: str) -> DesiredState:
         room_file,
         "the Room Overlay",
         _read(room_file),
-        required=("room", "hostname", "profile", "kodi_settings"),
+        required=("room", "hostname", "profile", "settings_documents"),
     )
     hostname = _text(room_file, "hostname", overlay["hostname"])
     declared_profile = _relative(
         room_file, "profile", _text(room_file, "profile", overlay["profile"])
     )
-    room_settings = overlay["kodi_settings"]
-    if not isinstance(room_settings, list):
-        raise ConfigError(
-            f"{room_file}: kodi_settings must be a list of settings, and an "
-            "empty list when the room adds none"
-        )
+    room_documents = _documents(
+        room_file, "settings_documents", overlay["settings_documents"]
+    )
 
     profile_file = config_root / "shared" / declared_profile / "profile.yaml"
     if not profile_file.is_file():
@@ -285,7 +351,7 @@ def load(config_root: Path, room: str) -> DesiredState:
         profile_file,
         "the Profile",
         _read(profile_file),
-        required=("profile", "transport", "smart_playlists", "kodi_settings"),
+        required=("profile", "transport", "smart_playlists", "settings_documents"),
     )
     if _text(profile_file, "profile", profile["profile"]) != declared_profile:
         raise ConfigError(
@@ -313,20 +379,9 @@ def load(config_root: Path, room: str) -> DesiredState:
     if not isinstance(declared, list) or not declared:
         raise ConfigError(f"{profile_file}: smart_playlists declares no playlists")
 
-    kodi = _fields(
-        profile_file,
-        "kodi_settings",
-        _mapping(profile_file, "kodi_settings", profile["kodi_settings"]),
-        required=("document", "settings"),
-    )
-    document = _text(profile_file, "the Kodi settings document", kodi["document"])
-    if not document.startswith("/"):
-        raise ConfigError(
-            f"{profile_file}: the Kodi settings document must be absolute: {document}"
-        )
-    declared_settings = kodi["settings"]
-    if not isinstance(declared_settings, list) or not declared_settings:
-        raise ConfigError(f"{profile_file}: kodi_settings declares no settings")
+    kodi = _documents(profile_file, "settings_documents", profile["settings_documents"])
+    if not kodi:
+        raise ConfigError(f"{profile_file}: settings_documents declares no documents")
 
     return DesiredState(
         room=_text(room_file, "room", overlay["room"]),
@@ -340,12 +395,5 @@ def load(config_root: Path, room: str) -> DesiredState:
             ).expanduser(),
         ),
         playlists=tuple(_playlist(profile_file, directory, raw) for raw in declared),
-        kodi_settings=KodiSettings(
-            document=document,
-            settings=_merge(
-                tuple(_kodi_setting(profile_file, raw) for raw in declared_settings),
-                tuple(_kodi_setting(room_file, raw) for raw in room_settings),
-                room_file,
-            ),
-        ),
+        documents=_merge(((profile_file, kodi), (room_file, room_documents))),
     )

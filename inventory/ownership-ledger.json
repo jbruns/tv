@@ -3051,7 +3051,7 @@
       "state_address": "Same file: ha_weather_forecast_entity_id",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3072,7 +3072,7 @@
       "state_address": "Same file: ha_sun_entity_id",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3114,7 +3114,7 @@
       "state_address": "Same file: hostprotocol",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3135,7 +3135,7 @@
       "state_address": "Same file: kodi_addon_instance_enabled",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3156,7 +3156,7 @@
       "state_address": "Same file: kodi_addon_instance_name",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -3198,7 +3198,7 @@
       "state_address": "Same file: port",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [

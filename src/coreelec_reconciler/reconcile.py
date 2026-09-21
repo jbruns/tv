@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TextIO
 
 from . import kodi_settings
-from .config import DesiredState, KodiSetting, KodiSettings, SmartPlaylist
+from .config import DesiredState, KodiSetting, SettingsDocument, SmartPlaylist
 from .device import Device, DeviceError
 from .playlist import render
 
@@ -88,16 +88,22 @@ def _guard_identity(device: Device, expected: str) -> None:
         )
 
 
-def _read_settings_document(device: Device, path: str) -> str | None:
-    """The settings document, rejected here rather than half-written later."""
+def _read_settings_document(device: Device, declared: SettingsDocument) -> str | None:
+    """The settings document, rejected here rather than half-written later.
 
-    document = device.read(path)
+    The dialect is the one the Profile declares. A document that does not read
+    as that dialect fails naming itself, because reading it in the wrong
+    dialect would report every declared address as unset and then plan every
+    one of them as a `create`.
+    """
+
+    document = device.read(declared.document)
     try:
-        kodi_settings.validate(document)
+        kodi_settings.validate(document, declared.dialect)
     except kodi_settings.SettingsError as error:
         raise DeviceError(
-            f"{path} on {device.hostname} cannot be read as a Kodi settings "
-            f"document: {error}"
+            f"{declared.document} on {device.hostname} cannot be read as a "
+            f"Kodi settings document: {error}"
         ) from error
     return document
 
@@ -118,21 +124,23 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
             )
         )
 
-    declared = desired.kodi_settings
-    document = _read_settings_document(device, declared.document)
-    for setting in declared.settings:
-        observed = kodi_settings.observe(document, setting.setting)
-        if observed == setting.value:
-            continue
-        changes.append(
-            SettingChange(
-                document=declared.document,
-                setting=setting,
-                action="create" if observed is None else "update",
-                observed=observed,
-                desired=setting.value,
+    for declared in desired.documents:
+        document = _read_settings_document(device, declared)
+        for setting in declared.settings:
+            observed = kodi_settings.observe(
+                document, declared.dialect, setting.setting
             )
-        )
+            if observed == setting.value:
+                continue
+            changes.append(
+                SettingChange(
+                    document=declared.document,
+                    setting=setting,
+                    action="create" if observed is None else "update",
+                    observed=observed,
+                    desired=setting.value,
+                )
+            )
     return changes
 
 
@@ -142,19 +150,21 @@ def _summarise(changes: list[Change]) -> str:
     return f"{len(changes)} change" + ("s" if len(changes) > 1 else "")
 
 
-def _write_settings(device: Device, declared: KodiSettings) -> None:
+def _write_settings(device: Device, declared: SettingsDocument) -> None:
     """Converges every declared setting in one write of the document.
 
     Both the Observation and the set of settings written are taken after the
-    service stopped, never from the Plan: Kodi rewrites the document from
-    memory as it exits, so a setting that looked converged while Kodi ran may
-    have reverted by the time the write happens.
+    service stopped, never from the Plan: Kodi rewrites a Settings Document
+    from memory as it exits, so a setting that looked converged while Kodi ran
+    may have reverted by the time the write happens.
     """
 
-    observed = _read_settings_document(device, declared.document)
+    observed = _read_settings_document(device, declared)
     wanted = {setting.setting: setting.value for setting in declared.settings}
     device.write(
-        declared.document, kodi_settings.rewrite(observed, wanted), mode="0600"
+        declared.document,
+        kodi_settings.rewrite(observed, declared.dialect, wanted),
+        mode="0600",
     )
 
 
@@ -173,9 +183,16 @@ def _apply(
             if isinstance(change, PlaylistChange):
                 device.write(change.playlist.path, change.desired)
                 applied.append(change)
-        settings = [change for change in changes if isinstance(change, SettingChange)]
-        if settings:
-            _write_settings(device, desired.kodi_settings)
+        for declared in desired.documents:
+            settings = [
+                change
+                for change in changes
+                if isinstance(change, SettingChange)
+                and change.document == declared.document
+            ]
+            if not settings:
+                continue
+            _write_settings(device, declared)
             applied.extend(settings)
     except DeviceError as error:
         failure = error
