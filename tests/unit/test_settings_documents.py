@@ -21,9 +21,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
-from .conftest import ROOM_HEADER, FakeDevice, document_block
+from .conftest import ROOM_HEADER, FakeDevice, document_block, shipped_profile
 
 WEATHER_SETTINGS = """\
       - setting: ha_sun_entity_id
@@ -415,22 +414,17 @@ OMDB_API_KEY='an-omdb-key'
 
 
 def shipped_addon_documents() -> dict[str, dict[str, Any]]:
-    """The add-on Settings Documents the committed Profile declares."""
-    profile = (
-        Path(__file__).resolve().parents[2]
-        / "config"
-        / "shared"
-        / "ugoos-am6b-plus"
-        / "coreelec-21.3"
-        / "profile.yaml"
-    )
-    documents = yaml.safe_load(profile.read_text(encoding="utf-8"))[
-        "settings_documents"
-    ]
+    """The three `SVC` add-on Settings Documents the committed Profile declares.
+
+    Arctic Fuse's document is an add-on document too, and is covered in
+    `test_cleared_addresses.py` because half of it is cleared rather than set.
+    """
+    documents = shipped_profile()["settings_documents"]
+    wanted = (WEATHER_PATH, NEXTPVR_PATH, TMDB_PATH)
     return {
         document["document"]: document
         for document in documents
-        if document["dialect"] != "guisettings"
+        if document["document"] in wanted
     }
 
 

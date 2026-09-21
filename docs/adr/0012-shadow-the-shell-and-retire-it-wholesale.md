@@ -53,6 +53,28 @@ Three consequences hold for all shadowing work:
    — gives two engines that revert each other forever, and nothing else would
    catch it.
 
+### Rule 2 does not reach a Cleared Address
+
+Rule 2 catches a typo because a wrong id has no node, so it plans a `create`.
+A Cleared Address inverts that. Its Desired State is that the Device resolves
+no value, and a typo'd id resolves no value either — so it observes as
+converged, plans nothing, writes nothing, and reports success forever. The
+rule cannot fire, because there is no write for it to fire on.
+
+Reading the add-on's `resources/settings.xml` to check the id against its
+definition was considered and rejected for the reasons in
+[ADR 0013](0013-a-settings-document-always-takes-the-kodi-stop.md): the check
+does not generalise, since `guisettings.xml` is Kodi core's and has no
+definition file, and it proves only that an id is *defined* rather than that
+it is the id the document's consumer actually reads.
+
+The net is therefore an obligation on acceptance rather than a code path. **A
+slice that declares a Cleared Address must, at acceptance, set every one of
+them to a junk value and show `apply` clearing all of them.** That is a
+stronger proof than a definition-file lookup and it needs no machinery, but it
+is a manual step, and it is written down here because nothing in the code will
+ever remind anyone to do it.
+
 ## The retirement test
 
 The shell is deleted when the `CONTEXT.md` definition of Pilot Phase is met: a
@@ -87,12 +109,20 @@ reader changes behaviour, so `schema_version` is not bumped.
 Twelve addresses are `deferred` rather than `none`, because they are blocked on
 a mechanism rather than waiting their turn:
 
-- `CORE-020`–`CORE-027` are blocked on a secrets mechanism. They are the Kodi
-  remote-control service cohort — EventServer and the web server — and they
-  contain `services.webserverpassword`, which no Profile may carry in
-  plaintext. Declaring the cohort around the password would enable and
-  reconfigure the service the password protects while leaving the credential
-  to the shell, so the cohort waits as a unit.
+- `CORE-020`–`CORE-027` are blocked on the decision of how the Reconciler
+  speaks to a running Kodi. They are the Kodi remote-control service cohort —
+  EventServer and the web server — and they were first deferred on a secrets
+  mechanism, because they contain `services.webserverpassword`, which no
+  Profile may carry in plaintext. [ADR 0014](0014-desired-state-names-a-value-it-may-not-hold.md)
+  settled that, and the cohort stayed deferred for a second reason that
+  outlived the first: these eight addresses configure the channel Kodi is
+  talked to *through*. The shell's own JSON-RPC runs over authenticated HTTP
+  on `KODI_WEB_PORT`, Home Assistant's Kodi lifecycle package waits on that
+  same endpoint, and `services.esenabled` gates the Skinvariables buildviews
+  probe. Managing the port, the credentials and the enable flags before the
+  Reconciler has decided whether it depends on that channel would configure
+  the channel from a Run that may be about to need it, so the cohort waits
+  until that decision is made.
 - `CORE-028`, `CORE-029`, `ROOM-001`, and `ROOM-011` are blocked on Intent
   resolution. Audio device, passthrough device, screen resolution, and channel
   count cannot be known without observing a live Device's capabilities, so

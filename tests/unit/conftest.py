@@ -13,8 +13,10 @@ import stat
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 SSH_STUB = """#!/bin/sh
 # Stub ssh: runs the remote command locally with the stub directory first on
@@ -129,6 +131,25 @@ def document_block(path: Path, dialect: str, settings: str) -> str:
     return f"  - document: {path}\n    dialect: {dialect}\n    settings:\n{settings}"
 
 
+def shipped_profile() -> dict[str, Any]:
+    """The committed Profile, read as YAML.
+
+    Tests that assert on what the fleet actually declares read it from here
+    rather than restating it, so a declaration and its test cannot drift.
+    """
+
+    profile = (
+        Path(__file__).resolve().parents[2]
+        / "config"
+        / "shared"
+        / "ugoos-am6b-plus"
+        / "coreelec-21.3"
+        / "profile.yaml"
+    )
+    document: dict[str, Any] = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    return document
+
+
 @dataclass(frozen=True)
 class FakeDevice:
     """A temporary directory standing in for the theater Ugoos."""
@@ -171,6 +192,11 @@ class FakeDevice:
             / "plugin.video.themoviedb.helper"
             / "settings.xml"
         )
+
+    @property
+    def skin(self) -> Path:
+        """Arctic Fuse's document, in the addon_v2 form."""
+        return self.userdata / "addon_data" / "skin.arctic.fuse.3" / "settings.xml"
 
     @property
     def effects(self) -> list[str]:

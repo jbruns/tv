@@ -162,8 +162,10 @@ and writes it in the flat form
 
 ### Declaring a setting
 
-Add an entry to a document's `settings`. No code changes; two Device checks
-do.
+Add an entry to a document's `settings`. A setting states **exactly one** of
+`value`, `from_env` and `unset`; stating two, or none, is an error naming the
+setting, raised before the Device is contacted. No code changes; two Device
+checks do.
 
 Declare the value `provision-coreelec.sh` already writes, exactly as it writes
 it — `true` and `1` are different values to Kodi. The two declarations then
@@ -171,11 +173,11 @@ agree, the Recovery Baseline and Desired State do not diverge, and a shell run
 stays a no-op. Values the shell resolves from `provision.conf` are declared as
 the resolved literal.
 
-The Profile declares thirty-two settings this way and the Reconciler holds no
-list of its own, so the thirty-third is an entry here and no code change. Two
-checks belong to declaring one: the Device must not plan it as a `create`, and
-the shell must still agree after it lands. Both are acceptance scenarios 7 and
-8 below.
+The Profile declares seventy-six settings this way and the Reconciler holds no
+list of its own, so the seventy-seventh is an entry here and no code change.
+Two checks belong to declaring one: the Device must not plan it as a `create`,
+and the shell must still agree after it lands. Both are acceptance scenarios 7
+and 8 below.
 
 Kodi resolves a setting ID without regard to case and reads only the direct
 `<setting>` children of the document root. The Reconciler resolves a declared
@@ -186,6 +188,74 @@ the shell provisioner does, so the two agree on what "set" means.
 A State Address is the document plus the setting, so the same setting ID in
 two documents is two addresses and not a collision.
 
+### Clearing an address
+
+Some addresses must hold no value rather than a value. Arctic Fuse's home
+screen is half of this: the hubs the appliance does not use own their fields,
+and a stale path or target from an earlier profile still aims a tile
+somewhere. Such an address is a [Cleared Address](../../CONTEXT.md), and it
+states `unset`:
+
+```yaml
+- setting: optionstiles.03.path
+  unset: true
+```
+
+It cannot be spelled as an empty value, and the reason is the trap this
+mechanism exists to avoid. Kodi cannot store an empty string — an empty node
+reads back as no value at all:
+
+```text
+written:              <setting id="a" />
+observed after write: (unset)
+Kodi-materialised:    (unset)
+absent:               (unset)
+```
+
+A Profile declaring `value: ""` would compare `""` against an Observation of
+nothing, plan a Change on every Run, and fail its own Verification forever.
+`value: null` is rejected for a different reason: YAML reads a truncated
+`value:` line as null too, so accepting it would make a typo silently mean
+"clear this".
+
+`unset` converges when the Device resolves no value. All three states above
+are that one Observation, so:
+
+- An address the shell has **already cleared** plans no Change, and nothing is
+  written or created for it. Most of the declared clears are in this state.
+- Kodi **re-materialises** a referenced skin string as an empty node at
+  startup, often with a lowercased id. That node resolves no value either, so
+  it does not re-plan as a Change after a restart.
+
+Applying a clear **writes an empty node** rather than removing one. The shell
+removes it and will keep doing so as the Recovery Baseline; the Device
+resolves no value either way, so the two engines do not revert each other over
+the difference.
+
+The Reconciler writes no `type` attribute. `set_skin_setting` writes one, but
+Kodi's own serialiser writes only `id`, plus `default` when a value is at its
+default. `type` is the shell's invention; a node that already carries one
+keeps it through a rewrite, which is enough.
+
+**A Cleared Address is not a Managed Absence.** Nothing is deleted: the hub
+stays gone because it resolves nothing.
+
+**Drift injection is the only net.** The `create`-catches-a-typo check
+(scenario 7) cannot reach a Cleared Address, because a typo'd id resolves no
+value, matches `unset`, and reports converged forever. Declaring one therefore
+carries an obligation at acceptance, scenario 11 below
+([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md),
+"Rule 2 does not reach a Cleared Address").
+
+An address the skin writes for itself is **not** declared, cleared or
+otherwise. `HomeSwitcher.1104.Name`, `.Mode` and `.Icon` are the case:
+Arctic Fuse rewrites them on every skin load, so declaring them cleared would
+give two engines that revert each other at every Kodi restart. They are inert
+while `HomeSwitcher.1104.Toggle` is empty, which is the field that decides
+whether the hub renders, so the six behaviourally active fields are declared
+and those three stay Unmanaged State. `provision-coreelec.sh`'s own verifier
+draws the same line.
+
 ### Naming a value the Profile may not hold
 
 Six State Addresses hold values a committed file may not carry: `weather.ha`'s
@@ -194,8 +264,8 @@ Six State Addresses hold values a committed file may not carry: `weather.ha`'s
 the shell entry points read and `provision.conf` refuses to hold
 ([the shared secret boundary](../../config/README.md#shared-secret-boundary)).
 
-Desired State **names** such a value rather than holding it. A setting states
-`value` or `from_env`, never both, and `from_env` is the `.env` key:
+Desired State **names** such a value rather than holding it. `from_env` is the
+`.env` key:
 
 ```yaml
 - setting: ha_server
@@ -472,7 +542,8 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
-   The `skin` component is the one that covers the playlists:
+   The `skin` component is the one that covers the playlists and the
+   Arctic Fuse document:
 
    ```console
    ./provision-coreelec.sh --target ugoos-theater --component skin
@@ -526,6 +597,66 @@ The scenarios are:
     ```
 
     Expect no output at all. Run it again after an `apply`, which prints more.
+11. **Every Cleared Address is the id the skin actually reads** — and this is
+    the only thing that proves it. Scenario 7 catches a typo because a wrong
+    id has no node and plans a `create`. A Cleared Address inverts that: a
+    typo'd id resolves no value, matches `unset`, and reports converged
+    forever. So **set every declared `unset` address to a junk value and watch
+    `apply` clear them all**. Run it whenever a slice declares a new one.
+
+    Kodi must be stopped for the injection and started again before the Run,
+    so the junk reaches memory — otherwise Kodi rewrites the document from
+    memory on the next exit and the Run proves nothing.
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    skin=/storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
+
+    # Every id declared `unset` in the Profile, read from the Profile itself
+    # so the list cannot drift away from what is declared.
+    cleared=$(uv run python -c '
+    import sys, yaml
+    for d in yaml.safe_load(open(sys.argv[1]))["settings_documents"]:
+        if "skin.arctic.fuse.3" not in d["document"]:
+            continue
+        for s in d["settings"]:
+            if s.get("unset"):
+                print(s["setting"])
+    ' config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml)
+
+    ug systemctl stop kodi
+    ug "cp $skin ${skin}.before"
+    for id in $cleared; do
+      ug "python3 - <<PY
+    import xml.etree.ElementTree as ET
+    t = ET.parse('$skin'); r = t.getroot()
+    n = next((x for x in r if (x.get('id') or '').casefold() == '$id'.casefold()), None)
+    if n is None:
+        n = ET.SubElement(r, 'setting'); n.set('id', '$id')
+    n.text = 'junk-$id'
+    t.write('$skin')
+    PY"
+    done
+    ug systemctl start kodi && sleep 20
+
+    uv run coreelec-reconciler plan  --room theater
+    uv run coreelec-reconciler apply --room theater
+    ug systemctl restart kodi && sleep 20
+    uv run coreelec-reconciler plan  --room theater
+    ```
+
+    Expect the `plan` to name **every** declared `unset` address as
+    `junk-… -> (cleared)` with none missing, the `apply` to converge, and the
+    `plan` after the restart to report `no changes`. An address that does not
+    appear in the first `plan` is an id nothing wrote to, which means the
+    injection missed it; an address that reappears in the last `plan` is one
+    Kodi or the skin writes for itself and must not be declared at all.
+
+    Then confirm the skin agrees: the home screen shows the TV Shows, Movies,
+    Plex, PVR and Add-ons hubs, the 1104 hub is still absent, the weather tile
+    renders, and the NowPlaying, Settings and SystemInfo tiles are present. A
+    junk value the Reconciler cleared but the skin never read would pass every
+    command above and show up only here.
 
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
@@ -551,8 +682,9 @@ by `apply` again.
 (`SKIN-019`-`SKIN-026`), the twenty
 `guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
 `CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
-Room Overlay declares (`ROOM-002`-`ROOM-010`), and the twelve add-on addresses
-the Profile declares (`SVC-002`-`SVC-013`) as shell-owned
+Room Overlay declares (`ROOM-002`-`ROOM-010`), the twelve add-on addresses
+the Profile declares (`SVC-002`-`SVC-013`), and the Arctic Fuse home screen
+(`SKIN-003`-`SKIN-010`) as shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
 `skin`, `services`, `room` or `baseline` run. `SKIN-027` and `SKIN-028`, the
@@ -564,6 +696,14 @@ those shell runs
 would remove the Recovery Baseline this slice depends on, so ownership moves
 only when the shell is deleted wholesale
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
+
+`SKIN-003`-`SKIN-010` are forty-four addresses in one document, twenty-eight
+valued and sixteen cleared. The shell writes forty-seven: the three it clears
+and the Reconciler does not declare are `HomeSwitcher.1104.Name`, `.Mode` and
+`.Icon`, which Arctic Fuse rewrites for itself. The shell removes them and the
+skin puts two of them straight back, which is why its own verifier does not
+check them; the Reconciler is silent about them for the same reason, and they
+stay Unmanaged State.
 
 `SVC-002`, `SVC-003`, `SVC-006`, `SVC-010`, `SVC-012` and `SVC-013` are the
 six named values. Both engines read them from the same `.env`, so the two
