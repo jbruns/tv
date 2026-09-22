@@ -123,7 +123,7 @@ are **not** declared. A newer playlist superseded both, so the shell deletes
 them, but a factory-fresh Device never had either file. Declaring either would
 ask for a Managed Absence the Reconciler does not have and does not yet need;
 they are deleted by hand, once, when the shell is deleted
-([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md#the-two-retired-addresses)).
+([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md#the-retired-addresses)).
 
 ## Declaring a Shortcut Node
 

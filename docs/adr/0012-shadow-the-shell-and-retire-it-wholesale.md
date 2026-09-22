@@ -132,7 +132,7 @@ a mechanism rather than waiting their turn:
   count cannot be known without observing a live Device's capabilities, so
   they are Intents to resolve rather than literals to declare.
 
-## The two retired addresses
+## The retired addresses
 
 `SKIN-027` and `SKIN-028` are `retired`. Both are Managed Absences: the shell
 deletes `RecentlyReleasedMovies90Days.xsp` and
@@ -148,6 +148,29 @@ door on Managed Absence as a Reconciler capability. It says only that two
 superseded playlists on a single Device do not justify building it, and that
 the first address that genuinely needs absence on a fresh Device is the one
 that should pay for the mechanism.
+
+`PLAT-002` is `retired` for a different reason: the check does not earn its
+place. The shell warns when `/proc/device-tree/model` does not match
+`Ugoos.*AM6`, and unlike its three sibling checks it does not set `failed`
+(provision-coreelec.sh:6053-6055) — the Recovery Baseline's own author did not
+treat it as load-bearing.
+
+Name the failure it would prevent: a Run aimed at a different Amlogic-ng
+CoreELEC Device that also answers to the managed Device's hostname. The
+hostname Guard fires first, `PLAT-001` pins the operating system, its version
+and the SoC family, and nothing the Reconciler declares is Ugoos-specific —
+`dolby_vision_mode` sits unused in `TRANSFORMS`, and the CEC document is found
+by a glob that refuses unknown hardware loudly. Getting there requires
+deliberately renaming a second Device, and recovery is reprovisioning.
+
+Everything the model would distinguish is settled before a Run exists: the
+operating system image and the device tree are chosen at install. A guard over
+a fact no Run can change, protecting against a mistake no Run can make, is
+machinery this bar does not buy.
+
+`PLAT-004` and `PLAT-005` are not the Reconciler's to shadow yet. They guard
+`LIFE-001`–`LIFE-003` from `lib/coreelec-lifecycle.sh`, not from the
+provisioner, and they stay `none` until the lifecycle cohort is taken.
 
 ## The CEC slice narrows the glob it shadows
 

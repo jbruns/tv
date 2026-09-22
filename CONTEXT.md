@@ -40,6 +40,10 @@ _Avoid_: Raw setting value
 A Desired State value that Desired State names rather than holds, resolved from the shared `.env` file on every read. It reaches the Device and nothing else: no committed file carries it, and no Run prints it.
 _Avoid_: Secret, credential, variable
 
+**Profile Constant**:
+A value a Profile states once and more than one State Address takes, so the Device cannot hold two records of one fact that disagree.
+_Avoid_: Named Value, variable, default
+
 **Resource**:
 An independently observable and reconcilable unit of managed Device state.
 _Avoid_: Component, task, step

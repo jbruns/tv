@@ -2060,7 +2060,7 @@
       "state_address": "Device-tree model /proc/device-tree/model",
       "role": "guard",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "retired",
       "shell_write_set": {
         "status": "audited",
         "items": []
