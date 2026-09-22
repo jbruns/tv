@@ -144,3 +144,39 @@ door on Managed Absence as a Reconciler capability. It says only that two
 superseded playlists on a single Device do not justify building it, and that
 the first address that genuinely needs absence on a fresh Device is the one
 that should pay for the mechanism.
+
+## The CEC slice narrows the glob it shadows
+
+`CEC-001`–`CEC-005` live in a document whose name the Profile cannot know.
+Kodi derives a peripheral's settings filename from the hardware's own
+identity, so the file on the theater Ugoos is `cec_CEC_Adapter.xml`: a `cec_`
+bus prefix Kodi controls, and a `CEC_Adapter` name the adapter reports. The
+shell finds it with `*CEC*.xml` and requires exactly one match
+(provision-coreelec.sh:588-597).
+
+The Reconciler declares `cec_*.xml` instead. This is a deliberate departure
+from the shell, and the reason is that the shell's glob works by coincidence:
+it matches on the *name*, so an adapter calling itself anything else — a
+Pulse-Eight, say — produces zero matches rather than the file it is standing
+in front of. Anchoring to the bus prefix anchors to the part Kodi writes.
+Both globs resolve the same file on the Device we own, so the value-parity
+invariant is unaffected.
+
+Two properties of this cohort are worth writing down because neither is
+visible from the Profile:
+
+Standing rule 2 fires a Run late here. `CPeripheral::PersistSettings` rebuilds
+the document from memory when Kodi exits, so a mistyped setting ID is written
+by the Reconciler, survives Verification, and is erased at the next Kodi exit
+— and only the Run after that re-plans it as a `create`. Verification
+immediately after `apply` is therefore not evidence for this cohort, and its
+acceptance requires a full Kodi stop and start before the final re-plan.
+
+`standby_pc_on_tv_standby` is `36028`, Kodi's localisation ID for the "Ignore"
+action. The shell reads it from `CEC_TV_OFF_ACTION` and then rejects every
+value except that one (provision-coreelec.sh:778-781) — a knob with a domain
+of one. The Profile declares `ignore` through a transform instead, which
+expresses the shell's validation as the schema rather than as a check, and the
+payload entry retires with the shell. It is not a secret and does not become a
+Named Value: routing a constant through `.env` would hide it from review for
+no gain.

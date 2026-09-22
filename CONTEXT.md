@@ -74,6 +74,10 @@ _Realised by_: Settings Document. Declared `unset`, applied as an empty node.
 Device state that no Resource in the resolved Profile owns and that reconciliation therefore preserves or ignores.
 _Avoid_: Drift, absent state
 
+**Contested Address**:
+A State Address another engine rewrites on its own schedule, so no Resource can hold a value there. Contested Addresses are left as Unmanaged State.
+_Avoid_: Volatile setting, drift, race
+
 **Observation**:
 The measured state of a Resource on a Device at a point in time.
 _Avoid_: Current state, probe result

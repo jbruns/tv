@@ -371,12 +371,9 @@ settings_documents:
       # cohort and not a Managed Absence — the hub stays gone because it
       # resolves nothing, not because anything is deleted.
       #
-      # `Name`, `Mode` and `Icon` are deliberately *not* declared. Arctic Fuse
-      # writes them itself on every skin load — the theater Ugoos holds
-      # `Custom` and `Standard` for the first two — so declaring them would
-      # give two engines that revert each other on every Kodi restart and
-      # never converge. They are inert while `Toggle` is empty, so they are
-      # Unmanaged State and the skin keeps them. This is the line
+      # `Name`, `Mode` and `Icon` are Contested Addresses: Arctic Fuse writes
+      # them on every skin load. They are inert while `Toggle` is empty, so
+      # they stay Unmanaged State, which is the line
       # provision-coreelec.sh's own verifier already draws (:3316-3327).
       - setting: HomeSwitcher.1104.Toggle
         unset: true
