@@ -1174,7 +1174,7 @@
     },
     {
       "id": "CORE-006",
-      "state_address": "/storage/.cache/timezone (TIMEZONE=\u2026)",
+      "state_address": "/storage/.cache/timezone (TIMEZONE=…)",
       "role": "resource",
       "current_owner_or_executor": "shell",
       "reconciler_status": "none",
@@ -1707,7 +1707,7 @@
       "state_address": "Skinvariables buildviews execution and skin reload",
       "role": "effect",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -2549,7 +2549,7 @@
       "state_address": "script.skinvariables/.../skinvariables-shortcut-homewidgets.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2570,7 +2570,7 @@
       "state_address": ".../skinvariables-shortcut-1101widgets.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2591,7 +2591,7 @@
       "state_address": ".../skinvariables-shortcut-1102widgets.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2612,7 +2612,7 @@
       "state_address": ".../skinvariables-shortcut-powermenu.json",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2633,7 +2633,7 @@
       "state_address": "addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json, library.seasons",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2654,7 +2654,7 @@
       "state_address": "Same, library.episodes",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [

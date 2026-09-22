@@ -63,11 +63,39 @@ printf '%s\\n' "$*" >> "$FAKE_DEVICE_SYSTEMCTL_LOG"
 if [ "$1" = "stop" ] && [ -n "$FAKE_DEVICE_KODI_MEMORY" ]; then
   cat "$FAKE_DEVICE_KODI_MEMORY" > "$FAKE_DEVICE_KODI_DOCUMENT"
 fi
+# Starting Kodi loads the skin, which compiles its view types over whatever
+# the compiled include held.
+if [ "$1" = "start" ] && [ -n "$FAKE_DEVICE_COMPILED" ]; then
+  printf '%s' "$FAKE_DEVICE_COMPILED_BODY" > "$FAKE_DEVICE_COMPILED"
+fi
 if [ "$FAKE_DEVICE_SYSTEMCTL_REFUSES" = "$1" ]; then
   echo "systemctl: $1 refused" >&2
   exit 1
 fi
 exit 0
+"""
+
+CAT_STUB = """#!/bin/sh
+# Scripts successive reads of one path, so a test can watch a Run refuse a
+# compile it caught mid-write and accept only the finished file. Every other
+# read, and every write, passes straight through.
+if [ -n "$FAKE_DEVICE_SCRIPTED_PATH" ]; then
+  for arg in "$@"; do
+    if [ "$arg" = "$FAKE_DEVICE_SCRIPTED_PATH" ]; then
+      reads=0
+      if [ -f "$FAKE_DEVICE_SCRIPTED_READS" ]; then
+        reads=$({cat} "$FAKE_DEVICE_SCRIPTED_READS")
+      fi
+      reads=$((reads + 1))
+      printf '%s' "$reads" > "$FAKE_DEVICE_SCRIPTED_READS"
+      if [ -f "$FAKE_DEVICE_SCRIPTED_DIR/$reads" ]; then
+        exec {cat} "$FAKE_DEVICE_SCRIPTED_DIR/$reads"
+      fi
+      exec {cat} "$FAKE_DEVICE_SCRIPTED_DIR/last"
+    fi
+  done
+fi
+exec {cat} "$@"
 """
 
 PROFILE = """\
@@ -78,6 +106,7 @@ transport:
   identity: {identity}
 smart_playlists:
   directory: {directory}
+  kodi_directory: special://profile/playlists/video
   playlists:
     - file: NewShows.xsp
       name: New Shows
@@ -91,6 +120,7 @@ smart_playlists:
         - field: playcount
           operator: is
           value: "0"
+shortcut_nodes: {nodes}
 settings_documents:
 """
 
@@ -231,6 +261,32 @@ class FakeDevice:
         return self.userdata / "peripheral_data"
 
     @property
+    def skinvariables(self) -> Path:
+        """Where `script.skinvariables` keeps its own data."""
+        return self.userdata / "addon_data" / "script.skinvariables"
+
+    @property
+    def viewtypes(self) -> Path:
+        """The view types document, which the add-on holds as JSON."""
+        return self.skinvariables / "skin.arctic.fuse.3-viewtypes.json"
+
+    @property
+    def nodes(self) -> Path:
+        """The directory of Shortcut Node files, six on the Device and four ours."""
+        return self.skinvariables / "nodes" / "skin.arctic.fuse.3"
+
+    @property
+    def compiled(self) -> Path:
+        """The include `script.skinvariables` compiles the view types into."""
+        return (
+            self.userdata.parent
+            / "addons"
+            / "skin.arctic.fuse.3"
+            / "1080i"
+            / "script-skinviewtypes-includes.xml"
+        )
+
+    @property
     def cec(self) -> Path:
         """The CEC adapter's document, whose name the Profile cannot state."""
         return self.peripheral_data / "cec_CEC_Adapter.xml"
@@ -243,12 +299,17 @@ class FakeDevice:
         return self.systemctl_log.read_text(encoding="utf-8").splitlines()
 
     def profile_body(
-        self, settings: Mapping[str, str] | None = None, extra: str = ""
+        self,
+        settings: Mapping[str, str] | None = None,
+        extra: str = "",
+        nodes: str = "[]",
     ) -> str:
         """The Profile, declaring guisettings.xml and any `extra` documents."""
         declared = DEFAULT_SETTINGS if settings is None else settings
         return (
-            PROFILE.format(directory=self.playlists_dir, identity=self.identity)
+            PROFILE.format(
+                directory=self.playlists_dir, identity=self.identity, nodes=nodes
+            )
             + document_block(
                 self.guisettings,
                 "guisettings",
@@ -301,6 +362,7 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
         ("hostname", HOSTNAME_STUB),
         ("mv", MV_STUB.format(mv=shutil.which("mv") or "/bin/mv")),
         ("chmod", CHMOD_STUB.format(chmod=shutil.which("chmod") or "/bin/chmod")),
+        ("cat", CAT_STUB.format(cat=shutil.which("cat") or "/bin/cat")),
         ("systemctl", SYSTEMCTL_STUB),
     ):
         stub = stub_dir / name
