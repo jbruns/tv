@@ -7,7 +7,7 @@ the key, so a typo can never be read as a silent default.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -60,9 +60,15 @@ class Rule:
 
 @dataclass(frozen=True)
 class SmartPlaylist:
-    """One Kodi Smart Playlist. Its State Address is its path on the Device."""
+    """One Kodi Smart Playlist. Its State Address is its path on the Device.
+
+    `path` is where the file is written; `kodi_path` is how Kodi addresses the
+    same file from inside a skin. They are two names for one document, and a
+    Shortcut Node that references this playlist carries the second.
+    """
 
     path: str
+    kodi_path: str
     name: str
     media_type: str
     match: str
@@ -106,12 +112,53 @@ class SettingsDocument:
     names it, for a document Kodi names after hardware the Profile cannot
     know. Which of the two it is comes from the key the Profile states, never
     from the string: a literal path holding a `*` is a path.
+
+    `compiles_to` names an artifact an add-on builds from this document. It is
+    stale the moment the source changes, and the Run rebuilds it.
     """
 
     document: str
     dialect: str
     settings: tuple[KodiSetting, ...]
     is_glob: bool = False
+    compiles_to: str | None = None
+
+
+@dataclass(frozen=True)
+class Shortcut:
+    """One entry in a Shortcut Node, in `script.skinvariables`' own shape.
+
+    The type is recursive because upstream's is: `submenu` and `widgets` hold
+    items of exactly this kind, and the add-on walks them recursively. Nothing
+    in the fleet nests anything today, and the self-reference costs a line;
+    a flat type would have to be revisited by every Profile written against it
+    the first time a submenu appears.
+
+    `guid` is always declared and never generated. The add-on invents
+    `guid-{random}` for an item that carries none, which would differ on every
+    Run and plan a Change forever.
+    """
+
+    guid: str
+    label: str
+    path: str
+    icon: str
+    target: str
+    submenu: tuple[Shortcut, ...] = ()
+    widgets: tuple[Shortcut, ...] = ()
+
+
+@dataclass(frozen=True)
+class ShortcutNode:
+    """One node file the Reconciler renders whole.
+
+    Each file is declared by name. The directory holding them is never
+    enumerated: the skin ships node files of its own beside these, carrying
+    generated guids, and owning the directory would delete them.
+    """
+
+    document: str
+    shortcuts: tuple[Shortcut, ...]
 
 
 @dataclass(frozen=True)
@@ -122,6 +169,7 @@ class DesiredState:
     transport: Transport
     playlists: tuple[SmartPlaylist, ...]
     documents: tuple[SettingsDocument, ...]
+    shortcut_nodes: tuple[ShortcutNode, ...] = ()
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -261,7 +309,9 @@ def _rule(source: Path, raw: Any) -> Rule:
     )
 
 
-def _playlist(source: Path, directory: str, raw: Any) -> SmartPlaylist:
+def _playlist(
+    source: Path, directory: str, kodi_directory: str, raw: Any
+) -> SmartPlaylist:
     mapping = _fields(
         source,
         "a playlist",
@@ -284,6 +334,7 @@ def _playlist(source: Path, directory: str, raw: Any) -> SmartPlaylist:
         raise ConfigError(f"{source}: {file_name} needs at least one rule")
     return SmartPlaylist(
         path=f"{directory.rstrip('/')}/{file_name}",
+        kodi_path=f"{kodi_directory.rstrip('/')}/{file_name}",
         name=_text(source, "playlist name", mapping["name"]),
         media_type=_text(source, "playlist type", mapping["type"]),
         match=_text(source, "playlist match", mapping["match"]),
@@ -292,6 +343,110 @@ def _playlist(source: Path, directory: str, raw: Any) -> SmartPlaylist:
         order_direction=_text(source, "order direction", order["direction"]),
         rules=tuple(_rule(source, rule) for rule in rules),
     )
+
+
+def _shortcut(source: Path, playlists: dict[str, SmartPlaylist], raw: Any) -> Shortcut:
+    mapping = _fields(
+        source,
+        "a shortcut",
+        _mapping(source, "a shortcut", raw),
+        required=("guid",),
+        optional=("playlist", "path", "label", "icon", "target", "submenu", "widgets"),
+    )
+    guid = _text(source, "a shortcut guid", mapping["guid"])
+    # The add-on invents a random guid for an item that states none, and an
+    # empty string is stated none. A document carrying one differs on every
+    # Run and plans a Change forever.
+    if not guid:
+        raise ConfigError(f"{source}: a shortcut guid must not be empty")
+    # Where the shortcut goes is stated either as a Smart Playlist the Profile
+    # already declares or as a literal path — a builtin, or a playlist some
+    # other add-on supplies. The reference arm is what makes a shortcut
+    # pointing at a retired playlist unrepresentable rather than merely
+    # detectable.
+    stated = [arm for arm in ("playlist", "path") if arm in mapping]
+    if len(stated) != 1:
+        raise ConfigError(
+            f"{source}: the shortcut {guid} states exactly one of playlist and path"
+        )
+    if stated == ["playlist"]:
+        if "label" in mapping:
+            raise ConfigError(
+                f"{source}: the shortcut {guid} names a playlist, which "
+                "supplies its label"
+            )
+        file_name = _text(source, f"the playlist of {guid}", mapping["playlist"])
+        playlist = playlists.get(file_name)
+        if playlist is None:
+            raise ConfigError(
+                f"{source}: the shortcut {guid} names the playlist "
+                f"{file_name}, which this Profile does not declare"
+            )
+        path, label = playlist.kodi_path, playlist.name
+    else:
+        path = _text(source, f"the path of {guid}", mapping["path"])
+        if "label" not in mapping:
+            raise ConfigError(
+                f"{source}: the shortcut {guid} states a path, and a shortcut "
+                "holding its own path states its own label"
+            )
+        label = _text(source, f"the label of {guid}", mapping["label"])
+    return Shortcut(
+        guid=guid,
+        label=label,
+        path=path,
+        # The add-on's default item carries both keys, so an undeclared icon
+        # or target is the empty string rather than an absent key.
+        icon=_text(source, f"the icon of {guid}", mapping.get("icon", "")),
+        target=_text(source, f"the target of {guid}", mapping.get("target", "")),
+        submenu=_shortcuts(source, playlists, mapping.get("submenu", [])),
+        widgets=_shortcuts(source, playlists, mapping.get("widgets", [])),
+    )
+
+
+def _shortcuts(
+    source: Path, playlists: dict[str, SmartPlaylist], raw: Any
+) -> tuple[Shortcut, ...]:
+    if not isinstance(raw, list):
+        raise ConfigError(f"{source}: a list of shortcuts is expected here")
+    return tuple(_shortcut(source, playlists, entry) for entry in raw)
+
+
+def _shortcut_node(
+    source: Path, playlists: dict[str, SmartPlaylist], raw: Any
+) -> ShortcutNode:
+    mapping = _fields(
+        source,
+        "a Shortcut Node",
+        _mapping(source, "a Shortcut Node", raw),
+        required=("document", "shortcuts"),
+    )
+    document = _text(source, "a Shortcut Node document", mapping["document"])
+    if not document.startswith("/"):
+        raise ConfigError(
+            f"{source}: a Shortcut Node path must be absolute: {document}"
+        )
+    declared = mapping["shortcuts"]
+    if not isinstance(declared, list) or not declared:
+        raise ConfigError(f"{source}: {document} declares no shortcuts")
+    shortcuts = _shortcuts(source, playlists, declared)
+    # The add-on finds an item by walking the whole tree for its guid, so a
+    # guid repeated at any depth is one shortcut shadowing another.
+    seen: set[str] = set()
+    for shortcut in _walk(shortcuts):
+        if shortcut.guid in seen:
+            raise ConfigError(
+                f"{source}: {document} declares the shortcut {shortcut.guid} twice"
+            )
+        seen.add(shortcut.guid)
+    return ShortcutNode(document=document, shortcuts=shortcuts)
+
+
+def _walk(shortcuts: Iterable[Shortcut]) -> Iterator[Shortcut]:
+    for shortcut in shortcuts:
+        yield shortcut
+        yield from _walk(shortcut.submenu)
+        yield from _walk(shortcut.widgets)
 
 
 def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
@@ -358,7 +513,7 @@ def _document(source: Path, named: NamedValues, raw: Any) -> SettingsDocument:
         "a Settings Document",
         _mapping(source, "a Settings Document", raw),
         required=("dialect", "settings"),
-        optional=("document", "document_glob"),
+        optional=("document", "document_glob", "compiles_to"),
     )
     # A document is named either literally or by a pattern, and the shape is
     # declared rather than sniffed: a `*` inside a `document` is a character
@@ -386,11 +541,22 @@ def _document(source: Path, named: NamedValues, raw: Any) -> SettingsDocument:
     declared = mapping["settings"]
     if not isinstance(declared, list) or not declared:
         raise ConfigError(f"{source}: {document} declares no settings")
+    compiles_to = None
+    if "compiles_to" in mapping:
+        compiles_to = _text(
+            source, f"the compiles_to of {document}", mapping["compiles_to"]
+        )
+        if not compiles_to.startswith("/"):
+            raise ConfigError(
+                f"{source}: the artifact {document} compiles to must be "
+                f"absolute: {compiles_to}"
+            )
     return SettingsDocument(
         document=document,
         dialect=dialect,
         settings=tuple(_kodi_setting(source, named, entry) for entry in declared),
         is_glob=is_glob,
+        compiles_to=compiles_to,
     )
 
 
@@ -486,7 +652,13 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         profile_file,
         "the Profile",
         _read(profile_file),
-        required=("profile", "transport", "smart_playlists", "settings_documents"),
+        required=(
+            "profile",
+            "transport",
+            "smart_playlists",
+            "settings_documents",
+            "shortcut_nodes",
+        ),
     )
     if _text(profile_file, "profile", profile["profile"]) != declared_profile:
         raise ConfigError(
@@ -503,22 +675,36 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         profile_file,
         "smart_playlists",
         _mapping(profile_file, "smart_playlists", profile["smart_playlists"]),
-        required=("directory", "playlists"),
+        required=("directory", "kodi_directory", "playlists"),
     )
     directory = _text(profile_file, "playlist directory", playlists["directory"])
     if not directory.startswith("/"):
         raise ConfigError(
             f"{profile_file}: the playlist directory must be absolute: {directory}"
         )
+    kodi_directory = _text(
+        profile_file, "playlist kodi_directory", playlists["kodi_directory"]
+    )
     declared = playlists["playlists"]
     if not isinstance(declared, list) or not declared:
         raise ConfigError(f"{profile_file}: smart_playlists declares no playlists")
+    parsed = tuple(
+        _playlist(profile_file, directory, kodi_directory, raw) for raw in declared
+    )
+    by_file = {Path(playlist.path).name: playlist for playlist in parsed}
 
     kodi = _documents(
         profile_file, named, "settings_documents", profile["settings_documents"]
     )
     if not kodi:
         raise ConfigError(f"{profile_file}: settings_documents declares no documents")
+
+    nodes = profile["shortcut_nodes"]
+    if not isinstance(nodes, list):
+        raise ConfigError(
+            f"{profile_file}: shortcut_nodes must be a list of Shortcut Nodes, "
+            "and an empty list when there are none"
+        )
 
     return DesiredState(
         room=_text(room_file, "room", overlay["room"]),
@@ -531,6 +717,9 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
                 _text(profile_file, "transport identity", transport["identity"])
             ).expanduser(),
         ),
-        playlists=tuple(_playlist(profile_file, directory, raw) for raw in declared),
+        playlists=parsed,
         documents=_merge(((profile_file, kodi), (room_file, room_documents))),
+        shortcut_nodes=tuple(
+            _shortcut_node(profile_file, by_file, entry) for entry in nodes
+        ),
     )

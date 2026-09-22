@@ -25,6 +25,10 @@ transport:
 # not yet need (ADR 0012).
 smart_playlists:
   directory: /storage/.kodi/userdata/playlists/video
+  # How Kodi addresses that same directory from inside a skin. A Shortcut Node
+  # below references a playlist rather than restating its path, and this is the
+  # form the reference resolves to.
+  kodi_directory: special://profile/playlists/video
   playlists:
     - file: InProgressMovies90Days.xsp
       name: In-Progress Movies
@@ -153,6 +157,112 @@ smart_playlists:
         - field: playcount
           operator: is
           value: "0"
+
+# Arctic Fuse's Shortcut Nodes: the widget rows under the home and hub
+# screens, and the power menu. Each file is rendered whole — every byte is the
+# Reconciler's — and each is declared by name.
+#
+# The directory is never enumerated. The Device holds six node files there and
+# these four are ours; `skinvariables-shortcut-homesubmenu.json` and
+# `-searchwidgets.json` are the skin's own, carrying generated `guid-…` ids,
+# and owning the directory would delete two working files on the first Run.
+#
+# A shortcut states exactly one of `playlist` and `path`. `playlist` names a
+# Smart Playlist declared above and supplies both the path and the label, so a
+# shortcut pointing at a playlist nobody declares is unrepresentable rather
+# than merely detectable — which is what nothing stopped when
+# RecentlyReleasedMovies90Days.xsp was superseded and retired. `path` carries a
+# builtin, or a playlist some other add-on supplies, and then states its own
+# label.
+#
+# Every `guid` is declared. The add-on invents `guid-{random}` for an item
+# that carries none, which would differ on every Run and plan a Change
+# forever. The existing ids do not derive cleanly from anything, so they are
+# stated as the Recovery Baseline writes them.
+#
+# Applying any of these restarts Kodi: the skin reads a node file when it
+# loads, and its own shortcut editor holds the list it read.
+shortcut_nodes:
+  # The widget row on the home screen.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json
+    shortcuts:
+      - guid: coreelec-home-inprogress-movies
+        playlist: InProgressMovies90Days.xsp
+        target: videos
+      - guid: coreelec-home-inprogress-shows
+        playlist: InProgressShows90Days.xsp
+        target: videos
+      - guid: coreelec-home-recently-aired-shows
+        playlist: RecentlyAiredEpisodes30Days.xsp
+        target: videos
+      - guid: coreelec-home-recently-released-movies
+        playlist: RecentlyReleasedMoviesCurrentAndPreviousYear.xsp
+        target: videos
+      - guid: coreelec-home-new-shows
+        playlist: NewShows.xsp
+        target: videos
+      - guid: coreelec-home-new-movies
+        playlist: NewMovies.xsp
+        target: videos
+
+  # The TV Shows hub, 1101.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101widgets.json
+    shortcuts:
+      - guid: coreelec-tv-inprogress
+        playlist: InProgressShows90Days.xsp
+        target: videos
+      - guid: coreelec-tv-recently-aired
+        playlist: RecentlyAiredEpisodes30Days.xsp
+        target: videos
+      - guid: coreelec-tv-trakt-popular
+        playlist: TraktPopularTVShows.xsp
+        target: videos
+      - guid: coreelec-tv-new
+        playlist: NewShows.xsp
+        target: videos
+
+  # The Movies hub, 1102.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102widgets.json
+    shortcuts:
+      - guid: coreelec-movies-inprogress
+        playlist: InProgressMovies90Days.xsp
+        target: videos
+      - guid: coreelec-movies-recently-released
+        playlist: RecentlyReleasedMoviesCurrentAndPreviousYear.xsp
+        target: videos
+      - guid: coreelec-movies-trakt-box-office
+        playlist: TraktWeekendBoxOffice.xsp
+        target: videos
+      - guid: coreelec-movies-new
+        playlist: NewMovies.xsp
+        target: videos
+
+  # The power menu. Every entry is a Kodi builtin rather than a playlist, and
+  # every label is a Kodi localisation reference so the menu follows the
+  # interface language.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-powermenu.json
+    shortcuts:
+      - guid: coreelec-power-poweroff
+        path: Powerdown()
+        label: "$LOCALIZE[13016]"
+        icon: special://skin/extras/icons/power.png
+      - guid: coreelec-power-timer
+        path: AlarmClock(shutdowntimer,Shutdown())
+        label: "$LOCALIZE[20150]"
+        icon: special://skin/extras/icons/timer.png
+      - guid: coreelec-power-suspend
+        path: Suspend()
+        label: "$LOCALIZE[13011]"
+        icon: special://skin/extras/icons/power.png
+      - guid: coreelec-power-reboot
+        path: Reset()
+        label: "$LOCALIZE[13013]"
+        icon: special://skin/extras/icons/refresh.png
+      # Kodi has no localisation string for this one, so the label is literal.
+      - guid: coreelec-power-restart-kodi
+        path: RestartApp()
+        label: Restart Kodi
+        icon: special://skin/extras/icons/refresh.png
 
 # Kodi settings, grouped by the Settings Document that holds them. A Settings
 # Document is shared: everything not declared here is Unmanaged State and is
@@ -419,6 +529,32 @@ settings_documents:
         unset: true
       - setting: optionstiles.03.target
         unset: true
+
+  # Arctic Fuse's season and episode view types. `script.skinvariables` holds
+  # them as JSON rather than XML, so the document declares the `json` dialect
+  # and each address is a dotted path into it. Everything else in the file is
+  # Unmanaged State: the add-on rewrites the whole document on every build,
+  # merging the skin's own defaults *under* what it finds, so these two keys
+  # win that merge and owning the rest would drift the moment Arctic Fuse adds
+  # a content type.
+  #
+  # 509 and 549 are Kodi view ids. They are declared as the literals the
+  # Recovery Baseline writes rather than as anything this file claims to
+  # decode.
+  #
+  # `compiles_to` names the include the add-on builds from this document. It
+  # is stale the moment the source changes and nothing else rebuilds it, so
+  # the Run writes the skin's own trigger stub over it and lets the Kodi
+  # restart it was taking anyway fire the rebuild (ADR 0015). No JSON-RPC, no
+  # kodi-send, no EventServer.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
+    dialect: json
+    compiles_to: /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
+    settings:
+      - setting: library.seasons
+        value: "509"
+      - setting: library.episodes
+        value: "549"
 
   # The HDMI-CEC power policy. The Device keeps CEC *navigation* — the Sony's
   # remote drives Kodi — while the two boxes' power states stay decoupled, so

@@ -14,31 +14,60 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import time
+import xml.etree.ElementTree as ElementTree
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import TextIO
 
-from . import kodi_settings
-from .config import DesiredState, KodiSetting, SettingsDocument, SmartPlaylist
+from . import kodi_settings, shortcut
+from .config import DesiredState, KodiSetting, SettingsDocument
 from .device import Device, DeviceError
 from .playlist import render
 
 KODI_SERVICE = "kodi.service"
 
+# The skin's own rebuild trigger. `script.skinvariables` compiles a view-types
+# document into an XML include inside the skin, and `Includes_Fallbacks.xml`
+# defines `Action_BuildViews` as an empty include that the compiled file
+# overrides to "trigger refresh ... and then not again because it will then
+# overwrite the file". Writing this stub over the compiled include therefore
+# arms the rebuild, and the compile disarms it by replacing the file.
+#
+# The skin ships that file untracked, so there is no pristine copy to restore
+# and the stub is authored here (ADR 0015). Emptying the file instead would
+# not work: the reference would resolve to the empty fallback and nothing
+# would rebuild.
+VIEW_REBUILD_STUB = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<includes>
+    <include name="Action_BuildViews">
+        <onload>RunScript(script.skinvariables,action=buildviews)</onload>
+    </include>
+</includes>
+"""
+
+# How long a Run waits for the skin to load and compile. `start_service`
+# returns when systemd started Kodi, not when the skin loaded.
+REBUILD_ATTEMPTS = 240
+REBUILD_DELAY = 1.0
+
 
 @dataclass(frozen=True)
-class PlaylistChange:
-    """A Smart Playlist document that differs from its Desired State."""
+class DocumentChange:
+    """A document the Reconciler renders whole and that differs on the Device.
 
-    playlist: SmartPlaylist
+    A Smart Playlist and a Shortcut Node are both of this kind: the Reconciler
+    owns every byte, so the Observation is compared against the rendering and
+    the whole file is replaced.
+    """
+
+    address: str
     action: str
     observed: str | None
     desired: str
+    mode: str = "0644"
     effect: str | None = None
-
-    @property
-    def address(self) -> str:
-        return self.playlist.path
 
     def report(self) -> Iterator[str]:
         yield f"{self.action} {self.address}"
@@ -62,6 +91,7 @@ class SettingChange:
     observed: str | None
     desired: str | None
     effect: str | None = KODI_SERVICE
+    rebuild: str | None = None
 
     @property
     def address(self) -> str:
@@ -83,7 +113,7 @@ class SettingChange:
         yield f"{self.action} {self.address}: {observed} -> {desired}{origin}"
 
 
-Change = PlaylistChange | SettingChange
+Change = DocumentChange | SettingChange
 
 
 def _guard_identity(device: Device, expected: str) -> None:
@@ -145,28 +175,75 @@ def _read_settings_document(device: Device, declared: SettingsDocument) -> str |
     return document
 
 
+def _observe(
+    device: Device, declared: SettingsDocument, document: str | None, setting: str
+) -> str | None:
+    """The Observation of one address, or an error naming the document.
+
+    A document may read as its dialect and still hold something at a declared
+    address that is not a value — a JSON path landing on an object, say. That
+    is a refusal naming the address, not a Change: overwriting it would
+    discard whatever the add-on put there.
+    """
+
+    try:
+        return kodi_settings.observe(document, declared.dialect, setting)
+    except kodi_settings.SettingsError as error:
+        raise DeviceError(
+            f"{declared.document} on {device.hostname} cannot be read at "
+            f"{setting}: {error}"
+        ) from error
+
+
+def _rendered(
+    device: Device,
+    address: str,
+    desired: str,
+    *,
+    mode: str = "0644",
+    effect: str | None = None,
+) -> DocumentChange | None:
+    """The Change a rendered document needs, or None when it already agrees."""
+
+    observed = device.read(address)
+    if observed == desired:
+        return None
+    return DocumentChange(
+        address=address,
+        action="create" if observed is None else "update",
+        observed=observed,
+        desired=desired,
+        mode=mode,
+        effect=effect,
+    )
+
+
 def _plan(device: Device, desired: DesiredState) -> list[Change]:
     changes: list[Change] = []
     for playlist in desired.playlists:
-        wanted = render(playlist)
-        observed_file = device.read(playlist.path)
-        if observed_file == wanted:
-            continue
-        changes.append(
-            PlaylistChange(
-                playlist=playlist,
-                action="create" if observed_file is None else "update",
-                observed=observed_file,
-                desired=wanted,
-            )
+        change = _rendered(device, playlist.path, render(playlist))
+        if change is not None:
+            changes.append(change)
+
+    # A node file is read when the skin loads, and the skin's own shortcut
+    # editor holds the list it read, so a file written under a running Kodi is
+    # neither live nor safe from being written back. The Run takes the stop it
+    # was taking anyway.
+    for node in desired.shortcut_nodes:
+        change = _rendered(
+            device,
+            node.document,
+            shortcut.render(node),
+            mode="0600",
+            effect=KODI_SERVICE,
         )
+        if change is not None:
+            changes.append(change)
 
     for declared in desired.documents:
         document = _read_settings_document(device, declared)
         for setting in declared.settings:
-            observed = kodi_settings.observe(
-                document, declared.dialect, setting.setting
-            )
+            observed = _observe(device, declared, document, setting.setting)
             if observed == setting.value:
                 continue
             changes.append(
@@ -179,6 +256,7 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
                     action="create" if observed is None else "update",
                     observed=observed,
                     desired=setting.value,
+                    rebuild=declared.compiles_to,
                 )
             )
     return changes
@@ -208,6 +286,34 @@ def _write_settings(device: Device, declared: SettingsDocument) -> None:
     )
 
 
+def _await_rebuild(device: Device, artifact: str, out: TextIO) -> None:
+    """Waits until the add-on has compiled `artifact` over the stub.
+
+    Having written the stub, the Run knows exactly what it is waiting to stop
+    seeing, so "changed from what we wrote" is an edge rather than a guess.
+    The parse is what catches a read taken mid-write, which returns a partial
+    or empty file.
+    """
+
+    print(f"waiting for {artifact}", file=out)
+    for attempt in range(REBUILD_ATTEMPTS):
+        if attempt:
+            time.sleep(REBUILD_DELAY)
+        observed = device.read(artifact)
+        if observed is None or observed == VIEW_REBUILD_STUB:
+            continue
+        try:
+            ElementTree.fromstring(observed)
+        except ElementTree.ParseError:
+            continue
+        print(f"rebuilt {artifact}", file=out)
+        return
+    raise DeviceError(
+        f"{artifact} on {device.hostname} was not rebuilt within "
+        f"{REBUILD_ATTEMPTS}s of Kodi starting"
+    )
+
+
 def _apply(
     device: Device, desired: DesiredState, changes: list[Change], out: TextIO
 ) -> None:
@@ -217,11 +323,12 @@ def _apply(
         device.stop_service(unit)
 
     applied: list[Change] = []
+    armed: list[str] = []
     failure: DeviceError | None = None
     try:
         for change in changes:
-            if isinstance(change, PlaylistChange):
-                device.write(change.playlist.path, change.desired)
+            if isinstance(change, DocumentChange):
+                device.write(change.address, change.desired, mode=change.mode)
                 applied.append(change)
         for declared in desired.documents:
             settings = [
@@ -234,6 +341,19 @@ def _apply(
                 continue
             _write_settings(device, declared)
             applied.extend(settings)
+        # The compiled artifact is stale the moment its source changed. Arming
+        # is a file write while Kodi is stopped; the restart below is what
+        # fires it (ADR 0015).
+        for artifact in sorted(
+            {
+                change.rebuild
+                for change in changes
+                if isinstance(change, SettingChange) and change.rebuild is not None
+            }
+        ):
+            print(f"arming {artifact}", file=out)
+            device.write(artifact, VIEW_REBUILD_STUB)
+            armed.append(artifact)
     except DeviceError as error:
         failure = error
 
@@ -255,6 +375,10 @@ def _apply(
                 failure = error
             else:
                 print(f"error: {error}", file=out)
+
+    if failure is None:
+        for artifact in armed:
+            _await_rebuild(device, artifact, out)
 
     if failure is not None:
         raise failure

@@ -56,7 +56,7 @@ def with_playlist(device: FakeDevice, block: str) -> str:
     """The Profile with `block` appended to its playlist list."""
 
     body = device.profile_body()
-    marker = "settings_documents:\n"
+    marker = "shortcut_nodes:"
     head, _, tail = body.partition(marker)
     return head + block + marker + tail
 

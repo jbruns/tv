@@ -9,11 +9,13 @@ Kodi serialises these documents in more than one shape, and which shape a
 document uses is not something the Reconciler may guess. `guisettings.xml` and
 an add-on whose settings definition declares a version carry a value as
 element text; an add-on whose definition carries no version attribute, such as
-`weather.ha`, carries it in a `value` attribute instead. The dialect is
-therefore declared in the Profile and checked against the Device: a document
-that does not read as its declared dialect is an error naming the document,
-never a plausible empty parse that would report every declared address as
-unset.
+`weather.ha`, carries it in a `value` attribute instead. An add-on may keep
+its settings in JSON altogether, as `script.skinvariables` does for the view
+types it compiles. The dialect is therefore declared in the Profile and
+checked against the Device: a document that does not read as its declared
+dialect is an error naming the document, never a plausible empty parse that
+would report every declared address as unset. For `json` the dialect also
+picks the parser, which the XML dialects did not have to do.
 
 Kodi resolves a setting ID without regard to case and reads only the direct
 `<setting>` children of the root, while a recursive reader sees nested copies
@@ -23,18 +25,21 @@ any depth is removed, matching the Recovery Baseline's behaviour.
 
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Mapping
+from typing import Any
 
 GUISETTINGS = "guisettings"
 ADDON_V1 = "addon_v1"
 ADDON_V2 = "addon_v2"
+JSON = "json"
 
 # Every dialect this module can read and write. `guisettings` and `addon_v2`
 # are the same shape on the wire and are named apart because they are
 # different documents: one is Kodi core's and one is an add-on's, and what
 # Kodi does to one it need not do to the other.
-DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2)
+DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, JSON)
 
 # The dialects that carry a setting's value as element text. `addon_v1` is the
 # one that carries it in a `value` attribute.
@@ -127,9 +132,100 @@ def _matches(
     return found
 
 
+def _tree(document: str | None) -> dict[str, Any]:
+    """A `json` document's top-level object, empty when the Device has none.
+
+    The Profile addresses a value inside it by dotted path. Nothing else in
+    the document is touched, the same as for the XML dialects: this file is
+    one `script.skinvariables` rewrites on every build, merging the skin's own
+    defaults back in, and owning the whole of it would drift the moment the
+    skin adds a content type.
+    """
+
+    if document is None or not document.strip():
+        return {}
+    try:
+        loaded = json.loads(document)
+    except ValueError as error:
+        raise SettingsError(str(error)) from error
+    if not isinstance(loaded, dict):
+        raise SettingsError(
+            f"its top level is a {type(loaded).__name__} and a settings "
+            "document holds an object"
+        )
+    return loaded
+
+
+def _observe_json(document: str | None, setting: str) -> str | None:
+    """The string at the dotted path, or None when nothing resolves there."""
+
+    held: Any = _tree(document)
+    for step in setting.split("."):
+        if not isinstance(held, dict) or step not in held:
+            return None
+        held = held[step]
+    if isinstance(held, str):
+        return held
+    # A path landing on an object, a list or a number is not an Observation
+    # this address can be compared against, and silently overwriting it would
+    # discard whatever the add-on put there.
+    raise SettingsError(
+        f"{setting} holds a {type(held).__name__} and a State Address names a string"
+    )
+
+
+def _rewrite_json(document: str | None, settings: Mapping[str, str | None]) -> str:
+    tree = _tree(document)
+    for setting, value in settings.items():
+        *branches, leaf = setting.split(".")
+        holder = _holder(tree, branches, build=value is not None)
+        if holder is None:
+            continue
+        if value is None:
+            holder.pop(leaf, None)
+        else:
+            holder[leaf] = value
+    return render_json(tree)
+
+
+def _holder(
+    tree: dict[str, Any], branches: list[str], build: bool
+) -> dict[str, Any] | None:
+    """The object a dotted address's leaf sits in, or None when it is absent.
+
+    A Cleared Address whose branch is absent is already clear, so the branch
+    is built only for a value being set: building it to pop nothing from it
+    would add keys the document did not have.
+    """
+
+    holder = tree
+    for step in branches:
+        below = holder.get(step)
+        if not isinstance(below, dict):
+            if not build:
+                return None
+            below = {}
+            holder[step] = below
+        holder = below
+    return holder
+
+
+def render_json(body: Any) -> str:
+    """Sorted, four-space JSON: what `script.skinvariables` writes itself.
+
+    The Recovery Baseline writes the same bytes, so the two engines agree on
+    every document this add-on reads.
+    """
+
+    return json.dumps(body, ensure_ascii=False, indent=4, sort_keys=True) + "\n"
+
+
 def validate(document: str | None, dialect: str) -> None:
     """Raises SettingsError unless `document` reads as `dialect`."""
 
+    if dialect == JSON:
+        _tree(document)
+        return
     _root(document, dialect)
 
 
@@ -146,6 +242,8 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
     converge.
     """
 
+    if dialect == JSON:
+        return _observe_json(document, setting)
     root = _root(document, dialect)
     for parent, node in _matches(root, setting):
         if parent is root:
@@ -158,13 +256,16 @@ def rewrite(
 ) -> str:
     """`document` with `settings` set, serialised the way the shell writes it.
 
-    A value of None is a Cleared Address. Clearing writes an empty node rather
-    than removing one — the Device resolves no value from either, and the two
-    engines therefore do not revert each other over the difference — but an
-    address the document does not hold is already clear, so nothing is created
-    for it.
+    A value of None is a Cleared Address. In the XML dialects, clearing writes
+    an empty node rather than removing one — the Device resolves no value from
+    either, and the two engines therefore do not revert each other over the
+    difference — but an address the document does not hold is already clear,
+    so nothing is created for it. JSON has no empty node, and `null` is a
+    value rather than the absence of one, so clearing there removes the key.
     """
 
+    if dialect == JSON:
+        return _rewrite_json(document, settings)
     root = _root(document, dialect)
     for setting, value in settings.items():
         node = None

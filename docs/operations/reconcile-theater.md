@@ -1,16 +1,19 @@
 # Reconcile the theater Ugoos
 
-The Reconciler shadows the shell on two Resource Types on the theater Ugoos:
-the eight Smart Playlists under `special://profile/playlists/video`, and the
-Kodi settings inside six Settings Documents — `guisettings.xml`, the Home
+The Reconciler shadows the shell on three Resource Types on the theater Ugoos:
+the eight Smart Playlists under `special://profile/playlists/video`, the four
+Arctic Fuse Shortcut Nodes under `script.skinvariables`, and the Kodi settings
+inside seven Settings Documents — `guisettings.xml`, the Home
 Assistant weather add-on's `settings.xml`, the NextPVR client's
 `instance-settings-1.xml`, TMDb Helper's `settings.xml`, Arctic Fuse 3's
-`settings.xml`, and the CEC adapter's `peripheral_data` document. Both engines
+`settings.xml`, Arctic Fuse's view types, and the CEC adapter's
+`peripheral_data` document. Both engines
 still write them, holding the same values. Everything else on the Device is
 the shell provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
-A Smart Playlist is a document the Reconciler renders whole. A Settings
+A Smart Playlist and a Shortcut Node are documents the Reconciler renders
+whole. A Settings
 Document is not: it holds many State Addresses, almost all of them Unmanaged
 State. The Reconciler changes only the State Addresses the resolved
 configuration declares and preserves every other setting's identity and
@@ -20,7 +23,7 @@ value.
 
 | File | Holds |
 | --- | --- |
-| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: SSH transport, the declared Smart Playlists, and the declared Settings Documents |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: SSH transport, the declared Smart Playlists, the declared Shortcut Nodes, and the declared Settings Documents |
 | `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Settings Documents |
 | `.env` | The values Desired State names but may not carry, shared with the shell |
 
@@ -54,7 +57,8 @@ shared `.env` is read from the repository root; `--env-file PATH` names
 another, and a Run that names no value in it never opens it at all.
 
 `plan` mutates nothing, including the Kodi service. It reports one Change per
-Resource: a unified diff for a Smart Playlist, and for a Kodi setting a single
+Resource: a unified diff for a document rendered whole — a Smart Playlist or a
+Shortcut Node — and for a Kodi setting a single
 line naming the Settings Document, the State Address, the Observation, and the
 desired value, so a Run that applies a dozen settings leaves a dozen readable
 lines.
@@ -121,6 +125,61 @@ ask for a Managed Absence the Reconciler does not have and does not yet need;
 they are deleted by hand, once, when the shell is deleted
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md#the-two-retired-addresses)).
 
+## Declaring a Shortcut Node
+
+A Shortcut Node is one of Arctic Fuse's widget rows, or its power menu. Each
+is a JSON document the Reconciler renders whole, declared by name in
+`shortcut_nodes`.
+
+```yaml
+shortcut_nodes:
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json
+    shortcuts:
+      - guid: coreelec-home-new-shows
+        playlist: NewShows.xsp
+        target: videos
+      - guid: coreelec-power-poweroff
+        path: Powerdown()
+        label: "$LOCALIZE[13016]"
+        icon: special://skin/extras/icons/power.png
+```
+
+A shortcut states **exactly one** of `playlist` and `path`. Stating both, or
+neither, is an error naming the shortcut, before any Device contact.
+
+- `playlist` names a Smart Playlist the Profile already declares, and supplies
+  both the shortcut's path and its label. Naming one the Profile does not
+  declare is an error naming the shortcut and the playlist. That is what makes
+  a shortcut pointing at a retired playlist *unrepresentable* rather than
+  merely detectable — nothing structural stopped it when
+  `RecentlyReleasedMovies90Days.xsp` was superseded. An explicit `label`
+  beside a `playlist` is an error, because the playlist already carries one.
+- `path` carries a Kodi builtin, or a playlist some other add-on supplies, and
+  then states its own `label`.
+
+`icon` and `target` default to the empty string, which is what the add-on's
+own default item holds. `submenu` and `widgets` hold shortcuts of exactly this
+kind — the type is recursive because upstream's is — and are written only when
+they hold something: the add-on creates either key lazily, so absent and empty
+are one thing to it.
+
+Every `guid` is declared, none is generated, and none is empty. The add-on
+invents `guid-{random}` for an item carrying none, which would differ on every
+Run and plan a Change forever. The existing ids do not derive cleanly from
+anything, so they are stated as the Recovery Baseline writes them. A guid
+repeated anywhere in one node file — including inside a `submenu` or
+`widgets` — is an error, because the add-on finds an item by walking the whole
+tree for its guid.
+
+**The directory is never enumerated.** The Device holds six node files and
+four of them are ours; `skinvariables-shortcut-homesubmenu.json` and
+`-searchwidgets.json` are the skin's own, carrying generated guids. Owning the
+directory would delete two working files on the first Run.
+
+Applying a Shortcut Node restarts Kodi. The skin reads a node file when it
+loads, and its own shortcut editor holds the list it read, so a file written
+under a running Kodi is neither live nor safe from being written back.
+
 ## Declaring a Settings Document
 
 A Settings Document is an entry in `settings_documents`, naming its path on
@@ -151,10 +210,23 @@ stopped.
 | `guisettings` | `<settings version="2"><setting id="x">y</setting></settings>` | `guisettings.xml` |
 | `addon_v2` | the same, for an add-on | an add-on whose settings definition declares a version, such as `pvr.nextpvr` |
 | `addon_v1` | `<setting id="x" value="y" />` | an add-on whose settings definition carries **no** version attribute, such as `weather.ha` |
+| `json` | `{"library": {"seasons": "509"}}`, addressed by dotted path | an add-on that keeps settings as JSON, such as `script.skinvariables` |
 
 `guisettings` and `addon_v2` are the same shape on the wire. They are named
 apart because they are different documents, and what a future Kodi does to
 one it need not do to the other.
+
+`json` is the one dialect that also picks the *parser*. A document declared
+`json` that does not parse as JSON, or whose top level is not an object, is an
+error naming the document — never an empty parse that would plan every
+declared address as a `create`. An address is a dotted path into the object,
+and it names a string: a path landing on a nested object, a list or a number
+is refused naming the address, because overwriting it would discard whatever
+the add-on put there. An address the document does not hold reads as unset,
+the same as everywhere else. Clearing one removes the key, JSON having no
+empty node and `null` being a value rather than the lack of one — and when the
+branch it sits under is absent, nothing is written, since building the branch
+to remove nothing from it would add keys the document did not have.
 
 Which dialect an add-on uses is a property of its settings definition, not of
 its data. `weather.ha`'s definition has no version attribute, so Kodi loads
@@ -465,6 +537,51 @@ The commands are in [Hardware acceptance](#hardware-acceptance) below.
 Run `plan` first if you are unsure whether a Run will restart Kodi. `plan`
 never touches the service.
 
+## The view rebuild Effect
+
+`script.skinvariables` compiles its view types document into an XML include
+inside the skin, `1080i/script-skinviewtypes-includes.xml`. Changing the
+source leaves that artifact stale, and nothing else rebuilds it — a plain Kodi
+restart provably does not.
+
+A document that has such an artifact names it:
+
+```yaml
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
+    dialect: json
+    compiles_to: /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
+```
+
+When a Change touches that document, and only then, the Run writes the skin's
+own trigger stub over the compiled include while Kodi is stopped, and the
+restart it was taking anyway fires the rebuild
+([ADR 0015](../adr/0015-trigger-the-view-rebuild-the-way-the-skin-does.md)).
+There is no JSON-RPC, no `kodi-send` and no EventServer.
+
+```
+arming /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
+stopping kodi.service
+applied 2 changes
+starting kodi.service
+waiting for /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
+rebuilt /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
+verification: converged
+```
+
+The stub is **authored**, not restored: the skin ships that file untracked, so
+no pristine copy exists. `Includes_Fallbacks.xml` defines `Action_BuildViews`
+as an empty include and the compiled file overrides it; the stub is that
+override, and the compile disarms it by replacing the file. Emptying the file
+instead would resolve to the empty fallback and rebuild nothing.
+
+Starting `kodi.service` returns when systemd started Kodi, not when the skin
+loaded, so the Run waits. It reads the compiled include until the content both
+differs from the stub it wrote and parses as well-formed XML. Having written
+the stub, the Run knows exactly what it is waiting to stop seeing; the parse
+is what catches a read taken mid-write, which returns a partial or empty file.
+A Run that waits four minutes without seeing a rebuild fails naming the
+artifact.
+
 ## Hardware acceptance
 
 A Reconciler change is accepted on the real Device, not in CI. Kodi on the
@@ -548,10 +665,11 @@ The scenarios are:
    `omdb_apikey` as `named by OMDB_API_KEY` with no value either side of it,
    and the `plan` after the restart to report `no changes`. A `plan` that
    reports the drift again is Kodi having overwritten the write from memory.
-7. **No declared setting or playlist is a `create`** — the shell writes every
-   declared setting and every declared playlist, so on a provisioned Device
+7. **No declared setting, playlist or Shortcut Node is a `create`** — the
+   shell writes every one of them, so on a provisioned Device
    none may plan as a `create`. A `create` is a misread or typo'd setting id,
-   a document read in the wrong dialect, or a playlist file named wrongly: it
+   a document read in the wrong dialect, or a playlist or node file named
+   wrongly: it
    writes a document Kodi ignores and then verifies as converged, so nothing
    else catches it
    ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
@@ -769,6 +887,59 @@ The scenarios are:
     ug systemctl is-active kodi     # with the Sony off: expect "active"
     ```
 
+13. **The Shortcut Nodes and the view types land, and the views rebuild** —
+    three things at once, because the rebuild is what makes the view types
+    visible and a Run carrying either takes the same Kodi stop.
+
+    Stop Kodi, corrupt one shortcut's `path` and one view type, start Kodi,
+    and watch `apply` correct both and rebuild.
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    nodes=/storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3
+    views=/storage/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
+    include=/storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
+
+    ug "md5sum $nodes/skinvariables-shortcut-homesubmenu.json \
+                $nodes/skinvariables-shortcut-searchwidgets.json"
+
+    ug systemctl stop kodi
+    ug "sed -i 's|special://profile/playlists/video/NewShows.xsp|special://profile/playlists/video/Wrong.xsp|' \
+        $nodes/skinvariables-shortcut-homewidgets.json"
+    ug "sed -i 's/\"seasons\": \"509\"/\"seasons\": \"55\"/' $views"
+    ug systemctl start kodi && sleep 20
+
+    uv run coreelec-reconciler apply --room theater
+    ```
+
+    Expect the `apply` to name both documents, to print `arming`, `waiting
+    for` and `rebuilt` for the compiled include, and to end `verification:
+    converged`. Then confirm the three things a Run cannot confirm for itself:
+
+    ```console
+    # The skin's own two node files are untouched: the directory is never
+    # enumerated. Expect the same digests as before the Run.
+    ug "md5sum $nodes/skinvariables-shortcut-homesubmenu.json \
+                $nodes/skinvariables-shortcut-searchwidgets.json"
+
+    # The rebuild disarmed itself by overwriting the stub.
+    ug "grep -c Action_BuildViews $include"     # expect 0
+    ```
+
+    Finally, **someone has to look at the screen**: open a TV show and confirm
+    the season and episode views render the way they are meant to. That is the
+    whole point of `509` and `549`, and nothing on the command line shows it.
+
+    Then the parity half, which covers all six addresses at once:
+
+    ```console
+    ./provision-coreelec.sh --target ugoos-theater --component skin
+    uv run coreelec-reconciler plan --room theater
+    ```
+
+    Expect `plan: no changes`, and expect scenario 7 to stay clean — the shell
+    writes all six, so none may plan as a `create`.
+
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
 
@@ -795,7 +966,9 @@ by `apply` again.
 `CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
 Room Overlay declares (`ROOM-002`-`ROOM-010`), the twelve add-on addresses
 the Profile declares (`SVC-002`-`SVC-013`), the Arctic Fuse home screen
-(`SKIN-003`-`SKIN-010`), and the CEC power policy (`CEC-001`-`CEC-005`) as
+(`SKIN-003`-`SKIN-010`), the four Shortcut Nodes (`SKIN-011`-`SKIN-014`), the
+two view types (`SKIN-015`, `SKIN-016`), the view rebuild (`EFFECT-004`), and
+the CEC power policy (`CEC-001`-`CEC-005`) as
 shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
@@ -840,7 +1013,7 @@ The shell writes the Smart Playlist `0600` and the Reconciler writes it
 `0644`, so a file the shell last wrote keeps `0600`; on a single-user
 appliance where Kodi runs as root that difference is inert, and observing a
 mode portably costs more than the difference is worth. Every Settings Document
-is written `0600` by both.
+and every Shortcut Node is written `0600` by both.
 
 Applying a Kodi setting reserialises the Settings Document the way the shell
 provisioner does — four-space indentation, one declaration, trailing newline,
