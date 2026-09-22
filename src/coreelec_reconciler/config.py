@@ -28,6 +28,10 @@ class ConfigError(Exception):
 TRANSFORMS: dict[str, dict[str, str]] = {
     "invert": {"true": "false", "false": "true"},
     "dolby_vision_mode": {"tv-led": "0", "player-led": "1"},
+    # Kodi's localisation ID for the CEC "Ignore" action. The shell reads it
+    # from a variable and then rejects every value but that one, so the domain
+    # is declared here instead and the schema carries the validation.
+    "cec_tv_off_action": {"ignore": "36028"},
 }
 
 # A rule that selects on the calendar cannot state a literal. A Profile saying
@@ -97,11 +101,17 @@ class SettingsDocument:
     `dialect` says how the document is serialised. It is declared, never
     sniffed: a corrupt or truncated document must fail naming itself rather
     than read as a plausible other shape.
+
+    `document` is the file's path, or — when `is_glob` — the pattern that
+    names it, for a document Kodi names after hardware the Profile cannot
+    know. Which of the two it is comes from the key the Profile states, never
+    from the string: a literal path holding a `*` is a path.
     """
 
     document: str
     dialect: str
     settings: tuple[KodiSetting, ...]
+    is_glob: bool = False
 
 
 @dataclass(frozen=True)
@@ -347,9 +357,22 @@ def _document(source: Path, named: NamedValues, raw: Any) -> SettingsDocument:
         source,
         "a Settings Document",
         _mapping(source, "a Settings Document", raw),
-        required=("document", "dialect", "settings"),
+        required=("dialect", "settings"),
+        optional=("document", "document_glob"),
     )
-    document = _text(source, "a Settings Document path", mapping["document"])
+    # A document is named either literally or by a pattern, and the shape is
+    # declared rather than sniffed: a `*` inside a `document` is a character
+    # in a filename, never a wildcard, because a path that quietly became a
+    # pattern would resolve to a file nobody declared.
+    stated = [arm for arm in ("document", "document_glob") if arm in mapping]
+    if len(stated) != 1:
+        held = ", ".join(str(mapping[arm]) for arm in stated) or "neither"
+        raise ConfigError(
+            f"{source}: a Settings Document states exactly one of document "
+            f"and document_glob, and this one states {held}"
+        )
+    is_glob = stated == ["document_glob"]
+    document = _text(source, f"a Settings Document {stated[0]}", mapping[stated[0]])
     if not document.startswith("/"):
         raise ConfigError(
             f"{source}: a Settings Document path must be absolute: {document}"
@@ -367,6 +390,7 @@ def _document(source: Path, named: NamedValues, raw: Any) -> SettingsDocument:
         document=document,
         dialect=dialect,
         settings=tuple(_kodi_setting(source, named, entry) for entry in declared),
+        is_glob=is_glob,
     )
 
 

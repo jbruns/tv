@@ -384,7 +384,9 @@ ARCTIC_FUSE_OWNS = (
 def shipped_skin() -> dict[str, Any]:
     """The Arctic Fuse Settings Document the committed Profile declares."""
     documents = shipped_profile()["settings_documents"]
-    return next(document for document in documents if document["document"] == SKIN_PATH)
+    return next(
+        document for document in documents if document.get("document") == SKIN_PATH
+    )
 
 
 def skin_extra(device: FakeDevice) -> str:
