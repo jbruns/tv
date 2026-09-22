@@ -20,8 +20,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("plan", "apply"),
-        help="plan reports the Changes and mutates nothing; apply converges",
+        choices=("plan", "apply", "bootstrap"),
+        help=(
+            "plan reports the Changes and mutates nothing; apply converges; "
+            "bootstrap makes First Contact with a Device that has no "
+            "administrator key yet"
+        ),
     )
     parser.add_argument(
         "--room",
@@ -59,7 +63,10 @@ def main(
     err = err if err is not None else sys.stderr
     try:
         desired = config.load(arguments.config_root, arguments.room, arguments.env_file)
-        reconcile.run(desired, apply=arguments.command == "apply", out=out)
+        if arguments.command == "bootstrap":
+            reconcile.bootstrap(desired, out=out)
+        else:
+            reconcile.run(desired, apply=arguments.command == "apply", out=out)
     except config.ConfigError as error:
         print(f"error: {error}", file=err)
         return 1

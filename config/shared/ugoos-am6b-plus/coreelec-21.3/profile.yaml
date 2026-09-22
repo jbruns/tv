@@ -35,6 +35,31 @@ transport:
   port: 22
   identity: ~/.ssh/coreelec_admin_ed25519
 
+# Who may log in to a Device in this Profile, declared whole. An entry nobody
+# declares here is removed from the Device, which is what makes a revoked key
+# actually revoked; the shell's append-if-absent can only ever grow the file.
+#
+# The administrator entry is not here and cannot be. It is derived from the
+# public half of the identity above, because a Profile that can name an
+# administrator key can name the wrong one and lock the Reconciler out of its
+# own Device (ADR 0016).
+authorized_keys:
+  document: /storage/.ssh/authorized_keys
+  entries:
+    # Home Assistant's key for the Kodi lifecycle gateway. `restrict` is
+    # implied by the entry, and the forced command is the only program this
+    # key may ever run — `/storage/.config/kodi-lifecycle`, which is still
+    # the shell's to install (LIFE-001). Between First Contact and that
+    # installer the key can authenticate and run nothing, which is safer than
+    # a key that can run anything.
+    #
+    # The public key is a per-deployment value, so it is named rather than
+    # held. It is not a secret, and the `.env` boundary is the file rather
+    # than a judgement about each key (ADR 0016).
+    - comment: homeassistant-ugoos-kodi-lifecycle
+      from_env: COREELEC_LIFECYCLE_PUBLIC_KEY
+      forced_command: /storage/.config/kodi-lifecycle
+
 # Kodi Smart Playlists. The directory is the physical path behind
 # special://profile/playlists/video on CoreELEC. Each file is one State
 # Address, listed in the order provision-coreelec.sh writes them so the two
@@ -633,3 +658,27 @@ settings_documents:
     settings:
       - setting: TIMEZONE
         from_profile: timezone
+
+  # CoreELEC's own service document for sshd, and its own two keys:
+  # `service.coreelec.settings` writes exactly this pair from its "Disable SSH
+  # password" toggle, and its `defaults.py` defines `OPT_SSH_NOPASSWD` as
+  # `-o 'PasswordAuthentication no'` byte for byte.
+  #
+  # Mode is what CoreELEC gives it. `oe.py`'s `set_service` writes the file
+  # with a plain `open` and no `chmod`, which is why `avahi.conf`,
+  # `crond.conf`, `samba.conf` and `bluez.conf` are all 0644. The shell's 0600
+  # is the departure, and the file holds no secret.
+  #
+  # A Device whose first-boot wizard left the password enabled holds these
+  # same two keys with the insecure values, so this plans as two Changes and
+  # never as a create. Applying either restarts `sshd.service`, which takes
+  # the connection issuing it with it; the Reconciler knows that, and the
+  # Profile does not declare it (ADR 0013).
+  - document: /storage/.cache/services/sshd.conf
+    dialect: shell_vars
+    mode: "0644"
+    settings:
+      - setting: SSH_ARGS
+        value: "-o 'PasswordAuthentication no'"
+      - setting: SSHD_DISABLE_PW_AUTH
+        value: "true"

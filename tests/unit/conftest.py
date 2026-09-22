@@ -32,6 +32,9 @@ SSH_STUB = """#!/bin/sh
 # theater Ugoos.
 cmd=""
 for arg in "$@"; do cmd="$arg"; done
+if [ -n "$FAKE_DEVICE_SSH_LOG" ]; then
+  printf '%s\\n' "$*" >> "$FAKE_DEVICE_SSH_LOG"
+fi
 PATH="{stub_dir}:$PATH"
 export PATH
 if [ -n "$FAKE_DEVICE_ROOT" ]; then
@@ -73,6 +76,11 @@ exec {chmod} "$@"
 SYSTEMCTL_STUB = """#!/bin/sh
 # Records every service Effect the Run takes, in order.
 printf '%s\\n' "$*" >> "$FAKE_DEVICE_SYSTEMCTL_LOG"
+# Restarting sshd is the one Effect that takes the connection issuing it, and
+# a Device whose storage has gone bad comes back with an empty authorized_keys.
+if [ "$1" = "restart" ] && [ -n "$FAKE_DEVICE_EMPTIES_ON_RESTART" ]; then
+  : > "$FAKE_DEVICE_EMPTIES_ON_RESTART"
+fi
 # Kodi rewrites a Settings Document from memory as it exits, so stopping it
 # can revert a setting that looked converged while it was running.
 if [ "$1" = "stop" ] && [ -n "$FAKE_DEVICE_KODI_MEMORY" ]; then
@@ -138,6 +146,9 @@ transport:
   user: root
   port: 22
   identity: {identity}
+authorized_keys:
+  document: {authorized}
+  entries: {entries}
 smart_playlists:
   directory: {directory}
   kodi_directory: special://profile/playlists/video
@@ -199,6 +210,63 @@ COREELEC_DEVICE="Amlogic-ng"
 """
 
 RELEASE = "Amlogic-ng.arm-21.3-Omega\n"
+
+# The administrator key pair the fake Device is reached with. Only the public
+# half is ever read — every connection in these tests goes through the stub
+# `ssh` above — so the private half is a placeholder and the public half is
+# the line the Reconciler derives the administrator entry from.
+ADMINISTRATOR_KEY = (
+    "ssh-ed25519 "
+    "AAAAC3NzaC1lZDI1NTE5AAAAIAdministratorKeyForBoundaryTestsOnly0 "
+    "coreelec-admin@controller\n"
+)
+ADMINISTRATOR_ENTRY = ADMINISTRATOR_KEY.strip()
+
+# Home Assistant's lifecycle key, named in `.env` the way a Profile names it.
+LIFECYCLE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILifecycleKeyForBoundaryTestsOnly0"
+LIFECYCLE_COMMENT = "homeassistant-ugoos-kodi-lifecycle"
+LIFECYCLE_ENTRY = (
+    f'restrict,command="/storage/.config/kodi-lifecycle" '
+    f"{LIFECYCLE_KEY} {LIFECYCLE_COMMENT}"
+)
+
+# The entry a Profile declares for it, as it reads in `authorized_keys`.
+LIFECYCLE_ENTRIES = f"""
+    - comment: {LIFECYCLE_COMMENT}
+      from_env: COREELEC_LIFECYCLE_PUBLIC_KEY
+      forced_command: /storage/.config/kodi-lifecycle
+"""
+
+# The address the Reconciler knows `sshd.service` reads, and CoreELEC's own
+# two keys inside it.
+SSHD_CONF = "/storage/.cache/services/sshd.conf"
+SSHD_HARDENED = """\
+SSH_ARGS="-o 'PasswordAuthentication no'"
+SSHD_DISABLE_PW_AUTH="true"
+"""
+# What the Reconciler leaves. `SSH_ARGS` is byte-identical to CoreELEC's,
+# because the quotes are load-bearing; `SSHD_DISABLE_PW_AUTH` is written bare
+# like every other `shell_vars` value the Reconciler writes, and the settings
+# add-on strips quotes when it reads it back
+# (`services.py:488`: `.replace('"', '')`).
+SSHD_RECONCILED = """\
+SSH_ARGS="-o 'PasswordAuthentication no'"
+SSHD_DISABLE_PW_AUTH=true
+"""
+SSHD_WIZARD_ENABLED = """\
+SSH_ARGS=""
+SSHD_DISABLE_PW_AUTH="false"
+"""
+SSHD_DOCUMENT = f"""\
+  - document: {SSHD_CONF}
+    dialect: shell_vars
+    mode: "0644"
+    settings:
+      - setting: SSH_ARGS
+        value: "-o 'PasswordAuthentication no'"
+      - setting: SSHD_DISABLE_PW_AUTH
+        value: "true"
+"""
 
 # The address the Reconciler knows `tz-data.service` reads.
 TIMEZONE_CACHE = "/storage/.cache/timezone"
@@ -298,6 +366,19 @@ class FakeDevice:
         return self.root / "storage" / ".cache" / "timezone"
 
     @property
+    def sshd_conf(self) -> Path:
+        """CoreELEC's service document for `sshd`, a `shell_vars` document.
+
+        A Profile states `SSHD_CONF`; this is where the fake Device holds it.
+        """
+        return self.root / "storage" / ".cache" / "services" / "sshd.conf"
+
+    @property
+    def authorized_keys(self) -> Path:
+        """Who may log in, which the Reconciler renders whole."""
+        return self.root / "storage" / ".ssh" / "authorized_keys"
+
+    @property
     def playlist(self) -> Path:
         return self.playlists_dir / "NewShows.xsp"
 
@@ -382,12 +463,17 @@ class FakeDevice:
         settings: Mapping[str, str] | None = None,
         extra: str = "",
         nodes: str = "[]",
+        entries: str = "[]",
     ) -> str:
         """The Profile, declaring guisettings.xml and any `extra` documents."""
         declared = DEFAULT_SETTINGS if settings is None else settings
         return (
             PROFILE.format(
-                directory=self.playlists_dir, identity=self.identity, nodes=nodes
+                directory=self.playlists_dir,
+                identity=self.identity,
+                nodes=nodes,
+                authorized=self.authorized_keys,
+                entries=entries,
             )
             + document_block(
                 self.guisettings,
@@ -473,6 +559,14 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
     # what the theater Ugoos says unless a test changes it.
     write_document(fake.os_release, OS_RELEASE)
     write_document(fake.release, RELEASE)
+    # Every Run also declares who may log in, and derives the administrator
+    # entry from the public half of the transport identity. The fake Device
+    # already holds that entry, so a Run that is about something else plans
+    # nothing here.
+    fake.identity.with_name(f"{fake.identity.name}.pub").write_text(
+        ADMINISTRATOR_KEY, encoding="utf-8"
+    )
+    write_document(fake.authorized_keys, f"{ADMINISTRATOR_ENTRY}\n")
     fake.localtime.parent.mkdir(parents=True, exist_ok=True)
     fake.write_profile(fake.profile_body())
     fake.write_room(ROOM)

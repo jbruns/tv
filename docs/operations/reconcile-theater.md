@@ -1,19 +1,21 @@
 # Reconcile the theater Ugoos
 
-The Reconciler shadows the shell on three Resource Types on the theater Ugoos:
+The Reconciler shadows the shell on four Resource Types on the theater Ugoos:
 the eight Smart Playlists under `special://profile/playlists/video`, the four
-Arctic Fuse Shortcut Nodes under `script.skinvariables`, and the Kodi settings
-inside eight Settings Documents — `guisettings.xml`, the Home
+Arctic Fuse Shortcut Nodes under `script.skinvariables`,
+`/storage/.ssh/authorized_keys`, and the Kodi settings
+inside nine Settings Documents — `guisettings.xml`, the Home
 Assistant weather add-on's `settings.xml`, the NextPVR client's
 `instance-settings-1.xml`, TMDb Helper's `settings.xml`, Arctic Fuse 3's
 `settings.xml`, Arctic Fuse's view types, the CEC adapter's
-`peripheral_data` document, and the CoreELEC timezone cache. Both engines
+`peripheral_data` document, the CoreELEC timezone cache, and CoreELEC's
+`sshd.conf`. Both engines
 still write them, holding the same values. Everything else on the Device is
 the shell provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
-A Smart Playlist and a Shortcut Node are documents the Reconciler renders
-whole. A Settings
+A Smart Playlist, a Shortcut Node and `authorized_keys` are documents the
+Reconciler renders whole. A Settings
 Document is not: it holds many State Addresses, almost all of them Unmanaged
 State. The Reconciler changes only the State Addresses the resolved
 configuration declares and preserves every other setting's identity and
@@ -23,7 +25,7 @@ value.
 
 | File | Holds |
 | --- | --- |
-| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, SSH transport, the declared Smart Playlists, the declared Shortcut Nodes, and the declared Settings Documents |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, SSH transport, who may log in, the declared Smart Playlists, the declared Shortcut Nodes, and the declared Settings Documents |
 | `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Settings Documents |
 | `.env` | The values Desired State names but may not carry, shared with the shell |
 
@@ -127,6 +129,9 @@ reason.
 ```console
 uv sync --frozen
 
+# Meet a Device that has no administrator key yet. Once per Device.
+uv run coreelec-reconciler bootstrap --room theater
+
 # Report the Changes; mutates nothing.
 uv run coreelec-reconciler plan --room theater
 
@@ -135,8 +140,11 @@ uv run coreelec-reconciler apply --room theater
 ```
 
 Transport is the system `ssh` client with the existing administrator key
-(`~/.ssh/coreelec_admin_ed25519` by default; change it in the Profile). The
-shared `.env` is read from the repository root; `--env-file PATH` names
+(`~/.ssh/coreelec_admin_ed25519` by default; change it in the Profile). An
+ordinary Run is key-only and `StrictHostKeyChecking=yes`: a changed host key
+means the Device was reimaged or something is wrong, and refusing is the
+right answer. The shared `.env` is read from the repository root;
+`--env-file PATH` names
 another, and a Run that names no value in it never opens it at all.
 
 `plan` mutates nothing, including the Kodi service. It reports one Change per
@@ -149,6 +157,171 @@ lines.
 ```
 update /storage/.kodi/userdata/guisettings.xml#videolibrary.flattentvshows: 0 -> 1
 ```
+
+## First Contact
+
+CoreELEC's first-boot wizard offers to enable SSH, and its final step offers
+to change the root password — an offer that is easy to accept as-is. A
+freshly imaged Device therefore sits on the home network with SSH open on a
+default password, and closing that window is the first thing anyone would
+want to do. The Reconciler does it
+([ADR 0016](../adr/0016-the-reconciler-owns-first-contact.md)).
+
+`bootstrap` is a separate entry point, not a fallback on the ordinary Run. It
+does three things and no others:
+
+1. Connects with `PubkeyAuthentication=no` and
+   `StrictHostKeyChecking=accept-new`. The system `ssh` client prompts for
+   the Device's root password on the terminal — there is no `sshpass`, no
+   stored password, and no `.env` key for one. Trust on first use is correct
+   for the connection that *is* first use, and it belongs to this entry point
+   alone.
+2. Appends the administrator public key to `/storage/.ssh/authorized_keys`,
+   matching on the key material so a second attempt adds nothing.
+3. Proves key-only authentication in a **new** connection, by asking the
+   Device its name — which is also the Guard every ordinary Run runs first,
+   so First Contact reports success on one Device only.
+
+```console
+$ uv run coreelec-reconciler bootstrap --room theater
+first contact ugoos-theater (room theater, profile ugoos-am6b-plus/coreelec-21.3)
+installing coreelec-admin@jbmbp in /storage/.ssh/authorized_keys; ssh will ask for the Device's root password
+root@ugoos-theater's password:
+installed the administrator key
+ugoos-theater answers to a key-only connection: run apply to converge it
+```
+
+Nothing else happens here. Hardening the daemon, declaring who else may log
+in, and everything the Profile says are the ordinary Run's.
+
+It is a separate entry point rather than a fallback because in steady state
+password authentication is disabled, so a Run that fell back would turn every
+genuine key failure — a moved key file, a wrong identity path — into three
+password prompts against a daemon that refuses all of them, and a confusing
+timeout in place of a clear error.
+
+## Declaring who may log in
+
+`/storage/.ssh/authorized_keys` is declared **whole**: the document is the
+complete set of entries, and a key nobody declares is removed. That is what
+lets a revoked key actually be revoked — the shell appends each entry if
+absent, so its file can only ever grow.
+
+```yaml
+authorized_keys:
+  document: /storage/.ssh/authorized_keys
+  entries:
+    - comment: homeassistant-ugoos-kodi-lifecycle
+      from_env: COREELEC_LIFECYCLE_PUBLIC_KEY
+      forced_command: /storage/.config/kodi-lifecycle
+```
+
+The **administrator entry is not declared and cannot be**. It is derived from
+the public half of the identity the Run is already authenticating with,
+because a Profile that can name an administrator key is a Profile that can
+name the wrong one and lock the Reconciler out of its own Device. Its `.pub`
+file must be beside the identity; a Run that cannot read it fails naming the
+file, before any Device contact.
+
+Every entry a Profile *does* declare carries a `forced_command`, which is the
+only program that key may ever run. There is no arm for declaring a second
+unrestricted key: that arm would be the one that quietly grants a Device to
+anybody a Profile names. The entry is written in the `restrict` form alone —
+`restrict` already implies no agent forwarding, no port forwarding, no pty,
+no user rc and no X11 forwarding on OpenSSH 7.2 and later, and the Device
+runs 9.9. `lib/coreelec-lifecycle.sh` also renders a spelled-out fallback for
+older releases, which guards a failure that cannot occur on any Device this
+Profile describes.
+
+The public key is named in `.env` rather than held. It is not a secret, so
+this widens `.env` slightly beyond
+[ADR 0014](../adr/0014-desired-state-names-a-value-it-may-not-hold.md)'s
+framing: the file holds per-deployment values, and secrecy is a property of
+some of them rather than the reason it exists.
+
+A Change here is reported by the entries the document gains and loses. A key
+blob is sixty-eight characters of base64 that nobody reads, and printing a
+diff of them would bury the one fact that matters:
+
+```
+update /storage/.ssh/authorized_keys
+observed entries: coreelec-admin@jbmbp, homeassistant-ugoos-kodi-lifecycle, somebody-else
+desired entries: coreelec-admin@jbmbp, homeassistant-ugoos-kodi-lifecycle
+```
+
+`LIFE-001`, the forced-command wrapper the entry names, is still the shell's.
+Between First Contact and the lifecycle installer that key can authenticate
+and run nothing, which is safer than a key that can run anything.
+
+## Closing the password window, and the sshd restart Effect
+
+`/storage/.cache/services/sshd.conf` is CoreELEC's own document, and its two
+keys are CoreELEC's own. `service.coreelec.settings` writes exactly this pair
+from its "Disable SSH password" toggle:
+
+```yaml
+  - document: /storage/.cache/services/sshd.conf
+    dialect: shell_vars
+    mode: "0644"
+    settings:
+      - setting: SSH_ARGS
+        value: "-o 'PasswordAuthentication no'"
+      - setting: SSHD_DISABLE_PW_AUTH
+        value: "true"
+```
+
+The mode is what CoreELEC gives it: `oe.py`'s `set_service` writes the file
+with a plain `open` and no `chmod`, which is why `avahi.conf`, `crond.conf`,
+`samba.conf` and `bluez.conf` are all `0644`. The shell's `0600` is the
+departure, and the file holds no secret.
+
+A Device whose wizard left the password enabled holds these same two keys
+with `SSH_ARGS=""` and `SSHD_DISABLE_PW_AUTH="false"`, so hardening plans as
+two Changes and never as a `create`.
+
+Applying either restarts `sshd.service`, and **that restart drops the
+connection issuing it**. This is unavoidable rather than chosen:
+`ExecStart=/usr/sbin/sshd -D $SSH_ARGS` reads the option from the
+environment at start; `ExecReload`'s SIGHUP makes the daemon re-exec from its
+original argv, so a reload would not pick the new option up; and the daemon
+is not socket-activated, so the Run's session is a child in the unit's
+cgroup.
+
+So this Effect is not the stop-and-start every other one is — a stop would
+take the connection with it and leave nothing able to start it again. The
+unit is restarted *after* the writes, its exit status is not read because a
+restart that worked kills the connection before `systemctl` can report
+anything, and what the Run reads is the connection after it:
+
+```
+restarting sshd.service
+sshd.service is active and /storage/.ssh/authorized_keys is not empty
+verification: converged
+```
+
+`authorized_keys` is checked with it because an empty one is the other way
+the Device becomes unreachable, and after this restart there is no password
+left to fall back on.
+
+**If the Device does not answer, the Run fails hard and names the local
+console.** There is no revert: a revert would have to travel over the
+connection that just died. The Run is not reordered to leave Kodi playing in
+that case either. A Device that cannot be reached after its own `sshd`
+restarted is evidence of something wrong with the Device, the storage media,
+or the way it was imaged, and that diagnosis is forced rather than softened.
+
+```console
+$ uv run coreelec-reconciler apply --room theater
+error: ugoos-theater did not answer within 20s of sshd.service restarting.
+Use the local console to inspect /storage/.cache/services/sshd.conf
+```
+
+The Reconciler writes `SSH_ARGS` byte for byte as CoreELEC does — the quotes
+are load-bearing, because `sshd` is started as `/usr/sbin/sshd -D $SSH_ARGS`
+and the option and its argument have to arrive as two words rather than
+three. `SSHD_DISABLE_PW_AUTH` is written bare, like every other `shell_vars`
+value; the settings add-on strips quotes when it reads it back, so `true` and
+`"true"` are the same answer to it.
 
 ## Declaring a Smart Playlist
 
@@ -1179,6 +1352,71 @@ The scenarios are:
     ug "cat /etc/os-release; cat /etc/release"
     ```
 
+16. **Who may log in converges, and the password window closes** — this is
+    the first Run that restarts the daemon carrying its own connection, so it
+    has to prove the reconnect. Inject both drifts at once: a stray key in
+    `authorized_keys`, and the pair a wizard-enabled Device presents.
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    keys=/storage/.ssh/authorized_keys
+    conf=/storage/.cache/services/sshd.conf
+
+    ug "ssh-keygen -q -t ed25519 -N '' -C stray-key -f /tmp/stray"
+    ug "cat /tmp/stray.pub >> $keys"
+    ug "printf 'SSH_ARGS=\"\"\nSSHD_DISABLE_PW_AUTH=\"false\"\n' > $conf"
+    ug "systemctl restart sshd.service" ; sleep 3
+
+    uv run coreelec-reconciler plan --room theater
+    uv run coreelec-reconciler apply --room theater
+
+    ug "cut -d' ' -f1,3- $keys; cat $conf; ls -l $conf"
+    ```
+
+    Expect the plan to name three Changes — the document, and both keys of
+    `sshd.conf` as `update`, never `create` — and to report the entries
+    rather than any key blob. Expect the apply to print `restarting
+    sshd.service`, then `sshd.service is active and …/authorized_keys is not
+    empty`, then `verification: converged`. Expect the stray key to be gone,
+    the lifecycle entry to survive untouched, and the file to be `0600`.
+
+    Then prove the window is actually shut, from a connection that offers no
+    key at all:
+
+    ```console
+    ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password \
+        -o NumberOfPasswordPrompts=1 root@ugoos-theater true
+    ```
+
+    Expect `Permission denied (publickey)` — the daemon refusing to even
+    offer password authentication — and `ug true` to still work.
+
+17. **First Contact reaches a Device with no administrator key** — the
+    precondition for the retirement test, and the one scenario that needs the
+    Device's root password. Remove the administrator entry, confirm the
+    Device is unreachable, and meet it again.
+
+    **Do this with the local console to hand.** It is the one scenario that
+    deliberately removes the Reconciler's own way in, and it needs password
+    authentication enabled to get back — so run it before scenario 16, or
+    re-enable the password from the console first.
+
+    ```console
+    ug "cp $keys $keys.acceptance-backup"
+    ug "grep kodi-lifecycle $keys > $keys.new && mv $keys.new $keys"
+    ug "chmod 600 $keys"
+    ssh -o BatchMode=yes -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater true
+
+    uv run coreelec-reconciler bootstrap --room theater
+    uv run coreelec-reconciler plan --room theater
+    ```
+
+    Expect the fourth command to fail with `Permission denied`, `bootstrap`
+    to prompt for the password once and then report that the Device answers
+    to a key-only connection, and the `plan` after it — which is key-only and
+    strict — to succeed. Expect `bootstrap` to have appended the
+    administrator entry and left the lifecycle entry exactly where it was.
+
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
 
@@ -1208,7 +1446,10 @@ the Profile declares (`SVC-002`-`SVC-013`), the Arctic Fuse home screen
 (`SKIN-003`-`SKIN-010`), the four Shortcut Nodes (`SKIN-011`-`SKIN-014`), the
 two view types (`SKIN-015`, `SKIN-016`), the view rebuild (`EFFECT-004`), the
 CEC power policy (`CEC-001`-`CEC-005`), the platform Guard (`PLAT-001`), the
-timezone cache (`CORE-006`) and the `tz-data.service` restart (`EFFECT-002`)
+timezone cache (`CORE-006`), the `tz-data.service` restart (`EFFECT-002`),
+the two `authorized_keys` entries (`SSH-002`, `LIFE-002`), the `sshd.conf`
+pair (`SSH-003`), the host key policy (`SSH-004`) and the `sshd.service`
+restart (`EFFECT-003`)
 as
 shell-owned
 with
@@ -1236,8 +1477,17 @@ stay Unmanaged State.
 
 `SVC-002`, `SVC-003`, `SVC-006`, `SVC-010`, `SVC-012` and `SVC-013` are the
 six named values. Both engines read them from the same `.env`, so the two
-declarations agree there for the same reason they agree everywhere else: there
-is one source.
+declarations agree there for the same reason they agree everywhere else:
+there is one source. `LIFE-002` names a seventh,
+`COREELEC_LIFECYCLE_PUBLIC_KEY`, which only the Reconciler reads: the shell
+takes the same key as a file path on `configure-kodi-lifecycle.sh`'s command
+line. Keeping both pointed at one key is the operator's, until the lifecycle
+installer moves too.
+
+`SSH-001`, the controller-local private key, stays with the operator. It is
+the one thing the Reconciler cannot declare, and the administrator entry in
+`authorized_keys` is derived from its public half rather than declared, so a
+Profile cannot name the wrong administrator.
 
 `CEC-001`-`CEC-005` are the only addresses in a document neither engine names
 literally. The shell finds it with `*CEC*.xml` and the Profile declares
@@ -1256,7 +1506,10 @@ The shell writes the Smart Playlist `0600` and the Reconciler writes it
 `0644`, so a file the shell last wrote keeps `0600`; on a single-user
 appliance where Kodi runs as root that difference is inert, and observing a
 mode portably costs more than the difference is worth. Every Settings Document
-and every Shortcut Node is written `0600` by both.
+and every Shortcut Node is written `0600` by both, and so is
+`authorized_keys`, which `sshd` insists on. `sshd.conf` goes the other way:
+the Reconciler writes it `0644`, which is what CoreELEC's own writer gives
+it, and the shell's `0600` is the departure.
 
 Applying a Kodi setting reserialises the Settings Document the way the shell
 provisioner does — four-space indentation, one declaration, trailing newline,

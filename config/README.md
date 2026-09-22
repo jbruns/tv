@@ -72,7 +72,13 @@ Secret requirements:
 
 Six of these keys are also named by the Reconciler's Profile, which carries
 the key and never the value: `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN`,
-`NEXTPVR_HOST`, `NEXTPVR_PIN`, `MDBLIST_API_KEY` and `OMDB_API_KEY`. The
+`NEXTPVR_HOST`, `NEXTPVR_PIN`, `MDBLIST_API_KEY` and `OMDB_API_KEY`. A
+seventh, `COREELEC_LIFECYCLE_PUBLIC_KEY`, is named by the Profile alone: the
+shell takes the same key as a file path on its command line. It is a public
+key and therefore not a secret, which widens this file slightly beyond its
+name — `.env` holds per-deployment values, and secrecy is a property of some
+of them rather than the reason the file exists
+([ADR 0016](../docs/adr/0016-the-reconciler-owns-first-contact.md)). The
 shell sources this file as bash; the Reconciler reads it as `KEY=value` with
 a bare, single-quoted, or double-quoted value and rejects any other line
 naming the file and the line. Keep values single-quoted and both readers
