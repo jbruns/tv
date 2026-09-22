@@ -58,7 +58,7 @@ def _binding(
 
 EXPECTED_PRIMITIVE_CALL_PATHS: Final[dict[str, dict[str, JsonObject]]] = {
     "atomic-file-mutation": {
-        "provision.bootstrap-admin-key": _binding(outside_inventory_ids=["SSH-002"]),
+        "provision.bootstrap-admin-key": _binding(["SSH-002"]),
         "provision.harden-ssh": _binding(["SSH-003"]),
         "provision.core-settings": _binding(
             _range("CORE", 1, 6) + _range("CORE", 8, 29)

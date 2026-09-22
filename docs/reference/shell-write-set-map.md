@@ -23,7 +23,7 @@ directory swaps, add-on enablement, shared-document writes, dynamic CEC
 discovery, `BuildSkinViews` output, lifecycle gateway files, service Effects,
 bootstrap state, rollback/finalize paths, and shell Run Infrastructure.
 
-Coverage is 146 shell-actor rows: 135 Device writes or indirect writes, 5
+Coverage is 147 shell-actor rows: 136 Device writes or indirect writes, 5
 Effects, and 6 read-only Guards or inventory observations. The remaining ledger
 rows are not shell-actor rows. `python3 scripts/check_shell_permissions.py
 --audit` prints the live counts and the map digest.
@@ -40,6 +40,8 @@ rows are not shell-actor rows. `python3 scripts/check_shell_permissions.py
 - `skin`: `core`, `addons`, and `SKIN-001`–`SKIN-028`.
 - `room`: `core` plus `ROOM-001`–`ROOM-011`.
 - `baseline`: `core`, `cec`, `addons`, `services`, and `skin`.
+- administrator key installation: `SSH-002`, over the temporary password
+  session before any key exists.
 - optional SSH hardening: `SSH-003` and `EFFECT-003`.
 - lifecycle deploy/rollback: `LIFE-001`, `LIFE-002`, and temporary
   `LIFE-003`, guarded by `PLAT-004` and `PLAT-005`.

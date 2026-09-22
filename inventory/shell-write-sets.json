@@ -332,6 +332,7 @@
       "SKIN-026",
       "SKIN-027",
       "SKIN-028",
+      "SSH-002",
       "SSH-003",
       "SVC-001",
       "SVC-002",
@@ -759,6 +760,9 @@
     "SKIN-028": [
       "special://profile/playlists/video/RecentlyReleasedMoviesCurrentYear.xsp (managed absence)"
     ],
+    "SSH-002": [
+      "/storage/.ssh/authorized_keys#administrator-key-line"
+    ],
     "SSH-003": [
       "/storage/.cache/services/sshd.conf#SSH_ARGS",
       "/storage/.cache/services/sshd.conf#SSHD_DISABLE_PW_AUTH"
@@ -815,11 +819,7 @@
       "special://profile/addon_data/script.plexmod/settings.xml#local_profiles_json (managed absence)"
     ]
   },
-  "outside_inventory_targets": {
-    "SSH-002": [
-      "/storage/.ssh/authorized_keys#administrator-key-line"
-    ]
-  },
+  "outside_inventory_targets": {},
   "primitive_families": [
     {
       "id": "atomic-file-mutation",
@@ -829,12 +829,12 @@
       ],
       "call_paths": {
         "provision.bootstrap-admin-key": {
-          "inventory_ids": [],
+          "inventory_ids": [
+            "SSH-002"
+          ],
           "effect_ids": [],
           "observation_ids": [],
-          "outside_inventory_ids": [
-            "SSH-002"
-          ]
+          "outside_inventory_ids": []
         },
         "provision.harden-ssh": {
           "inventory_ids": [

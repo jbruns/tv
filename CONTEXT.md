@@ -13,8 +13,12 @@ A CoreELEC/Kodi installation managed by this repository.
 _Avoid_: Target, host, node
 
 **Manageable Device**:
-A Device that has completed unavoidable local bootstrap and is network-reachable with administrator SSH access.
+A Device that has completed unavoidable local bootstrap and is network-reachable over SSH.
 _Avoid_: First-boot Device, prepared host
+
+**First Contact**:
+The one Run that reaches a Manageable Device using the credentials its first-boot wizard left, establishes the administrator key, and proves key-only access. A Device needs it once.
+_Avoid_: Bootstrap, onboarding, enrolment
 
 **Profile**:
 A versioned declaration of desired state for a class of Devices sharing relevant platform and deployment characteristics.

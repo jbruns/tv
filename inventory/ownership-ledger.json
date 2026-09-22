@@ -1656,7 +1656,7 @@
       "state_address": "Provisioning-wide Kodi stop/start",
       "role": "effect",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -2937,16 +2937,19 @@
     {
       "id": "SSH-002",
       "state_address": "/storage/.ssh/authorized_keys: administrator key line",
-      "role": "unmanaged-inventory-fact",
-      "current_owner_or_executor": "operator",
+      "role": "resource",
+      "current_owner_or_executor": "shell",
       "shell_write_set": {
-        "status": "not-applicable",
-        "items": []
+        "status": "audited",
+        "items": [
+          "/storage/.ssh/authorized_keys#administrator-key-line"
+        ]
       },
       "permitted_effects": {
-        "status": "not-applicable",
+        "status": "audited",
         "items": []
-      }
+      },
+      "reconciler_status": "none"
     },
     {
       "id": "SSH-003",
