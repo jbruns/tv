@@ -117,12 +117,16 @@ a mechanism rather than waiting their turn:
   settled that, and the cohort stayed deferred for a second reason that
   outlived the first: these eight addresses configure the channel Kodi is
   talked to *through*. The shell's own JSON-RPC runs over authenticated HTTP
-  on `KODI_WEB_PORT`, Home Assistant's Kodi lifecycle package waits on that
-  same endpoint, and `services.esenabled` gates the Skinvariables buildviews
-  probe. Managing the port, the credentials and the enable flags before the
-  Reconciler has decided whether it depends on that channel would configure
-  the channel from a Run that may be about to need it, so the cohort waits
-  until that decision is made.
+  on `KODI_WEB_PORT` and Home Assistant's Kodi lifecycle package waits on that
+  same endpoint. Managing the port, the credentials and the enable flags
+  before the Reconciler has decided whether it depends on that channel would
+  configure the channel from a Run that may be about to need it, so the cohort
+  waits until that decision is made — which is now the add-on artifact slice's
+  to make. `services.esenabled` once belonged in this list too, because it
+  gated the Skinvariables buildviews probe;
+  [ADR 0015](0015-trigger-the-view-rebuild-the-way-the-skin-does.md) removed
+  that dependency and the flag is deferred only for the reason the other seven
+  are.
 - `CORE-028`, `CORE-029`, `ROOM-001`, and `ROOM-011` are blocked on Intent
   resolution. Audio device, passthrough device, screen resolution, and channel
   count cannot be known without observing a live Device's capabilities, so

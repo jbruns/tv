@@ -135,6 +135,10 @@ _Avoid_: Download, payload
 A Kodi-defined saved query whose typed rules, ordering, and result limit select media for playback or navigation.
 _Avoid_: Widget, static playlist
 
+**Shortcut Node**:
+An entry in a skin's menu or widget list naming what to open: a Smart Playlist, a window, or a built-in command. Shortcut Nodes nest.
+_Avoid_: Widget, menu item, tile
+
 **Pilot Phase**:
 The period in which exactly one disposable Device is managed, ending when a factory-fresh Device can be provisioned from a Profile alone.
 _Avoid_: Beta, rollout
