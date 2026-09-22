@@ -1108,11 +1108,25 @@ The scenarios are:
 
     ug systemctl stop kodi
     ug "printf 'TIMEZONE=Europe/Berlin\n' > $cache"
-    ug "sed -i 's|<setting id=\"locale.timezone\">[^<]*</setting>|<setting id=\"locale.timezone\">Asia/Tokyo</setting>|' $gui"
+    ug "sed -i 's|<setting id=\"locale.timezone\"[^>]*>[^<]*</setting>|<setting id=\"locale.timezone\">Asia/Tokyo</setting>|' $gui"
+    # Confirm the injection actually took before trusting the Run.
+    ug "grep -o '<setting id=\"locale.timezone\"[^>]*>[^<]*' $gui; cat $cache"
     ug systemctl start kodi && sleep 20
 
     uv run coreelec-reconciler apply --room theater
     ```
+
+    The `[^>]*` matters and the confirmation is not ceremony. Kodi writes
+    `default="true"` on any setting still holding Kodi's own default, and
+    `America/Los_Angeles` **is** Kodi's default here, so the address on a
+    converged Device reads
+    `<setting id="locale.timezone" default="true">America/Los_Angeles</setting>`.
+    A pattern that assumed a bare `>` matches nothing, `sed` exits `0`, and
+    the scenario quietly becomes a one-address test that still passes — the
+    cache drifts, the Run repairs it, and the half this scenario exists to
+    prove never runs. No other scenario has this problem: the add-on
+    addresses in scenario 6 are declared to values Kodi has no default for,
+    so they carry no attribute.
 
     Expect the `apply` to name **both** addresses, to stop and start
     `tz-data.service`, to print `/var/run/localtime names America/Los_Angeles`,
