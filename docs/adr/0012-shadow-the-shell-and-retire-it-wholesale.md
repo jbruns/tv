@@ -104,33 +104,25 @@ repository-owned `run-infrastructure` rows, and `external` or
 `unmanaged-inventory-fact` rows do not get it. The field is additive and no
 reader changes behaviour, so `schema_version` is not bumped.
 
-## The twelve deferred addresses
+## The four deferred addresses
 
-Twelve addresses are `deferred` rather than `none`, because they are blocked on
+Four addresses are `deferred` rather than `none`, because they are blocked on
 a mechanism rather than waiting their turn:
 
-- `CORE-020`–`CORE-027` are blocked on the decision of how the Reconciler
-  speaks to a running Kodi. They are the Kodi remote-control service cohort —
-  EventServer and the web server — and they were first deferred on a secrets
-  mechanism, because they contain `services.webserverpassword`, which no
-  Profile may carry in plaintext. [ADR 0014](0014-desired-state-names-a-value-it-may-not-hold.md)
-  settled that, and the cohort stayed deferred for a second reason that
-  outlived the first: these eight addresses configure the channel Kodi is
-  talked to *through*. The shell's own JSON-RPC runs over authenticated HTTP
-  on `KODI_WEB_PORT` and Home Assistant's Kodi lifecycle package waits on that
-  same endpoint. Managing the port, the credentials and the enable flags
-  before the Reconciler has decided whether it depends on that channel would
-  configure the channel from a Run that may be about to need it, so the cohort
-  waits until that decision is made — which is now the add-on artifact slice's
-  to make. `services.esenabled` once belonged in this list too, because it
-  gated the Skinvariables buildviews probe;
-  [ADR 0015](0015-trigger-the-view-rebuild-the-way-the-skin-does.md) removed
-  that dependency and the flag is deferred only for the reason the other seven
-  are.
 - `CORE-028`, `CORE-029`, `ROOM-001`, and `ROOM-011` are blocked on Intent
   resolution. Audio device, passthrough device, screen resolution, and channel
   count cannot be known without observing a live Device's capabilities, so
   they are Intents to resolve rather than literals to declare.
+
+`CORE-020`–`CORE-027`, the Kodi remote-control service cohort, were the other
+eight. They were deferred on whether the Reconciler depends on the channel
+they configure.
+[ADR 0018](0018-enable-add-ons-in-kodis-database-while-kodi-is-stopped.md)
+settled that it does not, so they are ordinary `none` rows awaiting their turn.
+They still carry `services.webserverpassword`, which
+[ADR 0014](0014-desired-state-names-a-value-it-may-not-hold.md) already
+handles, and they still have to be configured because Home Assistant's
+lifecycle package waits on that endpoint.
 
 ## The retired addresses
 

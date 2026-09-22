@@ -139,6 +139,14 @@ _Realised by_: Recovery Baseline. The Reconciler has no Component selector.
 Versioned content referenced by a Profile and installed or used while reconciling a Resource.
 _Avoid_: Download, payload
 
+**Artifact Lock**:
+The record of which Artifact version a Profile installs, and of the exact bytes that version is: enough for anyone, or anything, to fetch it again and know it is unchanged.
+_Avoid_: Pin list, manifest, catalogue
+
+**Artifact Patch**:
+A targeted correction a Profile applies to an Artifact it does not publish, carrying its own assertion of the Artifact version it was written against.
+_Avoid_: Fix, override, transform
+
 **Smart Playlist**:
 A Kodi-defined saved query whose typed rules, ordering, and result limit select media for playback or navigation.
 _Avoid_: Widget, static playlist

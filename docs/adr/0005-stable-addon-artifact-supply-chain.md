@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0017
 ---
 
 # Use a stable-first reviewed add-on Artifact supply chain
@@ -11,3 +11,5 @@ The accepted issue #47 refinement is recorded in
 It preserves this stable-first decision while making expiry mandatory,
 separating origin from distribution, defining repository-owned mirroring,
 and fixing proposal, dependency, attestation, and workflow contracts.
+
+Superseded by [ADR 0017](0017-pin-add-on-artifacts-and-patch-the-broken-ones.md). None of the machinery above was built, and the Recovery Baseline contradicts the no-runtime-transforms clause four times over.
