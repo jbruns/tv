@@ -68,7 +68,6 @@ class DocumentChange:
     desired: str
     mode: str = "0644"
     effect: str | None = None
-    rebuild: str | None = None
 
     def report(self) -> Iterator[str]:
         yield f"{self.action} {self.address}"
@@ -346,7 +345,11 @@ def _apply(
         # is a file write while Kodi is stopped; the restart below is what
         # fires it (ADR 0015).
         for artifact in sorted(
-            {change.rebuild for change in changes if change.rebuild is not None}
+            {
+                change.rebuild
+                for change in changes
+                if isinstance(change, SettingChange) and change.rebuild is not None
+            }
         ):
             print(f"arming {artifact}", file=out)
             device.write(artifact, VIEW_REBUILD_STUB)

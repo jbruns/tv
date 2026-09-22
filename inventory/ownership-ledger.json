@@ -1174,7 +1174,7 @@
     },
     {
       "id": "CORE-006",
-      "state_address": "/storage/.cache/timezone (TIMEZONE=…)",
+      "state_address": "/storage/.cache/timezone (TIMEZONE=\u2026)",
       "role": "resource",
       "current_owner_or_executor": "shell",
       "reconciler_status": "none",

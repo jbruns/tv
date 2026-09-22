@@ -7,7 +7,7 @@ the key, so a typo can never be read as a silent default.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -354,6 +354,11 @@ def _shortcut(source: Path, playlists: dict[str, SmartPlaylist], raw: Any) -> Sh
         optional=("playlist", "path", "label", "icon", "target", "submenu", "widgets"),
     )
     guid = _text(source, "a shortcut guid", mapping["guid"])
+    # The add-on invents a random guid for an item that states none, and an
+    # empty string is stated none. A document carrying one differs on every
+    # Run and plans a Change forever.
+    if not guid:
+        raise ConfigError(f"{source}: a shortcut guid must not be empty")
     # Where the shortcut goes is stated either as a Smart Playlist the Profile
     # already declares or as a literal path — a builtin, or a playlist some
     # other add-on supplies. The reference arm is what makes a shortcut
@@ -425,14 +430,23 @@ def _shortcut_node(
     if not isinstance(declared, list) or not declared:
         raise ConfigError(f"{source}: {document} declares no shortcuts")
     shortcuts = _shortcuts(source, playlists, declared)
+    # The add-on finds an item by walking the whole tree for its guid, so a
+    # guid repeated at any depth is one shortcut shadowing another.
     seen: set[str] = set()
-    for shortcut in shortcuts:
+    for shortcut in _walk(shortcuts):
         if shortcut.guid in seen:
             raise ConfigError(
                 f"{source}: {document} declares the shortcut {shortcut.guid} twice"
             )
         seen.add(shortcut.guid)
     return ShortcutNode(document=document, shortcuts=shortcuts)
+
+
+def _walk(shortcuts: Iterable[Shortcut]) -> Iterator[Shortcut]:
+    for shortcut in shortcuts:
+        yield shortcut
+        yield from _walk(shortcut.submenu)
+        yield from _walk(shortcut.widgets)
 
 
 def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
@@ -674,10 +688,10 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
     declared = playlists["playlists"]
     if not isinstance(declared, list) or not declared:
         raise ConfigError(f"{profile_file}: smart_playlists declares no playlists")
-    rendered = tuple(
+    parsed = tuple(
         _playlist(profile_file, directory, kodi_directory, raw) for raw in declared
     )
-    by_file = {Path(playlist.path).name: playlist for playlist in rendered}
+    by_file = {Path(playlist.path).name: playlist for playlist in parsed}
 
     kodi = _documents(
         profile_file, named, "settings_documents", profile["settings_documents"]
@@ -703,7 +717,7 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
                 _text(profile_file, "transport identity", transport["identity"])
             ).expanduser(),
         ),
-        playlists=rendered,
+        playlists=parsed,
         documents=_merge(((profile_file, kodi), (room_file, room_documents))),
         shortcut_nodes=tuple(
             _shortcut_node(profile_file, by_file, entry) for entry in nodes

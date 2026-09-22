@@ -13,10 +13,10 @@ thing to it, and the Recovery Baseline writes neither.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from .config import Shortcut, ShortcutNode
+from .kodi_settings import render_json
 
 
 def _item(shortcut: Shortcut) -> dict[str, Any]:
@@ -35,7 +35,6 @@ def _item(shortcut: Shortcut) -> dict[str, Any]:
 
 
 def render(node: ShortcutNode) -> str:
-    """Sorted, four-space JSON: the add-on's convention and the shell's."""
+    """The node document, in the add-on's own JSON shape."""
 
-    body = [_item(shortcut) for shortcut in node.shortcuts]
-    return json.dumps(body, ensure_ascii=False, indent=4, sort_keys=True) + "\n"
+    return render_json([_item(shortcut) for shortcut in node.shortcuts])

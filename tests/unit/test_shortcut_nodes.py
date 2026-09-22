@@ -223,6 +223,46 @@ def test_one_guid_declared_twice_is_refused(
     assert "coreelec-home-new-shows" in capsys.readouterr().err
 
 
+def test_a_guid_repeated_inside_a_submenu_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The add-on finds an item by walking the tree, so depth does not hide one."""
+
+    declare(
+        device,
+        NEW_SHOWS
+        + "        submenu:\n"
+        + "          - guid: coreelec-home-new-shows\n"
+        + "            playlist: NewShows.xsp\n"
+        + "            target: videos\n",
+    )
+
+    assert reconcile("apply", "--room", "theater") == 1
+
+    assert "coreelec-home-new-shows" in capsys.readouterr().err
+    assert device.effects == []
+
+
+def test_an_empty_guid_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An item stating no guid gets a random one, which never converges."""
+
+    declare(
+        device,
+        '      - guid: ""\n        playlist: NewShows.xsp\n        target: videos\n',
+    )
+
+    assert reconcile("apply", "--room", "theater") == 1
+
+    assert "guid must not be empty" in capsys.readouterr().err
+    assert device.effects == []
+
+
 def test_a_shortcut_nests_shortcuts_of_the_same_kind(
     device: FakeDevice,
     reconcile: Callable[..., int],

@@ -163,10 +163,13 @@ kind — the type is recursive because upstream's is — and are written only wh
 they hold something: the add-on creates either key lazily, so absent and empty
 are one thing to it.
 
-Every `guid` is declared and none is generated. The add-on invents
-`guid-{random}` for an item carrying none, which would differ on every Run and
-plan a Change forever. The existing ids do not derive cleanly from anything,
-so they are stated as the Recovery Baseline writes them.
+Every `guid` is declared, none is generated, and none is empty. The add-on
+invents `guid-{random}` for an item carrying none, which would differ on every
+Run and plan a Change forever. The existing ids do not derive cleanly from
+anything, so they are stated as the Recovery Baseline writes them. A guid
+repeated anywhere in one node file — including inside a `submenu` or
+`widgets` — is an error, because the add-on finds an item by walking the whole
+tree for its guid.
 
 **The directory is never enumerated.** The Device holds six node files and
 four of them are ours; `skinvariables-shortcut-homesubmenu.json` and
@@ -221,7 +224,9 @@ and it names a string: a path landing on a nested object, a list or a number
 is refused naming the address, because overwriting it would discard whatever
 the add-on put there. An address the document does not hold reads as unset,
 the same as everywhere else. Clearing one removes the key, JSON having no
-empty node and `null` being a value rather than the lack of one.
+empty node and `null` being a value rather than the lack of one — and when the
+branch it sits under is absent, nothing is written, since building the branch
+to remove nothing from it would add keys the document did not have.
 
 Which dialect an add-on uses is a property of its settings definition, not of
 its data. `weather.ha`'s definition has no version attribute, so Kodi loads

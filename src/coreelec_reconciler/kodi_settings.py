@@ -178,20 +178,46 @@ def _rewrite_json(document: str | None, settings: Mapping[str, str | None]) -> s
     tree = _tree(document)
     for setting, value in settings.items():
         *branches, leaf = setting.split(".")
-        holder = tree
-        for step in branches:
-            below = holder.get(step)
-            if not isinstance(below, dict):
-                below = {}
-                holder[step] = below
-            holder = below
+        holder = _holder(tree, branches, build=value is not None)
+        if holder is None:
+            continue
         if value is None:
             holder.pop(leaf, None)
         else:
             holder[leaf] = value
-    # Sorted, four-space JSON: the add-on's own convention, and the bytes the
-    # Recovery Baseline writes.
-    return json.dumps(tree, ensure_ascii=False, indent=4, sort_keys=True) + "\n"
+    return render_json(tree)
+
+
+def _holder(
+    tree: dict[str, Any], branches: list[str], build: bool
+) -> dict[str, Any] | None:
+    """The object a dotted address's leaf sits in, or None when it is absent.
+
+    A Cleared Address whose branch is absent is already clear, so the branch
+    is built only for a value being set: building it to pop nothing from it
+    would add keys the document did not have.
+    """
+
+    holder = tree
+    for step in branches:
+        below = holder.get(step)
+        if not isinstance(below, dict):
+            if not build:
+                return None
+            below = {}
+            holder[step] = below
+        holder = below
+    return holder
+
+
+def render_json(body: Any) -> str:
+    """Sorted, four-space JSON: what `script.skinvariables` writes itself.
+
+    The Recovery Baseline writes the same bytes, so the two engines agree on
+    every document this add-on reads.
+    """
+
+    return json.dumps(body, ensure_ascii=False, indent=4, sort_keys=True) + "\n"
 
 
 def validate(document: str | None, dialect: str) -> None:

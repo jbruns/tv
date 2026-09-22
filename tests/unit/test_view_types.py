@@ -233,6 +233,38 @@ def test_clearing_a_json_address_removes_the_key(
     assert held(device)["library"] == {"movies": "52"}
 
 
+def test_clearing_an_absent_branch_adds_nothing(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A Cleared Address whose branch is absent is already clear.
+
+    Building the branch to pop nothing out of it would write keys the
+    document did not have, which is the one thing the dialect promises not
+    to do.
+    """
+
+    device.viewtypes.parent.mkdir(parents=True)
+    device.viewtypes.write_text('{"tvshows": {"seasons": "500"}}', encoding="utf-8")
+    device.write_profile(
+        device.profile_body(
+            extra=(
+                f"  - document: {device.viewtypes}\n"
+                "    dialect: json\n"
+                "    settings:\n"
+                "      - setting: library.seasons\n        unset: true\n"
+                "      - setting: tvshows.seasons\n        value: '509'\n"
+            )
+        )
+    )
+
+    assert reconcile("apply", "--room", "theater") == 0
+    capsys.readouterr()
+
+    assert held(device) == {"tvshows": {"seasons": "509"}}
+
+
 def test_a_change_arms_the_stub_and_the_restart_fires_the_rebuild(
     device: FakeDevice,
     reconcile: Callable[..., int],
