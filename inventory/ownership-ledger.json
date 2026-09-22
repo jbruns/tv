@@ -4,12 +4,12 @@
   "accepted_totals": {
     "rows": 169,
     "roles": {
-      "resource": 128,
+      "resource": 129,
       "guard": 5,
       "effect": 5,
       "guided-action": 6,
       "run-infrastructure": 4,
-      "unmanaged-inventory-fact": 21
+      "unmanaged-inventory-fact": 20
     },
     "dispositions": {
       "migrate": 153,
@@ -1690,7 +1690,7 @@
       "state_address": "sshd.service restart",
       "role": "effect",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -1953,7 +1953,7 @@
       "state_address": "/storage/.ssh/authorized_keys marked homeassistant-ugoos-kodi-lifecycle entry",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2949,14 +2949,14 @@
         "status": "audited",
         "items": []
       },
-      "reconciler_status": "none"
+      "reconciler_status": "accepted"
     },
     {
       "id": "SSH-003",
       "state_address": "/storage/.cache/services/sshd.conf with password authentication disabled",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2976,7 +2976,7 @@
       "state_address": "SSH host key acceptance / known-hosts state",
       "role": "guard",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": []

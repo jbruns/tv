@@ -3,6 +3,13 @@
 The transport shells out to the system `ssh` client and reuses the existing
 key-only administrator setup. Remote commands are `sh` scripts whose embedded
 paths are quoted, so a path is data rather than shell syntax.
+
+There is a second arm, used by First Contact alone: the same client with
+public-key authentication turned off, so the operator is prompted for the
+Device's password on the terminal. It is not a fallback. An ordinary Run
+stays key-only and strict about host keys, because in steady state password
+authentication is disabled and a key failure that fell back would turn into
+three prompts against a daemon that refuses all of them (ADR 0016).
 """
 
 from __future__ import annotations
@@ -16,6 +23,17 @@ from .config import Transport
 CONNECT_TIMEOUT = 10
 COMMAND_TIMEOUT = 60
 
+# First Contact may take as long as the operator takes to type the password.
+FIRST_CONTACT_TIMEOUT = 300
+
+# The status `ssh` itself exits with when the connection fails, as opposed to
+# any status the remote program could have chosen.
+TRANSPORT_FAILURE = 255
+
+# The status the First Contact program exits with when the Device does not
+# answer to the name the Room Overlay gives it.
+WRONG_DEVICE = 3
+
 
 class DeviceError(Exception):
     """A Device that could not be reached, read, or written."""
@@ -26,22 +44,33 @@ class Device:
     hostname: str
     transport: Transport
 
-    def _run(
-        self, script: str, stdin: str | None = None
-    ) -> subprocess.CompletedProcess[str]:
-        argv = [
+    def _argv(self, script: str, *options: str) -> list[str]:
+        return [
             "ssh",
             "-o",
-            "BatchMode=yes",
-            "-o",
             f"ConnectTimeout={CONNECT_TIMEOUT}",
-            "-i",
-            str(self.transport.identity),
             "-p",
             str(self.transport.port),
+            *options,
             f"{self.transport.user}@{self.hostname}",
             script,
         ]
+
+    def _run(
+        self, script: str, stdin: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        argv = self._argv(
+            script,
+            "-o",
+            "BatchMode=yes",
+            # A changed host key on an ordinary Run means the Device was
+            # reimaged or something is wrong, and refusing is the right
+            # answer. Trust on first use belongs to First Contact alone.
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-i",
+            str(self.transport.identity),
+        )
         try:
             return subprocess.run(
                 argv,
@@ -63,10 +92,15 @@ class Device:
     def _checked(self, what: str, script: str, stdin: str | None = None) -> str:
         result = self._run(script, stdin)
         if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip().splitlines()
-            reason = detail[-1] if detail else f"ssh exited {result.returncode}"
-            raise DeviceError(f"{what} on {self.hostname} failed: {reason}")
+            raise DeviceError(
+                f"{what} on {self.hostname} failed: {self._reason(result)}"
+            )
         return result.stdout
+
+    @staticmethod
+    def _reason(result: subprocess.CompletedProcess[str]) -> str:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        return detail[-1] if detail else f"ssh exited {result.returncode}"
 
     def observed_hostname(self) -> str:
         """The name the Device calls itself, used to confirm its identity."""
@@ -146,3 +180,118 @@ class Device:
 
     def start_service(self, unit: str) -> None:
         self._checked(f"starting {unit}", f"systemctl start {shlex.quote(unit)}")
+
+    def restart_service_expecting_loss(self, unit: str) -> None:
+        """Restarts a unit whose restart takes this connection with it.
+
+        A restart that worked kills the connection before `systemctl` can
+        report anything, so the transport's own failure status is the
+        expected outcome and is not read; the caller reconnects and asks the
+        Device instead. A status that is not the transport's is `systemctl`
+        answering, which is a real failure and is reported here rather than
+        left to look like a Device that never came back.
+        """
+
+        completed = self._run(f"systemctl restart {shlex.quote(unit)}")
+        if completed.returncode not in (0, TRANSPORT_FAILURE):
+            raise DeviceError(
+                f"restarting {unit} on {self.hostname} failed: "
+                f"{self._reason(completed)}"
+            )
+
+    def service_is_active(self, unit: str) -> bool:
+        """Whether the unit is running, over a connection made just now."""
+
+        return (
+            self._run(f"systemctl is-active --quiet {shlex.quote(unit)}").returncode
+            == 0
+        )
+
+    def install_administrator_key(self, path: str, entry: str) -> None:
+        """First Contact: puts the administrator key on a Device with no key.
+
+        This is the one program that runs over the password session, before
+        any key exists, so it gets a single attempt on a Device the operator
+        is standing in front of. It appends rather than declaring the
+        document whole: the ordinary Run that follows owns every byte of the
+        file, and this one has no business removing a key while the only
+        thing proving it reached the right Device is the password it was
+        just given.
+
+        `ssh` prompts on the terminal, so neither stream is captured. The
+        program rides on stdin — an argv word is joined by the client and
+        re-parsed by the Device's login shell, which would lose its quoting
+        in transit.
+
+        The identity Guard every ordinary Run opens with is the first thing
+        the program does, for the same reason and before the same line: a
+        wrong Device must be refused before it is written to.
+        """
+
+        directory, _, _ = path.rpartition("/")
+        blob = entry.split()[1]
+        quoted = shlex.quote(path)
+        expected = shlex.quote(self.hostname.casefold())
+        script = (
+            "set -eu\n"
+            "umask 077\n"
+            f"observed=$(hostname | tr '[:upper:]' '[:lower:]')\n"
+            f'if [ "$observed" != {expected} ]; then\n'
+            f'  echo "{self.hostname} answers to the hostname $observed:'
+            f' refusing to reach a Device that is not {self.hostname}" >&2\n'
+            "  exit 3\n"
+            "fi\n"
+            f"mkdir -p {shlex.quote(directory)}\n"
+            f"chmod 700 {shlex.quote(directory)}\n"
+            f"touch {quoted}\n"
+            f"chmod 600 {quoted}\n"
+            # Matching on the blob is what makes a retry idempotent: the
+            # comment may differ between attempts, the key material may not.
+            f"if ! grep -Fq {shlex.quote(blob)} {quoted}; then\n"
+            f"  printf '%s\\n' {shlex.quote(entry)} >> {quoted}\n"
+            "fi\n"
+            # The install only counts if the Device can find the key it is
+            # about to be asked to authenticate with.
+            f"grep -Fq {shlex.quote(blob)} {quoted}\n"
+        )
+        argv = self._argv(
+            "sh -s",
+            "-o",
+            "PubkeyAuthentication=no",
+            "-o",
+            "PreferredAuthentications=keyboard-interactive,password",
+            "-o",
+            "NumberOfPasswordPrompts=3",
+            # Trust on first use is correct for the connection that is first
+            # use, and belongs to this entry point alone.
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+        )
+        try:
+            completed = subprocess.run(
+                argv,
+                input=script,
+                text=True,
+                timeout=FIRST_CONTACT_TIMEOUT,
+                check=False,
+            )
+        except FileNotFoundError as error:
+            raise DeviceError(
+                f"the ssh client is not installed, so {self.hostname} cannot be reached"
+            ) from error
+        except subprocess.TimeoutExpired as error:
+            raise DeviceError(
+                f"ssh to {self.hostname} timed out after {FIRST_CONTACT_TIMEOUT}s"
+            ) from error
+        if completed.returncode == WRONG_DEVICE:
+            raise DeviceError(
+                f"{self.hostname} answers to the hostname named just above: "
+                "refusing to install the administrator key on a Device that "
+                f"is not {self.hostname}"
+            )
+        if completed.returncode != 0:
+            raise DeviceError(
+                f"the administrator key could not be installed on "
+                f"{self.hostname}. Confirm SSH is enabled on the Device and "
+                "that the password is the one its first-boot wizard set"
+            )

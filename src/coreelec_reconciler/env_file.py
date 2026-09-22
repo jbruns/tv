@@ -105,10 +105,24 @@ def serialise(value: str) -> str:
     The shell provisioner writes these values bare, so anything the bare
     grammar accepts is written bare and the two engines produce the same
     bytes.
+
+    A value holding a single quote is double-quoted instead, which is what
+    `SSH_ARGS` needs: CoreELEC's own value for it is
+    `-o 'PasswordAuthentication no'`, and the quotes are the point — `sshd`
+    is started as `/usr/sbin/sshd -D $SSH_ARGS`, so the option and its
+    argument have to survive the shell's word splitting as two words rather
+    than three. Double quotes are only safe where the shell would expand
+    nothing inside them, so a value holding both a single quote and an
+    expanding character cannot be written at all.
     """
 
     if BARE.fullmatch(value) is not None:
         return value
-    if "'" in value:
-        raise EnvError("a value holding a single quote cannot be written")
-    return f"'{value}'"
+    if "'" not in value:
+        return f"'{value}'"
+    if any(character in value for character in EXPANDS) or '"' in value:
+        raise EnvError(
+            "a value holding a single quote and a character the shell would "
+            "expand cannot be written"
+        )
+    return f'"{value}"'

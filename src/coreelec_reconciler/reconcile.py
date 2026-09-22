@@ -20,7 +20,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import TextIO
 
-from . import kodi_settings, shortcut
+from . import authorized_keys, kodi_settings, shortcut
 from .config import DesiredState, KodiSetting, Platform, SettingsDocument
 from .device import Device, DeviceError
 from .playlist import render
@@ -52,6 +52,23 @@ ZONEINFO = "/usr/share/zoneinfo"
 # passes, and the Device keeps yesterday's zone with nothing to notice.
 KODI_SERVICE = "kodi.service"
 SERVICE_EFFECTS = {TIMEZONE_CACHE: TZ_DATA_SERVICE}
+
+# `sshd.conf` is CoreELEC's own document, read by `sshd.service` as an
+# `EnvironmentFile`. Its Effect is not the stop-and-start above: a stop would
+# take the connection issuing it and leave nothing able to start it again.
+# `sshd` is `ExecStart=/usr/sbin/sshd -D $SSH_ARGS`, so the new option only
+# takes at start; `ExecReload` sends SIGHUP and the daemon re-execs from its
+# original argv, so a reload would not pick it up; and the daemon is not
+# socket-activated, so our session is a child in the unit's cgroup. A restart
+# is therefore both necessary and fatal to the connection that asks for it,
+# and the Run reconnects afterwards (ADR 0016).
+SSHD_CONF = "/storage/.cache/services/sshd.conf"
+SSHD_SERVICE = "sshd.service"
+RESTART_EFFECTS = {SSHD_CONF: SSHD_SERVICE}
+
+# How long the Run waits for the daemon it just restarted to answer again.
+RECONNECT_ATTEMPTS = 20
+RECONNECT_DELAY = 1.0
 
 # The skin's own rebuild trigger. `script.skinvariables` compiles a view-types
 # document into an XML include inside the skin, and `Includes_Fallbacks.xml`
@@ -94,9 +111,17 @@ class DocumentChange:
     desired: str
     mode: str = "0644"
     effect: str | None = None
+    summary: tuple[str, ...] = ()
 
     def report(self) -> Iterator[str]:
         yield f"{self.action} {self.address}"
+        # A document whose content nobody reads is reported by name instead.
+        # `authorized_keys` is the one: sixty-eight characters of base64 per
+        # entry says nothing, and the entries it gains and loses say
+        # everything.
+        if self.summary:
+            yield from self.summary
+            return
         for line in difflib.unified_diff(
             (self.observed or "").splitlines(keepends=True),
             self.desired.splitlines(keepends=True),
@@ -114,6 +139,10 @@ class SettingChange:
     `effect` is the unit the Change disturbs: `kodi.service` for a document
     Kodi rewrites from memory on exit, and whatever unit reads a `shell_vars`
     document for one of those.
+
+    `restart` is the unit a Change restarts *after* the writes rather than
+    stopping around them, because stopping it would take the connection the
+    Run is made of.
     """
 
     document: str
@@ -123,6 +152,7 @@ class SettingChange:
     desired: str | None
     effect: str | None = None
     rebuild: str | None = None
+    restart: str | None = None
 
     @property
     def address(self) -> str:
@@ -317,8 +347,35 @@ def _rendered(
     )
 
 
+def _entries(document: str | None) -> str:
+    """The entries a rendering of `authorized_keys` holds, named by comment."""
+
+    return ", ".join(authorized_keys.summarise(document)) or "none"
+
+
 def _plan(device: Device, desired: DesiredState) -> list[Change]:
     changes: list[Change] = []
+
+    # Who may log in is planned first, so a Run that also hardens the daemon
+    # has put the keys in place before the daemon is restarted.
+    keys = desired.authorized_keys
+    rendered = authorized_keys.render(keys)
+    observed = device.read(keys.document)
+    if observed != rendered:
+        changes.append(
+            DocumentChange(
+                address=keys.document,
+                action="create" if observed is None else "update",
+                observed=observed,
+                desired=rendered,
+                mode=keys.mode,
+                summary=(
+                    f"observed entries: {_entries(observed)}",
+                    f"desired entries: {_entries(rendered)}",
+                ),
+            )
+        )
+
     for playlist in desired.playlists:
         change = _rendered(device, playlist.path, render(playlist))
         if change is not None:
@@ -357,6 +414,7 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
                     desired=setting.value,
                     effect=_effect(declared),
                     rebuild=declared.compiles_to,
+                    restart=RESTART_EFFECTS.get(declared.document),
                 )
             )
     return changes
@@ -442,6 +500,45 @@ def _verify_timezone(device: Device, changes: list[Change], out: TextIO) -> None
         print(f"{LOCALTIME} names {zone}", file=out)
 
 
+def _restart_transport(device: Device, unit: str, document: str, out: TextIO) -> None:
+    """Restarts the daemon carrying this connection, and comes back.
+
+    The restart drops the connection that issues it, so its exit status says
+    nothing and is not read. What the Run reads is the connection after it:
+    the daemon answering again, under the option it was restarted for, is the
+    whole verification. `authorized_keys` is checked with it because an empty
+    one is the other way a Device becomes unreachable, and after this restart
+    there is no password left to fall back on.
+
+    A failure here is fatal and has no revert: a revert would have to travel
+    over the connection that just died. A Device that cannot be reached after
+    its own `sshd` restarted is evidence of something wrong with the Device,
+    the storage media, or the way it was imaged, and that diagnosis is forced
+    rather than softened (ADR 0016).
+    """
+
+    print(f"restarting {unit}", file=out)
+    device.restart_service_expecting_loss(unit)
+    for attempt in range(RECONNECT_ATTEMPTS):
+        if attempt:
+            time.sleep(RECONNECT_DELAY)
+        if not device.service_is_active(unit):
+            continue
+        if device.read(document):
+            print(f"{unit} is active and {document} is not empty", file=out)
+            return
+        raise DeviceError(
+            f"{document} on {device.hostname} is empty after {unit} restarted, "
+            f"so no key can log in. Use the local console: {SSHD_CONF} now "
+            "refuses password authentication"
+        )
+    raise DeviceError(
+        f"{device.hostname} did not answer within "
+        f"{int(RECONNECT_ATTEMPTS * RECONNECT_DELAY)}s of {unit} restarting. "
+        f"Use the local console to inspect {SSHD_CONF}"
+    )
+
+
 def _apply(
     device: Device, desired: DesiredState, changes: list[Change], out: TextIO
 ) -> None:
@@ -505,6 +602,14 @@ def _apply(
                 print(f"error: {error}", file=out)
 
     if failure is None:
+        for unit in sorted(
+            {
+                change.restart
+                for change in changes
+                if isinstance(change, SettingChange) and change.restart is not None
+            }
+        ):
+            _restart_transport(device, unit, desired.authorized_keys.document, out)
         if TZ_DATA_SERVICE in units:
             _verify_timezone(device, changes, out)
         for artifact in armed:
@@ -512,6 +617,48 @@ def _apply(
 
     if failure is not None:
         raise failure
+
+
+def bootstrap(desired: DesiredState, *, out: TextIO) -> None:
+    """First Contact: reach a Device that has no key yet, and leave one.
+
+    Three steps, in this order and no other: install the administrator key
+    over a password session, prove key-only authentication in a *new*
+    connection, and only then report success. The install refuses a Device
+    that does not answer to the name the Room Overlay gives it before it
+    writes anything, which is the same Guard every ordinary Run opens with,
+    asked over the only connection there is at that point. The proof is that
+    Guard again, over the key.
+
+    Nothing else is done here. Hardening the daemon, declaring who else may
+    log in, and everything a Profile says are the ordinary Run's, and this
+    entry point is finished the moment the key works.
+    """
+
+    device = Device(hostname=desired.hostname, transport=desired.transport)
+    keys = desired.authorized_keys
+    administrator = keys.entries[0]
+    print(
+        f"first contact {desired.hostname} (room {desired.room}, "
+        f"profile {desired.profile})",
+        file=out,
+    )
+    print(
+        f"installing {administrator.comment or 'the administrator key'} "
+        f"in {keys.document}; ssh will ask for the Device's root password",
+        file=out,
+    )
+    device.install_administrator_key(
+        keys.document, authorized_keys.administrator_entry(administrator)
+    )
+    print("installed the administrator key", file=out)
+    _guard_identity(device, desired.hostname)
+    _guard_platform(device, desired.platform)
+    print(
+        f"{desired.hostname} answers to a key-only connection: "
+        "run apply to converge it",
+        file=out,
+    )
 
 
 def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:

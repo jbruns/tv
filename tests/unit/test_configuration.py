@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import ROOM, FakeDevice
+from .conftest import ADMINISTRATOR_KEY, LIFECYCLE_KEY, ROOM, FakeDevice
 
 
 def test_an_unknown_room_is_named(
@@ -94,10 +94,12 @@ def test_the_shipped_configuration_is_readable(
 ) -> None:
     """The committed config/ tree must parse without a Device.
 
-    It must parse without the fleet's secrets too. The shipped Profile names
-    six values in `.env`, and CI has none of them, so the file this Run reads
-    is a stand-in holding exactly the keys the Profile names. Which six those
-    are is asserted in `test_settings_documents.py`.
+    It must parse without the fleet's secrets too, and without its
+    administrator key. The shipped Profile names seven values in `.env`, and
+    CI has none of them, so the file this Run reads is a stand-in holding
+    exactly the keys the Profile names; the administrator identity is a
+    stand-in for the same reason. Which six of those keys are Settings
+    Document addresses is asserted in `test_settings_documents.py`.
     """
     from coreelec_reconciler import main
 
@@ -114,9 +116,16 @@ def test_the_shipped_configuration_is_readable(
                 "MDBLIST_API_KEY",
                 "OMDB_API_KEY",
             )
-        ),
+        )
+        + f"COREELEC_LIFECYCLE_PUBLIC_KEY='{LIFECYCLE_KEY}'\n",
         encoding="utf-8",
     )
+    # The Profile names the administrator identity under `~`, and the
+    # administrator entry is derived from its public half.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    public = tmp_path / ".ssh" / "coreelec_admin_ed25519.pub"
+    public.parent.mkdir(parents=True)
+    public.write_text(ADMINISTRATOR_KEY, encoding="utf-8")
     monkeypatch.setenv("PATH", "/nonexistent-for-this-test")
 
     assert (

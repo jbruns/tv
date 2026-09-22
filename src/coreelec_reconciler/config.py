@@ -7,6 +7,7 @@ the key, so a typo can never be read as a silent default.
 from __future__ import annotations
 
 import datetime
+import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -23,6 +24,23 @@ class ConfigError(Exception):
 
 # What a Settings Document is written with unless it declares otherwise.
 DOCUMENT_MODE = "0600"
+
+# What `authorized_keys` is written with. Not declarable: `sshd` refuses a
+# file any other user can write, so there is one correct answer and a Profile
+# stating it could only ever state it wrongly.
+AUTHORIZED_KEYS_MODE = "0600"
+
+# One OpenSSH public key line: a key type, a base64 blob, and an optional
+# comment carrying no control characters. This is the shell's grammar
+# (`lib/coreelec-ssh.sh`), enforced here for the same reason — the line is
+# embedded in a program a Device runs, and a validated line can hold no
+# newline and no here-document delimiter.
+PUBLIC_KEY = re.compile(
+    r"(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)"
+    r"|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)"
+    r" ([A-Za-z0-9+/]+={0,3})"
+    r"(?: ([^\x00-\x1f\x7f]*))?"
+)
 
 
 # A setting a human declares positively that Kodi stores negatively, or as an
@@ -185,12 +203,58 @@ class ShortcutNode:
 
 
 @dataclass(frozen=True)
+class AuthorizedKey:
+    """One entry in `authorized_keys`: a key, and what it may do.
+
+    `key_type` and `blob` are the key itself. The comment the key file
+    carried is discarded and `comment` is what reaches the Device, so an
+    entry is found by a stable name rather than by whoever generated the key.
+
+    `forced_command` is the only program the key may ever run. An entry
+    carrying one is written `restrict,command="..."`, which on OpenSSH 7.2
+    and later already implies no agent forwarding, no port forwarding, no
+    pty, no user rc and no X11 forwarding. The administrator entry carries
+    none and may do anything.
+
+    `named_by` is the `.env` key the public key was read from, when Desired
+    State named it rather than holding it.
+    """
+
+    comment: str
+    key_type: str
+    blob: str
+    forced_command: str | None = None
+    named_by: str | None = None
+
+
+@dataclass(frozen=True)
+class AuthorizedKeys:
+    """Who may log in to the Device, declared whole.
+
+    The Reconciler owns every byte of this document, so an entry nobody
+    declared is removed rather than tolerated. Appending if absent — what the
+    shell does — can only ever grow the file, which means a revoked key is
+    never actually revoked.
+
+    `entries` begins with the administrator entry, which is derived from the
+    public half of the identity the Run authenticates with and is never
+    declared: a Profile that can name an administrator key can name the wrong
+    one and lock the Reconciler out of its own Device.
+    """
+
+    document: str
+    entries: tuple[AuthorizedKey, ...]
+    mode: str = AUTHORIZED_KEYS_MODE
+
+
+@dataclass(frozen=True)
 class DesiredState:
     room: str
     hostname: str
     profile: str
     platform: Platform
     transport: Transport
+    authorized_keys: AuthorizedKeys
     playlists: tuple[SmartPlaylist, ...]
     documents: tuple[SettingsDocument, ...]
     shortcut_nodes: tuple[ShortcutNode, ...] = ()
@@ -661,6 +725,141 @@ def _constants(source: Path, raw: Any) -> dict[str, str]:
     }
 
 
+def _public_key(where: str, text: str) -> tuple[str, str, str]:
+    """One public key line, as its type, blob and comment.
+
+    `where` is what carried the line — a file, or the `.env` key naming it.
+    Nothing here puts the line into an error message: a public key is not a
+    secret, but a named value is never printed, and one rule is easier to
+    trust than an exception to it.
+    """
+
+    lines = [line.strip() for line in text.splitlines()]
+    held = [line for line in lines if line]
+    if len(held) != 1:
+        raise ConfigError(
+            f"{where} holds {len(held)} public key lines, and a public key is "
+            "exactly one line"
+        )
+    matched = PUBLIC_KEY.fullmatch(held[0])
+    if matched is None:
+        raise ConfigError(f"{where} does not hold a well-formed OpenSSH public key")
+    return matched.group(1), matched.group(2), matched.group(3) or ""
+
+
+def _administrator_key(identity: Path) -> AuthorizedKey:
+    """The entry for the identity the Run authenticates with.
+
+    This is derived rather than declared, so the one key that must never be
+    absent from the document cannot be got wrong by a Profile. The comment
+    is the key file's own, which is what the shell installs, so a Device the
+    shell last wrote and a Device this wrote hold the same line.
+    """
+
+    public = identity.with_name(f"{identity.name}.pub")
+    try:
+        text = public.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ConfigError(
+            f"the administrator public key {public} cannot be read: "
+            f"{error.strerror or error}. It is the half of the transport "
+            "identity that goes on the Device, and every Run declares it"
+        ) from error
+    key_type, blob, comment = _public_key(str(public), text)
+    return AuthorizedKey(comment=comment, key_type=key_type, blob=blob)
+
+
+def _authorized_key(source: Path, named: NamedValues, raw: Any) -> AuthorizedKey:
+    mapping = _fields(
+        source,
+        "an authorized key",
+        _mapping(source, "an authorized key", raw),
+        required=("comment", "from_env", "forced_command"),
+    )
+    comment = _text(source, "an authorized key comment", mapping["comment"])
+    # The comment is how an entry is found and read, by a human and by the
+    # shell's own installer, which replaces the line carrying this marker.
+    # A comment holding whitespace would split into two words, and the second
+    # would not be part of the comment at all.
+    if not comment or comment.split() != [comment]:
+        raise ConfigError(
+            f"{source}: an authorized key comment is one word carrying no "
+            f"whitespace: {comment!r}"
+        )
+    command = _text(
+        source, f"the forced_command of {comment}", mapping["forced_command"]
+    )
+    if not command.startswith("/"):
+        raise ConfigError(
+            f"{source}: the forced_command of {comment} must be absolute: {command}"
+        )
+    # A forced command is written inside a double-quoted `command="..."`
+    # option, and OpenSSH reads a backslash there as an escape. A path
+    # holding either character would not be the path the entry names.
+    if '"' in command or "\\" in command:
+        raise ConfigError(
+            f"{source}: the forced_command of {comment} must hold neither a "
+            f"double quote nor a backslash: {command}"
+        )
+    key = _text(source, f"the from_env of {comment}", mapping["from_env"])
+    key_type, blob, _ = _public_key(
+        f"{source}, which names {key}", named.value(source, key)
+    )
+    return AuthorizedKey(
+        comment=comment,
+        key_type=key_type,
+        blob=blob,
+        forced_command=command,
+        named_by=key,
+    )
+
+
+def _authorized_keys(
+    source: Path, named: NamedValues, identity: Path, raw: Any
+) -> AuthorizedKeys:
+    """Who may log in, with the administrator entry first and always.
+
+    Every entry beside it carries a forced command. A second unrestricted
+    key is not something the fleet has ever wanted, and the arm to declare
+    one would be the arm that quietly grants a Device to anybody a Profile
+    names.
+    """
+
+    mapping = _fields(
+        source,
+        "authorized_keys",
+        _mapping(source, "authorized_keys", raw),
+        required=("document", "entries"),
+    )
+    document = _text(source, "the authorized_keys document", mapping["document"])
+    if not document.startswith("/"):
+        raise ConfigError(
+            f"{source}: the authorized_keys document must be absolute: {document}"
+        )
+    declared = mapping["entries"]
+    if not isinstance(declared, list):
+        raise ConfigError(
+            f"{source}: authorized_keys entries must be a list, and an empty "
+            "list when the administrator is the only key that may log in"
+        )
+    entries = (
+        _administrator_key(identity),
+        *(_authorized_key(source, named, entry) for entry in declared),
+    )
+    seen: dict[str, str] = {}
+    for entry in entries:
+        if entry.blob in seen:
+            raise ConfigError(
+                f"{source}: {document} declares one key twice, as "
+                f"{seen[entry.blob] or 'the administrator'} and as {entry.comment}"
+            )
+        seen[entry.blob] = entry.comment
+    comments = [entry.comment for entry in entries if entry.comment]
+    if len(set(comments)) != len(comments):
+        raise ConfigError(f"{source}: {document} declares one comment twice")
+    return AuthorizedKeys(document=document, entries=entries)
+
+
 def _merge(
     sides: tuple[tuple[Path, tuple[SettingsDocument, ...]], ...],
 ) -> tuple[SettingsDocument, ...]:
@@ -744,6 +943,7 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
             "platform",
             "constants",
             "transport",
+            "authorized_keys",
             "smart_playlists",
             "settings_documents",
             "shortcut_nodes",
@@ -766,6 +966,16 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         _mapping(profile_file, "transport", profile["transport"]),
         required=("user", "port", "identity"),
     )
+    identity = Path(
+        _text(profile_file, "transport identity", transport["identity"])
+    ).expanduser()
+    # Read before any Device contact, like every other declaration: the
+    # administrator entry is derived from this identity, so a missing public
+    # half is an error before a Run has written anything.
+    authorized = _authorized_keys(
+        profile_file, named, identity, profile["authorized_keys"]
+    )
+
     playlists = _fields(
         profile_file,
         "smart_playlists",
@@ -813,10 +1023,9 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         transport=Transport(
             user=_text(profile_file, "transport user", transport["user"]),
             port=_integer(profile_file, "transport port", transport["port"]),
-            identity=Path(
-                _text(profile_file, "transport identity", transport["identity"])
-            ).expanduser(),
+            identity=identity,
         ),
+        authorized_keys=authorized,
         playlists=parsed,
         documents=_merge(((profile_file, kodi), (room_file, room_documents))),
         shortcut_nodes=tuple(
