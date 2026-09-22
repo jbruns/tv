@@ -76,10 +76,15 @@ class KodiSetting:
     The two differ only where a transform stands between them, or where the
     file names the value rather than holding it, in which case `named_by` is
     the `.env` key it was read from and `declared` is that key.
+
+    A `value` of None is a Cleared Address: the Device must resolve no value
+    at all. It is not the empty string, which Kodi cannot store — an empty
+    node reads back as no value — and which would therefore plan a Change on
+    every Run and fail its own Verification forever.
     """
 
     setting: str
-    value: str
+    value: str | None
     declared: str
     transform: str | None = None
     named_by: str | None = None
@@ -285,16 +290,18 @@ def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
         "a Kodi setting",
         _mapping(source, "a Kodi setting", raw),
         required=("setting",),
-        optional=("value", "from_env", "transform"),
+        optional=("value", "from_env", "unset", "transform"),
     )
     setting = _text(source, "a Kodi setting id", mapping["setting"])
-    holds = "value" in mapping
-    names = "from_env" in mapping
-    if holds == names:
+    # The three arms are mutually exclusive and one is mandatory. A setting
+    # stating none of them is the shape a truncated line produces, and one
+    # stating two says two different things about the same address.
+    stated = [arm for arm in ("value", "from_env", "unset") if arm in mapping]
+    if len(stated) != 1:
         raise ConfigError(
-            f"{source}: {setting} states exactly one of value and from_env"
+            f"{source}: {setting} states exactly one of value, from_env and unset"
         )
-    if names:
+    if stated == ["from_env"]:
         if "transform" in mapping:
             raise ConfigError(
                 f"{source}: {setting} names its value in .env, and a named "
@@ -307,6 +314,20 @@ def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
             declared=key,
             named_by=key,
         )
+    if stated == ["unset"]:
+        # Only `true`. `unset: false` would be a setting saying nothing about
+        # its own value, and a Profile that meant to hold one says `value`.
+        if mapping["unset"] is not True:
+            raise ConfigError(
+                f"{source}: the unset of {setting} states true, and a setting "
+                "that holds a value states value"
+            )
+        if "transform" in mapping:
+            raise ConfigError(
+                f"{source}: {setting} is cleared, and a cleared setting takes "
+                "no transform"
+            )
+        return KodiSetting(setting=setting, value=None, declared="unset")
     declared = _text(source, "a Kodi setting value", mapping["value"])
     transform = (
         _text(source, "a Kodi setting transform", mapping["transform"])

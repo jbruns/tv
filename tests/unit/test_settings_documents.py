@@ -21,9 +21,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
-from .conftest import ROOM_HEADER, FakeDevice, document_block
+from .conftest import (
+    ROOM_HEADER,
+    FakeDevice,
+    attribute_values,
+    document_block,
+    shipped_profile,
+    text_values,
+    write_document,
+)
 
 WEATHER_SETTINGS = """\
       - setting: ha_sun_entity_id
@@ -63,23 +70,6 @@ TMDB_ON_DEVICE = """\
 """
 
 
-def text_values(document: Path) -> dict[str, str | None]:
-    """Every setting a text-dialect document holds, as id to element text."""
-    root = ElementTree.parse(document).getroot()
-    return {node.get("id") or "": node.text for node in root.findall("setting")}
-
-
-def attribute_values(document: Path) -> dict[str, str | None]:
-    """Every setting an `addon_v1` document holds, as id to value attribute."""
-    root = ElementTree.parse(document).getroot()
-    return {node.get("id") or "": node.get("value") for node in root.findall("setting")}
-
-
-def write(document: Path, body: str) -> None:
-    document.parent.mkdir(parents=True, exist_ok=True)
-    document.write_text(body, encoding="utf-8")
-
-
 def with_addons(device: FakeDevice) -> str:
     """The Profile, declaring guisettings.xml and both add-on documents."""
     return device.profile_body(
@@ -114,7 +104,7 @@ def test_the_addon_v1_value_is_written_as_an_attribute(
     reconcile: Callable[..., int],
 ) -> None:
     device.write_profile(with_addons(device))
-    write(device.weather, WEATHER_ON_DEVICE)
+    write_document(device.weather, WEATHER_ON_DEVICE)
 
     assert reconcile("apply", "--room", "theater") == 0
 
@@ -133,7 +123,7 @@ def test_the_addon_v2_value_is_written_as_element_text(
     reconcile: Callable[..., int],
 ) -> None:
     device.write_profile(with_addons(device))
-    write(device.nextpvr, NEXTPVR_ON_DEVICE)
+    write_document(device.nextpvr, NEXTPVR_ON_DEVICE)
 
     assert reconcile("apply", "--room", "theater") == 0
 
@@ -152,8 +142,8 @@ def test_every_document_converges_under_one_kodi_stop(
     """The stop belongs to the Resource Type, not to a document (ADR 0013),
     and the Run takes it once however many documents it writes."""
     device.write_profile(with_addons(device))
-    write(device.weather, WEATHER_ON_DEVICE)
-    write(device.nextpvr, NEXTPVR_ON_DEVICE)
+    write_document(device.weather, WEATHER_ON_DEVICE)
+    write_document(device.nextpvr, NEXTPVR_ON_DEVICE)
 
     assert reconcile("apply", "--room", "theater") == 0
 
@@ -171,8 +161,8 @@ def test_the_plan_names_the_document_of_every_change(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     device.write_profile(with_addons(device))
-    write(device.weather, WEATHER_ON_DEVICE)
-    write(device.nextpvr, NEXTPVR_ON_DEVICE)
+    write_document(device.weather, WEATHER_ON_DEVICE)
+    write_document(device.nextpvr, NEXTPVR_ON_DEVICE)
 
     assert reconcile("plan", "--room", "theater") == 0
 
@@ -200,7 +190,7 @@ def test_a_document_read_in_the_wrong_dialect_is_an_error_not_an_empty_parse(
             extra=document_block(device.weather, "addon_v2", WEATHER_SETTINGS)
         )
     )
-    write(device.weather, WEATHER_ON_DEVICE)
+    write_document(device.weather, WEATHER_ON_DEVICE)
 
     assert reconcile("apply", "--room", "theater") == 1
 
@@ -221,7 +211,7 @@ def test_the_other_way_round_is_an_error_too(
             extra=document_block(device.nextpvr, "addon_v1", NEXTPVR_SETTINGS)
         )
     )
-    write(device.nextpvr, NEXTPVR_ON_DEVICE)
+    write_document(device.nextpvr, NEXTPVR_ON_DEVICE)
 
     assert reconcile("apply", "--room", "theater") == 1
 
@@ -256,12 +246,12 @@ def test_every_document_is_re_read_after_the_stop(
     """An add-on document can look converged while Kodi runs and be reverted
     by Kodi's own exit write, exactly as guisettings.xml can."""
     device.write_profile(with_addons(device))
-    write(
+    write_document(
         device.weather,
         '<settings>\n    <setting id="ha_sun_entity_id" value="sun.sun" />\n'
         "</settings>\n",
     )
-    write(device.nextpvr, NEXTPVR_ON_DEVICE)
+    write_document(device.nextpvr, NEXTPVR_ON_DEVICE)
     memory = tmp_path / "kodi-memory.xml"
     memory.write_text(
         '<settings>\n    <setting id="ha_sun_entity_id" value="sun.wrong" />\n'
@@ -415,22 +405,17 @@ OMDB_API_KEY='an-omdb-key'
 
 
 def shipped_addon_documents() -> dict[str, dict[str, Any]]:
-    """The add-on Settings Documents the committed Profile declares."""
-    profile = (
-        Path(__file__).resolve().parents[2]
-        / "config"
-        / "shared"
-        / "ugoos-am6b-plus"
-        / "coreelec-21.3"
-        / "profile.yaml"
-    )
-    documents = yaml.safe_load(profile.read_text(encoding="utf-8"))[
-        "settings_documents"
-    ]
+    """The three `SVC` add-on Settings Documents the committed Profile declares.
+
+    Arctic Fuse's document is an add-on document too, and is covered in
+    `test_cleared_addresses.py` because half of it is cleared rather than set.
+    """
+    documents = shipped_profile()["settings_documents"]
+    wanted = (WEATHER_PATH, NEXTPVR_PATH, TMDB_PATH)
     return {
         document["document"]: document
         for document in documents
-        if document["dialect"] != "guisettings"
+        if document["document"] in wanted
     }
 
 
@@ -531,7 +516,7 @@ def test_no_declared_addon_setting_plans_as_a_create(
     documents = shipped_addon_documents()
     device.write_env(SHIPPED_ENV)
     device.write_profile(device.profile_body(extra=profile_extra(device, documents)))
-    write(
+    write_document(
         device.weather,
         "<settings>\n"
         + "".join(
@@ -540,7 +525,7 @@ def test_no_declared_addon_setting_plans_as_a_create(
         )
         + "</settings>\n",
     )
-    write(
+    write_document(
         device.nextpvr,
         '<settings version="2">\n'
         + "".join(
@@ -549,7 +534,7 @@ def test_no_declared_addon_setting_plans_as_a_create(
         )
         + "</settings>\n",
     )
-    write(
+    write_document(
         device.tmdb,
         '<settings version="2">\n'
         + "".join(
@@ -583,9 +568,9 @@ def test_the_shipped_addon_settings_converge_and_then_plan_clean(
     documents = shipped_addon_documents()
     device.write_env(SHIPPED_ENV)
     device.write_profile(device.profile_body(extra=profile_extra(device, documents)))
-    write(device.weather, WEATHER_ON_DEVICE)
-    write(device.nextpvr, NEXTPVR_ON_DEVICE)
-    write(device.tmdb, TMDB_ON_DEVICE)
+    write_document(device.weather, WEATHER_ON_DEVICE)
+    write_document(device.nextpvr, NEXTPVR_ON_DEVICE)
+    write_document(device.tmdb, TMDB_ON_DEVICE)
 
     assert reconcile("apply", "--room", "theater") == 0
 

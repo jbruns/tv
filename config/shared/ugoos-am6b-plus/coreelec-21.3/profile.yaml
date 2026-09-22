@@ -165,10 +165,11 @@ smart_playlists:
 # (ADR 0012). Adding a setting is an entry here and no code change; the two
 # Device checks that go with it are in docs/operations/reconcile-theater.md.
 #
-# A setting states `value` or `from_env`, never both. `from_env` names a key
-# in the shared .env file, which is where a value this committed file may not
-# carry lives (ADR 0014). The value is read before any Device contact and is
-# never printed.
+# A setting states exactly one of `value`, `from_env` and `unset`. `from_env`
+# names a key in the shared .env file, which is where a value this committed
+# file may not carry lives (ADR 0014); the value is read before any Device
+# contact and is never printed. `unset: true` is a Cleared Address: the Device
+# must resolve no value at all from it.
 #
 # Applying any of these restarts Kodi, because Kodi rewrites a Settings
 # Document from memory when it exits and would otherwise discard the write.
@@ -281,3 +282,143 @@ settings_documents:
         from_env: MDBLIST_API_KEY
       - setting: omdb_apikey
         from_env: OMDB_API_KEY
+
+  # Arctic Fuse 3's home screen. This is the first document in which half the
+  # cohort is *cleared* rather than set: the hubs the appliance does not use
+  # own their fields and must resolve nothing from them, because a stale value
+  # from an earlier profile still aims a tile somewhere.
+  #
+  # A cleared setting states `unset: true`. It is not `value: ""` — Kodi
+  # cannot hold an empty string, an empty node reads back as no value, and a
+  # Profile comparing "" against that would plan a Change on every Run
+  # forever.
+  #
+  # The shell removes a node it clears and the Reconciler blanks it. Both
+  # leave the Device resolving no value, so the two engines do not revert each
+  # other. See docs/operations/reconcile-theater.md, "Clearing an address".
+  #
+  # `HomeSwitcher.1107.Toggle` and `optionstiles.03.include` are written by
+  # the shell only when NextPVR and weather are configured. Both always are on
+  # this fleet — weather.ha's own addresses are declared above — so both are
+  # plain literals and no conditionality enters the schema.
+  - document: /storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
+    dialect: addon_v2
+    settings:
+      # The TV Shows hub. The skin builds `ActivateWindow(target, path,
+      # return)` only when the target is set; with an empty target it runs the
+      # path as a bare builtin, so the hub owns both.
+      - setting: HomeSwitcher.1101.Name
+        value: TV Shows
+      - setting: HomeSwitcher.1101.Toggle
+        value: "true"
+      - setting: HomeSwitcher.1101.Icon
+        value: special://skin/extras/icons/tv.png
+      - setting: HomeSwitcher.1101.Mode
+        value: Standard
+      - setting: HomeSwitcher.1101.Spotlight.Label
+        value: Random TV Shows
+      - setting: HomeSwitcher.1101.Spotlight.Path
+        value: special://skin/extras/playlists/RandomTvShows.xsp
+      - setting: HomeSwitcher.1101.Spotlight.Target
+        value: videos
+      - setting: HomeSwitcher.1101.Shortcut.Path
+        value: videodb://tvshows/titles/
+      - setting: HomeSwitcher.1101.Shortcut.Target
+        value: videos
+
+      # The Movies hub: the same nine fields, movie values.
+      - setting: HomeSwitcher.1102.Name
+        value: Movies
+      - setting: HomeSwitcher.1102.Toggle
+        value: "true"
+      - setting: HomeSwitcher.1102.Icon
+        value: special://skin/extras/icons/film.png
+      - setting: HomeSwitcher.1102.Mode
+        value: Standard
+      - setting: HomeSwitcher.1102.Spotlight.Label
+        value: Random Movies
+      - setting: HomeSwitcher.1102.Spotlight.Path
+        value: special://skin/extras/playlists/RandomMovies.xsp
+      - setting: HomeSwitcher.1102.Spotlight.Target
+        value: videos
+      - setting: HomeSwitcher.1102.Shortcut.Path
+        value: videodb://movies/titles/
+      - setting: HomeSwitcher.1102.Shortcut.Target
+        value: videos
+
+      # The Plex hub. Its shortcut is a bare builtin, so it owns no target,
+      # and it has no spotlight: all four are cleared rather than left alone,
+      # because a value in any of them aims the hub elsewhere.
+      - setting: HomeSwitcher.1103.Name
+        value: Plex
+      - setting: HomeSwitcher.1103.Toggle
+        value: "true"
+      - setting: HomeSwitcher.1103.Icon
+        value: special://home/addons/script.plexmod/icon2.png
+      - setting: HomeSwitcher.1103.Shortcut.Path
+        value: RunAddon(script.plexmod)
+      - setting: HomeSwitcher.1103.Shortcut.Target
+        unset: true
+      - setting: HomeSwitcher.1103.Spotlight.Label
+        unset: true
+      - setting: HomeSwitcher.1103.Spotlight.Path
+        unset: true
+      - setting: HomeSwitcher.1103.Spotlight.Target
+        unset: true
+
+      # The 1104 hub is disabled: the six fields that decide whether it
+      # renders and where it would go are cleared. It is a Cleared Address
+      # cohort and not a Managed Absence — the hub stays gone because it
+      # resolves nothing, not because anything is deleted.
+      #
+      # `Name`, `Mode` and `Icon` are deliberately *not* declared. Arctic Fuse
+      # writes them itself on every skin load — the theater Ugoos holds
+      # `Custom` and `Standard` for the first two — so declaring them would
+      # give two engines that revert each other on every Kodi restart and
+      # never converge. They are inert while `Toggle` is empty, so they are
+      # Unmanaged State and the skin keeps them. This is the line
+      # provision-coreelec.sh's own verifier already draws (:3316-3327).
+      - setting: HomeSwitcher.1104.Toggle
+        unset: true
+      - setting: HomeSwitcher.1104.Shortcut.Path
+        unset: true
+      - setting: HomeSwitcher.1104.Shortcut.Target
+        unset: true
+      - setting: HomeSwitcher.1104.Spotlight.Label
+        unset: true
+      - setting: HomeSwitcher.1104.Spotlight.Path
+        unset: true
+      - setting: HomeSwitcher.1104.Spotlight.Target
+        unset: true
+
+      # The PVR hub, on, with none of its four sections disabled.
+      - setting: HomeSwitcher.1107.Toggle
+        value: "true"
+      - setting: Hub.1107.DisableSearch
+        unset: true
+      - setting: Hub.1107.DisableChannels
+        unset: true
+      - setting: Hub.1107.DisableGroups
+        unset: true
+      - setting: Hub.1107.DisableRecordings
+        unset: true
+
+      - setting: HomeSwitcher.1108.Toggle
+        value: "true"
+
+      # The option tiles across the top of the home screen.
+      - setting: optionstiles.01.include
+        value: NowPlaying
+      - setting: optionstiles.02.include
+        value: Settings
+      - setting: optionstiles.04.include
+        value: SystemInfo
+
+      # The weather tile owns all three of its fields: a stale path or target
+      # from an earlier profile would still aim the tile somewhere else.
+      - setting: optionstiles.03.include
+        value: Weather
+      - setting: optionstiles.03.path
+        unset: true
+      - setting: optionstiles.03.target
+        unset: true

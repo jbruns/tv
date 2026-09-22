@@ -65,6 +65,11 @@ A State Address whose Desired State is that it does not exist.
 _Avoid_: Deletion, cleanup
 _Realised by_: Recovery Baseline. The Reconciler declares no Managed Absence.
 
+**Cleared Address**:
+A State Address that exists and from which the Device resolves no value.
+_Avoid_: Managed Absence, empty setting, null value
+_Realised by_: Settings Document. Declared `unset`, applied as an empty node.
+
 **Unmanaged State**:
 Device state that no Resource in the resolved Profile owns and that reconciliation therefore preserves or ignores.
 _Avoid_: Drift, absent state

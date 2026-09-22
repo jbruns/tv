@@ -59,7 +59,7 @@ class SettingChange:
     setting: KodiSetting
     action: str
     observed: str | None
-    desired: str
+    desired: str | None
     effect: str | None = KODI_SERVICE
 
     @property
@@ -75,10 +75,11 @@ class SettingChange:
             yield f"{self.action} {self.address}: named by {self.setting.named_by}"
             return
         observed = "(unset)" if self.observed is None else self.observed
+        desired = "(cleared)" if self.desired is None else self.desired
         origin = ""
         if self.setting.transform is not None:
             origin = f" ({self.setting.transform} of {self.setting.declared})"
-        yield f"{self.action} {self.address}: {observed} -> {self.desired}{origin}"
+        yield f"{self.action} {self.address}: {observed} -> {desired}{origin}"
 
 
 Change = PlaylistChange | SettingChange
@@ -143,6 +144,9 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
                 SettingChange(
                     document=declared.document,
                     setting=setting,
+                    # A Cleared Address only reaches here holding a value, so
+                    # it is always an `update`; nothing is ever created to
+                    # hold no value.
                     action="create" if observed is None else "update",
                     observed=observed,
                     desired=setting.value,

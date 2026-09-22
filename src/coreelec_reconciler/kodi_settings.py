@@ -138,6 +138,12 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
 
     A node that carries its value in the other dialect's place reads as unset,
     which is what Kodi does with it.
+
+    An absent node, a self-closing node and a node with no text are one
+    Observation and not three: none of them resolves a value, and Kodi
+    materialises the second and third on its own for any setting its skin
+    merely references. Distinguishing them would report a Change nothing can
+    converge.
     """
 
     root = _root(document, dialect)
@@ -147,8 +153,17 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
     return None
 
 
-def rewrite(document: str | None, dialect: str, settings: Mapping[str, str]) -> str:
-    """`document` with `settings` set, serialised the way the shell writes it."""
+def rewrite(
+    document: str | None, dialect: str, settings: Mapping[str, str | None]
+) -> str:
+    """`document` with `settings` set, serialised the way the shell writes it.
+
+    A value of None is a Cleared Address. Clearing writes an empty node rather
+    than removing one — the Device resolves no value from either, and the two
+    engines therefore do not revert each other over the difference — but an
+    address the document does not hold is already clear, so nothing is created
+    for it.
+    """
 
     root = _root(document, dialect)
     for setting, value in settings.items():
@@ -159,11 +174,16 @@ def rewrite(document: str | None, dialect: str, settings: Mapping[str, str]) -> 
                 continue
             parent.remove(candidate)
         if node is None:
+            if value is None:
+                continue
             node = ElementTree.SubElement(root, "setting")
         node.set("id", setting)
         # A node marked `default` is one Kodi feels free to overwrite.
         node.attrib.pop("default", None)
-        if dialect in _TEXT_DIALECTS:
+        if value is None:
+            node.attrib.pop("value", None)
+            node.text = None
+        elif dialect in _TEXT_DIALECTS:
             node.attrib.pop("value", None)
             node.text = value
         else:
