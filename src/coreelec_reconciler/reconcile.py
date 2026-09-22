@@ -13,8 +13,9 @@ back even when a Change failed partway: never leave the television dead.
 from __future__ import annotations
 
 import difflib
+import fnmatch
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TextIO
 
 from . import kodi_settings
@@ -94,6 +95,34 @@ def _guard_identity(device: Device, expected: str) -> None:
             f"{expected} answers to the hostname {observed}: refusing to "
             f"reconcile a Device that is not {expected}"
         )
+
+
+def _locate(device: Device, declared: SettingsDocument) -> SettingsDocument:
+    """`declared` with its path resolved, when the Profile states a pattern.
+
+    Exactly one match, or an error naming the glob and everything it found.
+    Zero is as much a mistake as several: a changed television or HDMI path
+    leaves the old peripheral document beside the new one, and picking either
+    would write a power policy for hardware that is not there. The symptom —
+    the television stops answering its own remote — is diagnosed nowhere near
+    a Run, so the Run refuses instead.
+    """
+
+    if not declared.is_glob:
+        return declared
+    directory, _, pattern = declared.document.rpartition("/")
+    matched = [
+        name
+        for name in device.list_directory(directory)
+        if fnmatch.fnmatchcase(name, pattern)
+    ]
+    if len(matched) != 1:
+        found = ", ".join(matched) if matched else "nothing"
+        raise DeviceError(
+            f"{declared.document} on {device.hostname} names exactly one "
+            f"document, and it matched {found}"
+        )
+    return replace(declared, document=f"{directory}/{matched[0]}", is_glob=False)
 
 
 def _read_settings_document(device: Device, declared: SettingsDocument) -> str | None:
@@ -240,6 +269,13 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
         file=out,
     )
     _guard_identity(device, desired.hostname)
+
+    # A document the Profile names by pattern is resolved once, before any
+    # Change is planned and so before anything is written.
+    desired = replace(
+        desired,
+        documents=tuple(_locate(device, declared) for declared in desired.documents),
+    )
 
     changes = _plan(device, desired)
     for change in changes:

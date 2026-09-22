@@ -419,3 +419,44 @@ settings_documents:
         unset: true
       - setting: optionstiles.03.target
         unset: true
+
+  # The HDMI-CEC power policy. The Device keeps CEC *navigation* — the Sony's
+  # remote drives Kodi — while the two boxes' power states stay decoupled, so
+  # turning the television off does not suspend the Ugoos and waking the Ugoos
+  # does not command the television.
+  #
+  # Kodi names a peripheral's document after the hardware's own identity, so
+  # the Profile cannot know the filename: a `cec_` bus prefix Kodi controls
+  # and an adapter name the adapter reports. `document_glob` states the
+  # pattern instead, and a Run resolves it against the Device and refuses
+  # unless exactly one document matches. The bus prefix is deliberately
+  # narrower than the shell's `*CEC*.xml`, which matches on the adapter's name
+  # and so finds nothing for an adapter that calls itself anything else
+  # (ADR 0012).
+  #
+  # Kodi rebuilds this document from memory when it exits, the same as every
+  # other Settings Document here, so applying any of these takes the Kodi stop.
+  - document_glob: /storage/.kodi/userdata/peripheral_data/cec_*.xml
+    dialect: addon_v1
+    settings:
+      # What Kodi does when the television says it is going to standby:
+      # nothing. `ignore` is Kodi's localisation ID 36028, and that is the
+      # whole domain of the transform — the shell has the same rule as a
+      # check, and here it is the schema.
+      - setting: standby_pc_on_tv_standby
+        value: ignore
+        transform: cec_tv_off_action
+      # Kodi does not make itself the active source on startup, so a boot does
+      # not grab the television away from whatever is playing on it.
+      - setting: activate_source
+        value: "0"
+      # Which devices Kodi wakes and puts to standby with itself. Kodi stores
+      # the selection as an opaque code; `231` is what the shell writes and
+      # what the Device holds, and it is declared as the literal the Recovery
+      # Baseline produces rather than as anything this file claims to decode.
+      - setting: wake_devices
+        value: "231"
+      - setting: standby_devices
+        value: "231"
+      - setting: standby_tv_on_pc_standby
+        value: "0"

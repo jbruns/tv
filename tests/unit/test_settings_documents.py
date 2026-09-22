@@ -415,7 +415,7 @@ def shipped_addon_documents() -> dict[str, dict[str, Any]]:
     return {
         document["document"]: document
         for document in documents
-        if document["document"] in wanted
+        if document.get("document") in wanted
     }
 
 

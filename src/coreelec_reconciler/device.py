@@ -90,6 +90,23 @@ class Device:
             raise DeviceError(f"{path} on {self.hostname} is not a regular file")
         return content
 
+    def list_directory(self, path: str) -> list[str]:
+        """The names the directory holds, empty when it holds none or is absent.
+
+        The transport stays dumb on purpose: it returns names, and matching a
+        pattern against them happens in Python. A glob handed to the remote
+        `sh` would be the one thing this module does not do — an unmatched
+        shell glob expands to itself, so a pattern matching nothing would
+        arrive as a path that merely does not exist.
+        """
+
+        quoted = shlex.quote(path)
+        listing = self._checked(
+            f"listing {path}",
+            f"if [ -d {quoted} ]; then ls -A {quoted}; fi",
+        )
+        return sorted(name for name in listing.splitlines() if name)
+
     def write(self, path: str, content: str, mode: str = "0644") -> None:
         """Stages the content beside the destination and renames it into place.
 

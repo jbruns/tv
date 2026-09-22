@@ -126,10 +126,15 @@ def indent(block: str) -> str:
     return "".join(f"    {line}\n" if line else "\n" for line in block.splitlines())
 
 
-def document_block(path: Path, dialect: str, settings: str) -> str:
-    """One entry in a `settings_documents` list."""
+def document_block(
+    path: Path | str, dialect: str, settings: str, key: str = "document"
+) -> str:
+    """One entry in a `settings_documents` list.
 
-    return f"  - document: {path}\n    dialect: {dialect}\n    settings:\n{settings}"
+    `key` is `document` for a literal path and `document_glob` for a pattern.
+    """
+
+    return f"  - {key}: {path}\n    dialect: {dialect}\n    settings:\n{settings}"
 
 
 def write_document(document: Path, body: str) -> None:
@@ -219,6 +224,16 @@ class FakeDevice:
     def skin(self) -> Path:
         """Arctic Fuse's document, in the addon_v2 form."""
         return self.userdata / "addon_data" / "skin.arctic.fuse.3" / "settings.xml"
+
+    @property
+    def peripheral_data(self) -> Path:
+        """Where Kodi keeps a peripheral's document, named after the hardware."""
+        return self.userdata / "peripheral_data"
+
+    @property
+    def cec(self) -> Path:
+        """The CEC adapter's document, whose name the Profile cannot state."""
+        return self.peripheral_data / "cec_CEC_Adapter.xml"
 
     @property
     def effects(self) -> list[str]:

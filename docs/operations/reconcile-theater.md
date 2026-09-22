@@ -2,9 +2,10 @@
 
 The Reconciler shadows the shell on two Resource Types on the theater Ugoos:
 the eight Smart Playlists under `special://profile/playlists/video`, and the
-Kodi settings inside four Settings Documents — `guisettings.xml`, the Home
+Kodi settings inside six Settings Documents — `guisettings.xml`, the Home
 Assistant weather add-on's `settings.xml`, the NextPVR client's
-`instance-settings-1.xml`, and TMDb Helper's `settings.xml`. Both engines
+`instance-settings-1.xml`, TMDb Helper's `settings.xml`, Arctic Fuse 3's
+`settings.xml`, and the CEC adapter's `peripheral_data` document. Both engines
 still write them, holding the same values. Everything else on the Device is
 the shell provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
@@ -173,8 +174,8 @@ agree, the Recovery Baseline and Desired State do not diverge, and a shell run
 stays a no-op. Values the shell resolves from `provision.conf` are declared as
 the resolved literal.
 
-The Profile declares seventy-six settings this way and the Reconciler holds no
-list of its own, so the seventy-seventh is an entry here and no code change.
+The Profile declares eighty-one settings this way and the Reconciler holds no
+list of its own, so the eighty-second is an entry here and no code change.
 Two checks belong to declaring one: the Device must not plan it as a `create`,
 and the shell must still agree after it lands. Both are acceptance scenarios 7
 and 8 below.
@@ -187,6 +188,43 @@ the shell provisioner does, so the two agree on what "set" means.
 
 A State Address is the document plus the setting, so the same setting ID in
 two documents is two addresses and not a collision.
+
+### Naming a document the Profile cannot know
+
+Kodi names a peripheral's settings document after the hardware's own
+identity, so the CEC document on the theater Ugoos is `cec_CEC_Adapter.xml`:
+a `cec_` bus prefix Kodi controls, and an adapter name the adapter reports. A
+Profile can state the pattern but not the path.
+
+A Settings Document therefore states **exactly one** of `document` and
+`document_glob`. Stating both, or neither, is an error naming the document,
+raised before the Device is contacted.
+
+```yaml
+- document_glob: /storage/.kodi/userdata/peripheral_data/cec_*.xml
+  dialect: addon_v1
+```
+
+The shape is declared, never sniffed. A `*` inside a `document` is a
+character in a filename and never a wildcard, because a path that quietly
+became a pattern would resolve to a file nobody declared.
+
+A pattern is resolved once per Run, before any Change is planned and so
+before anything is written. The Reconciler asks the Device for the names the
+directory holds and matches them in Python; no glob is ever handed to the
+remote `sh`, where an unmatched pattern expands to itself and arrives as a
+path that merely does not exist.
+
+**Exactly one match.** Zero is as much an error as several, and both name the
+pattern and everything it found. Two CEC documents mean a television or an
+HDMI path changed and the old one was left behind, so writing either is a
+coin toss — and the symptom, a television that stops answering its own
+remote, is diagnosed nowhere near a Run. A Device Kodi has never run on has
+no peripheral document at all and fails here too; that is a bootstrap
+condition and not a CEC quirk.
+
+Everything after resolution is ordinary: `plan` and `apply` name the document
+they resolved to, never the pattern.
 
 ### Clearing an address
 
@@ -339,14 +377,16 @@ later without reshaping anything.
 
 ### Transforms
 
-Two of the nine are not written as declared, because what a human states and
-what Kodi stores are different things:
+A transform stands between what a human declares and what Kodi stores, for a
+setting where the two are different things. Two of the room's nine use one,
+and so does the CEC power policy in the Profile:
 
 | Transform | Declared | Written |
 | --- | --- | --- |
 | `invert` | `true` | `false` |
 | `dolby_vision_mode` | `tv-led` | `0` |
 | `dolby_vision_mode` | `player-led` | `1` |
+| `cec_tv_off_action` | `ignore` | `36028` |
 
 ```yaml
   - setting: coreelec.amlogic.disabledolbyvision
@@ -360,6 +400,14 @@ states the room's fact and the transform carries it to the Device. Each
 transform's domain is closed: a value it cannot read is rejected naming both
 the value and the transform, because passing it through would write something
 Kodi ignores and then verify as converged.
+
+`cec_tv_off_action` is the same idea with a domain of exactly one. `36028` is
+Kodi's localisation ID for the CEC "Ignore" action, and the shell reads it
+from a variable and then rejects every value but that one — a knob with a
+domain of one. Declaring `ignore` makes the shell's check the schema and
+stops `36028` being a meaningless integer in a config file. It is a constant
+and not a secret, so it stays here rather than in `.env`
+([ADR 0014](../adr/0014-desired-state-names-a-value-it-may-not-hold.md)).
 
 `plan` names the value that will reach the Device, and the declaration it came
 from, so the Room Overlay still reads as the source:
@@ -550,6 +598,14 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
+   The `cec` component is the one that covers the CEC power policy, and it is
+   the one that proves `cec_tv_off_action` produces what the shell produces:
+
+   ```console
+   ./provision-coreelec.sh --target ugoos-theater --component cec
+   uv run coreelec-reconciler plan --room theater
+   ```
+
 9. **Usable** — Kodi still starts, every playlist still opens, the weather
    widget still renders on the home screen, NextPVR still lists channels, and
    TMDb Helper still returns ratings. The last four are what the six named
@@ -657,6 +713,61 @@ The scenarios are:
     renders, and the NowPlaying, Settings and SystemInfo tiles are present. A
     junk value the Reconciler cleared but the skin never read would pass every
     command above and show up only here.
+12. **The CEC power policy lands, and the glob refuses a second document** —
+    the two halves of the first Run that resolves a document by pattern. A
+    glob matching one file is indistinguishable from a literal path, so a
+    successful Run alone proves nothing about the capability, and the second
+    half is not optional.
+
+    Kodi must be stopped for the injection and started again before the Run,
+    so the wrong values reach `m_settings`; `CPeripheral::PersistSettings`
+    rebuilds this document from memory when Kodi exits, which is also why the
+    final `plan` comes after a full stop and start and not straight after
+    `apply` ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    dir=/storage/.kodi/userdata/peripheral_data
+    cec=$(ug "ls $dir/cec_*.xml")   # expect exactly one path
+
+    ug systemctl stop kodi
+    ug "sed -i 's/id=\"activate_source\" value=\"[^\"]*\"/id=\"activate_source\" value=\"1\"/;
+                s/id=\"standby_pc_on_tv_standby\" value=\"[^\"]*\"/id=\"standby_pc_on_tv_standby\" value=\"13011\"/' $cec"
+    ug systemctl start kodi && sleep 20
+
+    uv run coreelec-reconciler apply --room theater
+    ug systemctl restart kodi && sleep 20
+    uv run coreelec-reconciler plan --room theater
+    ```
+
+    Expect the `apply` to name the **resolved** path and not the pattern, and
+    `standby_pc_on_tv_standby` as `13011 -> 36028 (cec_tv_off_action of
+    ignore)`. Expect the final `plan` to report `no changes`; drift reported
+    again is Kodi having rebuilt the document from memory over the write.
+
+    Then prove the refusal, and put the Device back:
+
+    ```console
+    ug "cp $cec $dir/cec_Decoy.xml"
+    uv run coreelec-reconciler plan --room theater   # expect exit 1
+    ug "rm $dir/cec_Decoy.xml"
+    uv run coreelec-reconciler plan --room theater   # expect no changes
+    ```
+
+    Expect the refusing `plan` to name the pattern and **both** matches, to
+    mention no Change at all, and to leave the Kodi service alone: resolution
+    happens before anything is planned, so a second document stops the whole
+    Run and not just this cohort.
+
+    Finally, confirm the policy on the hardware, which is the only thing that
+    proves the five values mean what they say. **Someone has to be in the
+    room with the remote for this.** Turn the Sony off and confirm the Ugoos
+    keeps running and Kodi is still up; turn it back on and confirm the Sony's
+    remote still drives Kodi, which is the CEC navigation the policy keeps.
+
+    ```console
+    ug systemctl is-active kodi     # with the Sony off: expect "active"
+    ```
 
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
@@ -683,11 +794,13 @@ by `apply` again.
 `guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
 `CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
 Room Overlay declares (`ROOM-002`-`ROOM-010`), the twelve add-on addresses
-the Profile declares (`SVC-002`-`SVC-013`), and the Arctic Fuse home screen
-(`SKIN-003`-`SKIN-010`) as shell-owned
+the Profile declares (`SVC-002`-`SVC-013`), the Arctic Fuse home screen
+(`SKIN-003`-`SKIN-010`), and the CEC power policy (`CEC-001`-`CEC-005`) as
+shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
-`skin`, `services`, `room` or `baseline` run. `SKIN-027` and `SKIN-028`, the
+`cec`, `skin`, `services`, `room` or `baseline` run. `SKIN-027` and `SKIN-028`,
+the
 two superseded playlists, stay `retired` and are not declared anywhere. That
 is the shadowing model:
 transferring a row freezes
@@ -710,9 +823,16 @@ six named values. Both engines read them from the same `.env`, so the two
 declarations agree there for the same reason they agree everywhere else: there
 is one source.
 
+`CEC-001`-`CEC-005` are the only addresses in a document neither engine names
+literally. The shell finds it with `*CEC*.xml` and the Profile declares
+`cec_*.xml`; both resolve the same file on this Device, so value parity is
+unaffected, and the narrower pattern is the deliberate departure ADR 0012
+records.
+
 The two declarations agree — the Reconciler renders the same Smart Playlist
-document the shell does, declares the same Kodi setting values, and its two
-transforms produce exactly what the shell's inversion and mapping produce — so
+document the shell does, declares the same Kodi setting values, and its three
+transforms produce exactly what the shell's inversion, mapping and CEC check
+produce — so
 a Device restored from the shell baseline converges with no Change. The
 Observation is the file's content, or the setting's value, and nothing else.
 
