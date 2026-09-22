@@ -3,11 +3,11 @@
 The Reconciler shadows the shell on three Resource Types on the theater Ugoos:
 the eight Smart Playlists under `special://profile/playlists/video`, the four
 Arctic Fuse Shortcut Nodes under `script.skinvariables`, and the Kodi settings
-inside seven Settings Documents — `guisettings.xml`, the Home
+inside eight Settings Documents — `guisettings.xml`, the Home
 Assistant weather add-on's `settings.xml`, the NextPVR client's
 `instance-settings-1.xml`, TMDb Helper's `settings.xml`, Arctic Fuse 3's
-`settings.xml`, Arctic Fuse's view types, and the CEC adapter's
-`peripheral_data` document. Both engines
+`settings.xml`, Arctic Fuse's view types, the CEC adapter's
+`peripheral_data` document, and the CoreELEC timezone cache. Both engines
 still write them, holding the same values. Everything else on the Device is
 the shell provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
@@ -23,7 +23,7 @@ value.
 
 | File | Holds |
 | --- | --- |
-| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: SSH transport, the declared Smart Playlists, the declared Shortcut Nodes, and the declared Settings Documents |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, SSH transport, the declared Smart Playlists, the declared Shortcut Nodes, and the declared Settings Documents |
 | `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Settings Documents |
 | `.env` | The values Desired State names but may not carry, shared with the shell |
 
@@ -38,6 +38,89 @@ Device what it calls itself and refuses to continue unless the answer matches
 the Room Overlay exactly, case aside, so a Run aimed at the wrong Device fails
 while planning, before any mutation. Write the hostname the way the Device
 reports it: CoreELEC answers with the short name, not a fully-qualified one.
+
+## The platform Guard
+
+A hostname says which Device answered. It does not say what that Device *is*,
+so a second Guard runs beside it, before anything is planned.
+
+The Profile declares what a Device in it is claimed to be, and nothing about
+how to check it:
+
+```yaml
+platform:
+  id: coreelec
+  version: "21.3"
+  device: Amlogic-ng
+  release_contains: Amlogic-ng.arm-21.3-Omega
+```
+
+Which file holds which key is the Reconciler's business. A Profile that named
+paths and grep patterns would be the only block declaring mechanism, and the
+only one naming a path outside a Resource. The block is required; a Profile
+missing it is an error before any Device contact.
+
+`/etc/os-release` is a defined `KEY=value` document, so the Reconciler
+**parses it and asserts on keys**: `ID`, `VERSION_ID` and `COREELEC_DEVICE`,
+with surrounding quotes stripped. The shell instead concatenates
+`/etc/os-release` and `/etc/release` and greps the blob case-insensitively for
+`coreelec` — which passes on a Device whose `ID` is something else entirely,
+because `coreelec` is also in `HOME_URL` and `BUG_REPORT_URL`. `/etc/release`
+is genuinely one line of free text (`Amlogic-ng.arm-21.3-Omega`), so
+`release_contains` stays a substring match.
+
+A refusal names the key, what the Profile declares and what the Device holds:
+
+```console
+$ uv run coreelec-reconciler plan --room theater
+error: /etc/os-release on ugoos-theater holds VERSION_ID=22.0 and the Profile
+declares 21.3: refusing to reconcile it
+```
+
+Nothing here is derived from the Profile's directory name.
+`ugoos-am6b-plus/coreelec-21.3` is for humans; the Device's own model string
+is `UGOOS AM6`, with no "plus" in it. The device-tree model is not checked at
+all: `PLAT-002` is retired, and
+[ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md) records
+why.
+
+## Profile Constants
+
+A fact more than one State Address records is stated once:
+
+```yaml
+constants:
+  timezone: America/Los_Angeles
+```
+
+and an address takes it with `from_profile`, which is a fourth arm beside
+`value`, `from_env` and `unset`:
+
+```yaml
+  - setting: locale.timezone
+    from_profile: timezone
+```
+
+The timezone is the case that forced it. Kodi's `locale.timezone` and the
+operating system's `/storage/.cache/timezone` are two records of one fact, and
+two declarations are two things free to diverge — with a symptom that is
+quiet, Kodi showing one zone and the shell another.
+
+The block is required; a Profile with nothing to share states an empty
+mapping. A `from_profile` naming a constant the Profile does not declare is an
+error naming both, raised before the Device is contacted.
+
+This is **not** interpolation inside `value`, and `value` is never scanned for
+one. Kodi values routinely carry `$LOCALIZE[...]` and `$INFO[...]`, so sigils
+in a value are normal here and scanning a literal would change the meaning of
+one that legitimately holds `${`.
+
+A Profile Constant is also not a Named Value. A Named Value comes from `.env`,
+reaches no committed file and is never printed
+([ADR 0014](../adr/0014-desired-state-names-a-value-it-may-not-hold.md)); a
+Profile Constant is committed, reviewable and printed by a Run like any other
+value. `from_profile` and `from_env` stay distinct keys for exactly that
+reason.
 
 ## Running
 
@@ -211,6 +294,7 @@ stopped.
 | `addon_v2` | the same, for an add-on | an add-on whose settings definition declares a version, such as `pvr.nextpvr` |
 | `addon_v1` | `<setting id="x" value="y" />` | an add-on whose settings definition carries **no** version attribute, such as `weather.ha` |
 | `json` | `{"library": {"seasons": "509"}}`, addressed by dotted path | an add-on that keeps settings as JSON, such as `script.skinvariables` |
+| `shell_vars` | `TIMEZONE=America/Los_Angeles`, addressed by key | a document the operating system reads, such as `/storage/.cache/timezone` |
 
 `guisettings` and `addon_v2` are the same shape on the wire. They are named
 apart because they are different documents, and what a future Kodi does to
@@ -228,6 +312,25 @@ empty node and `null` being a value rather than the lack of one — and when the
 branch it sits under is absent, nothing is written, since building the branch
 to remove nothing from it would add keys the document did not have.
 
+`shell_vars` is the one dialect that is not Kodi's. It is here because the
+document has exactly the property the name Settings Document describes — many
+addresses in one file, owned one at a time — and because `sshd.conf` is next
+and is the same shape with two keys. The read is the strict `KEY=value`
+grammar `.env` uses, so a line is data and never shell syntax, and a document
+outside it is an error naming the document. The rewrite is line by line:
+every undeclared key keeps its line, its order and whatever comment sits
+beside it. Clearing an address removes the line, because `KEY=` is the empty
+string to a shell that sources the file rather than the absence of a value.
+
+A `shell_vars` document also states its `mode`, because it is not the `0600`
+every Kodi document is written with:
+
+```yaml
+  - document: /storage/.cache/timezone
+    dialect: shell_vars
+    mode: "0644"
+```
+
 Which dialect an add-on uses is a property of its settings definition, not of
 its data. `weather.ha`'s definition has no version attribute, so Kodi loads
 and writes it in the flat form
@@ -236,8 +339,8 @@ and writes it in the flat form
 ### Declaring a setting
 
 Add an entry to a document's `settings`. A setting states **exactly one** of
-`value`, `from_env` and `unset`; stating two, or none, is an error naming the
-setting, raised before the Device is contacted. No code changes; two Device
+`value`, `from_env`, `from_profile` and `unset`; stating two, or none, is an
+error naming the setting, raised before the Device is contacted. No code changes; two Device
 checks do.
 
 Declare the value `provision-coreelec.sh` already writes, exactly as it writes
@@ -581,6 +684,56 @@ the stub, the Run knows exactly what it is waiting to stop seeing; the parse
 is what catches a read taken mid-write, which returns a partial or empty file.
 A Run that waits four minutes without seeing a rebuild fails naming the
 artifact.
+
+## The timezone Effect
+
+Writing `/storage/.cache/timezone` changes nothing on its own.
+`/etc/localtime` is a symlink to `/var/run/localtime`, and `tz-data.service`
+is the oneshot that relinks it:
+
+```
+[Service]
+Type=oneshot
+EnvironmentFile=-/storage/.cache/timezone
+ExecStart=/bin/ln -sf /usr/share/zoneinfo/${TIMEZONE} /var/run/localtime
+```
+
+The Profile does not name that unit — the Reconciler knows which service
+reads the document, exactly as it knows that a Kodi document takes the Kodi
+stop:
+
+```yaml
+  - document: /storage/.cache/timezone
+    dialect: shell_vars
+    mode: "0644"
+    settings:
+      - setting: TIMEZONE
+        from_profile: timezone
+```
+
+The Effect is taken **only when that document actually changes**, through the
+same machinery as the Kodi stop: the unit is stopped before the writes and
+started after them, once per Run however many addresses moved. Because it is
+a oneshot, `start` returns after `ExecStart` — there is nothing to poll and no
+partial state.
+
+The Run then reads `/var/run/localtime` and fails unless it names the declared
+zone. That is the opposite end of the spectrum from the view rebuild: one
+synchronous call with an unambiguous answer.
+
+```
+stopping tz-data.service
+applied 1 change
+starting tz-data.service
+/var/run/localtime names America/Los_Angeles
+verification: converged
+```
+
+No document declares its Effect, Kodi's or otherwise
+([ADR 0013](../adr/0013-a-settings-document-always-takes-the-kodi-stop.md)). A
+document that could state its unit could omit it, and an omitted unit is the
+one mistake nothing catches: the write lands, the document converges, the Run
+reports `verification: converged`, and the Device keeps yesterday's zone.
 
 ## Hardware acceptance
 
@@ -939,6 +1092,92 @@ The scenarios are:
 
     Expect `plan: no changes`, and expect scenario 7 to stay clean — the shell
     writes all six, so none may plan as a `create`.
+14. **The timezone lands in both places, and `/etc/localtime` follows** — the
+    first Run through the `shell_vars` dialect, the `from_profile` arm and the
+    `tz-data.service` Effect, so it has to prove all three. Drift both records
+    of the zone in different directions: if the two addresses did not resolve
+    from one constant, only one of them would come back.
+
+    Kodi must be stopped for the injection and started again before the Run,
+    so the wrong `locale.timezone` reaches memory.
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    cache=/storage/.cache/timezone
+    gui=/storage/.kodi/userdata/guisettings.xml
+
+    ug systemctl stop kodi
+    ug "printf 'TIMEZONE=Europe/Berlin\n' > $cache"
+    ug "sed -i 's|<setting id=\"locale.timezone\"[^>]*>[^<]*</setting>|<setting id=\"locale.timezone\">Asia/Tokyo</setting>|' $gui"
+    # Confirm the injection actually took before trusting the Run.
+    ug "grep -o '<setting id=\"locale.timezone\"[^>]*>[^<]*' $gui; cat $cache"
+    ug systemctl start kodi && sleep 20
+
+    uv run coreelec-reconciler apply --room theater
+    ```
+
+    The `[^>]*` matters and the confirmation is not ceremony. Kodi writes
+    `default="true"` on any setting still holding Kodi's own default, and
+    `America/Los_Angeles` **is** Kodi's default here, so the address on a
+    converged Device reads
+    `<setting id="locale.timezone" default="true">America/Los_Angeles</setting>`.
+    A pattern that assumed a bare `>` matches nothing, `sed` exits `0`, and
+    the scenario quietly becomes a one-address test that still passes — the
+    cache drifts, the Run repairs it, and the half this scenario exists to
+    prove never runs. No other scenario has this problem: the add-on
+    addresses in scenario 6 are declared to values Kodi has no default for,
+    so they carry no attribute.
+
+    Expect the `apply` to name **both** addresses, to stop and start
+    `tz-data.service`, to print `/var/run/localtime names America/Los_Angeles`,
+    and to end `verification: converged`. Then confirm the three things a Run
+    cannot confirm for itself:
+
+    ```console
+    ug "cat $cache; ls -l $cache"        # TIMEZONE=…, mode -rw-r--r--
+    ug "readlink -f /etc/localtime"      # /usr/share/zoneinfo/America/Los_Angeles
+    ug date                              # reports the declared zone
+    ```
+
+    The mode matters: the shell writes this file `0644` and a Kodi document
+    `0600`, so a `shell_vars` document that ignored its declared mode would
+    show up here and nowhere else.
+
+    Then the parity half:
+
+    ```console
+    ./provision-coreelec.sh --target ugoos-theater --component core
+    uv run coreelec-reconciler plan --room theater
+    ```
+
+    Expect `plan: no changes`, and scenario 7 to stay clean.
+15. **The platform Guard refuses a Device that is not what the Profile
+    claims** — a Guard that has never refused anything is a Guard nobody has
+    tested. Declare a version the Device does not hold and watch the Run stop
+    before it writes:
+
+    ```console
+    profile=config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+
+    ug "md5sum /storage/.kodi/userdata/guisettings.xml"
+    sed -i.bak 's/^  version: "21.3"/  version: "22.0"/' $profile
+    uv run coreelec-reconciler apply --room theater   # expect exit 1
+    mv $profile.bak $profile
+    ug "md5sum /storage/.kodi/userdata/guisettings.xml"
+    ```
+
+    Expect the refusal to name `/etc/os-release`, `VERSION_ID`, both values,
+    and no Change at all — the Guard runs before anything is planned. Expect
+    the two digests to match and `systemctl status kodi` to show no restart:
+    an `apply` that refuses here must not have touched the service.
+
+    Then confirm what the Device actually says, which is what the Profile has
+    to keep agreeing with:
+
+    ```console
+    ug "cat /etc/os-release; cat /etc/release"
+    ```
 
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
@@ -967,14 +1206,18 @@ by `apply` again.
 Room Overlay declares (`ROOM-002`-`ROOM-010`), the twelve add-on addresses
 the Profile declares (`SVC-002`-`SVC-013`), the Arctic Fuse home screen
 (`SKIN-003`-`SKIN-010`), the four Shortcut Nodes (`SKIN-011`-`SKIN-014`), the
-two view types (`SKIN-015`, `SKIN-016`), the view rebuild (`EFFECT-004`), and
-the CEC power policy (`CEC-001`-`CEC-005`) as
+two view types (`SKIN-015`, `SKIN-016`), the view rebuild (`EFFECT-004`), the
+CEC power policy (`CEC-001`-`CEC-005`), the platform Guard (`PLAT-001`), the
+timezone cache (`CORE-006`) and the `tz-data.service` restart (`EFFECT-002`)
+as
 shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
 `cec`, `skin`, `services`, `room` or `baseline` run. `SKIN-027` and `SKIN-028`,
 the
-two superseded playlists, stay `retired` and are not declared anywhere. That
+two superseded playlists, stay `retired` and are not declared anywhere, and
+so does `PLAT-002`, the device-tree model check the Reconciler will never
+make. That
 is the shadowing model:
 transferring a row freezes
 those shell runs

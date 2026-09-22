@@ -22,10 +22,25 @@ import yaml
 SSH_STUB = """#!/bin/sh
 # Stub ssh: runs the remote command locally with the stub directory first on
 # PATH, so `hostname` and `mv` resolve to the shims beside this script.
+#
+# The Reconciler names four Device paths of its own — the two the platform
+# Guard reads, the timezone cache whose unit it knows, and the link that unit
+# writes — and those are the operating system's, not a tmp_path a Profile can
+# state. They are rewritten
+# into the fake Device here, for the same reason every other path in these
+# tests is a tmp_path: the fake Device is a directory standing in for the
+# theater Ugoos.
 cmd=""
 for arg in "$@"; do cmd="$arg"; done
 PATH="{stub_dir}:$PATH"
 export PATH
+if [ -n "$FAKE_DEVICE_ROOT" ]; then
+  cmd=$(printf '%s' "$cmd" | sed \\
+    -e "s#/etc/os-release#$FAKE_DEVICE_ROOT/etc/os-release#g" \\
+    -e "s#/etc/release#$FAKE_DEVICE_ROOT/etc/release#g" \\
+    -e "s#/var/run/localtime#$FAKE_DEVICE_ROOT/var/run/localtime#g" \
+    -e "s#/storage/.cache#$FAKE_DEVICE_ROOT/storage/.cache#g")
+fi
 exec sh -c "$cmd"
 """
 
@@ -68,6 +83,18 @@ fi
 if [ "$1" = "start" ] && [ -n "$FAKE_DEVICE_COMPILED" ]; then
   printf '%s' "$FAKE_DEVICE_COMPILED_BODY" > "$FAKE_DEVICE_COMPILED"
 fi
+# tz-data.service is a oneshot reading TIMEZONE from the cache document and
+# relinking /var/run/localtime.
+if [ "$1" = "start" ] && [ "$2" = "tz-data.service" ] \\
+   && [ -n "$FAKE_DEVICE_LOCALTIME" ]; then
+  TIMEZONE=""
+  if [ -f "$FAKE_DEVICE_TIMEZONE_DOCUMENT" ]; then
+    . "$FAKE_DEVICE_TIMEZONE_DOCUMENT"
+  fi
+  if [ -n "$TIMEZONE" ] && [ -z "$FAKE_DEVICE_TZ_DATA_WRONG" ]; then
+    ln -sf "/usr/share/zoneinfo/$TIMEZONE" "$FAKE_DEVICE_LOCALTIME"
+  fi
+fi
 if [ "$FAKE_DEVICE_SYSTEMCTL_REFUSES" = "$1" ]; then
   echo "systemctl: $1 refused" >&2
   exit 1
@@ -100,6 +127,13 @@ exec {cat} "$@"
 
 PROFILE = """\
 profile: ugoos-am6b-plus/coreelec-21.3
+platform:
+  id: coreelec
+  version: "21.3"
+  device: Amlogic-ng
+  release_contains: Amlogic-ng.arm-21.3-Omega
+constants:
+  timezone: America/Los_Angeles
 transport:
   user: root
   port: 22
@@ -148,6 +182,26 @@ EXPECTED_XSP = """\
     <order direction="descending">dateadded</order>
 </smartplaylist>
 """
+
+# What the theater Ugoos holds, abridged to the keys the Guard reads plus the
+# two that carry `coreelec` without saying the Device is one. A Profile
+# declaring `id: coreelec` must not be satisfied by those.
+OS_RELEASE = """\
+NAME="CoreELEC"
+VERSION="21.3-Omega"
+ID="coreelec"
+VERSION_ID="21.3"
+PRETTY_NAME="CoreELEC (official): 21.3-Omega"
+HOME_URL="https://coreelec.org"
+BUG_REPORT_URL="https://github.com/CoreELEC/CoreELEC/issues"
+COREELEC_ARCH="Amlogic-ng.arm"
+COREELEC_DEVICE="Amlogic-ng"
+"""
+
+RELEASE = "Amlogic-ng.arm-21.3-Omega\n"
+
+# The address the Reconciler knows `tz-data.service` reads.
+TIMEZONE_CACHE = "/storage/.cache/timezone"
 
 
 def indent(block: str) -> str:
@@ -217,6 +271,31 @@ class FakeDevice:
     identity: Path
     systemctl_log: Path
     env_file: Path
+    root: Path
+
+    @property
+    def os_release(self) -> Path:
+        """What the Device says it is, which the platform Guard reads."""
+        return self.root / "etc" / "os-release"
+
+    @property
+    def release(self) -> Path:
+        """One line of free text, matched by substring."""
+        return self.root / "etc" / "release"
+
+    @property
+    def localtime(self) -> Path:
+        """The link `tz-data.service` writes and `/etc/localtime` points at."""
+        return self.root / "var" / "run" / "localtime"
+
+    @property
+    def timezone(self) -> Path:
+        """The CoreELEC timezone cache, a `shell_vars` Settings Document.
+
+        A Profile states `TIMEZONE_CACHE`; this is where the fake Device
+        holds it.
+        """
+        return self.root / "storage" / ".cache" / "timezone"
 
     @property
     def playlist(self) -> Path:
@@ -369,6 +448,7 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
         stub.write_text(body, encoding="utf-8")
         stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_DEVICE_ROOT", str(tmp_path))
     monkeypatch.setenv("FAKE_DEVICE_SYSTEMCTL_LOG", str(tmp_path / "systemctl.log"))
     monkeypatch.setenv(
         "FAKE_DEVICE_KODI_DOCUMENT",
@@ -387,7 +467,13 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
         identity=tmp_path / "id_ed25519",
         systemctl_log=tmp_path / "systemctl.log",
         env_file=tmp_path / ".env",
+        root=tmp_path,
     )
+    # Every Run guards the platform before it plans, so the fake Device says
+    # what the theater Ugoos says unless a test changes it.
+    write_document(fake.os_release, OS_RELEASE)
+    write_document(fake.release, RELEASE)
+    fake.localtime.parent.mkdir(parents=True, exist_ok=True)
     fake.write_profile(fake.profile_body())
     fake.write_room(ROOM)
     yield fake

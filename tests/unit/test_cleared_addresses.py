@@ -107,7 +107,7 @@ def test_a_setting_stating_two_arms_is_rejected_naming_it(
 
     err = capsys.readouterr().err
     assert "HomeSwitcher.1104.Toggle" in err
-    assert "exactly one of value, from_env and unset" in err
+    assert "exactly one of value, from_env, from_profile and unset" in err
     # Rejected before Device contact: nothing was stopped and nothing written.
     assert device.effects == []
     assert not device.guisettings.exists()
@@ -126,7 +126,7 @@ def test_a_setting_stating_no_arm_is_rejected_naming_it(
 
     err = capsys.readouterr().err
     assert "HomeSwitcher.1104.Toggle" in err
-    assert "exactly one of value, from_env and unset" in err
+    assert "exactly one of value, from_env, from_profile and unset" in err
 
 
 def test_a_truncated_value_line_is_still_rejected(

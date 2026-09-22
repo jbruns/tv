@@ -21,11 +21,37 @@ from dataclasses import dataclass, replace
 from typing import TextIO
 
 from . import kodi_settings, shortcut
-from .config import DesiredState, KodiSetting, SettingsDocument
+from .config import DesiredState, KodiSetting, Platform, SettingsDocument
 from .device import Device, DeviceError
 from .playlist import render
 
+# Where the Device states what it is. `/etc/os-release` is a defined
+# `KEY=value` document, so the Guard asserts on keys rather than grepping the
+# file: `coreelec` appears in `HOME_URL` and `BUG_REPORT_URL` too, and a
+# substring match therefore passes on a Device whose `ID` is something else
+# entirely. `/etc/release` is genuinely one line of free text.
+OS_RELEASE = "/etc/os-release"
+RELEASE = "/etc/release"
+
+# `tz-data.service` is a oneshot reading `TIMEZONE` from the cache document
+# and relinking `/var/run/localtime`, which `/etc/localtime` points at. A
+# `systemctl start` therefore returns after `ExecStart` — nothing to poll,
+# and no partial state — and the link is the unambiguous answer to whether it
+# worked.
+TZ_DATA_SERVICE = "tz-data.service"
+TIMEZONE = "TIMEZONE"
+TIMEZONE_CACHE = "/storage/.cache/timezone"
+LOCALTIME = "/var/run/localtime"
+ZONEINFO = "/usr/share/zoneinfo"
+
+# The unit a Settings Document disturbs. Kodi owns most of them; a document
+# that is not Kodi's names the unit that reads it here. A Profile does not
+# declare this and could not be trusted with it (ADR 0013): a document that
+# could state its unit could omit it, and an omitted unit is the one mistake
+# nothing catches — the write lands, the document converges, verification
+# passes, and the Device keeps yesterday's zone with nothing to notice.
 KODI_SERVICE = "kodi.service"
+SERVICE_EFFECTS = {TIMEZONE_CACHE: TZ_DATA_SERVICE}
 
 # The skin's own rebuild trigger. `script.skinvariables` compiles a view-types
 # document into an XML include inside the skin, and `Includes_Fallbacks.xml`
@@ -83,14 +109,19 @@ class DocumentChange:
 
 @dataclass(frozen=True)
 class SettingChange:
-    """One Kodi setting inside a document Kodi rewrites from memory on exit."""
+    """One State Address inside a document that holds many.
+
+    `effect` is the unit the Change disturbs: `kodi.service` for a document
+    Kodi rewrites from memory on exit, and whatever unit reads a `shell_vars`
+    document for one of those.
+    """
 
     document: str
     setting: KodiSetting
     action: str
     observed: str | None
     desired: str | None
-    effect: str | None = KODI_SERVICE
+    effect: str | None = None
     rebuild: str | None = None
 
     @property
@@ -125,6 +156,74 @@ def _guard_identity(device: Device, expected: str) -> None:
             f"{expected} answers to the hostname {observed}: refusing to "
             f"reconcile a Device that is not {expected}"
         )
+
+
+def _os_release(document: str) -> dict[str, str]:
+    """`/etc/os-release` as the keys it defines, with quotes stripped.
+
+    The reading is deliberately forgiving of everything it is not asked
+    about: this document is the operating system's and the Reconciler owns
+    nothing in it, so a line a future CoreELEC adds must not turn the Guard
+    into a refusal. Only the keys the Profile names are then asserted on, and
+    a key the document does not hold fails naming it.
+    """
+
+    values: dict[str, str] = {}
+    for line in document.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, raw = stripped.partition("=")
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+            raw = raw[1:-1]
+        values[key.strip()] = raw
+    return values
+
+
+def _guard_platform(device: Device, platform: Platform) -> None:
+    """The Device is what the Profile claims, or the Run refuses here.
+
+    This runs with the hostname Guard, before anything is planned, so a Run
+    aimed at a Device of the wrong operating system, the wrong version or the
+    wrong SoC family stops before it has written anything.
+    """
+
+    document = device.read(OS_RELEASE)
+    if document is None:
+        raise DeviceError(
+            f"{device.hostname} does not hold {OS_RELEASE}, so it cannot be "
+            f"confirmed to be {platform.id}"
+        )
+    held = _os_release(document)
+    for key, expected in (
+        ("ID", platform.id),
+        ("VERSION_ID", platform.version),
+        ("COREELEC_DEVICE", platform.device),
+    ):
+        observed = held.get(key)
+        if observed != expected:
+            raise DeviceError(
+                f"{OS_RELEASE} on {device.hostname} holds {key}="
+                f"{observed if observed is not None else '(unset)'} and the "
+                f"Profile declares {expected}: refusing to reconcile it"
+            )
+
+    release = device.read(RELEASE)
+    if release is None or platform.release_contains not in release:
+        line = "nothing" if release is None else release.strip() or "an empty line"
+        raise DeviceError(
+            f"{RELEASE} on {device.hostname} holds {line} and the Profile "
+            f"declares it contains {platform.release_contains}: refusing to "
+            "reconcile it"
+        )
+
+
+def _effect(declared: SettingsDocument) -> str | None:
+    """The unit a Change to `declared` disturbs, or None when no service reads it."""
+
+    if declared.dialect in kodi_settings.KODI_DIALECTS:
+        return KODI_SERVICE
+    return SERVICE_EFFECTS.get(declared.document)
 
 
 def _locate(device: Device, declared: SettingsDocument) -> SettingsDocument:
@@ -170,7 +269,7 @@ def _read_settings_document(device: Device, declared: SettingsDocument) -> str |
     except kodi_settings.SettingsError as error:
         raise DeviceError(
             f"{declared.document} on {device.hostname} cannot be read as a "
-            f"Kodi settings document: {error}"
+            f"{declared.dialect} settings document: {error}"
         ) from error
     return document
 
@@ -256,6 +355,7 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
                     action="create" if observed is None else "update",
                     observed=observed,
                     desired=setting.value,
+                    effect=_effect(declared),
                     rebuild=declared.compiles_to,
                 )
             )
@@ -282,7 +382,7 @@ def _write_settings(device: Device, declared: SettingsDocument) -> None:
     device.write(
         declared.document,
         kodi_settings.rewrite(observed, declared.dialect, wanted),
-        mode="0600",
+        mode=declared.mode,
     )
 
 
@@ -312,6 +412,34 @@ def _await_rebuild(device: Device, artifact: str, out: TextIO) -> None:
         f"{artifact} on {device.hostname} was not rebuilt within "
         f"{REBUILD_ATTEMPTS}s of Kodi starting"
     )
+
+
+def _verify_timezone(device: Device, changes: list[Change], out: TextIO) -> None:
+    """The link `tz-data.service` just wrote names the declared zone.
+
+    The unit reads `TIMEZONE` from the document the Run wrote, so the zone
+    the Run declared and the link the unit produced are two ends of the same
+    fact and comparing them is the whole verification. This is the opposite
+    of the view rebuild: one synchronous call with an unambiguous answer.
+    """
+
+    for change in changes:
+        if (
+            not isinstance(change, SettingChange)
+            or change.document != TIMEZONE_CACHE
+            or change.setting.setting != TIMEZONE
+            or change.desired is None
+        ):
+            continue
+        zone = change.desired
+        observed = device.read_link(LOCALTIME)
+        if observed != f"{ZONEINFO}/{zone}":
+            raise DeviceError(
+                f"{LOCALTIME} on {device.hostname} names "
+                f"{observed if observed is not None else 'no zone'} and the "
+                f"declared timezone is {zone}"
+            )
+        print(f"{LOCALTIME} names {zone}", file=out)
 
 
 def _apply(
@@ -377,6 +505,8 @@ def _apply(
                 print(f"error: {error}", file=out)
 
     if failure is None:
+        if TZ_DATA_SERVICE in units:
+            _verify_timezone(device, changes, out)
         for artifact in armed:
             _await_rebuild(device, artifact, out)
 
@@ -393,6 +523,7 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
         file=out,
     )
     _guard_identity(device, desired.hostname)
+    _guard_platform(device, desired.platform)
 
     # A document the Profile names by pattern is resolved once, before any
     # Change is planned and so before anything is written.

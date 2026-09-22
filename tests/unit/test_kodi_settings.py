@@ -350,6 +350,8 @@ def shipped_settings() -> dict[str, str]:
         / "coreelec-21.3"
         / "profile.yaml"
     )
+    document = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    constants = document["constants"]
     documents = shipped_documents(profile)
     guisettings = [
         document for document in documents if document["dialect"] == "guisettings"
@@ -357,7 +359,17 @@ def shipped_settings() -> dict[str, str]:
     assert len(guisettings) == 1, "the Profile declares guisettings.xml once"
     declared = guisettings[0]["settings"]
     assert isinstance(declared, list)
-    settings = {entry["setting"]: entry["value"] for entry in declared}
+    # A setting takes a Profile Constant rather than repeating a literal the
+    # Device records in two places, and what reaches Kodi is the same either
+    # way.
+    settings = {
+        entry["setting"]: (
+            constants[entry["from_profile"]]
+            if "from_profile" in entry
+            else entry["value"]
+        )
+        for entry in declared
+    }
     assert len(settings) == len(declared), "a setting is declared twice"
     return settings
 

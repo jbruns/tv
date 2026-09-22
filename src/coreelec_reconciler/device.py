@@ -90,6 +90,20 @@ class Device:
             raise DeviceError(f"{path} on {self.hostname} is not a regular file")
         return content
 
+    def read_link(self, path: str) -> str | None:
+        """What the symbolic link names, or None when `path` is not one."""
+
+        quoted = shlex.quote(path)
+        answer = self._checked(
+            f"reading {path}",
+            f"if [ -L {quoted} ]; then printf 'link\\n'; readlink {quoted};"
+            f" else printf 'other\\n'; fi",
+        )
+        kind, _, target = answer.partition("\n")
+        if kind != "link":
+            return None
+        return target.strip()
+
     def list_directory(self, path: str) -> list[str]:
         """The names the directory holds, empty when it holds none or is absent.
 

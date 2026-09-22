@@ -67,3 +67,21 @@ is core and has no definition file, so the check would cover some documents and
 not others while appearing to cover all, and the behavioural rule — no declared
 address may plan as `create` on a provisioned Device — already catches the typo
 it would catch, on the first Run, for nothing.
+
+## A document that is not Kodi's
+
+The timezone slice added a `shell_vars` dialect for `/storage/.cache/timezone`,
+which is a Settings Document by every property that word describes — many
+addresses in one file, owned one at a time — and which Kodi core does not hold
+in memory. It takes `tz-data.service` instead.
+
+That does not reopen the decision above, and was deliberately not allowed to.
+Declaring the unit on the document was considered again and rejected for the
+reason already recorded: a document that could state its unit could omit it,
+and here an omitted unit fails exactly the silent way — the write lands, the
+document converges, the Run reports `verification: converged`, and
+`/var/run/localtime` keeps yesterday's zone with nothing to notice. The
+Reconciler therefore holds the unit beside the rest of what it knows about
+`tz-data.service`: the address it reads, the link it writes, and the zone
+directory that link points into. A Profile naming one of those four facts
+while the Reconciler holds the other three could only split them.

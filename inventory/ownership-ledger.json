@@ -1177,7 +1177,7 @@
       "state_address": "/storage/.cache/timezone (TIMEZONE=\u2026)",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1673,7 +1673,7 @@
       "state_address": "tz-data.service restart",
       "role": "effect",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": []
@@ -2045,7 +2045,7 @@
       "state_address": "CoreELEC identity in /etc/os-release and /etc/release",
       "role": "guard",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": []
