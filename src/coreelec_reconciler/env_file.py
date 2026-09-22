@@ -13,6 +13,11 @@ have read differently — a value misread here is a credential written to a
 Device.
 
 Nothing in this module puts a value into an error message.
+
+The same grammar reads the `shell_vars` Settings Documents the Device holds
+(`/storage/.cache/timezone`, say), which are the same shape read for the same
+reason. Those are not secrets, but the strictness costs nothing and one
+grammar is easier to trust than two.
 """
 
 from __future__ import annotations
@@ -63,18 +68,47 @@ def read(path: Path) -> dict[str, str]:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
         raise EnvError(f"{path}: {error.strerror or error}") from error
+    return parse(text, str(path))
+
+
+def parse(text: str, where: str | None = None) -> dict[str, str]:
+    """Every key `text` holds. Raises EnvError naming the line.
+
+    `where` is what the lines belong to, when the caller has a name for it;
+    a caller that names the document itself passes nothing and decorates the
+    message.
+
+    The grammar is shared with the `shell_vars` dialect, because both read
+    the same shape for the same reason: a line is data and never shell
+    syntax, whatever the file is called.
+    """
 
     values: dict[str, str] = {}
     for number, line in enumerate(text.splitlines(), start=1):
-        where = f"{path}:{number}"
+        location = f"line {number}" if where is None else f"{where}:{number}"
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         assignment = ASSIGNMENT.fullmatch(stripped)
         if assignment is None:
-            raise EnvError(f"{where}: expected KEY=value")
+            raise EnvError(f"{location}: expected KEY=value")
         key = assignment.group(1)
         if key in values:
-            raise EnvError(f"{where}: duplicate key: {key}")
-        values[key] = _value(where, key, assignment.group(2))
+            raise EnvError(f"{location}: duplicate key: {key}")
+        values[key] = _value(location, key, assignment.group(2))
     return values
+
+
+def serialise(value: str) -> str:
+    """`value` as a line's right-hand side, quoted only when it must be.
+
+    The shell provisioner writes these values bare, so anything the bare
+    grammar accepts is written bare and the two engines produce the same
+    bytes.
+    """
+
+    if BARE.fullmatch(value) is not None:
+        return value
+    if "'" in value:
+        raise EnvError("a value holding a single quote cannot be written")
+    return f"'{value}'"

@@ -6,6 +6,28 @@
 
 profile: ugoos-am6b-plus/coreelec-21.3
 
+# What a Device in this Profile is claimed to be. Every Run asserts it against
+# the Device before anything is planned; which file holds which key is the
+# Reconciler's business.
+#
+# None of this is derived from the directory name above. `ugoos-am6b-plus` is
+# for humans, and the Device's own model string is `UGOOS AM6`, with no "plus"
+# in it.
+platform:
+  id: coreelec
+  version: "21.3"
+  device: Amlogic-ng
+  release_contains: Amlogic-ng.arm-21.3-Omega
+
+# Facts more than one State Address takes. Stating one twice is two records
+# free to diverge, and the symptom here is quiet: Kodi showing one timezone
+# and the operating system another.
+#
+# A Profile Constant is not a Named Value. It is committed, reviewable and
+# printed by a Run; a Named Value is none of those (ADR 0014).
+constants:
+  timezone: America/Los_Angeles
+
 # Controller-side SSH transport. The Reconciler shells out to ssh and reuses
 # the existing key-only administrator setup.
 transport:
@@ -299,7 +321,7 @@ settings_documents:
       - setting: locale.timezonecountry
         value: United States
       - setting: locale.timezone
-        value: America/Los_Angeles
+        from_profile: timezone
       # Add-on updates are notified, never installed unattended, so the
       # appliance never changes underneath a viewer.
       - setting: general.addonupdates
@@ -596,3 +618,18 @@ settings_documents:
         value: "231"
       - setting: standby_tv_on_pc_standby
         value: "0"
+
+  # The CoreELEC timezone cache. Not Kodi's: the operating system reads it,
+  # and `tz-data.service` is the unit that does. Kodi's CoreELEC patch writes
+  # it when the zone changes through the UI, so an offline edit must write it
+  # explicitly.
+  #
+  # `locale.timezone` above records the same fact for Kodi. Both take the
+  # `timezone` constant, so the Device cannot hold two records of one zone
+  # that disagree.
+  - document: /storage/.cache/timezone
+    dialect: shell_vars
+    mode: "0644"
+    settings:
+      - setting: TIMEZONE
+        from_profile: timezone

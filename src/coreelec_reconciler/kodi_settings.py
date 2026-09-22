@@ -1,9 +1,14 @@
-"""Reading and writing Kodi settings inside a Settings Document.
+"""Reading and writing settings inside a Settings Document.
 
 A Settings Document is not a document the Reconciler renders. It holds many
 State Addresses, almost all of them Unmanaged State, so this module changes
 only the State Addresses it is given and leaves every other setting's identity
 and value exactly as it found them.
+
+Most of these documents are Kodi's. One dialect, `shell_vars`, is not: it is
+the `KEY=value` shape the operating system reads, and it is here because it
+has exactly the property the name Settings Document describes — many
+addresses in one file, owned one at a time.
 
 Kodi serialises these documents in more than one shape, and which shape a
 document uses is not something the Reconciler may guess. `guisettings.xml` and
@@ -30,16 +35,23 @@ import xml.etree.ElementTree as ElementTree
 from collections.abc import Mapping
 from typing import Any
 
+from . import env_file
+
 GUISETTINGS = "guisettings"
 ADDON_V1 = "addon_v1"
 ADDON_V2 = "addon_v2"
 JSON = "json"
+SHELL_VARS = "shell_vars"
 
 # Every dialect this module can read and write. `guisettings` and `addon_v2`
 # are the same shape on the wire and are named apart because they are
 # different documents: one is Kodi core's and one is an add-on's, and what
 # Kodi does to one it need not do to the other.
-DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, JSON)
+DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, JSON, SHELL_VARS)
+
+# The dialects Kodi itself reads and rewrites from memory as it exits, and
+# which therefore always take the Kodi stop (ADR 0013).
+KODI_DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, JSON)
 
 # The dialects that carry a setting's value as element text. `addon_v1` is the
 # one that carries it in a `value` attribute.
@@ -220,17 +232,80 @@ def render_json(body: Any) -> str:
     return json.dumps(body, ensure_ascii=False, indent=4, sort_keys=True) + "\n"
 
 
+def _shell_vars(document: str | None) -> dict[str, str]:
+    """Every key a `shell_vars` document holds, empty when it has none."""
+
+    if document is None:
+        return {}
+    try:
+        return env_file.parse(document)
+    except env_file.EnvError as error:
+        raise SettingsError(str(error)) from error
+
+
+def _shell_vars_line(key: str, value: str) -> str:
+    try:
+        return f"{key}={env_file.serialise(value)}"
+    except env_file.EnvError as error:
+        raise SettingsError(f"{key} cannot be written: {error}") from error
+
+
+def _rewrite_shell_vars(
+    document: str | None, settings: Mapping[str, str | None]
+) -> str:
+    """`document` with `settings` set, line by line.
+
+    The rewrite is line-preserving rather than a re-render of a parsed
+    mapping: every undeclared key keeps its line, its order and whatever
+    comment sits beside it. Only a declared key's line is rewritten, and a
+    declared key the document does not hold is appended.
+
+    A Cleared Address removes the line. `KEY=` is not the absence of a value
+    to a shell that sources the file — it is the empty string, and
+    `EnvironmentFile` would set it — so writing one would be a value rather
+    than the lack of one, the same reason JSON clears by removing the key.
+    """
+
+    _shell_vars(document)
+    lines = (document or "").splitlines()
+    written: set[str] = set()
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        assignment = (
+            None
+            if not stripped or stripped.startswith("#")
+            else env_file.ASSIGNMENT.fullmatch(stripped)
+        )
+        key = assignment.group(1) if assignment is not None else None
+        if key is None or key not in settings:
+            kept.append(line)
+            continue
+        written.add(key)
+        value = settings[key]
+        if value is not None:
+            kept.append(_shell_vars_line(key, value))
+    for key, value in settings.items():
+        if key in written or value is None:
+            continue
+        kept.append(_shell_vars_line(key, value))
+    return "".join(f"{line}\n" for line in kept)
+
+
 def validate(document: str | None, dialect: str) -> None:
     """Raises SettingsError unless `document` reads as `dialect`."""
 
     if dialect == JSON:
         _tree(document)
         return
+    if dialect == SHELL_VARS:
+        _shell_vars(document)
+        return
     _root(document, dialect)
 
 
 def observe(document: str | None, dialect: str, setting: str) -> str | None:
-    """The value Kodi resolves for `setting`, or None when it is unset.
+    """The value the Device resolves for `setting`, or None when it is unset.
 
     A node that carries its value in the other dialect's place reads as unset,
     which is what Kodi does with it.
@@ -244,6 +319,8 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
 
     if dialect == JSON:
         return _observe_json(document, setting)
+    if dialect == SHELL_VARS:
+        return _shell_vars(document).get(setting)
     root = _root(document, dialect)
     for parent, node in _matches(root, setting):
         if parent is root:
@@ -261,11 +338,14 @@ def rewrite(
     either, and the two engines therefore do not revert each other over the
     difference — but an address the document does not hold is already clear,
     so nothing is created for it. JSON has no empty node, and `null` is a
-    value rather than the absence of one, so clearing there removes the key.
+    value rather than the absence of one, so clearing there removes the key,
+    and `shell_vars` removes the line for the same reason.
     """
 
     if dialect == JSON:
         return _rewrite_json(document, settings)
+    if dialect == SHELL_VARS:
+        return _rewrite_shell_vars(document, settings)
     root = _root(document, dialect)
     for setting, value in settings.items():
         node = None

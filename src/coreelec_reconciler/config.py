@@ -7,7 +7,7 @@ the key, so a typo can never be read as a silent default.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,10 @@ from . import env_file, kodi_settings
 
 class ConfigError(Exception):
     """A Profile or Room Overlay that cannot be read as Desired State."""
+
+
+# What a Settings Document is written with unless it declares otherwise.
+DOCUMENT_MODE = "0600"
 
 
 # A setting a human declares positively that Kodi stores negatively, or as an
@@ -42,6 +46,21 @@ TRANSFORMS: dict[str, dict[str, str]] = {
 RELATIVE_BASES: dict[str, Callable[[datetime.date], int]] = {
     "current_year": lambda today: today.year,
 }
+
+
+@dataclass(frozen=True)
+class Platform:
+    """What the Device is claimed to be, checked before anything is planned.
+
+    A Profile declares the identity, not how to check it: which file holds
+    which key is the Reconciler's business, and a Profile naming paths and
+    patterns would be the only block declaring mechanism.
+    """
+
+    id: str
+    version: str
+    device: str
+    release_contains: str
 
 
 @dataclass(frozen=True)
@@ -115,6 +134,9 @@ class SettingsDocument:
 
     `compiles_to` names an artifact an add-on builds from this document. It is
     stale the moment the source changes, and the Run rebuilds it.
+
+    `mode` is the file's mode on the Device. Which service a Change here
+    disturbs is not declared: the Resource Type knows it (ADR 0013).
     """
 
     document: str
@@ -122,6 +144,7 @@ class SettingsDocument:
     settings: tuple[KodiSetting, ...]
     is_glob: bool = False
     compiles_to: str | None = None
+    mode: str = DOCUMENT_MODE
 
 
 @dataclass(frozen=True)
@@ -166,6 +189,7 @@ class DesiredState:
     room: str
     hostname: str
     profile: str
+    platform: Platform
     transport: Transport
     playlists: tuple[SmartPlaylist, ...]
     documents: tuple[SettingsDocument, ...]
@@ -449,23 +473,25 @@ def _walk(shortcuts: Iterable[Shortcut]) -> Iterator[Shortcut]:
         yield from _walk(shortcut.widgets)
 
 
-def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
+def _kodi_setting(
+    source: Path, named: NamedValues, constants: Mapping[str, str], raw: Any
+) -> KodiSetting:
     mapping = _fields(
         source,
         "a Kodi setting",
         _mapping(source, "a Kodi setting", raw),
         required=("setting",),
-        optional=("value", "from_env", "unset", "transform"),
+        optional=("value", "from_env", "from_profile", "unset", "transform"),
     )
     setting = _text(source, "a Kodi setting id", mapping["setting"])
-    # The three arms are mutually exclusive and one is mandatory. A setting
+    # The four arms are mutually exclusive and one is mandatory. A setting
     # stating none of them is the shape a truncated line produces, and one
     # stating two says two different things about the same address.
-    stated = [arm for arm in ("value", "from_env", "unset") if arm in mapping]
+    arms = ("value", "from_env", "from_profile", "unset")
+    stated = [arm for arm in arms if arm in mapping]
     if len(stated) != 1:
-        raise ConfigError(
-            f"{source}: {setting} states exactly one of value, from_env and unset"
-        )
+        listed = ", ".join(arms[:-1]) + f" and {arms[-1]}"
+        raise ConfigError(f"{source}: {setting} states exactly one of {listed}")
     if stated == ["from_env"]:
         if "transform" in mapping:
             raise ConfigError(
@@ -493,7 +519,19 @@ def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
                 "no transform"
             )
         return KodiSetting(setting=setting, value=None, declared="unset")
-    declared = _text(source, "a Kodi setting value", mapping["value"])
+    if stated == ["from_profile"]:
+        # A Profile Constant is committed and printable, so it resolves to an
+        # ordinary declared value and is reported like one. `from_env` stays
+        # a separate arm because what it names may never be printed.
+        name = _text(source, f"the from_profile of {setting}", mapping["from_profile"])
+        if name not in constants:
+            raise ConfigError(
+                f"{source}: {setting} takes the Profile constant {name}, "
+                "which the Profile does not declare"
+            )
+        declared = constants[name]
+    else:
+        declared = _text(source, "a Kodi setting value", mapping["value"])
     transform = (
         _text(source, "a Kodi setting transform", mapping["transform"])
         if "transform" in mapping
@@ -507,13 +545,15 @@ def _kodi_setting(source: Path, named: NamedValues, raw: Any) -> KodiSetting:
     )
 
 
-def _document(source: Path, named: NamedValues, raw: Any) -> SettingsDocument:
+def _document(
+    source: Path, named: NamedValues, constants: Mapping[str, str], raw: Any
+) -> SettingsDocument:
     mapping = _fields(
         source,
         "a Settings Document",
         _mapping(source, "a Settings Document", raw),
         required=("dialect", "settings"),
-        optional=("document", "document_glob", "compiles_to"),
+        optional=("document", "document_glob", "compiles_to", "mode"),
     )
     # A document is named either literally or by a pattern, and the shape is
     # declared rather than sniffed: a `*` inside a `document` is a character
@@ -554,21 +594,71 @@ def _document(source: Path, named: NamedValues, raw: Any) -> SettingsDocument:
     return SettingsDocument(
         document=document,
         dialect=dialect,
-        settings=tuple(_kodi_setting(source, named, entry) for entry in declared),
+        settings=tuple(
+            _kodi_setting(source, named, constants, entry) for entry in declared
+        ),
         is_glob=is_glob,
         compiles_to=compiles_to,
+        mode=_text(
+            source, f"the mode of {document}", mapping.get("mode", DOCUMENT_MODE)
+        ),
     )
 
 
 def _documents(
-    source: Path, named: NamedValues, where: str, raw: Any
+    source: Path,
+    named: NamedValues,
+    constants: Mapping[str, str],
+    where: str,
+    raw: Any,
 ) -> tuple[SettingsDocument, ...]:
     if not isinstance(raw, list):
         raise ConfigError(
             f"{source}: {where} must be a list of Settings Documents, and an "
             "empty list when there are none"
         )
-    return tuple(_document(source, named, entry) for entry in raw)
+    return tuple(_document(source, named, constants, entry) for entry in raw)
+
+
+def _platform(source: Path, raw: Any) -> Platform:
+    """What the Profile claims the Device is.
+
+    Nothing here is derived from the Profile's directory name. That name is
+    for humans — `ugoos-am6b-plus` against a Device whose own model string is
+    `UGOOS AM6` — so reading an identity out of it would assert something no
+    Device ever said about itself.
+    """
+
+    mapping = _fields(
+        source,
+        "platform",
+        _mapping(source, "platform", raw),
+        required=("id", "version", "device", "release_contains"),
+    )
+    return Platform(
+        id=_text(source, "platform id", mapping["id"]),
+        version=_text(source, "platform version", mapping["version"]),
+        device=_text(source, "platform device", mapping["device"]),
+        release_contains=_text(
+            source, "platform release_contains", mapping["release_contains"]
+        ),
+    )
+
+
+def _constants(source: Path, raw: Any) -> dict[str, str]:
+    """The facts the Profile states once and more than one address takes.
+
+    A Profile with nothing to share states an empty mapping, the same as
+    every other block that is required and may be empty.
+    """
+
+    mapping = _mapping(source, "constants", raw)
+    return {
+        _text(source, "a constant name", name): _text(
+            source, f"the constant {name}", value
+        )
+        for name, value in mapping.items()
+    }
 
 
 def _merge(
@@ -641,9 +731,6 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
     declared_profile = _relative(
         room_file, "profile", _text(room_file, "profile", overlay["profile"])
     )
-    room_documents = _documents(
-        room_file, named, "settings_documents", overlay["settings_documents"]
-    )
 
     profile_file = config_root / "shared" / declared_profile / "profile.yaml"
     if not profile_file.is_file():
@@ -654,6 +741,8 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         _read(profile_file),
         required=(
             "profile",
+            "platform",
+            "constants",
             "transport",
             "smart_playlists",
             "settings_documents",
@@ -664,6 +753,12 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         raise ConfigError(
             f"{profile_file}: declares a different profile than {declared_profile}"
         )
+
+    platform = _platform(profile_file, profile["platform"])
+    constants = _constants(profile_file, profile["constants"])
+    room_documents = _documents(
+        room_file, named, constants, "settings_documents", overlay["settings_documents"]
+    )
 
     transport = _fields(
         profile_file,
@@ -694,7 +789,11 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
     by_file = {Path(playlist.path).name: playlist for playlist in parsed}
 
     kodi = _documents(
-        profile_file, named, "settings_documents", profile["settings_documents"]
+        profile_file,
+        named,
+        constants,
+        "settings_documents",
+        profile["settings_documents"],
     )
     if not kodi:
         raise ConfigError(f"{profile_file}: settings_documents declares no documents")
@@ -710,6 +809,7 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         room=_text(room_file, "room", overlay["room"]),
         hostname=hostname,
         profile=declared_profile,
+        platform=platform,
         transport=Transport(
             user=_text(profile_file, "transport user", transport["user"]),
             port=_integer(profile_file, "transport port", transport["port"]),
