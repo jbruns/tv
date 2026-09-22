@@ -42,6 +42,26 @@ PUBLIC_KEY = re.compile(
     r"(?: ([^\x00-\x1f\x7f]*))?"
 )
 
+# The name of the Artifact Lock, which sits beside `profile.yaml` in the same
+# Profile directory rather than inside it: an Action will eventually rewrite
+# it, and a bot editing the file humans edit for settings turns every version
+# bump into a conflict (ADR 0017).
+ADDONS = "addons.yaml"
+
+# An add-on id is a directory name on the Device and a value inside a SQL
+# statement, so the grammar is narrow enough that neither can be anything but
+# a name. Kodi's own ids are dotted lowercase words.
+ADDON_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+# Kodi's version grammar (`CAddonVersion`): digits, letters, and the
+# separators `. _ - + ~`. A leading `-` or `~` is refused because it is never
+# a published version and `~` sorts below everything.
+ADDON_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~-]*")
+
+# A digest is compared against `hashlib`'s own rendering, which is lowercase,
+# so the Lock states it lowercase rather than folding case at every read.
+SHA256 = re.compile(r"[0-9a-f]{64}")
+
 
 # A setting a human declares positively that Kodi stores negatively, or as an
 # ordinal, needs a transform between the declaration and the Device. Each one
@@ -86,6 +106,49 @@ class Transport:
     user: str
     port: int
     identity: Path
+
+
+@dataclass(frozen=True)
+class Addresses:
+    """The Device addresses the Reconciler knows the meaning of.
+
+    Every other address reaches the Reconciler as the State Address of a
+    Resource. These four do not: the Reconciler knows which unit reads the
+    timezone cache and which reads `sshd.conf`, where add-ons live, and which
+    database holds their enabled flags — but knowing what an address *means*
+    is not the same as knowing where it *is*.
+
+    So the meaning stays in code and the address is declared here. The Kodi
+    schema version is in the database's filename, so a Profile branched for a
+    future Kodi changes one line rather than forking the Reconciler
+    (ADR 0018). No Device address lives in code.
+    """
+
+    timezone_cache: str
+    sshd_conf: str
+    addons: str
+    addon_database: str
+
+
+@dataclass(frozen=True)
+class AddonArtifact:
+    """One record of the Artifact Lock: an add-on, pinned to bytes.
+
+    Appearing here *is* the statement that the add-on should be installed at
+    this version and enabled. The two facts are never independently
+    desirable, so they are one declaration that cannot disagree with itself
+    (ADR 0018).
+
+    `notes` carries the deviation rationale a reviewer of a future version
+    bump needs — why this version and not the newest — and is the one field
+    nothing but a human reads.
+    """
+
+    id: str
+    version: str
+    url: str
+    sha256: str
+    notes: str | None = None
 
 
 @dataclass(frozen=True)
@@ -254,9 +317,11 @@ class DesiredState:
     profile: str
     platform: Platform
     transport: Transport
+    addresses: Addresses
     authorized_keys: AuthorizedKeys
     playlists: tuple[SmartPlaylist, ...]
     documents: tuple[SettingsDocument, ...]
+    addons: tuple[AddonArtifact, ...] = ()
     shortcut_nodes: tuple[ShortcutNode, ...] = ()
 
 
@@ -709,6 +774,98 @@ def _platform(source: Path, raw: Any) -> Platform:
     )
 
 
+def _addresses(source: Path, raw: Any) -> Addresses:
+    """The four Device addresses the Reconciler knows the meaning of.
+
+    Every one is required and every one is absolute. A Profile that could
+    omit one would leave the Reconciler holding a path of its own, which is
+    the thing this block exists to stop.
+    """
+
+    mapping = _fields(
+        source,
+        "addresses",
+        _mapping(source, "addresses", raw),
+        required=("timezone_cache", "sshd_conf", "addons", "addon_database"),
+    )
+    held = {}
+    for key in ("timezone_cache", "sshd_conf", "addons", "addon_database"):
+        address = _text(source, f"the {key} address", mapping[key])
+        if not address.startswith("/"):
+            raise ConfigError(
+                f"{source}: the {key} address must be absolute: {address}"
+            )
+        held[key] = address.rstrip("/") if key == "addons" else address
+    return Addresses(**held)
+
+
+def _addon(source: Path, raw: Any) -> AddonArtifact:
+    """One record of the Artifact Lock, rejected here rather than mid-Run."""
+
+    mapping = _fields(
+        source,
+        "an add-on",
+        _mapping(source, "an add-on", raw),
+        required=("id", "version", "url", "sha256", "notes"),
+    )
+    addon_id = _text(source, "an add-on id", mapping["id"])
+    if not ADDON_ID.fullmatch(addon_id):
+        raise ConfigError(f"{source}: not a well-formed add-on id: {addon_id}")
+    version = _text(source, f"the version of {addon_id}", mapping["version"])
+    if not ADDON_VERSION.fullmatch(version):
+        raise ConfigError(
+            f"{source}: not a well-formed add-on version for {addon_id}: {version}"
+        )
+    url = _text(source, f"the url of {addon_id}", mapping["url"])
+    # The Artifact travels over the open internet, so the pin states how it
+    # is fetched as well as what it is.
+    if not url.startswith("https://") or len(url) <= len("https://"):
+        raise ConfigError(f"{source}: the url of {addon_id} must be https://: {url}")
+    digest = _text(source, f"the sha256 of {addon_id}", mapping["sha256"])
+    if not SHA256.fullmatch(digest):
+        raise ConfigError(
+            f"{source}: the sha256 of {addon_id} must be 64 lowercase hex "
+            f"characters: {digest}"
+        )
+    notes = mapping["notes"]
+    return AddonArtifact(
+        id=addon_id,
+        version=version,
+        url=url,
+        sha256=digest,
+        notes=(
+            None if notes is None else _text(source, f"the notes of {addon_id}", notes)
+        ),
+    )
+
+
+def _addons(source: Path) -> tuple[AddonArtifact, ...]:
+    """The Artifact Lock, which every Profile has and which may be empty.
+
+    It is a separate file from the Profile, and a required one: a Profile
+    whose Lock had gone missing would plan nothing for every add-on in the
+    fleet and report a converged Device.
+    """
+
+    if not source.is_file():
+        raise ConfigError(f"no {ADDONS} beside the Profile: {source}")
+    declared = _fields(
+        source, "the Artifact Lock", _read(source), required=("addons",)
+    )["addons"]
+    if not isinstance(declared, list):
+        raise ConfigError(
+            f"{source}: addons must be a list of records, and an empty list "
+            "when the Profile installs none"
+        )
+    records = tuple(_addon(source, entry) for entry in declared)
+    seen: set[str] = set()
+    for record in records:
+        if record.id in seen:
+            raise ConfigError(f"{source}: {record.id} is pinned twice")
+        seen.add(record.id)
+    return records
+
+
 def _constants(source: Path, raw: Any) -> dict[str, str]:
     """The facts the Profile states once and more than one address takes.
 
@@ -942,6 +1099,7 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
             "profile",
             "platform",
             "constants",
+            "addresses",
             "transport",
             "authorized_keys",
             "smart_playlists",
@@ -956,6 +1114,8 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
 
     platform = _platform(profile_file, profile["platform"])
     constants = _constants(profile_file, profile["constants"])
+    addresses = _addresses(profile_file, profile["addresses"])
+    addons = _addons(profile_file.with_name(ADDONS))
     room_documents = _documents(
         room_file, named, constants, "settings_documents", overlay["settings_documents"]
     )
@@ -1025,9 +1185,11 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
             port=_integer(profile_file, "transport port", transport["port"]),
             identity=identity,
         ),
+        addresses=addresses,
         authorized_keys=authorized,
         playlists=parsed,
         documents=_merge(((profile_file, kodi), (room_file, room_documents))),
+        addons=addons,
         shortcut_nodes=tuple(
             _shortcut_node(profile_file, by_file, entry) for entry in nodes
         ),

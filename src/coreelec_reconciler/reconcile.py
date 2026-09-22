@@ -12,6 +12,7 @@ back even when a Change failed partway: never leave the television dead.
 
 from __future__ import annotations
 
+import datetime
 import difflib
 import fnmatch
 import time
@@ -20,8 +21,15 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import TextIO
 
-from . import authorized_keys, kodi_settings, shortcut
-from .config import DesiredState, KodiSetting, Platform, SettingsDocument
+from . import artifact, authorized_keys, kodi_settings, shortcut
+from .config import (
+    AddonArtifact,
+    Addresses,
+    DesiredState,
+    KodiSetting,
+    Platform,
+    SettingsDocument,
+)
 from .device import Device, DeviceError
 from .playlist import render
 
@@ -40,7 +48,6 @@ RELEASE = "/etc/release"
 # worked.
 TZ_DATA_SERVICE = "tz-data.service"
 TIMEZONE = "TIMEZONE"
-TIMEZONE_CACHE = "/storage/.cache/timezone"
 LOCALTIME = "/var/run/localtime"
 ZONEINFO = "/usr/share/zoneinfo"
 
@@ -50,8 +57,10 @@ ZONEINFO = "/usr/share/zoneinfo"
 # could state its unit could omit it, and an omitted unit is the one mistake
 # nothing catches — the write lands, the document converges, verification
 # passes, and the Device keeps yesterday's zone with nothing to notice.
+#
+# Which document that is, though, is the Profile's. The Reconciler knows the
+# meaning of an address; the Profile holds the address itself (ADR 0018).
 KODI_SERVICE = "kodi.service"
-SERVICE_EFFECTS = {TIMEZONE_CACHE: TZ_DATA_SERVICE}
 
 # `sshd.conf` is CoreELEC's own document, read by `sshd.service` as an
 # `EnvironmentFile`. Its Effect is not the stop-and-start above: a stop would
@@ -62,9 +71,7 @@ SERVICE_EFFECTS = {TIMEZONE_CACHE: TZ_DATA_SERVICE}
 # socket-activated, so our session is a child in the unit's cgroup. A restart
 # is therefore both necessary and fatal to the connection that asks for it,
 # and the Run reconnects afterwards (ADR 0016).
-SSHD_CONF = "/storage/.cache/services/sshd.conf"
 SSHD_SERVICE = "sshd.service"
-RESTART_EFFECTS = {SSHD_CONF: SSHD_SERVICE}
 
 # How long the Run waits for the daemon it just restarted to answer again.
 RECONNECT_ATTEMPTS = 20
@@ -174,7 +181,47 @@ class SettingChange:
         yield f"{self.action} {self.address}: {observed} -> {desired}{origin}"
 
 
-Change = DocumentChange | SettingChange
+@dataclass(frozen=True)
+class AddonChange:
+    """One add-on that is not installed at its pinned version, or not enabled.
+
+    Installed and enabled are one Resource, because there is no add-on this
+    fleet wants present but disabled or enabled but absent. Appearing in the
+    Artifact Lock is the statement that both are true (ADR 0018).
+
+    `observed` is the version `addon.xml` declares, which is what Kodi itself
+    believes, and None when the add-on is not on the Device at all.
+    `enabled` is what the `installed` table holds — `True`, `False`, or None
+    when the table holds no row for it.
+    """
+
+    addon: AddonArtifact
+    directory: str
+    action: str
+    observed: str | None
+    enabled: bool | None
+    effect: str | None = KODI_SERVICE
+
+    @property
+    def address(self) -> str:
+        return self.directory
+
+    @property
+    def ships(self) -> bool:
+        """Whether this Change fetches and replaces the tree, or only enables."""
+
+        return self.observed != self.addon.version
+
+    def report(self) -> Iterator[str]:
+        yield f"{self.action} {self.directory}"
+        observed = "(absent)" if self.observed is None else self.observed
+        yield f"version: {observed} -> {self.addon.version}"
+        if self.enabled is not True:
+            held = "(no row)" if self.enabled is None else "0"
+            yield f"enabled: {held} -> 1"
+
+
+Change = DocumentChange | SettingChange | AddonChange
 
 
 def _guard_identity(device: Device, expected: str) -> None:
@@ -248,12 +295,20 @@ def _guard_platform(device: Device, platform: Platform) -> None:
         )
 
 
-def _effect(declared: SettingsDocument) -> str | None:
+def _effect(addresses: Addresses, declared: SettingsDocument) -> str | None:
     """The unit a Change to `declared` disturbs, or None when no service reads it."""
 
     if declared.dialect in kodi_settings.KODI_DIALECTS:
         return KODI_SERVICE
-    return SERVICE_EFFECTS.get(declared.document)
+    if declared.document == addresses.timezone_cache:
+        return TZ_DATA_SERVICE
+    return None
+
+
+def _restart(addresses: Addresses, declared: SettingsDocument) -> str | None:
+    """The unit a Change to `declared` restarts *after* the writes, if any."""
+
+    return SSHD_SERVICE if declared.document == addresses.sshd_conf else None
 
 
 def _locate(device: Device, declared: SettingsDocument) -> SettingsDocument:
@@ -353,6 +408,83 @@ def _entries(document: str | None) -> str:
     return ", ".join(authorized_keys.summarise(document)) or "none"
 
 
+# Exactly the statements Kodi issues itself. `SyncInstalled` inserts only
+# `(addonID, enabled, installDate)` and `EnableAddon` updates only
+# `enabled` and `disabledReason`, so every other column takes its declared
+# default and a future schema that adds a defaulted column still works
+# (ADR 0018).
+#
+# The update runs first and the insert is conditional on it having matched
+# nothing, so one program converges a row that exists, a row that is
+# disabled, and an add-on the table has never heard of. `changes()` counts
+# the rows the update *matched*, not the ones whose values moved.
+ENABLE_ADDON = (
+    "BEGIN;"
+    " UPDATE installed SET enabled=1, disabledReason=0 WHERE addonID='{id}';"
+    " INSERT INTO installed(addonID, enabled, installDate)"
+    " SELECT '{id}', 1, '{installed}' WHERE changes()=0;"
+    " COMMIT;"
+)
+
+# What `SELECT enabled` answers with when the table holds no row at all.
+NO_ROW = ""
+
+
+def _observe_addon(
+    device: Device, addresses: Addresses, addon: AddonArtifact
+) -> tuple[str | None, bool | None]:
+    """What the Device holds for one add-on: its declared version, and enabled.
+
+    The whole Observation is one small file and one row. Hashing the
+    installed tree cannot work — the tree is the *expanded* archive, so its
+    hash is never the Artifact's — and a receipt the Reconciler wrote can
+    disagree with reality, while `addon.xml` is what Kodi itself believes
+    (ADR 0017).
+    """
+
+    directory = f"{addresses.addons}/{addon.id}"
+    manifest = device.read(f"{directory}/addon.xml")
+    version: str | None = None
+    if manifest is not None:
+        try:
+            held_id, version = artifact.declared(manifest)
+        except artifact.ArtifactError as error:
+            raise DeviceError(
+                f"{directory}/addon.xml on {device.hostname} cannot be read: {error}"
+            ) from error
+        if held_id != addon.id:
+            raise DeviceError(
+                f"{directory} on {device.hostname} holds the add-on {held_id}: "
+                "refusing to replace a directory that is not the add-on it is named for"
+            )
+
+    held = device.sqlite(
+        addresses.addon_database,
+        f"SELECT enabled FROM installed WHERE addonID='{addon.id}';",
+    ).strip()
+    if held == NO_ROW:
+        return version, None
+    return version, held == "1"
+
+
+def _plan_addons(device: Device, desired: DesiredState, changes: list[Change]) -> None:
+    """One Change per add-on that is not installed at its pin, or not enabled."""
+
+    for addon in desired.addons:
+        version, enabled = _observe_addon(device, desired.addresses, addon)
+        if version == addon.version and enabled is True:
+            continue
+        changes.append(
+            AddonChange(
+                addon=addon,
+                directory=f"{desired.addresses.addons}/{addon.id}",
+                action="create" if version is None else "update",
+                observed=version,
+                enabled=enabled,
+            )
+        )
+
+
 def _plan(device: Device, desired: DesiredState) -> list[Change]:
     changes: list[Change] = []
 
@@ -375,6 +507,11 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
                 ),
             )
         )
+
+    # An add-on is planned before the documents that configure it, and
+    # applied in that order too: a setting for an add-on that is not there
+    # yet is a setting Kodi discards.
+    _plan_addons(device, desired, changes)
 
     for playlist in desired.playlists:
         change = _rendered(device, playlist.path, render(playlist))
@@ -412,9 +549,9 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
                     action="create" if observed is None else "update",
                     observed=observed,
                     desired=setting.value,
-                    effect=_effect(declared),
+                    effect=_effect(desired.addresses, declared),
                     rebuild=declared.compiles_to,
-                    restart=RESTART_EFFECTS.get(declared.document),
+                    restart=_restart(desired.addresses, declared),
                 )
             )
     return changes
@@ -444,8 +581,8 @@ def _write_settings(device: Device, declared: SettingsDocument) -> None:
     )
 
 
-def _await_rebuild(device: Device, artifact: str, out: TextIO) -> None:
-    """Waits until the add-on has compiled `artifact` over the stub.
+def _await_rebuild(device: Device, compiled: str, out: TextIO) -> None:
+    """Waits until the add-on has compiled the include over the stub.
 
     Having written the stub, the Run knows exactly what it is waiting to stop
     seeing, so "changed from what we wrote" is an edge rather than a guess.
@@ -453,26 +590,28 @@ def _await_rebuild(device: Device, artifact: str, out: TextIO) -> None:
     or empty file.
     """
 
-    print(f"waiting for {artifact}", file=out)
+    print(f"waiting for {compiled}", file=out)
     for attempt in range(REBUILD_ATTEMPTS):
         if attempt:
             time.sleep(REBUILD_DELAY)
-        observed = device.read(artifact)
+        observed = device.read(compiled)
         if observed is None or observed == VIEW_REBUILD_STUB:
             continue
         try:
             ElementTree.fromstring(observed)
         except ElementTree.ParseError:
             continue
-        print(f"rebuilt {artifact}", file=out)
+        print(f"rebuilt {compiled}", file=out)
         return
     raise DeviceError(
-        f"{artifact} on {device.hostname} was not rebuilt within "
+        f"{compiled} on {device.hostname} was not rebuilt within "
         f"{REBUILD_ATTEMPTS}s of Kodi starting"
     )
 
 
-def _verify_timezone(device: Device, changes: list[Change], out: TextIO) -> None:
+def _verify_timezone(
+    device: Device, addresses: Addresses, changes: list[Change], out: TextIO
+) -> None:
     """The link `tz-data.service` just wrote names the declared zone.
 
     The unit reads `TIMEZONE` from the document the Run wrote, so the zone
@@ -484,7 +623,7 @@ def _verify_timezone(device: Device, changes: list[Change], out: TextIO) -> None
     for change in changes:
         if (
             not isinstance(change, SettingChange)
-            or change.document != TIMEZONE_CACHE
+            or change.document != addresses.timezone_cache
             or change.setting.setting != TIMEZONE
             or change.desired is None
         ):
@@ -500,7 +639,9 @@ def _verify_timezone(device: Device, changes: list[Change], out: TextIO) -> None
         print(f"{LOCALTIME} names {zone}", file=out)
 
 
-def _restart_transport(device: Device, unit: str, document: str, out: TextIO) -> None:
+def _restart_transport(
+    device: Device, unit: str, document: str, conf: str, out: TextIO
+) -> None:
     """Restarts the daemon carrying this connection, and comes back.
 
     The restart drops the connection that issues it, so its exit status says
@@ -529,19 +670,70 @@ def _restart_transport(device: Device, unit: str, document: str, out: TextIO) ->
             return
         raise DeviceError(
             f"{document} on {device.hostname} is empty after {unit} restarted, "
-            f"so no key can log in. Use the local console: {SSHD_CONF} now "
+            f"so no key can log in. Use the local console: {conf} now "
             "refuses password authentication"
         )
     raise DeviceError(
         f"{device.hostname} did not answer within "
         f"{int(RECONNECT_ATTEMPTS * RECONNECT_DELAY)}s of {unit} restarting. "
-        f"Use the local console to inspect {SSHD_CONF}"
+        f"Use the local console to inspect {conf}"
     )
+
+
+def _install(
+    device: Device,
+    addresses: Addresses,
+    change: AddonChange,
+    prepared: dict[str, bytes],
+    out: TextIO,
+) -> None:
+    """Puts the add-on's tree in place and writes its row enabled.
+
+    Kodi is stopped, which is what makes both halves safe: a directory cannot
+    be replaced under a running Kodi, and `installed` is written immediately
+    on change rather than flushed from memory at exit, so a stopped Kodi has
+    nothing to lose (ADR 0018).
+    """
+
+    addon = change.addon
+    tree = prepared.get(addon.id)
+    if tree is not None:
+        print(f"shipping {addon.id} {addon.version}", file=out)
+        device.replace_directory(change.directory, tree)
+    device.sqlite(
+        addresses.addon_database,
+        ENABLE_ADDON.format(
+            id=addon.id,
+            installed=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+
+
+def _prepare(changes: list[Change], out: TextIO) -> dict[str, bytes]:
+    """Every Artifact this Run ships, fetched and proven before Kodi stops.
+
+    Downloading under a stopped Kodi would hold the television down for the
+    length of the transfer, and an Artifact that fails to fetch or fails its
+    pin would do it for nothing. Everything that can fail on the controller
+    fails here, before the Run has taken an Effect or written a byte.
+    """
+
+    prepared: dict[str, bytes] = {}
+    for change in changes:
+        if not isinstance(change, AddonChange) or not change.ships:
+            continue
+        addon = change.addon
+        print(f"fetching {addon.id} {addon.version}", file=out)
+        prepared[addon.id] = artifact.prepare(
+            addon.url, addon.sha256, addon.id, addon.version
+        )
+    return prepared
 
 
 def _apply(
     device: Device, desired: DesiredState, changes: list[Change], out: TextIO
 ) -> None:
+    prepared = _prepare(changes, out)
     units = sorted({change.effect for change in changes if change.effect is not None})
     for unit in units:
         print(f"stopping {unit}", file=out)
@@ -551,6 +743,10 @@ def _apply(
     armed: list[str] = []
     failure: DeviceError | None = None
     try:
+        for change in changes:
+            if isinstance(change, AddonChange):
+                _install(device, desired.addresses, change, prepared, out)
+                applied.append(change)
         for change in changes:
             if isinstance(change, DocumentChange):
                 device.write(change.address, change.desired, mode=change.mode)
@@ -569,16 +765,16 @@ def _apply(
         # The compiled artifact is stale the moment its source changed. Arming
         # is a file write while Kodi is stopped; the restart below is what
         # fires it (ADR 0015).
-        for artifact in sorted(
+        for compiled in sorted(
             {
                 change.rebuild
                 for change in changes
                 if isinstance(change, SettingChange) and change.rebuild is not None
             }
         ):
-            print(f"arming {artifact}", file=out)
-            device.write(artifact, VIEW_REBUILD_STUB)
-            armed.append(artifact)
+            print(f"arming {compiled}", file=out)
+            device.write(compiled, VIEW_REBUILD_STUB)
+            armed.append(compiled)
     except DeviceError as error:
         failure = error
 
@@ -609,11 +805,17 @@ def _apply(
                 if isinstance(change, SettingChange) and change.restart is not None
             }
         ):
-            _restart_transport(device, unit, desired.authorized_keys.document, out)
+            _restart_transport(
+                device,
+                unit,
+                desired.authorized_keys.document,
+                desired.addresses.sshd_conf,
+                out,
+            )
         if TZ_DATA_SERVICE in units:
-            _verify_timezone(device, changes, out)
-        for artifact in armed:
-            _await_rebuild(device, artifact, out)
+            _verify_timezone(device, desired.addresses, changes, out)
+        for compiled in armed:
+            _await_rebuild(device, compiled, out)
 
     if failure is not None:
         raise failure

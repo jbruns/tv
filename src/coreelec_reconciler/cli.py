@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from . import config, reconcile
+from . import artifact, config, reconcile
 from .device import DeviceError
 
 DESCRIPTION = "Reconcile a CoreELEC Device with its declared Desired State."
@@ -68,6 +68,11 @@ def main(
         else:
             reconcile.run(desired, apply=arguments.command == "apply", out=out)
     except config.ConfigError as error:
+        print(f"error: {error}", file=err)
+        return 1
+    except artifact.ArtifactError as error:
+        # Every Artifact is fetched and proven before the Run takes an
+        # Effect, so a failure here left the Device untouched and running.
         print(f"error: {error}", file=err)
         return 1
     except DeviceError as error:

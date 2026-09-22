@@ -1,9 +1,10 @@
 # Reconcile the theater Ugoos
 
-The Reconciler shadows the shell on four Resource Types on the theater Ugoos:
+The Reconciler shadows the shell on five Resource Types on the theater Ugoos:
 the eight Smart Playlists under `special://profile/playlists/video`, the four
 Arctic Fuse Shortcut Nodes under `script.skinvariables`,
-`/storage/.ssh/authorized_keys`, and the Kodi settings
+`/storage/.ssh/authorized_keys`, one Kodi add-on
+(`script.module.six`), and the Kodi settings
 inside nine Settings Documents — `guisettings.xml`, the Home
 Assistant weather add-on's `settings.xml`, the NextPVR client's
 `instance-settings-1.xml`, TMDb Helper's `settings.xml`, Arctic Fuse 3's
@@ -15,7 +16,8 @@ the shell provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
 A Smart Playlist, a Shortcut Node and `authorized_keys` are documents the
-Reconciler renders whole. A Settings
+Reconciler renders whole. An add-on is a tree the Reconciler replaces whole,
+from bytes it pinned. A Settings
 Document is not: it holds many State Addresses, almost all of them Unmanaged
 State. The Reconciler changes only the State Addresses the resolved
 configuration declares and preserves every other setting's identity and
@@ -26,11 +28,12 @@ value.
 | File | Holds |
 | --- | --- |
 | `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, SSH transport, who may log in, the declared Smart Playlists, the declared Shortcut Nodes, and the declared Settings Documents |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/addons.yaml` | The Artifact Lock: one record per declared add-on — its version, its URL, and the SHA-256 of the bytes that URL must return |
 | `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Settings Documents |
 | `.env` | The values Desired State names but may not carry, shared with the shell |
 
-Both configuration files are strict: an unknown or missing key is rejected
-naming the key, before any Device contact. The shell's `provision.conf` and
+All three configuration files are strict: an unknown or missing key is
+rejected naming the key, before any Device contact. The shell's `provision.conf` and
 `room.conf` beside them are untouched and still read only by the shell. `.env`
 is the shell's too, and the Reconciler reads the same file; see
 [naming a value the Profile may not hold](#naming-a-value-the-profile-may-not-hold).
@@ -123,6 +126,37 @@ reaches no committed file and is never printed
 Profile Constant is committed, reviewable and printed by a Run like any other
 value. `from_profile` and `from_env` stay distinct keys for exactly that
 reason.
+
+## Device addresses
+
+A few State Addresses are not declared as Resources but are still paths the
+Reconciler must know: the CoreELEC timezone cache, `sshd.conf`, the add-on
+directory, and Kodi's add-on database. The Profile names them:
+
+```yaml
+addresses:
+  timezone_cache: /storage/.cache/timezone
+  sshd_conf: /storage/.cache/services/sshd.conf
+  addons: /storage/.kodi/addons
+  addon_database: /storage/.kodi/userdata/Database/Addons33.db
+```
+
+The key is a role the Reconciler knows; the value is where that role lives on
+this platform. Which Effect a role takes stays in code — a Settings Document
+at `timezone_cache` always takes the timezone Effect, and one at `sshd_conf`
+always restarts the transport — because that is mechanism, not declaration
+([ADR 0013](../adr/0013-a-settings-document-always-takes-the-kodi-stop.md)).
+What changes across CoreELEC releases is the path, and the path is the part
+the Profile holds.
+
+`addon_database` is the case that forced the block. Kodi versions its add-on
+database by schema (`Addons33.db` on Kodi 21, a different number on the next
+major release), so a Reconciler with the name compiled in silently stops
+matching on an upgrade. The Profile states it, and the platform Guard already
+refuses a Device whose version the Profile does not claim.
+
+The block is required and every key in it is required. A missing or unknown
+key is an error naming the key, before any Device contact.
 
 ## Running
 
@@ -627,9 +661,9 @@ keeps it through a rewrite, which is enough.
 stays gone because it resolves nothing.
 
 **Drift injection is the only net.** The `create`-catches-a-typo check
-(scenario 7) cannot reach a Cleared Address, because a typo'd id resolves no
+(scenario 8) cannot reach a Cleared Address, because a typo'd id resolves no
 value, matches `unset`, and reports converged forever. Declaring one therefore
-carries an obligation at acceptance, scenario 11 below
+carries an obligation at acceptance, scenario 12 below
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md),
 "Rule 2 does not reach a Cleared Address").
 
@@ -770,6 +804,98 @@ resolves by probing a running Kodi, and the resolved index is not stable
 across runs against unchanged hardware, so an address declared as a literal
 would report a Change on every Run and fail its own Verification. They wait
 for Intent resolution.
+
+## Declaring an add-on
+
+One add-on is the Reconciler's: `script.module.six`. It is declared in the
+Artifact Lock beside the Profile, never in the Profile itself:
+
+```yaml
+addons:
+  - id: script.module.six
+    version: "1.16.0+matrix.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.six/script.module.six-1.16.0+matrix.1.zip
+    sha256: "4197f7773f75ab9f16b3c920195acbb8b8b151b4b3c8c3e14fc4876e764e3860"
+    notes: >-
+      A leaf with no dependants and no repository semantics, chosen to prove
+      the vertical.
+```
+
+A record names the bytes, not a place to look for bytes. The Reconciler
+fetches the URL and hashes what came back; anything but `sha256` fails the Run
+without touching the Device, because a mirror that changed under a stable URL
+is exactly the case a pin exists to catch
+([ADR 0017](../adr/0017-pin-add-on-artifacts-and-patch-the-broken-ones.md)).
+
+Appearing in the Lock is one statement: **installed at this version and
+enabled**. There is no add-on this fleet wants present but disabled, so the
+two are not separately declarable and cannot disagree with each other
+([ADR 0018](../adr/0018-enable-add-ons-in-kodis-database-while-kodi-is-stopped.md)). `notes` carries
+the rationale a reviewer of a future version bump needs — why this version and
+not the newest — and is the one field nothing but a human reads. A record with
+nothing to explain states `~`.
+
+The Lock is a separate file from the Profile because a version bump is
+eventually a bot's edit, and a bot editing the file humans edit for settings
+turns every bump into a conflict with unrelated work.
+
+### What a Run observes
+
+The Observation is `/storage/.kodi/addons/<id>/addon.xml`, parsed as XML and
+read for the `version` attribute — what Kodi itself believes is installed.
+Nothing hashes the tree, and the Reconciler writes no receipt of its own: a
+receipt would be a second record of the same fact, free to disagree with the
+one Kodi reads. The enabled half is the `installed` row in the add-on
+database.
+
+A Plan names both:
+
+```
+install /storage/.kodi/addons/script.module.six
+version: (absent) -> 1.16.0+matrix.1
+enabled: (no row) -> 1
+```
+
+An add-on already at its pin but disabled plans as `enable` and ships
+nothing — the tree is already right, so re-downloading it would be work
+nobody asked for.
+
+### What an Apply does
+
+Everything that can fail on the controller fails first. The Run downloads the
+archive, verifies the digest, rejects any ZIP entry that is absolute or walks
+out of the archive, cross-checks the `addon.xml` inside against the pinned id
+and version, and builds a `ustar` tar — all before Kodi is stopped.
+Downloading under a stopped Kodi would hold the television down for the length
+of the transfer, and an Artifact that fails its pin would hold it down for
+nothing:
+
+```
+fetching script.module.six 1.16.0+matrix.1
+stopping kodi.service
+shipping script.module.six 1.16.0+matrix.1
+starting kodi.service
+```
+
+The tree is streamed over the existing ssh transport, expanded into a staging
+directory beside the destination, and moved into place only once it is whole.
+A Run killed mid-transfer leaves the old add-on intact and a staging directory
+behind; the next Run replaces it. That is the interruption property, not
+rollback — there is no copy of the previous tree, and reprovisioning is the
+disaster recovery story
+([ADR 0009](../adr/0009-fail-forward-and-exclusive-execution-ownership.md)).
+
+The row is then written directly into Kodi's add-on database with Kodi still
+stopped, with exactly the statement Kodi itself issues: update `enabled` and
+`disabledReason` if a row exists, insert `(addonID, enabled, installDate)` if
+one does not. Kodi writes `installed` immediately on change rather than
+flushing it from memory at exit, so a stopped Kodi has nothing to lose. There
+is no JSON-RPC path that installs a local add-on and enables it, which is why
+the database is the interface
+([ADR 0018](../adr/0018-enable-add-ons-in-kodis-database-while-kodi-is-stopped.md)).
+
+The add-on database is named by the Profile, not compiled in; see
+[Device addresses](#device-addresses).
 
 ## The Kodi restart Effect
 
@@ -991,7 +1117,49 @@ The scenarios are:
    `omdb_apikey` as `named by OMDB_API_KEY` with no value either side of it,
    and the `plan` after the restart to report `no changes`. A `plan` that
    reports the drift again is Kodi having overwritten the write from memory.
-7. **No declared setting, playlist or Shortcut Node is a `create`** — the
+7. **The add-on lands, both halves** — this is the first Run through the
+   Artifact Type, so it has to prove the whole vertical. Delete the tree and
+   forget the row, start Kodi so it settles with the add-on genuinely gone,
+   then `apply`:
+
+   ```console
+   ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+   db=/storage/.kodi/userdata/Database/Addons33.db
+
+   ug systemctl stop kodi
+   ug rm -rf /storage/.kodi/addons/script.module.six
+   ug "sqlite3 $db \"DELETE FROM installed WHERE addonID='script.module.six'\""
+   ug systemctl start kodi
+
+   uv run coreelec-reconciler apply --room theater
+   uv run coreelec-reconciler plan --room theater
+   ```
+
+   Expect the `apply` to name `(absent) -> 1.16.0+matrix.1` and
+   `(no row) -> 1`, to fetch before it stops Kodi, and the `plan` after it to
+   report the add-on converged. Then confirm the three things the Run claims:
+
+   ```console
+   ug cat /storage/.kodi/addons/script.module.six/addon.xml | head -3
+   ug "sqlite3 $db \"SELECT addonID, enabled, disabledReason FROM installed
+       WHERE addonID='script.module.six'\""
+   ug systemctl restart kodi
+   ```
+
+   Expect `version="1.16.0+matrix.1"` in the manifest, `1|0` for the row, and
+   Kodi to come back up with the add-on enabled in Settings > Add-ons > My
+   add-ons. A restart is the half that catches a database write Kodi discards.
+
+   Then prove the disabled-only path separately: disable the add-on in the
+   Kodi UI, stop Kodi, `apply`, and confirm the Run reported `enable` and
+   shipped nothing — the tree was already at its pin.
+
+   Finally, prove the pin refuses. Edit `addons.yaml` to a `sha256` that is
+   one character different, delete the tree, and `apply`: the Run must fail
+   naming both digests, before it stops Kodi, and the television must still be
+   up. Restore the digest afterwards.
+8. **No declared setting, playlist, Shortcut Node or add-on is a `create`**
+   — the
    shell writes every one of them, so on a provisioned Device
    none may plan as a `create`. A `create` is a misread or typo'd setting id,
    a document read in the wrong dialect, or a playlist or node file named
@@ -1006,7 +1174,7 @@ The scenarios are:
 
    Expect no output. Run this whenever the Profile or the Room Overlay
    declares a new setting, a new Settings Document, or a new playlist.
-8. **The shell and the Reconciler agree** — the value-parity invariant. One
+9. **The shell and the Reconciler agree** — the value-parity invariant. One
    mismatched literal (`true` against `1`) gives two engines that revert each
    other forever, and it is the check that proves a transform produces what
    the shell produces rather than something merely plausible. For the Smart
@@ -1050,7 +1218,16 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
-9. **Usable** — Kodi still starts, every playlist still opens, the weather
+   The `addons` component is the one that covers `script.module.six`, and it
+   is the one that proves the two engines install the same version from the
+   same bytes rather than reverting each other on every Run:
+
+   ```console
+   ./provision-coreelec.sh --target ugoos-theater --component addons
+   uv run coreelec-reconciler plan --room theater
+   ```
+
+10. **Usable** — Kodi still starts, every playlist still opens, the weather
    widget still renders on the home screen, NextPVR still lists channels, and
    TMDb Helper still returns ratings. The last four are what the six named
    values buy: each one is a live endpoint or the credential that reaches it,
@@ -1080,7 +1257,7 @@ The scenarios are:
 
    A `result` with `files` (or an empty list when nothing is unwatched) means
    Kodi parsed the Smart Playlist. An `error` means it did not.
-10. **No named value is anywhere it should not be** — the whole point of
+11. **No named value is anywhere it should not be** — the whole point of
     naming. Capture a Run's output and search it for each of the six values,
     and search what the Reconciler commits:
 
@@ -1097,7 +1274,7 @@ The scenarios are:
     ```
 
     Expect no output at all. Run it again after an `apply`, which prints more.
-11. **Every Cleared Address is the id the skin actually reads** — and this is
+12. **Every Cleared Address is the id the skin actually reads** — and this is
     the only thing that proves it. Scenario 7 catches a typo because a wrong
     id has no node and plans a `create`. A Cleared Address inverts that: a
     typo'd id resolves no value, matches `unset`, and reports converged
@@ -1157,7 +1334,7 @@ The scenarios are:
     renders, and the NowPlaying, Settings and SystemInfo tiles are present. A
     junk value the Reconciler cleared but the skin never read would pass every
     command above and show up only here.
-12. **The CEC power policy lands, and the glob refuses a second document** —
+13. **The CEC power policy lands, and the glob refuses a second document** —
     the two halves of the first Run that resolves a document by pattern. A
     glob matching one file is indistinguishable from a literal path, so a
     successful Run alone proves nothing about the capability, and the second
@@ -1213,7 +1390,7 @@ The scenarios are:
     ug systemctl is-active kodi     # with the Sony off: expect "active"
     ```
 
-13. **The Shortcut Nodes and the view types land, and the views rebuild** —
+14. **The Shortcut Nodes and the view types land, and the views rebuild** —
     three things at once, because the rebuild is what makes the view types
     visible and a Run carrying either takes the same Kodi stop.
 
@@ -1263,9 +1440,9 @@ The scenarios are:
     uv run coreelec-reconciler plan --room theater
     ```
 
-    Expect `plan: no changes`, and expect scenario 7 to stay clean — the shell
+    Expect `plan: no changes`, and expect scenario 8 to stay clean — the shell
     writes all six, so none may plan as a `create`.
-14. **The timezone lands in both places, and `/etc/localtime` follows** — the
+15. **The timezone lands in both places, and `/etc/localtime` follows** — the
     first Run through the `shell_vars` dialect, the `from_profile` arm and the
     `tz-data.service` Effect, so it has to prove all three. Drift both records
     of the zone in different directions: if the two addresses did not resolve
@@ -1323,8 +1500,8 @@ The scenarios are:
     uv run coreelec-reconciler plan --room theater
     ```
 
-    Expect `plan: no changes`, and scenario 7 to stay clean.
-15. **The platform Guard refuses a Device that is not what the Profile
+    Expect `plan: no changes`, and scenario 8 to stay clean.
+16. **The platform Guard refuses a Device that is not what the Profile
     claims** — a Guard that has never refused anything is a Guard nobody has
     tested. Declare a version the Device does not hold and watch the Run stop
     before it writes:
@@ -1352,7 +1529,7 @@ The scenarios are:
     ug "cat /etc/os-release; cat /etc/release"
     ```
 
-16. **Who may log in converges, and the password window closes** — this is
+17. **Who may log in converges, and the password window closes** — this is
     the first Run that restarts the daemon carrying its own connection, so it
     has to prove the reconnect. Inject both drifts at once: a stray key in
     `authorized_keys`, and the pair a wizard-enabled Device presents.
@@ -1391,14 +1568,14 @@ The scenarios are:
     Expect `Permission denied (publickey)` — the daemon refusing to even
     offer password authentication — and `ug true` to still work.
 
-17. **First Contact reaches a Device with no administrator key** — the
+18. **First Contact reaches a Device with no administrator key** — the
     precondition for the retirement test, and the one scenario that needs the
     Device's root password. Remove the administrator entry, confirm the
     Device is unreachable, and meet it again.
 
     **Do this with the local console to hand.** It is the one scenario that
     deliberately removes the Reconciler's own way in, and it needs password
-    authentication enabled to get back — so run it before scenario 16, or
+    authentication enabled to get back — so run it before scenario 17, or
     re-enable the password from the console first.
 
     ```console
@@ -1448,13 +1625,17 @@ two view types (`SKIN-015`, `SKIN-016`), the view rebuild (`EFFECT-004`), the
 CEC power policy (`CEC-001`-`CEC-005`), the platform Guard (`PLAT-001`), the
 timezone cache (`CORE-006`), the `tz-data.service` restart (`EFFECT-002`),
 the two `authorized_keys` entries (`SSH-002`, `LIFE-002`), the `sshd.conf`
-pair (`SSH-003`), the host key policy (`SSH-004`) and the `sshd.service`
-restart (`EFFECT-003`)
+pair (`SSH-003`), the host key policy (`SSH-004`), the `sshd.service`
+restart (`EFFECT-003`) and one add-on artifact (`ART-037`)
 as
 shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
-`cec`, `skin`, `services`, `room` or `baseline` run. `SKIN-027` and `SKIN-028`,
+`cec`, `skin`, `services`, `addons`, `room` or `baseline` run. `ADDON-001` is
+one row covering the enabled flag of all forty-one add-ons, so it stays
+`none` until the Reconciler declares every one of them; the Reconciler
+enabling `script.module.six` is shadowing inside a row the shell still owns
+whole. `SKIN-027` and `SKIN-028`,
 the
 two superseded playlists, stay `retired` and are not declared anywhere, and
 so does `PLAT-002`, the device-tree model check the Reconciler will never

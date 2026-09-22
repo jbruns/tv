@@ -7,10 +7,13 @@ on PATH; there is no fake-device framework.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
+import sqlite3
 import stat
 import xml.etree.ElementTree as ElementTree
+import zipfile
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,6 +113,60 @@ fi
 exit 0
 """
 
+CURL_STUB = """#!/bin/sh
+# Stub curl: serves a pinned Artifact from a local directory, so the fetch is
+# exercised end to end without reaching the internet. The URL's last path
+# segment names the file, the way it does on every mirror we pin.
+#
+# This is the same boundary as the stub `ssh` above: the Reconciler shells
+# out to a client, and the test stands a client in front of it.
+url=""
+output=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    --retry|--connect-timeout|--max-time|--proto) shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+case "$url" in
+  https://*) ;;
+  *) echo "curl: only https is configured here" >&2; exit 1 ;;
+esac
+name="${url##*/}"
+if [ -n "$FAKE_ARTIFACT_REFUSES" ]; then
+  echo "curl: (22) The requested URL returned error: 404" >&2
+  exit 22
+fi
+if [ ! -f "$FAKE_ARTIFACT_DIR/$name" ]; then
+  echo "curl: (22) The requested URL returned error: 404" >&2
+  exit 22
+fi
+cp "$FAKE_ARTIFACT_DIR/$name" "$output"
+"""
+
+SQLITE_STUB = """#!/usr/bin/env python3
+# Stub sqlite3: the real engine, reached through Python's own binding rather
+# than through a command-line tool the runner may not have. Arguments are the
+# CLI's: an optional -batch, the database, and one script of statements.
+import sqlite3
+import sys
+
+arguments = [word for word in sys.argv[1:] if word != "-batch"]
+database, statements = arguments[0], arguments[1]
+connection = sqlite3.connect(database, isolation_level=None)
+try:
+    held = [part for part in statements.split(";") if part.strip()]
+    if len(held) == 1:
+        for row in connection.execute(held[0]).fetchall():
+            print("|".join("" if value is None else str(value) for value in row))
+    else:
+        connection.executescript(statements)
+finally:
+    connection.close()
+"""
+
 CAT_STUB = """#!/bin/sh
 # Scripts successive reads of one path, so a test can watch a Run refuse a
 # compile it caught mid-write and accept only the finished file. Every other
@@ -142,6 +199,11 @@ platform:
   release_contains: Amlogic-ng.arm-21.3-Omega
 constants:
   timezone: America/Los_Angeles
+addresses:
+  timezone_cache: {timezone_cache}
+  sshd_conf: {sshd_conf}
+  addons: {addons}
+  addon_database: {addon_database}
 transport:
   user: root
   port: 22
@@ -271,6 +333,71 @@ SSHD_DOCUMENT = f"""\
 # The address the Reconciler knows `tz-data.service` reads.
 TIMEZONE_CACHE = "/storage/.cache/timezone"
 
+# The one add-on this slice pins, as the Artifact Lock states it. The URL is
+# the one the shell's `provision.conf` holds; the stub `curl` serves the
+# archive the fixture builds under the same last path segment.
+ADDON_ID = "script.module.six"
+ADDON_VERSION = "1.16.0+matrix.1"
+ADDON_URL = (
+    "https://mirrors.kodi.tv/addons/omega/script.module.six/"
+    f"{ADDON_ID}-{ADDON_VERSION}.zip"
+)
+
+# An Artifact Lock pinning nothing. Every Profile has the file; most tests
+# are about something else, so theirs is empty.
+NO_ADDONS = "addons: []\n"
+
+# Kodi's `installed` table, as Addons33 declares it (`AddonDatabase.cpp`).
+# The fake Device holds the real schema so a statement that names a column
+# Kodi does not have fails here rather than on the television.
+ADDONS33_SCHEMA = """\
+CREATE TABLE installed (
+  id INTEGER PRIMARY KEY,
+  addonID TEXT UNIQUE,
+  enabled BOOLEAN,
+  installDate TEXT,
+  lastUpdated TEXT,
+  lastUsed TEXT,
+  origin TEXT NOT NULL DEFAULT \'\',
+  disabledReason INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+def addon_manifest(addon_id: str = ADDON_ID, version: str = ADDON_VERSION) -> str:
+    """An `addon.xml` with its attributes spread across lines, as several real
+    add-ons write it, so nothing here can be read with a pattern."""
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<addon\n"
+        f'  id="{addon_id}"\n'
+        f'  name="{addon_id}"\n'
+        f'  version="{version}"\n'
+        '  provider-name="kodi">\n'
+        '  <extension point="xbmc.python.module" library="lib" />\n'
+        "</addon>\n"
+    )
+
+
+def addon_lock(
+    addon_id: str = ADDON_ID,
+    version: str = ADDON_VERSION,
+    url: str = ADDON_URL,
+    digest: str = "",
+    notes: str = "~",
+) -> str:
+    """The Artifact Lock, pinning one add-on."""
+
+    return (
+        "addons:\n"
+        f"  - id: {addon_id}\n"
+        f'    version: "{version}"\n'
+        f"    url: {url}\n"
+        f'    sha256: "{digest}"\n'
+        f"    notes: {notes}\n"
+    )
+
 
 def indent(block: str) -> str:
     """`block` moved four spaces right, into a document's `settings` list."""
@@ -379,6 +506,21 @@ class FakeDevice:
         return self.root / "storage" / ".ssh" / "authorized_keys"
 
     @property
+    def addons(self) -> Path:
+        """Where Kodi keeps add-ons, one expanded tree per id."""
+        return self.root / "storage" / ".kodi" / "addons"
+
+    @property
+    def addon_database(self) -> Path:
+        """Kodi's add-on database, whose schema version is in its filename."""
+        return self.userdata / "Database" / "Addons33.db"
+
+    @property
+    def artifacts(self) -> Path:
+        """What the stub `curl` serves, one file per URL's last segment."""
+        return self.root / "artifacts"
+
+    @property
     def playlist(self) -> Path:
         return self.playlists_dir / "NewShows.xsp"
 
@@ -474,6 +616,13 @@ class FakeDevice:
                 nodes=nodes,
                 authorized=self.authorized_keys,
                 entries=entries,
+                # The two the operating system owns are stated as the
+                # Device's own paths, which the stub `ssh` rewrites into the
+                # fake Device, because that is how a Profile states them.
+                timezone_cache=TIMEZONE_CACHE,
+                sshd_conf=SSHD_CONF,
+                addons=self.addons,
+                addon_database=self.addon_database,
             )
             + document_block(
                 self.guisettings,
@@ -486,15 +635,97 @@ class FakeDevice:
             + extra
         )
 
+    def profile_directory(self) -> Path:
+        return self.config_root / "shared" / "ugoos-am6b-plus" / "coreelec-21.3"
+
+    def write_addons(self, body: str) -> None:
+        """Writes the Artifact Lock beside the Profile."""
+        (self.profile_directory() / "addons.yaml").write_text(body, encoding="utf-8")
+
+    def publish_artifact(
+        self,
+        addon_id: str = ADDON_ID,
+        version: str = ADDON_VERSION,
+        root: str | None = None,
+        manifest: str | None = None,
+        extra: Mapping[str, str] | None = None,
+        entries: Mapping[str, str] | None = None,
+        url: str = ADDON_URL,
+    ) -> str:
+        """Builds the pinned ZIP the stub `curl` serves, and returns its SHA-256.
+
+        `root` is the archive's single top-level directory, which is not
+        always the add-on id: two pins in this fleet are GitHub tag archives.
+        `entries` writes raw names straight into the archive, which is how a
+        test asks for one no add-on would ever ship.
+        """
+        self.artifacts.mkdir(parents=True, exist_ok=True)
+        top = addon_id if root is None else root
+        held = {
+            f"{top}/addon.xml": (
+                addon_manifest(addon_id, version) if manifest is None else manifest
+            ),
+            f"{top}/lib/six.py": "SIX = True\n",
+        }
+        for name, body in (extra or {}).items():
+            held[f"{top}/{name}"] = body
+        held.update(entries or {})
+        archive = self.artifacts / url.rsplit("/", 1)[1]
+        with zipfile.ZipFile(archive, "w") as zipped:
+            for name, body in held.items():
+                zipped.writestr(name, body)
+        return hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def install_addon(
+        self,
+        addon_id: str = ADDON_ID,
+        version: str = ADDON_VERSION,
+        enabled: bool | None = True,
+    ) -> None:
+        """Puts the add-on on the fake Device the way a provisioned one holds it."""
+        manifest = self.addons / addon_id / "addon.xml"
+        write_document(manifest, addon_manifest(addon_id, version))
+        (self.addons / addon_id / "lib").mkdir(parents=True, exist_ok=True)
+        if enabled is not None:
+            self.write_addon_row(addon_id, enabled)
+
+    def create_addon_database(self) -> None:
+        """Kodi's own `installed` table, as Addons33 declares it."""
+        self.create_addon_database_at(self.addon_database)
+
+    def create_addon_database_at(self, database: Path) -> None:
+        database.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(database) as connection:
+            connection.executescript(ADDONS33_SCHEMA)
+
+    def write_addon_row(self, addon_id: str, enabled: bool) -> None:
+        with sqlite3.connect(self.addon_database) as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO installed(addonID, enabled, installDate)"
+                " VALUES(?, ?, ?)",
+                (addon_id, int(enabled), "2026-01-01 00:00:00"),
+            )
+
+    def forget_addon_row(self, addon_id: str) -> None:
+        """What Kodi does on start when the add-on is no longer on disk."""
+        with sqlite3.connect(self.addon_database) as connection:
+            connection.execute("DELETE FROM installed WHERE addonID=?", (addon_id,))
+
+    def addon_row(
+        self, addon_id: str, database: Path | None = None
+    ) -> tuple[int, int, str] | None:
+        """The row Kodi reads: whether the add-on is enabled, and why not."""
+        with sqlite3.connect(
+            self.addon_database if database is None else database
+        ) as connection:
+            held = connection.execute(
+                "SELECT enabled, disabledReason, origin FROM installed WHERE addonID=?",
+                (addon_id,),
+            ).fetchone()
+        return None if held is None else (held[0], held[1], held[2])
+
     def write_profile(self, body: str) -> None:
-        profile = (
-            self.config_root
-            / "shared"
-            / "ugoos-am6b-plus"
-            / "coreelec-21.3"
-            / "profile.yaml"
-        )
-        profile.write_text(body, encoding="utf-8")
+        (self.profile_directory() / "profile.yaml").write_text(body, encoding="utf-8")
 
     def write_room(self, body: str) -> None:
         (self.config_root / "rooms" / "theater" / "room.yaml").write_text(
@@ -529,6 +760,8 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
         ("chmod", CHMOD_STUB.format(chmod=shutil.which("chmod") or "/bin/chmod")),
         ("cat", CAT_STUB.format(cat=shutil.which("cat") or "/bin/cat")),
         ("systemctl", SYSTEMCTL_STUB),
+        ("curl", CURL_STUB),
+        ("sqlite3", SQLITE_STUB),
     ):
         stub = stub_dir / name
         stub.write_text(body, encoding="utf-8")
@@ -536,6 +769,7 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
     monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("FAKE_DEVICE_ROOT", str(tmp_path))
     monkeypatch.setenv("FAKE_DEVICE_SYSTEMCTL_LOG", str(tmp_path / "systemctl.log"))
+    monkeypatch.setenv("FAKE_ARTIFACT_DIR", str(tmp_path / "artifacts"))
     monkeypatch.setenv(
         "FAKE_DEVICE_KODI_DOCUMENT",
         str(tmp_path / "storage" / ".kodi" / "userdata" / "guisettings.xml"),
@@ -569,6 +803,9 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
     write_document(fake.authorized_keys, f"{ADMINISTRATOR_ENTRY}\n")
     fake.localtime.parent.mkdir(parents=True, exist_ok=True)
     fake.write_profile(fake.profile_body())
+    # Every Profile has an Artifact Lock. A test that is about something else
+    # pins nothing, so no Run of it reaches an add-on.
+    fake.write_addons(NO_ADDONS)
     fake.write_room(ROOM)
     yield fake
 

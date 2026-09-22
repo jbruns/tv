@@ -23,6 +23,10 @@ from .config import Transport
 CONNECT_TIMEOUT = 10
 COMMAND_TIMEOUT = 60
 
+# Shipping an add-on tree is the one program that carries megabytes rather
+# than a document, and the skin is the largest of them.
+SHIP_TIMEOUT = 600
+
 # First Contact may take as long as the operator takes to type the password.
 FIRST_CONTACT_TIMEOUT = 300
 
@@ -59,6 +63,19 @@ class Device:
     def _run(
         self, script: str, stdin: str | None = None
     ) -> subprocess.CompletedProcess[str]:
+        completed = self._invoke(
+            script, b"" if stdin is None else stdin.encode("utf-8")
+        )
+        return subprocess.CompletedProcess(
+            completed.args,
+            completed.returncode,
+            completed.stdout.decode("utf-8", errors="replace"),
+            completed.stderr.decode("utf-8", errors="replace"),
+        )
+
+    def _invoke(
+        self, script: str, stdin: bytes, timeout: int = COMMAND_TIMEOUT
+    ) -> subprocess.CompletedProcess[bytes]:
         argv = self._argv(
             script,
             "-o",
@@ -74,10 +91,9 @@ class Device:
         try:
             return subprocess.run(
                 argv,
-                input=stdin if stdin is not None else "",
+                input=stdin,
                 capture_output=True,
-                text=True,
-                timeout=COMMAND_TIMEOUT,
+                timeout=timeout,
                 check=False,
             )
         except FileNotFoundError as error:
@@ -86,7 +102,7 @@ class Device:
             ) from error
         except subprocess.TimeoutExpired as error:
             raise DeviceError(
-                f"ssh to {self.hostname} timed out after {COMMAND_TIMEOUT}s"
+                f"ssh to {self.hostname} timed out after {timeout}s"
             ) from error
 
     def _checked(self, what: str, script: str, stdin: str | None = None) -> str:
@@ -171,6 +187,56 @@ class Device:
             f" chmod {mode} {shlex.quote(staged)};"
             f" mv {shlex.quote(staged)} {shlex.quote(path)}",
             stdin=content,
+        )
+
+    def replace_directory(self, path: str, archive: bytes) -> None:
+        """Replaces the directory with the tree the tar stream carries.
+
+        The stream is expanded into a staging directory beside the
+        destination and moved into place, so an expansion that fails partway
+        never leaves a half-written add-on where Kodi will read one. The
+        directory being replaced is not kept: the Artifact Lock reproduces it
+        at any time, so a copy on the Device stores something already stored
+        (ADR 0017), and an interrupted Run is repeated (ADR 0009).
+
+        The tar stream rides on stdin, so the program cannot. It is a single
+        `sh` command word whose embedded paths are quoted.
+        """
+
+        directory, _, name = path.rpartition("/")
+        staging = f"{directory}/.{name}.staging"
+        quoted, quoted_staging = shlex.quote(path), shlex.quote(staging)
+        script = (
+            f"set -e; rm -rf {quoted_staging}; mkdir -p {quoted_staging};"
+            f" tar -xf - -C {quoted_staging};"
+            f" test -d {quoted_staging}/{shlex.quote(name)};"
+            f" rm -rf {quoted}; mkdir -p {shlex.quote(directory)};"
+            f" mv {quoted_staging}/{shlex.quote(name)} {quoted};"
+            f" rm -rf {quoted_staging}"
+        )
+        completed = self._invoke(script, archive, timeout=SHIP_TIMEOUT)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).decode(
+                "utf-8", errors="replace"
+            )
+            lines = detail.strip().splitlines()
+            reason = lines[-1] if lines else f"ssh exited {completed.returncode}"
+            raise DeviceError(f"replacing {path} on {self.hostname} failed: {reason}")
+
+    def sqlite(self, database: str, statements: str) -> str:
+        """Runs `statements` against the SQLite database, and returns its output.
+
+        The database must already exist: creating it would produce an empty
+        file where Kodi expects its own schema, and every later Run would
+        then fail somewhere less obvious than here.
+        """
+
+        quoted = shlex.quote(database)
+        return self._checked(
+            f"reading {database}",
+            f"if [ ! -f {quoted} ]; then"
+            f" echo 'no such database' >&2; exit 1; fi;"
+            f" sqlite3 -batch {quoted} {shlex.quote(statements)}",
         )
 
     def stop_service(self, unit: str) -> None:

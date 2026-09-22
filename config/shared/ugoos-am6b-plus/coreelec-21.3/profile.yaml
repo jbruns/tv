@@ -28,6 +28,24 @@ platform:
 constants:
   timezone: America/Los_Angeles
 
+# The Device addresses the Reconciler knows the meaning of, but not the
+# location of. Every other address on the Device reaches the Reconciler as
+# the State Address of a Resource; these four do not, because what they are
+# for is mechanism — which unit reads a document, where Kodi keeps add-ons,
+# which database holds their enabled flags — and mechanism is not declared
+# (ADR 0013).
+#
+# Knowing what an address means is not knowing where it is, though, so the
+# address itself is here. The Kodi add-on database carries its schema version
+# in its filename, so a Profile branched for a future Kodi changes one line
+# rather than forking the Reconciler (ADR 0018). No Device address lives in
+# code.
+addresses:
+  timezone_cache: /storage/.cache/timezone
+  sshd_conf: /storage/.cache/services/sshd.conf
+  addons: /storage/.kodi/addons
+  addon_database: /storage/.kodi/userdata/Database/Addons33.db
+
 # Controller-side SSH transport. The Reconciler shells out to ssh and reuses
 # the existing key-only administrator setup.
 transport:
