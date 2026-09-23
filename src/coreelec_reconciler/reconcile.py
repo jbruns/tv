@@ -42,6 +42,7 @@ from .playlist import render
 # entirely. `/etc/release` is genuinely one line of free text.
 OS_RELEASE = "/etc/os-release"
 RELEASE = "/etc/release"
+SOUND_CARDS = "/proc/asound/cards"
 
 # `tz-data.service` is a oneshot reading `TIMEZONE` from the cache document
 # and relinking `/var/run/localtime`, which `/etc/localtime` points at. A
@@ -306,6 +307,29 @@ def _guard_platform(device: Device, platform: Platform) -> None:
             f"declares it contains {platform.release_contains}: refusing to "
             "reconcile it"
         )
+
+    # The Profile's ALSA device strings name this card. Kodi given a card the
+    # Device does not have falls back to another output without complaint,
+    # which presents as "no audio" rather than as a card name.
+    cards = _sound_cards(device.read(SOUND_CARDS) or "")
+    if platform.sound_card not in cards:
+        listed = ", ".join(cards) if cards else "no sound card"
+        raise DeviceError(
+            f"{SOUND_CARDS} on {device.hostname} lists {listed} and the Profile "
+            f"declares {platform.sound_card}: refusing to reconcile it"
+        )
+
+
+def _sound_cards(document: str) -> list[str]:
+    """The card ids `/proc/asound/cards` lists: ` 0 [AMLAUGESOUND   ]: ...`."""
+
+    cards: list[str] = []
+    for line in document.splitlines():
+        index, _, rest = line.strip().partition(" ")
+        rest = rest.lstrip()
+        if index.isdigit() and rest.startswith("[") and "]" in rest:
+            cards.append(rest[1 : rest.index("]")].strip())
+    return cards
 
 
 def _effect(addresses: Addresses, declared: SettingsDocument) -> str | None:

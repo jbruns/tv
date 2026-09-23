@@ -31,14 +31,16 @@ The concrete values are not stable facts safe to hard-code:
   `ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND`. `AMLAUGESOUND` is
   a driver detail, not a hardware fact worth pinning in configuration that
   ships to every room.
-- `audiooutput.channels` is an opaque Kodi enum ordinal. There is precedent
-  in this codebase for that kind of index moving on its own: the room
-  component's display resolution index was observed moving from `41` to `40`
-  between two provisioning runs minutes apart, on completely unchanged
-  hardware (`docs/devices/ugoos-am6b-plus/room-desired-state.md`, "Resolution
-  is a label, not Kodi's index"). The same risk applies to any Kodi-assigned
-  enum ordinal, including the channel layout, so it is resolved fresh every
-  run rather than pinned.
+- `audiooutput.channels` is resolved fresh every run too, but not because its
+  value moves. Kodi registers no options-filler for it: its options are a
+  static table in Kodi's own `system/settings/settings.xml`, where `10` is
+  `AE_CH_LAYOUT_7_1`, so matching the label `7.1` against that table always
+  yields `10` on this Kodi. The shell resolves it only because it shares the
+  probe with the two device strings above. The display resolution index,
+  which was observed moving from `41` to `40` on unchanged hardware, is a
+  different case: Kodi recomputes that ordinal from the live display mode at
+  every startup
+  ([ADR 0019](../../adr/0019-the-profiles-scope-resolves-what-the-shell-probed.md)).
 
 ## The intent vocabulary
 

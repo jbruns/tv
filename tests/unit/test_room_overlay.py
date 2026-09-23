@@ -220,7 +220,7 @@ def test_a_value_the_transform_cannot_map_is_rejected_naming_it(
     assert "dolby_vision_mode" in err
 
 
-def test_the_shipped_room_overlay_declares_the_nine_room_scoped_addresses(
+def test_the_shipped_room_overlay_declares_the_ten_room_scoped_addresses(
     device: FakeDevice,
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
@@ -238,6 +238,7 @@ def test_the_shipped_room_overlay_declares_the_nine_room_scoped_addresses(
         "audiooutput.dtspassthrough",
         "audiooutput.truehdpassthrough",
         "audiooutput.dtshdpassthrough",
+        "audiooutput.channels",
     ]
     device.write_room_settings(
         "".join(
@@ -253,6 +254,7 @@ def test_the_shipped_room_overlay_declares_the_nine_room_scoped_addresses(
     written = values(device.guisettings)
     assert written["coreelec.amlogic.disabledolbyvision"] == "false"
     assert written["coreelec.amlogic.dolbyvisionled"] == "0"
+    assert written["audiooutput.channels"] == "10"
     for setting in (
         "audiooutput.passthrough",
         "audiooutput.ac3passthrough",

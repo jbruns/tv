@@ -83,6 +83,25 @@ error: /etc/os-release on ugoos-theater holds VERSION_ID=22.0 and the Profile
 declares 21.3: refusing to reconcile it
 ```
 
+The sound card is part of the platform too:
+
+```yaml
+  sound_card: AMLAUGESOUND
+```
+
+The Profile's audio device strings embed it as `CARD=AMLAUGESOUND`, and Kodi
+given a card the Device does not have falls back to another output without
+complaint — which presents as "no audio", a long way from a card name.
+Re-reading `guisettings.xml` after a write proves only that the Reconciler
+wrote what it meant to, so the Guard reads `/proc/asound/cards` instead, which
+needs no running Kodi, and refuses unless the declared id is one of the
+bracketed card ids listed there:
+
+```console
+error: /proc/asound/cards on ugoos-theater lists AMLAUGESOUND and the Profile
+declares AMLMESONAUDIO: refusing to reconcile it
+```
+
 Nothing here is derived from the Profile's directory name.
 `ugoos-am6b-plus/coreelec-21.3` is for humans; the Device's own model string
 is `UGOOS AM6`, with no "plus" in it. The device-tree model is not checked at
@@ -831,9 +850,9 @@ cannot read its input reports the value it could not read.
 A setting that describes the room's hardware rather than the class of Device
 belongs in the Room Overlay's `settings_documents`, which uses the Profile's
 schema exactly: a room names the document and its dialect too. The Room
-Overlay declares nine settings in `guisettings.xml`: the Sony's EDID mode
-whitelist, the two Dolby Vision settings, and the six passthrough flags for
-the Sony eARC to OREI to Denon chain.
+Overlay declares ten settings in `guisettings.xml`: the Sony's EDID mode
+whitelist, the two Dolby Vision settings, the six passthrough flags for
+the Sony eARC to OREI to Denon chain, and the decoded channel layout.
 
 ```yaml
 settings_documents:
@@ -860,7 +879,7 @@ later without reshaping anything.
 ### Transforms
 
 A transform stands between what a human declares and what Kodi stores, for a
-setting where the two are different things. Two of the room's nine use one,
+setting where the two are different things. Two of the room's ten use one,
 and so does the CEC power policy in the Profile:
 
 | Transform | Declared | Written |
@@ -898,12 +917,17 @@ from, so the Room Overlay still reads as the source:
 update /storage/.kodi/userdata/guisettings.xml#coreelec.amlogic.dolbyvisionled: 1 -> 0 (dolby_vision_mode of tv-led)
 ```
 
-`videoscreen.resolution` and `audiooutput.channels` are room-scoped too and
-are deliberately *not* declared. Both are opaque Kodi enum ordinals the shell
-resolves by probing a running Kodi, and the resolved index is not stable
-across runs against unchanged hardware, so an address declared as a literal
-would report a Change on every Run and fail its own Verification. They wait
-for Intent resolution.
+`audiooutput.channels` is the room's tenth address, declared as `10`. That
+looks like an ordinal, and it is one, but from a fixed table in Kodi's own
+`settings.xml` where `10` is `AE_CH_LAYOUT_7_1`; nothing on the Device
+assigns it, so it is as stable as the Kodi version the Profile names.
+
+`videoscreen.resolution` is room-scoped too and is deliberately *not*
+declared, now or later. Kodi recomputes that ordinal from the live display
+mode at every startup; the stored truth is `videoscreen.screenmode`, which the
+shell never writes. Writing the ordinal is not ownership, so `ROOM-001` is
+retired
+([ADR 0019](../adr/0019-the-profiles-scope-resolves-what-the-shell-probed.md)).
 
 ## Declaring an add-on
 
@@ -1907,11 +1931,24 @@ The scenarios are:
     the two digests to match and `systemctl status kodi` to show no restart:
     an `apply` that refuses here must not have touched the service.
 
+    Repeat with a sound card the Device does not have:
+
+    ```console
+    sed -i.bak 's/^  sound_card: AMLAUGESOUND/  sound_card: AMLMESONAUDIO/' $profile
+    uv run coreelec-reconciler apply --room theater   # expect exit 1
+    mv $profile.bak $profile
+    ug "md5sum /storage/.kodi/userdata/guisettings.xml"
+    ```
+
+    Expect the refusal to name `/proc/asound/cards`, `AMLAUGESOUND` and
+    `AMLMESONAUDIO`, the digest to match again, and Kodi not to have
+    restarted.
+
     Then confirm what the Device actually says, which is what the Profile has
     to keep agreeing with:
 
     ```console
-    ug "cat /etc/os-release; cat /etc/release"
+    ug "cat /etc/os-release; cat /etc/release; cat /proc/asound/cards"
     ```
 
 17. **Who may log in converges, and the password window closes** — this is
@@ -2164,10 +2201,10 @@ by `apply` again.
 ## Ownership
 
 `inventory/ownership-ledger.json` records the eight declared Smart Playlists
-(`SKIN-019`-`SKIN-026`), the twenty-eight
+(`SKIN-019`-`SKIN-026`), the thirty
 `guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
-`CORE-008`-`CORE-027`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
-Room Overlay declares (`ROOM-002`-`ROOM-010`), the twelve add-on addresses
+`CORE-008`-`CORE-029`, `SKIN-001`, `SKIN-002` and `SVC-001` — the ten the
+Room Overlay declares (`ROOM-002`-`ROOM-011`), the twelve add-on addresses
 the Profile declares (`SVC-002`-`SVC-013`), the Arctic Fuse home screen
 (`SKIN-003`-`SKIN-010`), the four Shortcut Nodes (`SKIN-011`-`SKIN-014`), the
 two view types (`SKIN-015`, `SKIN-016`), the view rebuild (`EFFECT-004`), the
@@ -2202,7 +2239,10 @@ two superseded playlists, stay `retired` and are not declared anywhere, and
 so does `PLAT-002`, the device-tree model check the Reconciler will never
 make, and so do `PLAT-004`, `PLAT-005` and `LIFE-003`, the lifecycle deploy's
 second platform guard, its pre-7.2 OpenSSH fallback and its Kodi stop
-([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)). That
+([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)), and
+so does `ROOM-001`, the display resolution ordinal Kodi recomputes at every
+startup
+([ADR 0019](../adr/0019-the-profiles-scope-resolves-what-the-shell-probed.md)). That
 is the shadowing model:
 transferring a row freezes
 those shell runs

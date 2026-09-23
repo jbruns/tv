@@ -12,7 +12,7 @@ hostname: ugoos-theater
 profile: ugoos-am6b-plus/coreelec-21.3
 
 # Room-scoped Kodi settings, grouped by the Settings Document that holds them,
-# exactly as the Profile groups its own. These nine State Addresses describe
+# exactly as the Profile groups its own. These ten State Addresses describe
 # this room's hardware rather than the class of Device, so declaring them in a
 # Profile shared by four rooms would be false. The Profile declares
 # guisettings.xml too, and the two sides' settings merge into one document; an
@@ -23,11 +23,10 @@ profile: ugoos-am6b-plus/coreelec-21.3
 # this file, so the Recovery Baseline and Desired State do not diverge and a
 # shell run stays a no-op (ADR 0012). Applying any of them restarts Kodi.
 #
-# videoscreen.resolution and audiooutput.channels are not here. Both are
-# opaque Kodi enum ordinals the shell resolves by probing a running Kodi, and
-# the resolved index is not stable across runs, so an address declared as a
-# literal would report a Change on every Run and fail its own Verification.
-# They wait for Intent resolution.
+# videoscreen.resolution is not here, and will not be. Kodi recomputes that
+# ordinal from the live display mode at every startup, so writing it is not
+# ownership; the mode Kodi actually keeps is videoscreen.screenmode, which
+# nothing writes (ADR 0019).
 settings_documents:
   - document: /storage/.kodi/userdata/guisettings.xml
     dialect: guisettings
@@ -60,3 +59,8 @@ settings_documents:
         value: "true"
       - setting: audiooutput.dtshdpassthrough
         value: "true"
+      # 7.1, the room's speaker layout. `10` is AE_CH_LAYOUT_7_1 in the
+      # fixed table in Kodi's own settings.xml; it is not an ordinal Kodi
+      # assigns per Device, so it is as stable as the Kodi version.
+      - setting: audiooutput.channels
+        value: "10"

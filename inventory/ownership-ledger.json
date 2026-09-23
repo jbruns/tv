@@ -1616,7 +1616,7 @@
       "state_address": "audiooutput.audiodevice",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "deferred",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -1636,7 +1636,7 @@
       "state_address": "audiooutput.passthroughdevice",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "deferred",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2119,7 +2119,7 @@
       "state_address": "videoscreen.resolution",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "deferred",
+      "reconciler_status": "retired",
       "shell_write_set": {
         "status": "audited",
         "items": [
@@ -2319,7 +2319,7 @@
       "state_address": "audiooutput.channels",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "deferred",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [

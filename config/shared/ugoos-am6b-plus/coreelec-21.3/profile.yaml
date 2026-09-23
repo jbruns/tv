@@ -18,6 +18,10 @@ platform:
   version: "21.3"
   device: Amlogic-ng
   release_contains: Amlogic-ng.arm-21.3-Omega
+  # The kernel's id for this board's sound card, as /proc/asound/cards lists
+  # it. The audio device strings below embed it, and Kodi given a card the
+  # Device does not have falls back to another output in silence (ADR 0019).
+  sound_card: AMLAUGESOUND
 
 # Facts more than one State Address takes. Stating one twice is two records
 # free to diverge, and the symptom here is quiet: Kodi showing one timezone
@@ -420,6 +424,17 @@ settings_documents:
         value: "2"
       - setting: videoplayer.usedisplayasclock
         value: "false"
+      # Audio leaves over HDMI. These are the ALSA strings Kodi offers on
+      # this board and this Kodi, which is what the Profile's directory names,
+      # so they are literals rather than something to discover. `CARD=` is
+      # the platform's sound_card above, which every Run checks first.
+      #
+      # hdmi-multichannel: decoded audio, up to eight channels.
+      - setting: audiooutput.audiodevice
+        value: ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
+      # hdmi: the bitstream, untouched.
+      - setting: audiooutput.passthroughdevice
+        value: ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
       # These name add-ons the shell installs. The Reconciler never runs on a
       # bare Device, so nothing here installs them; an add-on that is missing
       # shows up as a setting Kodi discards, which the hardware acceptance run

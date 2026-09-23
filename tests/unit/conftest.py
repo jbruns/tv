@@ -26,7 +26,7 @@ SSH_STUB = """#!/bin/sh
 # Stub ssh: runs the remote command locally with the stub directory first on
 # PATH, so `hostname` and `mv` resolve to the shims beside this script.
 #
-# The Reconciler names four Device paths of its own — the two the platform
+# The Reconciler names five Device paths of its own — the three the platform
 # Guard reads, the timezone cache whose unit it knows, and the link that unit
 # writes — and those are the operating system's, not a tmp_path a Profile can
 # state. They are rewritten
@@ -44,6 +44,7 @@ if [ -n "$FAKE_DEVICE_ROOT" ]; then
   cmd=$(printf '%s' "$cmd" | sed \\
     -e "s#/etc/os-release#$FAKE_DEVICE_ROOT/etc/os-release#g" \\
     -e "s#/etc/release#$FAKE_DEVICE_ROOT/etc/release#g" \\
+    -e "s#/proc/asound/cards#$FAKE_DEVICE_ROOT/proc/asound/cards#g" \\
     -e "s#/var/run/localtime#$FAKE_DEVICE_ROOT/var/run/localtime#g" \
     -e "s#/storage/.cache#$FAKE_DEVICE_ROOT/storage/.cache#g")
 fi
@@ -197,6 +198,7 @@ platform:
   version: "21.3"
   device: Amlogic-ng
   release_contains: Amlogic-ng.arm-21.3-Omega
+  sound_card: AMLAUGESOUND
 constants:
   timezone: America/Los_Angeles
 addresses:
@@ -274,6 +276,13 @@ COREELEC_DEVICE="Amlogic-ng"
 """
 
 RELEASE = "Amlogic-ng.arm-21.3-Omega\n"
+
+# What the theater Ugoos's kernel reports, verbatim: the card id is padded
+# inside its brackets.
+SOUND_CARDS = """\
+ 0 [AMLAUGESOUND   ]: AML-AUGESOUND - AML-AUGESOUND
+                      AML-AUGESOUND
+"""
 
 # The administrator key pair the fake Device is reached with. Only the public
 # half is ever read — every connection in these tests goes through the stub
@@ -506,6 +515,11 @@ class FakeDevice:
     def release(self) -> Path:
         """One line of free text, matched by substring."""
         return self.root / "etc" / "release"
+
+    @property
+    def sound_cards(self) -> Path:
+        """The kernel's sound cards, which the platform Guard reads."""
+        return self.root / "proc" / "asound" / "cards"
 
     @property
     def localtime(self) -> Path:
@@ -849,6 +863,7 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
     # what the theater Ugoos says unless a test changes it.
     write_document(fake.os_release, OS_RELEASE)
     write_document(fake.release, RELEASE)
+    write_document(fake.sound_cards, SOUND_CARDS)
     # Every Run also declares who may log in, and derives the administrator
     # entry from the public half of the transport identity. The fake Device
     # already holds that entry, so a Run that is about something else plans
