@@ -172,13 +172,18 @@ class SettingChange:
         # is documented in the open.
         if self.setting.named_by is not None:
             yield f"{self.action} {self.address}: named by {self.setting.named_by}"
-            return
-        observed = "(unset)" if self.observed is None else self.observed
-        desired = "(cleared)" if self.desired is None else self.desired
-        origin = ""
-        if self.setting.transform is not None:
-            origin = f" ({self.setting.transform} of {self.setting.declared})"
-        yield f"{self.action} {self.address}: {observed} -> {desired}{origin}"
+        else:
+            observed = "(unset)" if self.observed is None else self.observed
+            desired = "(cleared)" if self.desired is None else self.desired
+            origin = ""
+            if self.setting.transform is not None:
+                origin = f" ({self.setting.transform} of {self.setting.declared})"
+            yield f"{self.action} {self.address}: {observed} -> {desired}{origin}"
+        # Printed with the Change rather than once at the top, because the
+        # moment it is needed is rule 3: run the shell, re-plan, and read the
+        # one Change that came back. A declared divergence says so there.
+        if self.setting.divergent is not None:
+            yield f"divergent: {self.setting.divergent}"
 
 
 @dataclass(frozen=True)
@@ -483,6 +488,56 @@ def _plan_addons(device: Device, desired: DesiredState, changes: list[Change]) -
                 enabled=enabled,
             )
         )
+
+
+ADDON_MANIFEST_ENTRY = "addon"
+
+# What makes a directory under the add-on address an add-on. Kodi's own
+# `packages` and `temp` scratch directories are excluded by this and not by
+# name: naming them would re-introduce the hand-maintained list the Artifact
+# Lock replaced, and would still miss the next one Kodi invents.
+ADDON_DESCRIPTOR = "addon.xml"
+
+
+def _shipped_with_kodi(device: Device, address: str) -> set[str]:
+    """Every add-on Kodi ships with, which is Kodi's business and not ours.
+
+    These are installed under the same address as everything else and carry
+    `ORIGIN_SYSTEM`, so an inventory that did not read this file would report
+    seven perfectly ordinary scrapers as strays on every Run.
+    """
+
+    document = device.read(address)
+    if document is None:
+        raise DeviceError(f"{address} on {device.hostname} is not there")
+    try:
+        root = ElementTree.fromstring(document)
+    except ElementTree.ParseError as error:
+        raise DeviceError(
+            f"{address} on {device.hostname} cannot be read: {error}"
+        ) from error
+    return {
+        (entry.text or "").strip()
+        for entry in root.findall(ADDON_MANIFEST_ENTRY)
+        if (entry.text or "").strip()
+    }
+
+
+def _undeclared_addons(device: Device, desired: DesiredState) -> list[str]:
+    """Add-ons on the Device that neither the Artifact Lock nor Kodi accounts for.
+
+    This does not fail the Run. An add-on appearing from nowhere is worth
+    knowing about, but nothing has yet decided what a Run should *do* about
+    one, and refusing to work for a reason nobody chose is worse than the
+    stray.
+    """
+
+    addresses = desired.addresses
+    accounted = {addon.id for addon in desired.addons} | _shipped_with_kodi(
+        device, addresses.addon_manifest
+    )
+    held = device.list_directories_holding(addresses.addons, ADDON_DESCRIPTOR)
+    return [name for name in held if name not in accounted]
 
 
 def _plan(device: Device, desired: DesiredState) -> list[Change]:
@@ -885,6 +940,12 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
     for change in changes:
         for line in change.report():
             print(line, file=out)
+
+    # Reported once, from the planning the Run opens with, so it appears on a
+    # Run that changes nothing too — which is exactly when a stray add-on is
+    # the only thing worth noticing.
+    for stray in _undeclared_addons(device, desired):
+        print(f"undeclared add-on: {desired.addresses.addons}/{stray}", file=out)
 
     if not apply:
         print(f"plan: {_summarise(changes)}", file=out)

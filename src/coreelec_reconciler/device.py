@@ -171,6 +171,27 @@ class Device:
         )
         return sorted(name for name in listing.splitlines() if name)
 
+    def list_directories_holding(self, path: str, name: str) -> list[str]:
+        """The names of the entries in `path` that hold a file called `name`.
+
+        One round trip, because the alternative is a read per entry and this
+        answers a question about fifty of them. The `*` is expanded by the
+        remote shell rather than handed to it as a pattern to match: an empty
+        directory expands it to itself, and `[ -f "*"/name ]` is false, so
+        nothing is reported. Dot entries are skipped, which is what is wanted
+        — a staging directory a killed Run left behind is not a find.
+        """
+
+        quoted = shlex.quote(path)
+        listing = self._checked(
+            f"listing {path}",
+            f"if [ -d {quoted} ]; then cd {quoted} || exit 1; for entry in *; do"
+            f' if [ -f "$entry"/{shlex.quote(name)} ]; then'
+            f" printf '%s\\n' \"$entry\"; fi;"
+            " done; fi; exit 0",
+        )
+        return sorted(held for held in listing.splitlines() if held)
+
     def write(self, path: str, content: str, mode: str = "0644") -> None:
         """Stages the content beside the destination and renames it into place.
 
