@@ -48,10 +48,10 @@ answers "why is this add-on here at all", with three values: `chosen`,
 `dependency`, `repository`.
 
 The two questions looked like one until the Lock was widened past a single
-record. Thirty-four of the forty entries have no version rationale to give —
-they are at the highest version their index publishes, which is the version
-Kodi's own resolver would install — so their `notes` is `~` and without `role`
-the record would say nothing at all about why it exists.
+record. The forty entries split twenty-six `dependency`, eleven `chosen` and
+three `repository`, and thirty-four of them have no version deviation to
+explain, so their `notes` is `~` and without `role` the record would say
+nothing at all about why it exists.
 
 The distinction is not bookkeeping. Bumping a `chosen` add-on is a decision
 someone makes; bumping a `dependency` is a consequence of one. Removing a

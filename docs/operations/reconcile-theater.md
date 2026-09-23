@@ -846,12 +846,12 @@ repository and recorded in nothing but a comment. They are Profile intent, so
 they are declared like anything else someone chose.
 
 The archive's top-level directory is not required to be the add-on id, and for
-three of these pins it is not — `plugin.service.emby-next-gen` is rooted at
-`plugin.video.emby-plugin.service.emby-next-gen_11.1.27`, `weather.ha` at
-`kodi_weather_ha-0.0.6.6`, and `resource.font.robotocjksc` at
-`resource.font.robotcjksc`, an upstream typo. The identity comes from
-`addon.xml`, which all three declare correctly, and the tree is installed
-under the id the Lock pins.
+two of these pins it is not — `plugin.service.emby-next-gen` is rooted at
+`plugin.video.emby-plugin.service.emby-next-gen_11.1.27` and
+`resource.font.robotocjksc` at `resource.font.robotcjksc`, an upstream typo.
+The identity comes from `addon.xml`, which both declare correctly, and the
+tree is installed under the id the Lock pins. `weather.ha` is the third such
+archive and arrives with the patch mechanism.
 
 The Lock is a separate file from the Profile because a version bump is
 eventually a bot's edit, and a bot editing the file humans edit for settings
@@ -1221,6 +1221,9 @@ The scenarios are:
 
    Expect four `create` lines, four `fetching` lines before a single
    `stopping kodi.service`, and the `plan` after it to report no changes.
+   Expect nothing else: deleting the active skin's directory does not make
+   Kodi rewrite `lookandfeel.skin`, so no Settings Document Change appears
+   alongside the four.
    Then confirm what each one was chosen to prove:
 
    ```console
@@ -1250,6 +1253,9 @@ The scenarios are:
    back:
 
    ```console
+   ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+   db=/storage/.kodi/userdata/Database/Addons33.db
+
    ug systemctl stop kodi
    ug "rm -rf /storage/.kodi/addons/plugin.program.autocompletion \
      /storage/.kodi/addons/script.module.autocompletion"

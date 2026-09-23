@@ -501,19 +501,18 @@ def test_the_shipped_lock_pins_the_bytes_the_shell_pins() -> None:
 def test_every_shipped_record_states_why_the_addon_is_there() -> None:
     """`role` is the group rationale surviving `provision.conf` (ADR 0017)."""
 
-    records = shipped_lock()
-    assert {record["role"] for record in records} == {
-        "chosen",
-        "dependency",
-        "repository",
-    }
-    # A repository add-on is the one kind whose enablement could invite Kodi
-    # to go and fetch something, so the three are named rather than counted.
-    assert {record["id"] for record in records if record["role"] == "repository"} == {
-        "repository.emby.kodi",
-        "repository.dontpanic",
-        "repository.jurialmunkey",
-    }
-    assert set(OPERATOR_INSTALLED) <= {
-        record["id"] for record in records if record["role"] == "chosen"
-    }
+    for record in shipped_lock():
+        # Kodi's own naming, so the one role a reader can check from outside
+        # the file is the one the Lock is checked on.
+        expected = "repository" if record["id"].startswith("repository.") else None
+        if expected is not None:
+            assert record["role"] == expected, record["id"]
+        else:
+            assert record["role"] in ("chosen", "dependency"), record["id"]
+
+    # The operator installed the program and got its dependency with it, which
+    # is the distinction `role` exists to keep: bumping the first is a
+    # decision, bumping the second is a consequence of one.
+    roles = {record["id"]: record["role"] for record in shipped_lock()}
+    assert roles["plugin.program.autocompletion"] == "chosen"
+    assert roles["script.module.autocompletion"] == "dependency"

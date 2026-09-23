@@ -19,8 +19,9 @@
 # someone made, `dependency` is a consequence of one, and `repository` is the
 # kind whose enablement could invite Kodi to go and fetch something. `notes`
 # answers "why this version and not the newest", and a record with nothing to
-# explain states `~` — most of these are at the highest version their index
-# publishes, which is the version Kodi's own resolver would install.
+# explain states `~`. Most of these say `~`: a pin is a known-good version
+# someone ran, and "newest" is a question for the update proposer, not a claim
+# this file makes.
 #
 # Three add-ons are missing on purpose: weather.ha, script.plexmod and
 # plugin.video.themoviedb.helper cannot be correct without an Artifact Patch,
@@ -55,7 +56,8 @@ addons:
     notes: ~
 
 # --- Chosen -----------------------------------------------------------------
-# The add-ons someone decided this fleet should have.
+# Bumping one of these is a decision. Removing one should take with it any
+# dependency below that nothing else needs.
   - id: plugin.service.emby-next-gen
     version: "11.1.27"
     url: https://embydata.com/downloads/addons/xbmb3c/multi-repo/release/v21_omega/plugin.service.emby-next-gen/plugin.service.emby-next-gen-11.1.27.zip
@@ -128,8 +130,8 @@ addons:
     notes: ~
 
   # Installed by hand from the official Kodi repository. The shell tolerated
-  # these two without pinning them; they are Profile intent like anything
-  # else someone chose.
+  # it without pinning it; it is Profile intent like anything else someone
+  # chose. Its one dependency is below.
   - id: plugin.program.autocompletion
     version: "2.1.2"
     url: https://mirrors.kodi.tv/addons/omega/plugin.program.autocompletion/plugin.program.autocompletion-2.1.2.zip
@@ -139,18 +141,18 @@ addons:
       An operator install from the official Kodi repository that the shell
       never pinned, recorded until now in nothing but a comment. Add-on
       updates are `notify`, so this is the version the fleet is running.
+
+# --- Dependencies -----------------------------------------------------------
+# Bumping one of these is a consequence of a decision above, never a decision.
+# Which add-on requires which is in `<requires>` and is not restated here.
   - id: script.module.autocompletion
     version: "2.1.1"
     url: https://mirrors.kodi.tv/addons/omega/script.module.autocompletion/script.module.autocompletion-2.1.1.zip
     sha256: "e26bbc0550534f765a2a4cf82d9359142fd7b6cf97a5d6fe9ab575681899eb83"
-    role: chosen
+    role: dependency
     notes: >-
-      The only dependency of plugin.program.autocompletion, and pinned for
-      the same reason: the shell never named it, and `notify` froze it here.
-
-# --- Dependencies -----------------------------------------------------------
-# Present because something above requires them. Which add-on requires
-# which is in `<requires>` and is not restated here.
+      Required by plugin.program.autocompletion, and unpinned for the same
+      reason it was: the shell never named either of them.
   - id: inputstream.adaptive
     version: "21.5.24.1"
     url: https://addons.coreelec.org/Amlogic-ng/21.3/arm/inputstream.adaptive/inputstream.adaptive-21.5.24.1.zip
@@ -169,9 +171,10 @@ addons:
       CoreELEC's Amlogic-ng build, like inputstream.adaptive: the version
       tracks the CoreELEC release rather than the newest upstream.
 
-  # Everything below comes from the Kodi Omega index or from the
-  # jurialmunkey repository at the highest version it publishes, which is
-  # the version Kodi's own resolver would install.
+  # Everything below is a transitive dependency of something above, pinned
+  # at the version this fleet has run. The sources are the Kodi Omega index
+  # and jurialmunkey's own repository, which publish different versions of
+  # the add-ons they both carry.
   - id: resource.font.robotocjksc
     version: "0.0.3"
     url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/resource.font.robotocjksc/resource.font.robotocjksc-0.0.3.zip
