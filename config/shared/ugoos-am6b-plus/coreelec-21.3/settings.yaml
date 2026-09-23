@@ -1,0 +1,418 @@
+# Kodi settings, grouped by the Settings Document that holds them. A Settings
+# Document is shared: everything not declared here is Unmanaged State and is
+# preserved. Each document declares how it is serialised; the dialect is
+# declared and never sniffed, so a corrupt or truncated document fails naming
+# itself instead of reading as a plausible other shape.
+#
+# Each value matches what provision-coreelec.sh writes, so the Recovery
+# Baseline and Desired State do not diverge and a shell run remains a no-op
+# (ADR 0012). Adding a setting is an entry here and no code change; the two
+# Device checks that go with it are in docs/operations/reconcile-theater.md.
+#
+# A setting states exactly one of `value`, `from_env` and `unset`. `from_env`
+# names a key in the shared .env file, which is where a value this committed
+# file may not carry lives (ADR 0014); the value is read before any Device
+# contact and is never printed. `unset: true` is a Cleared Address: the Device
+# must resolve no value at all from it.
+#
+# Applying any of these restarts Kodi, because Kodi rewrites a Settings
+# Document from memory when it exits and would otherwise discard the write.
+# The stop belongs to the Resource Type and is never declared here
+# (ADR 0013).
+settings_documents:
+  - document: /storage/.kodi/userdata/guisettings.xml
+    dialect: guisettings
+    settings:
+      # Region and input.
+      - setting: locale.language
+        value: resource.language.en_us
+      - setting: locale.country
+        value: USA (12h)
+      - setting: locale.keyboardlayouts
+        value: English QWERTY
+      - setting: locale.timezonecountry
+        value: United States
+      - setting: locale.timezone
+        from_profile: timezone
+      # Nothing installs unattended, and now nothing looks either. `1` is
+      # AUTO_UPDATES_NOTIFY, which still polls all three repositories on a
+      # timer; `general.addonnotifications` is false, so that work produces
+      # an answer nobody sees. `2` is AUTO_UPDATES_NEVER, which is the only
+      # mode that stops the timer. The Artifact Lock is the supply chain now.
+      #
+      # The cost is that "an update is available" leaves the UI, which is
+      # what makes the update proposer in ADR 0017 load-bearing.
+      - setting: general.addonupdates
+        value: "2"
+        divergent: >-
+          the shell writes 0 or 1 from ADDON_UPDATE_MODE and cannot emit 2,
+          so a shell run after an apply leaves this address changed on purpose
+      - setting: input.enablemouse
+        value: "false"
+      # File lists: a ten-foot interface, not a file manager.
+      - setting: filelists.showaddsourcebuttons
+        value: "false"
+      - setting: filelists.showextensions
+        value: "false"
+      - setting: filelists.showparentdiritems
+        value: "false"
+      # Video library presentation.
+      - setting: videolibrary.flattentvshows
+        value: "1"
+      - setting: videolibrary.ignorevideoextras
+        value: "true"
+      - setting: videolibrary.ignorevideoversions
+        value: "true"
+      - setting: videolibrary.showallitems
+        value: "false"
+      - setting: videolibrary.tvshowsselectfirstunwatcheditem
+        value: "1"
+      # Playback follows the source frame rate and the display's clock.
+      - setting: videoplayer.adjustrefreshrate
+        value: "2"
+      - setting: videoplayer.usedisplayasclock
+        value: "false"
+      # Audio leaves over HDMI. These are the ALSA strings Kodi offers on
+      # this board and this Kodi, which is what the Profile's directory names,
+      # so they are literals rather than something to discover. `CARD=` is
+      # the platform's sound_card in profile.yaml, which every Run checks first.
+      #
+      # hdmi-multichannel: decoded audio, up to eight channels.
+      - setting: audiooutput.audiodevice
+        value: ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
+      # hdmi: the bitstream, untouched.
+      - setting: audiooutput.passthroughdevice
+        value: ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
+      # These name add-ons the shell installs. The Reconciler never runs on a
+      # bare Device, so nothing here installs them; an add-on that is missing
+      # shows up as a setting Kodi discards, which the hardware acceptance run
+      # catches.
+      - setting: lookandfeel.skin
+        value: skin.arctic.fuse.3
+      - setting: lookandfeel.soundskin
+        value: resource.uisounds.fromashes
+      # The shell writes this one only when weather is configured. It always
+      # is on this fleet, so declaring it unconditionally matches the Device.
+      - setting: weather.addon
+        value: weather.ha
+      # Home Assistant's Kodi integration reaches the Device over JSON-RPC,
+      # which the web server carries. Plain HTTP, authenticated, on a trusted
+      # home network (ADR 0007).
+      - setting: services.webserver
+        value: "true"
+      - setting: services.webserverauthentication
+        value: "true"
+      - setting: services.webserverusername
+        value: homeassistant
+      - setting: services.webserverpassword
+        from_env: KODI_WEB_PASSWORD
+      - setting: services.webserverport
+        value: "8080"
+      - setting: services.webserverssl
+        value: "false"
+      # The EventServer is off. Its only consumer was the shell's view rebuild
+      # through `kodi-send`, which ADR 0015 replaced with the skin's own
+      # trigger, and Home Assistant speaks JSON-RPC. It listened on localhost
+      # only, so nothing off the Device could ever have been using it.
+      - setting: services.esallinterfaces
+        value: "false"
+      - setting: services.esenabled
+        value: "false"
+        divergent: >-
+          the shell writes true for the kodi-send view rebuild ADR 0015
+          retired, so a shell run after an apply leaves this address changed
+          on purpose
+
+  # The Home Assistant weather add-on. Its settings definition carries no
+  # version attribute, so Kodi loads and writes this document in the old flat
+  # form: the value is an attribute, not element text.
+  #
+  # ha_server and ha_key name their values in .env rather than holding them.
+  # The token is a credential; the endpoint sits beside it behind the same
+  # boundary (ADR 0014).
+  - document: /storage/.kodi/userdata/addon_data/weather.ha/settings.xml
+    dialect: addon_v1
+    settings:
+      - setting: ha_server
+        from_env: HOME_ASSISTANT_URL
+      - setting: ha_key
+        from_env: HOME_ASSISTANT_TOKEN
+      - setting: ha_weather_forecast_entity_id
+        value: weather.openweathermap
+      - setting: ha_sun_entity_id
+        value: sun.sun
+
+  # The NextPVR client's first instance. Kodi 21 has no pvrmanager.enabled
+  # setting: the PVR manager starts from an enabled client instance, so this
+  # document carries the enable.
+  #
+  # host and pin name their values, for the same reason as weather.ha's two.
+  - document: /storage/.kodi/userdata/addon_data/pvr.nextpvr/instance-settings-1.xml
+    dialect: addon_v2
+    settings:
+      - setting: host
+        from_env: NEXTPVR_HOST
+      - setting: hostprotocol
+        value: https
+      - setting: port
+        value: "443"
+      - setting: pin
+        from_env: NEXTPVR_PIN
+      - setting: kodi_addon_instance_enabled
+        value: "true"
+      - setting: kodi_addon_instance_name
+        value: NextPVR
+
+  # TMDb Helper's metadata provider credentials. Both name their values, so
+  # this whole document is named and none of it is held here. The shell writes
+  # these two addresses and nothing else in the file.
+  - document: /storage/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
+    dialect: addon_v2
+    settings:
+      - setting: mdblist_apikey
+        from_env: MDBLIST_API_KEY
+      - setting: omdb_apikey
+        from_env: OMDB_API_KEY
+
+  # Arctic Fuse 3's home screen. This is the first document in which half the
+  # cohort is *cleared* rather than set: the hubs the appliance does not use
+  # own their fields and must resolve nothing from them, because a stale value
+  # from an earlier profile still aims a tile somewhere.
+  #
+  # A cleared setting states `unset: true`. It is not `value: ""` — Kodi
+  # cannot hold an empty string, an empty node reads back as no value, and a
+  # Profile comparing "" against that would plan a Change on every Run
+  # forever.
+  #
+  # The shell removes a node it clears and the Reconciler blanks it. Both
+  # leave the Device resolving no value, so the two engines do not revert each
+  # other. See docs/operations/reconcile-theater.md, "Clearing an address".
+  #
+  # `HomeSwitcher.1107.Toggle` and `optionstiles.03.include` are written by
+  # the shell only when NextPVR and weather are configured. Both always are on
+  # this fleet — weather.ha's own addresses are declared above — so both are
+  # plain literals and no conditionality enters the schema.
+  - document: /storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
+    dialect: addon_v2
+    settings:
+      # The TV Shows hub. The skin builds `ActivateWindow(target, path,
+      # return)` only when the target is set; with an empty target it runs the
+      # path as a bare builtin, so the hub owns both.
+      - setting: HomeSwitcher.1101.Name
+        value: TV Shows
+      - setting: HomeSwitcher.1101.Toggle
+        value: "true"
+      - setting: HomeSwitcher.1101.Icon
+        value: special://skin/extras/icons/tv.png
+      - setting: HomeSwitcher.1101.Mode
+        value: Standard
+      - setting: HomeSwitcher.1101.Spotlight.Label
+        value: Random TV Shows
+      - setting: HomeSwitcher.1101.Spotlight.Path
+        value: special://skin/extras/playlists/RandomTvShows.xsp
+      - setting: HomeSwitcher.1101.Spotlight.Target
+        value: videos
+      - setting: HomeSwitcher.1101.Shortcut.Path
+        value: videodb://tvshows/titles/
+      - setting: HomeSwitcher.1101.Shortcut.Target
+        value: videos
+
+      # The Movies hub: the same nine fields, movie values.
+      - setting: HomeSwitcher.1102.Name
+        value: Movies
+      - setting: HomeSwitcher.1102.Toggle
+        value: "true"
+      - setting: HomeSwitcher.1102.Icon
+        value: special://skin/extras/icons/film.png
+      - setting: HomeSwitcher.1102.Mode
+        value: Standard
+      - setting: HomeSwitcher.1102.Spotlight.Label
+        value: Random Movies
+      - setting: HomeSwitcher.1102.Spotlight.Path
+        value: special://skin/extras/playlists/RandomMovies.xsp
+      - setting: HomeSwitcher.1102.Spotlight.Target
+        value: videos
+      - setting: HomeSwitcher.1102.Shortcut.Path
+        value: videodb://movies/titles/
+      - setting: HomeSwitcher.1102.Shortcut.Target
+        value: videos
+
+      # The Plex hub. Its shortcut is a bare builtin, so it owns no target,
+      # and it has no spotlight: all four are cleared rather than left alone,
+      # because a value in any of them aims the hub elsewhere.
+      - setting: HomeSwitcher.1103.Name
+        value: Plex
+      - setting: HomeSwitcher.1103.Toggle
+        value: "true"
+      - setting: HomeSwitcher.1103.Icon
+        value: special://home/addons/script.plexmod/icon2.png
+      - setting: HomeSwitcher.1103.Shortcut.Path
+        value: RunAddon(script.plexmod)
+      - setting: HomeSwitcher.1103.Shortcut.Target
+        unset: true
+      - setting: HomeSwitcher.1103.Spotlight.Label
+        unset: true
+      - setting: HomeSwitcher.1103.Spotlight.Path
+        unset: true
+      - setting: HomeSwitcher.1103.Spotlight.Target
+        unset: true
+
+      # The 1104 hub is disabled: the six fields that decide whether it
+      # renders and where it would go are cleared. It is a Cleared Address
+      # cohort and not a Managed Absence — the hub stays gone because it
+      # resolves nothing, not because anything is deleted.
+      #
+      # `Name`, `Mode` and `Icon` are Contested Addresses: Arctic Fuse writes
+      # them on every skin load. They are inert while `Toggle` is empty, so
+      # they stay Unmanaged State, which is the line
+      # provision-coreelec.sh's own verifier already draws (:3316-3327).
+      - setting: HomeSwitcher.1104.Toggle
+        unset: true
+      - setting: HomeSwitcher.1104.Shortcut.Path
+        unset: true
+      - setting: HomeSwitcher.1104.Shortcut.Target
+        unset: true
+      - setting: HomeSwitcher.1104.Spotlight.Label
+        unset: true
+      - setting: HomeSwitcher.1104.Spotlight.Path
+        unset: true
+      - setting: HomeSwitcher.1104.Spotlight.Target
+        unset: true
+
+      # The PVR hub, on, with none of its four sections disabled.
+      - setting: HomeSwitcher.1107.Toggle
+        value: "true"
+      - setting: Hub.1107.DisableSearch
+        unset: true
+      - setting: Hub.1107.DisableChannels
+        unset: true
+      - setting: Hub.1107.DisableGroups
+        unset: true
+      - setting: Hub.1107.DisableRecordings
+        unset: true
+
+      - setting: HomeSwitcher.1108.Toggle
+        value: "true"
+
+      # The option tiles across the top of the home screen.
+      - setting: optionstiles.01.include
+        value: NowPlaying
+      - setting: optionstiles.02.include
+        value: Settings
+      - setting: optionstiles.04.include
+        value: SystemInfo
+
+      # The weather tile owns all three of its fields: a stale path or target
+      # from an earlier profile would still aim the tile somewhere else.
+      - setting: optionstiles.03.include
+        value: Weather
+      - setting: optionstiles.03.path
+        unset: true
+      - setting: optionstiles.03.target
+        unset: true
+
+  # Arctic Fuse's season and episode view types. `script.skinvariables` holds
+  # them as JSON rather than XML, so the document declares the `json` dialect
+  # and each address is a dotted path into it. Everything else in the file is
+  # Unmanaged State: the add-on rewrites the whole document on every build,
+  # merging the skin's own defaults *under* what it finds, so these two keys
+  # win that merge and owning the rest would drift the moment Arctic Fuse adds
+  # a content type.
+  #
+  # 509 and 549 are Kodi view ids. They are declared as the literals the
+  # Recovery Baseline writes rather than as anything this file claims to
+  # decode.
+  #
+  # `compiles_to` names the include the add-on builds from this document. It
+  # is stale the moment the source changes and nothing else rebuilds it, so
+  # the Run writes the skin's own trigger stub over it and lets the Kodi
+  # restart it was taking anyway fire the rebuild (ADR 0015). No JSON-RPC, no
+  # kodi-send, no EventServer.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
+    dialect: json
+    compiles_to: /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
+    settings:
+      - setting: library.seasons
+        value: "509"
+      - setting: library.episodes
+        value: "549"
+
+  # The HDMI-CEC power policy. The Device keeps CEC *navigation* — the Sony's
+  # remote drives Kodi — while the two boxes' power states stay decoupled, so
+  # turning the television off does not suspend the Ugoos and waking the Ugoos
+  # does not command the television.
+  #
+  # Kodi names a peripheral's document after the hardware's own identity, so
+  # the Profile cannot know the filename: a `cec_` bus prefix Kodi controls
+  # and an adapter name the adapter reports. `document_glob` states the
+  # pattern instead, and a Run resolves it against the Device and refuses
+  # unless exactly one document matches. The bus prefix is deliberately
+  # narrower than the shell's `*CEC*.xml`, which matches on the adapter's name
+  # and so finds nothing for an adapter that calls itself anything else
+  # (ADR 0012).
+  #
+  # Kodi rebuilds this document from memory when it exits, the same as every
+  # other Settings Document here, so applying any of these takes the Kodi stop.
+  - document_glob: /storage/.kodi/userdata/peripheral_data/cec_*.xml
+    dialect: addon_v1
+    settings:
+      # What Kodi does when the television says it is going to standby:
+      # nothing. `ignore` is Kodi's localisation ID 36028, and that is the
+      # whole domain of the transform — the shell has the same rule as a
+      # check, and here it is the schema.
+      - setting: standby_pc_on_tv_standby
+        value: ignore
+        transform: cec_tv_off_action
+      # Kodi does not make itself the active source on startup, so a boot does
+      # not grab the television away from whatever is playing on it.
+      - setting: activate_source
+        value: "0"
+      # Which devices Kodi wakes and puts to standby with itself. Kodi stores
+      # the selection as an opaque code; `231` is what the shell writes and
+      # what the Device holds, and it is declared as the literal the Recovery
+      # Baseline produces rather than as anything this file claims to decode.
+      - setting: wake_devices
+        value: "231"
+      - setting: standby_devices
+        value: "231"
+      - setting: standby_tv_on_pc_standby
+        value: "0"
+
+  # The CoreELEC timezone cache. Not Kodi's: the operating system reads it,
+  # and `tz-data.service` is the unit that does. Kodi's CoreELEC patch writes
+  # it when the zone changes through the UI, so an offline edit must write it
+  # explicitly.
+  #
+  # `locale.timezone` above records the same fact for Kodi. Both take the
+  # `timezone` constant, so the Device cannot hold two records of one zone
+  # that disagree.
+  - document: /storage/.cache/timezone
+    dialect: shell_vars
+    mode: "0644"
+    settings:
+      - setting: TIMEZONE
+        from_profile: timezone
+
+  # CoreELEC's own service document for sshd, and its own two keys:
+  # `service.coreelec.settings` writes exactly this pair from its "Disable SSH
+  # password" toggle, and its `defaults.py` defines `OPT_SSH_NOPASSWD` as
+  # `-o 'PasswordAuthentication no'` byte for byte.
+  #
+  # Mode is what CoreELEC gives it. `oe.py`'s `set_service` writes the file
+  # with a plain `open` and no `chmod`, which is why `avahi.conf`,
+  # `crond.conf`, `samba.conf` and `bluez.conf` are all 0644. The shell's 0600
+  # is the departure, and the file holds no secret.
+  #
+  # A Device whose first-boot wizard left the password enabled holds these
+  # same two keys with the insecure values, so this plans as two Changes and
+  # never as a create. Applying either restarts `sshd.service`, which takes
+  # the connection issuing it with it; the Reconciler knows that, and the
+  # Profile does not declare it (ADR 0013).
+  - document: /storage/.cache/services/sshd.conf
+    dialect: shell_vars
+    mode: "0644"
+    settings:
+      - setting: SSH_ARGS
+        value: "-o 'PasswordAuthentication no'"
+      - setting: SSHD_DISABLE_PW_AUTH
+        value: "true"

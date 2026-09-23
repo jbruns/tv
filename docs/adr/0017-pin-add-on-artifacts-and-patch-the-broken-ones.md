@@ -91,8 +91,8 @@ for a reason nobody chose.
 
 ## The Artifact Lock is its own file
 
-The Lock lives beside `profile.yaml` in the same Profile directory rather than
-inside it. Requirement 3 decides this: a bot rewriting the file humans edit for
+The Lock lives beside the Profile's other files in the same directory rather
+than inside any of them. Requirement 3 decides this: a bot rewriting the file humans edit for
 settings turns every routine version bump into a conflict with unrelated work,
 and a reviewer reads "one version and one hash moved" very differently from a
 settings change. Splitting manifest from lock is what every language ecosystem

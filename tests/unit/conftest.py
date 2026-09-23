@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -358,6 +359,15 @@ ADDON_URL = (
 # are about something else, so theirs is empty.
 NO_ADDONS = "addons: []\n"
 
+# The Profile's four content blocks, each in its own file beside
+# `profile.yaml`. Everything else stays in `profile.yaml`.
+PROFILE_FILES = {
+    "smart_playlists": "playlists.yaml",
+    "shortcut_nodes": "shortcuts.yaml",
+    "documents": "documents.yaml",
+    "settings_documents": "settings.yaml",
+}
+
 # Kodi's `installed` table, as Addons33 declares it (`AddonDatabase.cpp`).
 # The fake Device holds the real schema so a statement that names a column
 # Kodi does not have fails here rather than on the television.
@@ -476,22 +486,29 @@ def attribute_values(document: Path) -> dict[str, str | None]:
 
 
 def shipped_profile() -> dict[str, Any]:
-    """The committed Profile, read as YAML.
+    """The committed Profile, read as YAML and merged from its five files.
 
     Tests that assert on what the fleet actually declares read it from here
     rather than restating it, so a declaration and its test cannot drift.
     """
 
-    profile = (
+    directory = shipped_profile_directory()
+    document: dict[str, Any] = {}
+    for name in ("profile.yaml", *PROFILE_FILES.values()):
+        document.update(yaml.safe_load((directory / name).read_text(encoding="utf-8")))
+    return document
+
+
+def shipped_profile_directory() -> Path:
+    """The committed Profile's directory."""
+
+    return (
         Path(__file__).resolve().parents[2]
         / "config"
         / "shared"
         / "ugoos-am6b-plus"
         / "coreelec-21.3"
-        / "profile.yaml"
     )
-    document: dict[str, Any] = yaml.safe_load(profile.read_text(encoding="utf-8"))
-    return document
 
 
 @dataclass(frozen=True)
@@ -795,7 +812,19 @@ class FakeDevice:
         source.write_text(body, encoding="utf-8")
 
     def write_profile(self, body: str) -> None:
-        (self.profile_directory() / "profile.yaml").write_text(body, encoding="utf-8")
+        """Writes a whole logical Profile, each block to the file it lives in."""
+        files: dict[str, list[str]] = {"profile.yaml": []}
+        files.update({name: [] for name in PROFILE_FILES.values()})
+        target = "profile.yaml"
+        for line in body.splitlines(keepends=True):
+            key = re.match(r"([A-Za-z_]\w*):", line)
+            if key:
+                target = PROFILE_FILES.get(key.group(1), "profile.yaml")
+            files[target].append(line)
+        for name, lines in files.items():
+            (self.profile_directory() / name).write_text(
+                "".join(lines), encoding="utf-8"
+            )
 
     def write_room(self, body: str) -> None:
         (self.config_root / "rooms" / "theater" / "room.yaml").write_text(

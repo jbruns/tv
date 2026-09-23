@@ -1,0 +1,15 @@
+# Documents the Reconciler owns every byte of, each shipped as a file beside
+# this one. `source` is relative to this directory and must stay inside it, so
+# a Profile is copyable as a unit; a missing source fails when the Profile is
+# read, before any Device contact. `mode` is stated because some of these are
+# programs the Device runs.
+documents:
+  # The Kodi lifecycle gateway: the forced command of Home Assistant's key
+  # in profile.yaml, which accepts only `start`, `stop` and `status` and hardcodes
+  # `/usr/bin/systemctl` and `kodi.service`. The source is byte for byte what
+  # `lib/coreelec-lifecycle.sh` renders, so a shell run changes nothing here.
+  #
+  # Kodi does not read it, so writing it takes no Effect.
+  - document: /storage/.config/kodi-lifecycle
+    source: documents/kodi-lifecycle
+    mode: "0700"

@@ -5,7 +5,11 @@ files below belong to the shell entry points and are described by the rest of
 this document. The `.yaml` files beside them belong to the Reconciler:
 
 ```text
-config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml   Profile
+config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml   Profile: identity, transport, logins
+config/shared/ugoos-am6b-plus/coreelec-21.3/playlists.yaml Profile: Smart Playlists
+config/shared/ugoos-am6b-plus/coreelec-21.3/shortcuts.yaml Profile: Shortcut Nodes
+config/shared/ugoos-am6b-plus/coreelec-21.3/documents.yaml Profile: documents shipped as files
+config/shared/ugoos-am6b-plus/coreelec-21.3/settings.yaml  Profile: Settings Documents
 config/rooms/theater/room.yaml                             Room Overlay
 ```
 
