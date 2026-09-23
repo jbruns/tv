@@ -851,14 +851,20 @@ database.
 A Plan names both:
 
 ```
-install /storage/.kodi/addons/script.module.six
+create /storage/.kodi/addons/script.module.six
 version: (absent) -> 1.16.0+matrix.1
 enabled: (no row) -> 1
 ```
 
-An add-on already at its pin but disabled plans as `enable` and ships
+An add-on already at its pin but disabled plans as an `update` that ships
 nothing — the tree is already right, so re-downloading it would be work
-nobody asked for.
+nobody asked for:
+
+```
+update /storage/.kodi/addons/script.module.six
+version: 1.16.0+matrix.1 -> 1.16.0+matrix.1
+enabled: 0 -> 1
+```
 
 ### What an Apply does
 
@@ -1151,16 +1157,15 @@ The scenarios are:
    add-ons. A restart is the half that catches a database write Kodi discards.
 
    Then prove the disabled-only path separately: disable the add-on in the
-   Kodi UI, stop Kodi, `apply`, and confirm the Run reported `enable` and
-   shipped nothing — the tree was already at its pin.
+   Kodi UI, `apply`, and confirm the Run planned an `update` with no
+   `fetching` or `shipping` line — the tree was already at its pin.
 
    Finally, prove the pin refuses. Edit `addons.yaml` to a `sha256` that is
    one character different, delete the tree, and `apply`: the Run must fail
    naming both digests, before it stops Kodi, and the television must still be
    up. Restore the digest afterwards.
 8. **No declared setting, playlist, Shortcut Node or add-on is a `create`**
-   — the
-   shell writes every one of them, so on a provisioned Device
+   — the shell writes every one of them, so on a provisioned Device
    none may plan as a `create`. A `create` is a misread or typo'd setting id,
    a document read in the wrong dialect, or a playlist or node file named
    wrongly: it
@@ -1226,6 +1231,12 @@ The scenarios are:
    ./provision-coreelec.sh --target ugoos-theater --component addons
    uv run coreelec-reconciler plan --room theater
    ```
+
+   **Let Kodi settle before reading a parity plan.** Every shell component
+   restarts Kodi, and a `plan` run in the seconds after that restart reads a
+   `guisettings.xml` Kodi has truncated and not yet rewritten — it reports
+   most of the declared addresses as `(unset)`, which is not drift. Wait for
+   `systemctl is-active kodi` and re-plan before believing a parity failure.
 
 10. **Usable** — Kodi still starts, every playlist still opens, the weather
    widget still renders on the home screen, NextPVR still lists channels, and
