@@ -64,6 +64,9 @@ ADDON_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # a published version and `~` sorts below everything.
 ADDON_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~-]*")
 
+# A file mode as `chmod` reads it in octal.
+MODE = re.compile(r"[0-7]{3,4}")
+
 # A digest is compared against `hashlib`'s own rendering, which is lowercase,
 # so the Lock states it lowercase rather than folding case at every read.
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -299,6 +302,26 @@ class ShortcutNode:
 
 
 @dataclass(frozen=True)
+class WholeDocument:
+    """A document the Reconciler owns every byte of, shipped as a file.
+
+    `content` is the file named by `source`, read from the Profile directory
+    when the Profile is read, so a missing source fails before any Device
+    contact. The source lives beside the Profile rather than inside it
+    because a program embedded in YAML can be neither linted nor read as the
+    language it is written in.
+
+    `mode` is stated, never defaulted: some of these are programs the Device
+    runs, and a mode nobody wrote down is how one stops being executable.
+    """
+
+    document: str
+    source: str
+    content: str
+    mode: str
+
+
+@dataclass(frozen=True)
 class AuthorizedKey:
     """One entry in `authorized_keys`: a key, and what it may do.
 
@@ -356,6 +379,7 @@ class DesiredState:
     documents: tuple[SettingsDocument, ...]
     addons: tuple[AddonArtifact, ...] = ()
     shortcut_nodes: tuple[ShortcutNode, ...] = ()
+    whole_documents: tuple[WholeDocument, ...] = ()
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -804,6 +828,53 @@ def _documents(
             "empty list when there are none"
         )
     return tuple(_document(source, named, constants, entry) for entry in raw)
+
+
+def _whole_document(source: Path, raw: Any) -> WholeDocument:
+    mapping = _fields(
+        source,
+        "a document",
+        _mapping(source, "a document", raw),
+        required=("document", "source", "mode"),
+    )
+    document = _text(source, "a document path", mapping["document"])
+    if not document.startswith("/"):
+        raise ConfigError(f"{source}: a document path must be absolute: {document}")
+    # Relative to the Profile directory, and inside it, so a Profile stays
+    # copyable as a unit — the same rule `patches/<id>/` follows.
+    named = _relative(
+        source,
+        f"the source of {document}",
+        _text(source, f"the source of {document}", mapping["source"]),
+    )
+    try:
+        content = (source.parent / named).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        reason = error.strerror if isinstance(error, OSError) else error
+        raise ConfigError(
+            f"{source}: the source of {document} cannot be read: {named}: {reason}"
+        ) from error
+    mode = _text(source, f"the mode of {document}", mapping["mode"])
+    # The mode reaches a `chmod` on the Device, so it is an octal mode and
+    # nothing else.
+    if not MODE.fullmatch(mode):
+        raise ConfigError(f"{source}: the mode of {document} is not a mode: {mode}")
+    return WholeDocument(document=document, source=named, content=content, mode=mode)
+
+
+def _whole_documents(source: Path, raw: Any) -> tuple[WholeDocument, ...]:
+    if not isinstance(raw, list):
+        raise ConfigError(
+            f"{source}: documents must be a list of documents, and an empty "
+            "list when there are none"
+        )
+    documents = tuple(_whole_document(source, entry) for entry in raw)
+    seen: set[str] = set()
+    for document in documents:
+        if document.document in seen:
+            raise ConfigError(f"{source}: {document.document} is declared twice")
+        seen.add(document.document)
+    return documents
 
 
 def _platform(source: Path, raw: Any) -> Platform:
@@ -1290,6 +1361,7 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
             "smart_playlists",
             "settings_documents",
             "shortcut_nodes",
+            "documents",
         ),
     )
     if _text(profile_file, "profile", profile["profile"]) != declared_profile:
@@ -1360,6 +1432,7 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
             f"{profile_file}: shortcut_nodes must be a list of Shortcut Nodes, "
             "and an empty list when there are none"
         )
+    whole = _whole_documents(profile_file, profile["documents"])
 
     return DesiredState(
         room=_text(room_file, "room", overlay["room"]),
@@ -1379,4 +1452,5 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         shortcut_nodes=tuple(
             _shortcut_node(profile_file, by_file, entry) for entry in nodes
         ),
+        whole_documents=whole,
     )

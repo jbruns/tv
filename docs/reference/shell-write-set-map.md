@@ -93,12 +93,15 @@ reach `SKIN-025`, while an `addons`-only run reaches the indirect skin outputs
 
 Progress is recorded instead in the ledger's `reconciler_status` field, which
 is `accepted` for all eight declared Smart Playlists (`SKIN-019`-`SKIN-026`),
-for the twenty `guisettings.xml` addresses the
-Profile declares, for the nine the Room Overlay declares, and for the
+for the twenty-eight `guisettings.xml` addresses the
+Profile declares, for the nine the Room Overlay declares, for the
 forty-one add-on artifacts in the Artifact Lock (`ART-001`-`ART-041`) and the
-enabled flag they share (`ADDON-001`). `SKIN-027`
+enabled flag they share (`ADDON-001`), and for the Kodi lifecycle gateway
+(`LIFE-001`). `SKIN-027`
 and
-`SKIN-028` are Managed Absences and stay `retired`. `current_owner_or_executor` stays
+`SKIN-028` are Managed Absences and stay `retired`, and so do `PLAT-004`,
+`PLAT-005` and `LIFE-003`, which the lifecycle deploy performs and the
+Reconciler has no reason to. `current_owner_or_executor` stays
 `shell` for every row, and the Python-owner guard stays intact and unused. See
 [ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md).
 

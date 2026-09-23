@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+SYSTEMCTL="/usr/bin/systemctl"
+UNIT="kodi.service"
+
+status() {
+  state="$("${SYSTEMCTL}" is-active "${UNIT}" 2>/dev/null || true)"
+  case "${state}" in
+    active) printf 'running\n' ;;
+    inactive)
+      if "${SYSTEMCTL}" is-failed --quiet "${UNIT}"; then
+        printf 'failed\n'
+      else
+        printf 'stopped\n'
+      fi
+      ;;
+    failed) printf 'failed\n' ;;
+    *)
+      printf 'Unsupported kodi.service state: %s\n' "${state}" >&2
+      return 3
+      ;;
+  esac
+}
+
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  start)
+    "${SYSTEMCTL}" is-active --quiet "${UNIT}" || "${SYSTEMCTL}" start "${UNIT}"
+    status
+    ;;
+  stop)
+    "${SYSTEMCTL}" is-active --quiet "${UNIT}" && "${SYSTEMCTL}" stop "${UNIT}"
+    status
+    ;;
+  status) status ;;
+  *)
+    printf 'Allowed commands: start, stop, status\n' >&2
+    exit 2
+    ;;
+esac

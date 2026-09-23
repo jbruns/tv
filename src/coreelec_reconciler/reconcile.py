@@ -626,6 +626,14 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
         if change is not None:
             changes.append(change)
 
+    # Nothing the Reconciler knows of reads one of these while it runs, so
+    # none takes an Effect. The gateway is read by `sshd` when Home
+    # Assistant's key logs in, and never by Kodi.
+    for whole in desired.whole_documents:
+        change = _rendered(device, whole.document, whole.content, mode=whole.mode)
+        if change is not None:
+            changes.append(change)
+
     for declared in desired.documents:
         document = _read_settings_document(device, declared)
         for setting in declared.settings:

@@ -361,11 +361,14 @@ def shipped_settings() -> dict[str, str]:
     assert isinstance(declared, list)
     # A setting takes a Profile Constant rather than repeating a literal the
     # Device records in two places, and what reaches Kodi is the same either
-    # way.
+    # way. A Named Value has no committed value, so it is stood in for by
+    # the key that names it.
     settings = {
         entry["setting"]: (
             constants[entry["from_profile"]]
             if "from_profile" in entry
+            else entry["from_env"]
+            if "from_env" in entry
             else entry["value"]
         )
         for entry in declared
