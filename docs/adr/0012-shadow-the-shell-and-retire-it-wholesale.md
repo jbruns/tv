@@ -71,6 +71,14 @@ Recovery is unaffected. The order is shell baseline, then reconcile — so the
 Reconciler lands its value after the shell has laid down the older one. The
 two never alternate, because the Baseline is run once, not on a schedule.
 
+The exception expires with the shell. A Divergent Address is defined against
+the Recovery Baseline, so when there is no Baseline there is nothing to
+diverge from and every one of them becomes an ordinary declaration. Retiring
+the shell therefore includes a step nobody would otherwise look for: drop the
+divergence declarations, drop this exception, and drop `Divergent Address`
+from the glossary. Leaving them behind would preserve a permitted mismatch
+against an engine that no longer exists.
+
 ### Rule 2 does not reach a Cleared Address
 
 Rule 2 catches a typo because a wrong id has no node, so it plans a `create`.
@@ -178,9 +186,28 @@ operating system image and the device tree are chosen at install. A guard over
 a fact no Run can change, protecting against a mistake no Run can make, is
 machinery this bar does not buy.
 
-`PLAT-004` and `PLAT-005` are not the Reconciler's to shadow yet. They guard
-`LIFE-001`–`LIFE-003` from `lib/coreelec-lifecycle.sh`, not from the
-provisioner, and they stay `none` until the lifecycle cohort is taken.
+`PLAT-004`, `PLAT-005` and `LIFE-003` are `retired`, each for its own reason,
+and all three were reached by taking the lifecycle cohort rather than by
+deferring it further.
+
+`PLAT-004` is a second platform guard, inside the lifecycle deploy rather than
+the provisioner. The Reconciler already guards the platform once per Run from
+`/etc/os-release`. A Run that has passed that guard has nothing left for a
+second reading of the same file to discover.
+
+`PLAT-005` reads `sshd -V` to choose between a `restrict` key entry and a
+spelled-out fallback for OpenSSH older than 7.2. The Device runs OpenSSH
+9.9p2, `restrict` has been available since 2016, and the Reconciler already
+declares the `authorized_keys` line whole — with `restrict` — as a matter of
+Desired State rather than a capability test. The fallback is unreachable on
+any Device this Profile can provision.
+
+`LIFE-003` is the `kodi.service` running state during gateway installation.
+Kodi does not read `/storage/.config/kodi-lifecycle`; nothing about writing
+that file requires Kodi to be stopped. The shell captures and restores the
+service state because its deploy is one large transaction with backups,
+rollback directories and a pending-transaction pointer. The Reconciler writes
+a document, so the Effect it would be shadowing does not exist.
 
 ## The CEC slice narrows the glob it shadows
 
