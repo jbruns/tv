@@ -86,6 +86,10 @@ _Avoid_: Drift, absent state
 A State Address another engine rewrites on its own schedule, so no Resource can hold a value there. Contested Addresses are left as Unmanaged State.
 _Avoid_: Volatile setting, drift, race
 
+**Divergent Address**:
+A State Address where the Profile deliberately holds a value the Recovery Baseline cannot produce, so the two disagree by intent rather than by mistake. Each one is named individually; an unnamed disagreement is still a fault.
+_Avoid_: Override, exception, drift
+
 **Observation**:
 The measured state of a Resource on a Device at a point in time.
 _Avoid_: Current state, probe result

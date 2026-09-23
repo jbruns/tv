@@ -53,6 +53,24 @@ Three consequences hold for all shadowing work:
    — gives two engines that revert each other forever, and nothing else would
    catch it.
 
+### Rule 3 admits a named Divergent Address
+
+Rule 3 assumes the Reconciler is reproducing the shell's behaviour, which it
+is almost everywhere. But the Profile may deliberately want something better
+than the shell can produce, and then the two disagree on purpose. That is a
+Divergent Address, and [ADR 0010](0010-retire-the-shell-by-attrition.md)
+already anticipated it: the Recovery Baseline deliberately lags Desired State.
+
+The exception is declared per address in the Profile, never as a blanket flag.
+This is the whole safeguard. Rule 3 exists because a mismatched literal is
+invisible otherwise, and a general escape hatch would hide exactly the faults
+the rule was written to catch. A divergence somebody wrote down is a decision;
+an undeclared one is still a bug, and still fails.
+
+Recovery is unaffected. The order is shell baseline, then reconcile — so the
+Reconciler lands its value after the shell has laid down the older one. The
+two never alternate, because the Baseline is run once, not on a schedule.
+
 ### Rule 2 does not reach a Cleared Address
 
 Rule 2 catches a typo because a wrong id has no node, so it plans a `create`.

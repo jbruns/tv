@@ -41,6 +41,54 @@ arrive with the proposer that reads them, not before. Today's deviation
 rationales become a `notes` field on the record so they stay attached to the
 pin a reviewer is being asked to move.
 
+### `role` separates a decision from a consequence
+
+`notes` answers "why this version and not the newest". A second field, `role`,
+answers "why is this add-on here at all", with three values: `chosen`,
+`dependency`, `repository`.
+
+The two questions looked like one until the Lock was widened past a single
+record. Thirty of the thirty-nine entries are transitive dependencies whose
+version rationale is uniformly "the highest the Omega index publishes" — there
+is no deviation to explain, so their `notes` is `~` and without `role` the
+record would say nothing at all about why it exists.
+
+The distinction is not bookkeeping. Bumping a `chosen` add-on is a decision
+someone makes; bumping a `dependency` is a consequence of one. Removing a
+`chosen` add-on should remove the dependencies nothing else needs. An update
+proposer that cannot tell the two apart proposes the wrong bumps, and
+requirement 3 is the reason the field is worth its keep.
+
+`role` is an intent, not a graph. Which add-on requires which is already
+derivable from `<requires>` in `addon.xml`, which the Reconciler parses. That
+a human *wanted* an add-on is derivable from nothing.
+
+## The Lock's boundary is derived, not listed
+
+Every directory under the add-on address is in the Lock, is in Kodi's own
+`addon-manifest.xml`, or is not an add-on at all. There is no fourth category,
+and on a provisioned Device today there are no exceptions.
+
+The shell maintained a hand-written allowlist of add-ons it tolerated but did
+not pin. That list conflated two unrelated things. Seven of its nine entries
+are in Kodi's manifest, so Kodi stamps them with its own system origin,
+enables them itself, and versions them with Kodi — they are not a gap in our
+supply chain, they *are* Kodi, and pinning them would mean overwriting files
+Kodi considers part of itself on every upgrade. The other two were genuine
+operator installs from the official repository, unrecorded anywhere but a
+comment, and they belong in the Lock like anything else we chose.
+
+Deriving the boundary from the manifest is what keeps it honest. A
+hand-written list is a statement about the past that nothing updates; the
+manifest is on the Device and answers for the Kodi that is actually installed.
+An add-on is a directory containing `addon.xml`, which excludes Kodi's scratch
+directories by observation rather than by naming them.
+
+What falls outside all three is reported, not failed. An add-on appearing from
+nowhere is interesting and we want to know, but we do not yet know what a Run
+should *do* about one, and guessing would make the Reconciler refuse to work
+for a reason nobody chose.
+
 ## The Artifact Lock is its own file
 
 The Lock lives beside `profile.yaml` in the same Profile directory rather than
