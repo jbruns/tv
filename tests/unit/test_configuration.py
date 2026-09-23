@@ -158,19 +158,23 @@ def test_the_shipped_configuration_is_readable(
 
 
 @pytest.mark.parametrize("name", sorted(PROFILE_FILES.values()))
-def test_a_profile_missing_one_of_its_files_is_refused_naming_it(
+def test_a_profile_missing_one_of_its_files_is_refused_before_the_device_is_contacted(
     device: FakeDevice,
     reconcile: Callable[..., int],
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     name: str,
 ) -> None:
     """A missing file would plan nothing for a whole cohort, and say nothing."""
 
+    log = device.root / "ssh.log"
+    monkeypatch.setenv("FAKE_DEVICE_SSH_LOG", str(log))
     (device.profile_directory() / name).unlink()
 
-    assert reconcile("plan", "--room", "theater") == 1
+    assert reconcile("apply", "--room", "theater") == 1
 
     assert f"no {name} beside the Profile" in capsys.readouterr().err
+    assert not log.exists()
 
 
 @pytest.mark.parametrize(("key", "name"), sorted(PROFILE_FILES.items()))

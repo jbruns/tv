@@ -49,11 +49,11 @@ PUBLIC_KEY = re.compile(
 # version bump into a conflict (ADR 0017).
 ADDONS = "addons.yaml"
 
-# The Profile's four content blocks, one file each beside `profile.yaml`, so
-# finding a declaration does not mean scrolling past three unrelated cohorts.
-# Each holds the one top-level key it is named for, and every one is required:
-# a file gone missing would plan nothing for its whole cohort without saying
-# so.
+# The Profile's Smart Playlists, Shortcut Nodes, whole documents and Settings
+# Documents, one file each beside `profile.yaml`. Each holds the one top-level
+# key it is named for, and every one is required: a file gone missing must not
+# read as an empty declaration, which would plan nothing for everything it
+# held and report a converged Device.
 PLAYLISTS = "playlists.yaml"
 SHORTCUTS = "shortcuts.yaml"
 DOCUMENTS = "documents.yaml"
@@ -1317,7 +1317,7 @@ def _block(profile_file: Path, name: str, key: str) -> tuple[Path, Any]:
     source = profile_file.with_name(name)
     if not source.is_file():
         raise ConfigError(f"no {name} beside the Profile: {source}")
-    return source, _fields(source, key, _read(source), required=(key,))[key]
+    return source, _fields(source, name, _read(source), required=(key,))[key]
 
 
 def _resolved(config_root: Path, room: str) -> tuple[Path, Mapping[str, Any], Path]:
