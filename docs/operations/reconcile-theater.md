@@ -864,7 +864,7 @@ for Intent resolution.
 
 ## Declaring an add-on
 
-Forty add-ons are the Reconciler's. They are declared in the Artifact Lock
+Forty-three add-ons — every one this fleet installs — are the Reconciler's. They are declared in the Artifact Lock
 beside the Profile, never in the Profile itself:
 
 ```yaml
@@ -895,25 +895,118 @@ kind whose enablement could invite Kodi to go and fetch something. `notes` is
 why *this version* and not the newest; a record with nothing to explain states
 `~`, which most of them do.
 
-Three add-ons the shell pins are deliberately outside the Lock: `weather.ha`,
-`script.plexmod` and `plugin.video.themoviedb.helper` cannot be correct
-without an Artifact Patch, and they arrive with the patch mechanism. Two the
-shell never pinned are inside it: `plugin.program.autocompletion` and
+Two add-ons the shell never pinned are inside the Lock:
+`plugin.program.autocompletion` and
 `script.module.autocompletion` were installed by hand from the official Kodi
 repository and recorded in nothing but a comment. They are Profile intent, so
 they are declared like anything else someone chose.
 
 The archive's top-level directory is not required to be the add-on id, and for
-two of these pins it is not — `plugin.service.emby-next-gen` is rooted at
-`plugin.video.emby-plugin.service.emby-next-gen_11.1.27` and
-`resource.font.robotocjksc` at `resource.font.robotcjksc`, an upstream typo.
-The identity comes from `addon.xml`, which both declare correctly, and the
-tree is installed under the id the Lock pins. `weather.ha` is the third such
-archive and arrives with the patch mechanism.
+three of these pins it is not — `plugin.service.emby-next-gen` is rooted at
+`plugin.video.emby-plugin.service.emby-next-gen_11.1.27`,
+`resource.font.robotocjksc` at `resource.font.robotcjksc`, an upstream typo,
+and `weather.ha` at `kodi_weather_ha-0.0.6.6`, because the pin is a GitHub tag
+archive. The identity comes from `addon.xml`, which all three declare
+correctly, and the tree is installed under the id the Lock pins. Artifact
+Patches are applied relative to that root, so a patch does not care which
+directory the archive happened to use.
 
 The Lock is a separate file from the Profile because a version bump is
 eventually a bot's edit, and a bot editing the file humans edit for settings
 turns every bump into a conflict with unrelated work.
+
+### Correcting an add-on upstream has broken
+
+Three add-ons cannot be correct as published, and four one-line fixes stand
+between this fleet and add-ons that crash. Each fix is a unified diff in
+`patches/<addon-id>/` beside the Lock, and the record lists the ones it
+applies:
+
+```yaml
+  - id: weather.ha
+    version: "0.0.6.6"
+    url: https://codeload.github.com/Eugeniusz-Gienek/kodi_weather_ha/zip/refs/tags/0.0.6.6
+    sha256: "2978014d258c01e3b5ce73d2a8a73bb3e7d29e64b4d36ae35a355d5665760ae5"
+    role: chosen
+    notes: >-
+      ...
+    patches:
+      - 0001-settings-int-is-number-on-kodi-21.patch
+      - 0002-continue-when-the-request-raises.patch
+    patched_files:
+      lib/homeassistant/_adapter.py: "0f1ffeb4..."
+      resources/settings.xml: "c2ab0d8d..."
+```
+
+Each patch opens with a header comment naming the add-on and the version it
+was written against. `patch` skips leading text, so that assertion costs the
+diff nothing, and it is checked against the Lock **before anything is
+fetched**: a version bump that outruns its patches fails at once rather than
+after an 8 MB download, which is the safeguard that makes carrying patches
+acceptable at all.
+
+Patches are applied on the controller, between expanding the Artifact and
+packing the tree the Device receives, by shelling out to `patch` — CoreELEC
+has `unzip` and `python3` but no `patch`, and reimplementing diff application
+on the Device to avoid a dependency we already take for `ssh` and `curl` is
+reimplementing a very old tool. The Device receives finished bytes.
+
+A diff's context lines *are* the assertion the shell hand-wrote as expected
+line tuples, so a patch that does not apply cleanly fails the Run with the
+Device untouched. The shell's second tuple, occurrence counts and
+already-patched branch do not survive: they guard re-patching a tree that is
+already installed, and this tree was expanded from bytes a SHA-256 pins.
+
+What does survive is the syntax check. A clean application proves the context
+matched; it does not prove the result parses, and four of the five patched
+files are Python that Kodi imports at boot. Every patched `.py` file is
+compiled on the controller, so a broken patch fails the Run instead of the
+add-on.
+
+### Recording what a patch produces
+
+Correcting a patch does not move the add-on's version. The Device still
+reports `6.17.1`, so a Plan reading only the version would see no difference
+and the correction would never ship — and iterating on patches is the whole
+reason for carrying them.
+
+So a patched add-on is observed by its version **and** by the hashes of the
+files its patches touch. The file list comes from the diffs' own `+++`
+headers, so nothing declares it twice, and `patched_files` must name exactly
+those files or the Lock is refused.
+
+Those hashes are recorded rather than recomputed, which is what keeps `plan`
+offline and instant — the alternative puts a download and a patch run in the
+path that executes even when nothing changed. `record-patches` generates
+them, by running the real pipeline and no imitation of it:
+
+```console
+uv run coreelec-reconciler record-patches --room theater
+```
+
+It fetches each patched Artifact, proves its digest, expands it, applies the
+patches, hashes what came out, and writes the values back into the Lock —
+rewriting nothing else in the file, so every comment beside a pin survives. It
+contacts no Device. A record whose hash is `~` is one nobody has recorded, and
+a Run refuses it rather than guessing: an unrecorded hash cannot tell a
+patched Device from an unpatched one.
+
+Regeneration lives on the Reconciler rather than in `scripts/` because it *is*
+the artifact pipeline. A tool beside it would duplicate the pipeline or reach
+past the package boundary
+([ADR 0011](../adr/0011-linux-only-ci-and-boundary-tests.md)), and it is what
+the update proposer will call when it bumps a version.
+
+CI regenerates and compares, in a job that runs only when the Lock or
+`patches/` changed — exactly when the answer could have moved. It is not in
+the main suite, because that makes an unrelated one-line change fail when a
+mirror is down, and not scheduled-only either, because a wrong hash would then
+merge and surface as a failed Run on the appliance.
+
+Encoding patch identity in the version instead — shipping `6.17.1+tv.1` — was
+rejected. `skin.arctic.fuse.3` declares a dependency floor of `6.14.3` on
+`plugin.video.themoviedb.helper`, so that rewrites the identity another add-on
+compares against.
 
 ### What a Run observes
 
@@ -922,7 +1015,10 @@ read for the `version` attribute — what Kodi itself believes is installed.
 Nothing hashes the tree, and the Reconciler writes no receipt of its own: a
 receipt would be a second record of the same fact, free to disagree with the
 one Kodi reads. The enabled half is the `installed` row in the add-on
-database.
+database. For a patched add-on it is those two and the files the diffs
+touch, read back and compared against the hashes the Lock records. They are
+read only when the declared version already matches: an add-on being replaced
+whole is replaced whole.
 
 A Plan names both:
 
@@ -940,6 +1036,15 @@ nobody asked for:
 update /storage/.kodi/addons/script.module.six
 version: 1.16.0+matrix.1 -> 1.16.0+matrix.1
 enabled: 0 -> 1
+```
+
+An add-on at its pin whose patched files are not the bytes the Lock records
+plans as an `update` that ships the whole tree, and names the file:
+
+```
+update /storage/.kodi/addons/weather.ha
+version: 0.0.6.6 -> 0.0.6.6
+patched file: resources/settings.xml is not the bytes the Artifact Lock records
 ```
 
 ### What an Apply does
@@ -1013,13 +1118,9 @@ A missing or unparseable `addon_manifest` *does* fail the Run, naming the
 address. That is not a stray: without it every add-on Kodi ships with reads as
 one, and a report that cries wolf seven times is a report nobody reads.
 
-On the theater Ugoos today the report names exactly three:
-`plugin.video.themoviedb.helper`, `script.plexmod` and `weather.ha`. Those are
-the three the shell installs and the Lock deliberately excludes, because they
-cannot be correct without an Artifact Patch and arrive with that mechanism
+On the theater Ugoos today the report names nothing. Every add-on on the
+Device is in the Lock or in Kodi's own manifest
 ([ADR 0017](../adr/0017-pin-add-on-artifacts-and-patch-the-broken-ones.md)).
-The report goes quiet when the patch slice lands. Nothing else on the Device
-is unaccounted for.
 
 This replaces the shell's `coreelec_report_addon_inventory`, which printed a
 count and tolerated nine ids through `ADDON_UNMANAGED_ALLOWED`. Seven of those
@@ -1889,14 +1990,14 @@ The scenarios are:
     rm -f /tmp/held /tmp/kodis /tmp/locked
     ```
 
-    Expect the two lists to name the same three add-ons:
-    `plugin.video.themoviedb.helper`, `script.plexmod` and `weather.ha` —
-    the three the Lock deliberately excludes until the Artifact Patch
-    mechanism arrives
+    Expect both to be empty, now that the three patched add-ons are in the
+    Lock
     ([ADR 0017](../adr/0017-pin-add-on-artifacts-and-patch-the-broken-ones.md)).
-    Anything else in the report is a genuine stray and is worth finding out
-    about; a report that is **empty** on this Device means the accounting is
-    broken, not that the Device is clean.
+    Anything either one names is a genuine stray and is worth finding out
+    about, and the two must agree: the report naming something the derivation
+    does not, or the reverse, is the accounting being broken rather than the
+    Device being dirty. The injected stray below is what proves an empty
+    report is still a report.
 
     Then prove a stray is actually seen, and that it does not stop a Run:
 
@@ -1912,6 +2013,45 @@ The scenarios are:
     Expect a fourth `undeclared add-on:` line naming it, exit `0`, and no
     Change alongside it. Expect `packages` and `temp` never to appear: they
     hold no `addon.xml`, which is the whole rule.
+
+21. **A patched add-on is not identified by its version** — the drift only
+    the recorded file hashes can catch. Install the **unpatched** add-on at
+    the pinned version, which is what upstream ships and what an operator
+    installing from the repository would get:
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    tmdb=/storage/.kodi/addons/plugin.video.themoviedb.helper
+    service=$tmdb/resources/tmdbhelper/lib/monitor/service.py
+
+    ug "sed -i '/\.daemon = True/d' $service"
+    ug "grep -c 'daemon = True' $service"        # expect 0
+    ug "sed -n 's/.*version=\"\([^\"]*\)\".*/\1/p' $tmdb/addon.xml | head -1"
+
+    uv run coreelec-reconciler plan --room theater
+    ```
+
+    Expect the version to read `6.17.1`, matching the pin exactly, and the
+    plan to name the add-on anyway with a `patched file:` line for
+    `resources/tmdbhelper/lib/monitor/service.py`. That is the case where the
+    old Observation returns "converged" and the new one must not. Deleting the
+    add-on instead would pass even if patching were skipped entirely, which is
+    why the drift is injected inside a file rather than by removing the tree.
+
+    Then converge it and confirm the bytes on the Device are the patched ones,
+    not merely present:
+
+    ```console
+    uv run coreelec-reconciler apply --room theater
+    ug "grep -c 'daemon = True' $service"        # expect 2
+    ug "grep -c 'if windowutils.HOME:' /storage/.kodi/addons/script.plexmod/lib/monitor.py"
+    ug "grep -c 'type=\"number\"' /storage/.kodi/addons/weather.ha/resources/settings.xml"
+
+    uv run coreelec-reconciler plan --room theater    # expect no changes
+    ```
+
+    Expect `1` from each of the other two, and the final `plan` to report no
+    changes — the same hashes the Lock records, read back off the Device.
 
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
@@ -1945,20 +2085,16 @@ CEC power policy (`CEC-001`-`CEC-005`), the platform Guard (`PLAT-001`), the
 timezone cache (`CORE-006`), the `tz-data.service` restart (`EFFECT-002`),
 the two `authorized_keys` entries (`SSH-002`, `LIFE-002`), the `sshd.conf`
 pair (`SSH-003`), the host key policy (`SSH-004`), the `sshd.service`
-restart (`EFFECT-003`) and thirty-eight add-on artifacts — `ART-001`-`ART-041`
-less `ART-005`, `ART-007` and `ART-009` —
+restart (`EFFECT-003`) and all forty-one add-on artifacts
+(`ART-001`-`ART-041`)
 as
 shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
-`cec`, `skin`, `services`, `addons`, `room` or `baseline` run. The three
-missing rows are `plugin.video.themoviedb.helper`, `script.plexmod` and
-`weather.ha`, which cannot be correct without an Artifact Patch and arrive
-with the patch mechanism. `ADDON-001` is
-one row covering the enabled flag of all forty-one add-ons, so it stays
-`none` until the Reconciler declares every one of them; the Reconciler
-enabling thirty-eight of them is shadowing inside a row the shell still owns
-whole.
+`cec`, `skin`, `services`, `addons`, `room` or `baseline` run. `ADDON-001` is
+one row covering the enabled flag of all forty-one add-ons, and it is
+`accepted` too: the Reconciler now declares every one of them, which is the
+one thing that row was waiting for.
 
 The Artifact Lock also declares two add-ons that have **no ledger row at
 all**: `plugin.program.autocompletion` and `script.module.autocompletion`. The

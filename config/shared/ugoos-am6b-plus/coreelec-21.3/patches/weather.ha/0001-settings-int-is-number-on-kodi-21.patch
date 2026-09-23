@@ -1,0 +1,15 @@
+# weather.ha 0.0.6.6
+#
+# Kodi 21 dropped the `int` setting type. A setting declaring it is not shown
+# at all, so the add-on's request-attempt count cannot be set from its own
+# settings dialog. `number` is the type Kodi 21 reads it as.
+--- a/resources/settings.xml
++++ b/resources/settings.xml
+@@ -16,6 +16,6 @@
+         <setting id="logEnabled"                    type="bool" label="30009" default="false" />
+         <setting id="remove_seconds"                type="bool" label="30204" default="false" />
+         <setting id="errNotInform"                  type="bool" label="30202" default="false" />
+-        <setting id="ha_request_attempts"           type="int"  label="30203" default="5" />
++        <setting id="ha_request_attempts"           type="number" label="30203" default="5" />
+     </category>
+ </settings>

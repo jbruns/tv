@@ -11,11 +11,12 @@ import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import yaml
 
-from . import env_file, kodi_settings
+from . import artifact, env_file, kodi_settings
 
 
 class ConfigError(Exception):
@@ -47,6 +48,11 @@ PUBLIC_KEY = re.compile(
 # it, and a bot editing the file humans edit for settings turns every version
 # bump into a conflict (ADR 0017).
 ADDONS = "addons.yaml"
+
+# The directory holding the Artifact Patches, beside the Lock. One
+# subdirectory per add-on, and the Lock record lists the files it applies
+# (ADR 0017).
+PATCHES = "patches"
 
 # An add-on id is a directory name on the Device and a value inside a SQL
 # statement, so the grammar is narrow enough that neither can be anything but
@@ -151,6 +157,14 @@ class AddonArtifact:
     nothing but a human reads. `role` answers the other question, why the
     add-on is here at all: bumping a `chosen` add-on is a decision someone
     makes, and bumping a `dependency` is a consequence of one (ADR 0017).
+
+    `patches` are the Artifact Patches applied to the expanded Artifact on
+    the controller, read from `patches/<id>/` beside the Lock.
+    `patched_files` is the post-patch SHA-256 of each file those diffs touch,
+    which is how a patched add-on is observed: correcting a patch does not
+    move the add-on's version, so the version alone would never ship the
+    correction. A hash of None is one nothing has recorded yet, which
+    `record-patches` fills in (ADR 0017).
     """
 
     id: str
@@ -159,6 +173,8 @@ class AddonArtifact:
     sha256: str
     role: str
     notes: str | None = None
+    patches: tuple[artifact.Patch, ...] = ()
+    patched_files: Mapping[str, str | None] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -338,6 +354,9 @@ class DesiredState:
     authorized_keys: AuthorizedKeys
     playlists: tuple[SmartPlaylist, ...]
     documents: tuple[SettingsDocument, ...]
+    # Where the Artifact Lock is, so the command that records post-patch
+    # hashes rewrites the file the Profile actually read.
+    lock: Path
     addons: tuple[AddonArtifact, ...] = ()
     shortcut_nodes: tuple[ShortcutNode, ...] = ()
 
@@ -849,6 +868,89 @@ def _addresses(source: Path, raw: Any) -> Addresses:
     return Addresses(**held)
 
 
+def _patches(
+    source: Path, addon_id: str, version: str, raw: Any
+) -> tuple[artifact.Patch, ...]:
+    """The Artifact Patches a record lists, read from `patches/<id>/`.
+
+    The version each diff was written against is asserted here, before a Run
+    has fetched anything: a bump that outruns its patches fails at once
+    rather than after an 8 MB download (ADR 0017).
+    """
+
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError(f"{source}: the patches of {addon_id} must be a list")
+    directory = source.parent / PATCHES / addon_id
+    held: list[artifact.Patch] = []
+    for entry in raw:
+        name = _text(source, f"a patch of {addon_id}", entry)
+        _relative(source, f"the patch {name} of {addon_id}", name)
+        document = directory / name
+        if not document.is_file():
+            raise ConfigError(
+                f"{source}: {addon_id} names a patch that is not there: {document}"
+            )
+        patch = artifact.Patch(name=name, diff=document.read_text(encoding="utf-8"))
+        try:
+            patched_id, patched_version = artifact.asserted(patch)
+            artifact.touched(patch)
+        except artifact.ArtifactError as error:
+            raise ConfigError(f"{document}: {error}") from error
+        if patched_id != addon_id:
+            raise ConfigError(
+                f"{document}: written against {patched_id} and listed under {addon_id}"
+            )
+        if patched_version != version:
+            raise ConfigError(
+                f"{document}: written against {addon_id} {patched_version} and "
+                f"the Artifact Lock pins {version}: re-review the patch before "
+                "moving the pin"
+            )
+        held.append(patch)
+    return tuple(held)
+
+
+def _patched_files(
+    source: Path,
+    addon_id: str,
+    patches: tuple[artifact.Patch, ...],
+    raw: Any,
+) -> Mapping[str, str | None]:
+    """The recorded post-patch hash of every file the diffs touch.
+
+    The file list is the diffs' own, so the Lock states the same names and
+    nothing declares them twice. A record naming a file no patch touches, or
+    missing one a patch does, is rejected here: the Observation would
+    silently stop covering it.
+    """
+
+    expected = sorted({path for patch in patches for path in artifact.touched(patch)})
+    mapping = (
+        {} if raw is None else _mapping(source, f"the patched files of {addon_id}", raw)
+    )
+    held: dict[str, str | None] = {}
+    for path, value in mapping.items():
+        name = _text(source, f"a patched file of {addon_id}", path)
+        if value is None:
+            held[name] = None
+            continue
+        digest = _text(source, f"the hash of {name} in {addon_id}", value)
+        if not SHA256.fullmatch(digest):
+            raise ConfigError(
+                f"{source}: the hash of {name} in {addon_id} must be 64 "
+                f"lowercase hex characters: {digest}"
+            )
+        held[name] = digest
+    if sorted(held) != expected:
+        raise ConfigError(
+            f"{source}: the patched files of {addon_id} must be exactly the "
+            f"files its patches touch: {', '.join(expected) or 'none'}"
+        )
+    return MappingProxyType(held)
+
+
 def _addon(source: Path, raw: Any) -> AddonArtifact:
     """One record of the Artifact Lock, rejected here rather than mid-Run."""
 
@@ -857,6 +959,7 @@ def _addon(source: Path, raw: Any) -> AddonArtifact:
         "an add-on",
         _mapping(source, "an add-on", raw),
         required=("id", "version", "url", "sha256", "role", "notes"),
+        optional=("patches", "patched_files"),
     )
     addon_id = _text(source, "an add-on id", mapping["id"])
     if not ADDON_ID.fullmatch(addon_id):
@@ -884,6 +987,7 @@ def _addon(source: Path, raw: Any) -> AddonArtifact:
             f"{source}: the role of {addon_id} must be one of "
             f"{', '.join(ADDON_ROLES)}: {role}"
         )
+    patches = _patches(source, addon_id, version, mapping.get("patches"))
     return AddonArtifact(
         id=addon_id,
         version=version,
@@ -892,6 +996,10 @@ def _addon(source: Path, raw: Any) -> AddonArtifact:
         role=role,
         notes=(
             None if notes is None else _text(source, f"the notes of {addon_id}", notes)
+        ),
+        patches=patches,
+        patched_files=_patched_files(
+            source, addon_id, patches, mapping.get("patched_files")
         ),
     )
 
@@ -1172,7 +1280,8 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
     platform = _platform(profile_file, profile["platform"])
     constants = _constants(profile_file, profile["constants"])
     addresses = _addresses(profile_file, profile["addresses"])
-    addons = _addons(profile_file.with_name(ADDONS))
+    lock = profile_file.with_name(ADDONS)
+    addons = _addons(lock)
     room_documents = _documents(
         room_file, named, constants, "settings_documents", overlay["settings_documents"]
     )
@@ -1246,6 +1355,7 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         authorized_keys=authorized,
         playlists=parsed,
         documents=_merge(((profile_file, kodi), (room_file, room_documents))),
+        lock=lock,
         addons=addons,
         shortcut_nodes=tuple(
             _shortcut_node(profile_file, by_file, entry) for entry in nodes

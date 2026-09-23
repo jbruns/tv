@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from . import artifact, config, reconcile
+from . import artifact, config, lock, reconcile
 from .device import DeviceError
 
 DESCRIPTION = "Reconcile a CoreELEC Device with its declared Desired State."
@@ -20,11 +20,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("plan", "apply", "bootstrap"),
+        choices=("plan", "apply", "bootstrap", "record-patches"),
         help=(
             "plan reports the Changes and mutates nothing; apply converges; "
             "bootstrap makes First Contact with a Device that has no "
-            "administrator key yet"
+            "administrator key yet; record-patches runs the artifact "
+            "pipeline and writes what each Artifact Patch produces back into "
+            "the Artifact Lock, touching no Device"
         ),
     )
     parser.add_argument(
@@ -65,6 +67,8 @@ def main(
         desired = config.load(arguments.config_root, arguments.room, arguments.env_file)
         if arguments.command == "bootstrap":
             reconcile.bootstrap(desired, out=out)
+        elif arguments.command == "record-patches":
+            lock.record(desired, out=out)
         else:
             reconcile.run(desired, apply=arguments.command == "apply", out=out)
     except config.ConfigError as error:

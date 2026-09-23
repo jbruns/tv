@@ -23,9 +23,12 @@
 # someone ran, and "newest" is a question for the update proposer, not a claim
 # this file makes.
 #
-# Three add-ons are missing on purpose: weather.ha, script.plexmod and
-# plugin.video.themoviedb.helper cannot be correct without an Artifact Patch,
-# and they arrive with the patch mechanism.
+# Three add-ons carry Artifact Patches: upstream has broken them, and they
+# cannot be correct without four one-line fixes. The diffs are in patches/,
+# the record lists the ones it applies, and `patched_files` records what each
+# diff produces — a patched add-on is observed by its version *and* by those
+# hashes, because correcting a patch does not move the version. Those hashes
+# are generated: run `record-patches` rather than editing them by hand.
 #
 # The shell's `provision.conf` beside this file still holds all 41 pins as
 # `ADDON_ARTIFACT` records and is untouched: it is the Recovery Baseline
@@ -64,6 +67,18 @@ addons:
     sha256: "2ae9b76aa763cd44d4296882ecc076372bf0d2aba50b0cf08ae5797a4983c402"
     role: chosen
     notes: ~
+  - id: plugin.video.themoviedb.helper
+    version: "6.17.1"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.17.1.zip
+    sha256: "52ce3389076b138a8c0069bab5ee316e7c2e84ab74488044cd7ec18faae68f59"
+    role: chosen
+    notes: ~
+    patches:
+      - 0001-workers-are-daemon-threads.patch
+      - 0002-recheck-the-abort-after-waiting.patch
+    patched_files:
+      resources/tmdbhelper/lib/monitor/cronjob.py: "c36ecf0f62a9759fbe7b984eb759206a065b4659dba686849f9d1bbdd88dc277"
+      resources/tmdbhelper/lib/monitor/service.py: "18dbe39dc00d8250e52540d0ff0c59972f4908afb6a5b94e750593b932361b8e"
   - id: pvr.nextpvr
     version: "21.3.2.1"
     url: https://addons.coreelec.org/Amlogic-ng/21.3/arm/pvr.nextpvr/pvr.nextpvr-21.3.2.1.zip
@@ -73,6 +88,19 @@ addons:
       CoreELEC's own Amlogic-ng/arm build, so the version tracks the CoreELEC
       release rather than the newest NextPVR client. Bumping it without
       bumping CoreELEC installs a binary built against another Kodi.
+  - id: script.plexmod
+    version: "1.3.19"
+    url: https://raw.githubusercontent.com/pannal/dontpanickodi/eba134ac09bfe4916b3511d1e377bf6bb03a947e/omega/zips/script.plexmod/script.plexmod-1.3.19.zip
+    sha256: "885b48b724a525a1412df09db8c69f4ec0eebb6da06d6e0509df097b3ac19816"
+    role: chosen
+    notes: >-
+      The latest published stable PM4K release, taken from an immutable commit
+      in the publisher's own Don't Panic repository rather than from the
+      moving master branch.
+    patches:
+      - 0001-guard-a-home-window-that-is-gone.patch
+    patched_files:
+      lib/monitor.py: "ab3d01700339e2c3f6690c954ebae76c13b6246d87087b973bb18ed7e7b15dac"
   - id: skin.arctic.fuse.3
     version: "3.2.16"
     url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.2.16.zip
@@ -82,6 +110,22 @@ addons:
       The Shortcut Nodes and view types this Profile declares are written
       against this skin version, and the view include the skin compiles is
       derived from them. A bump re-reads both and is reviewed with them.
+  - id: weather.ha
+    version: "0.0.6.6"
+    url: https://codeload.github.com/Eugeniusz-Gienek/kodi_weather_ha/zip/refs/tags/0.0.6.6
+    sha256: "2978014d258c01e3b5ce73d2a8a73bb3e7d29e64b4d36ae35a355d5665760ae5"
+    role: chosen
+    notes: >-
+      The Kodi mirror publishes only 0.0.5, 0.0.6.3 and 0.0.6.4.1, and the
+      upstream 0.0.6.6 release carries no attached asset, so the pin is the
+      publisher's own tag archive. It is rooted at kodi_weather_ha-0.0.6.6
+      rather than at the add-on id.
+    patches:
+      - 0001-settings-int-is-number-on-kodi-21.patch
+      - 0002-continue-when-the-request-raises.patch
+    patched_files:
+      lib/homeassistant/_adapter.py: "0f1ffeb438a91c18c865101cc181450b8f7430dedb5cc30df5711377e87c17a4"
+      resources/settings.xml: "c2ab0d8da2fa70124b3e7e31fd4c14070f2b532d404588ad68d1a3a7d957dd9a"
   - id: resource.language.en_us
     version: "11.0.82"
     url: https://mirrors.kodi.tv/addons/omega/resource.language.en_us/resource.language.en_us-11.0.82.zip

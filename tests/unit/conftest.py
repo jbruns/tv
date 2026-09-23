@@ -403,10 +403,12 @@ def addon_lock(
     digest: str = "",
     role: str = "dependency",
     notes: str = "~",
+    patches: tuple[str, ...] = (),
+    patched_files: Mapping[str, str | None] | None = None,
 ) -> str:
     """The Artifact Lock, pinning one add-on."""
 
-    return (
+    record = (
         "addons:\n"
         f"  - id: {addon_id}\n"
         f'    version: "{version}"\n'
@@ -415,6 +417,14 @@ def addon_lock(
         f"    role: {role}\n"
         f"    notes: {notes}\n"
     )
+    if patches:
+        record += "    patches:\n" + "".join(f"      - {name}\n" for name in patches)
+    if patched_files is not None:
+        record += "    patched_files:\n" + "".join(
+            f"      {path}: ~\n" if held is None else f'      {path}: "{held}"\n'
+            for path, held in patched_files.items()
+        )
+    return record
 
 
 def indent(block: str) -> str:
@@ -666,6 +676,16 @@ class FakeDevice:
         """Writes the Artifact Lock beside the Profile."""
         (self.profile_directory() / "addons.yaml").write_text(body, encoding="utf-8")
 
+    def read_addons(self) -> str:
+        """The Artifact Lock as it stands, which `record-patches` rewrites."""
+        return (self.profile_directory() / "addons.yaml").read_text(encoding="utf-8")
+
+    def write_patch(self, name: str, body: str, addon_id: str = ADDON_ID) -> None:
+        """Writes an Artifact Patch into `patches/<id>/` beside the Lock."""
+        directory = self.profile_directory() / "patches" / addon_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(body, encoding="utf-8")
+
     def publish_artifact(
         self,
         addon_id: str = ADDON_ID,
@@ -705,11 +725,14 @@ class FakeDevice:
         addon_id: str = ADDON_ID,
         version: str = ADDON_VERSION,
         enabled: bool | None = True,
+        files: Mapping[str, str] | None = None,
     ) -> None:
         """Puts the add-on on the fake Device the way a provisioned one holds it."""
         manifest = self.addons / addon_id / "addon.xml"
         write_document(manifest, addon_manifest(addon_id, version))
         (self.addons / addon_id / "lib").mkdir(parents=True, exist_ok=True)
+        for path, body in (files or {}).items():
+            write_document(self.addons / addon_id / path, body)
         if enabled is not None:
             self.write_addon_row(addon_id, enabled)
 
