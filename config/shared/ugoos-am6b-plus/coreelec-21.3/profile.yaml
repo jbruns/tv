@@ -30,10 +30,10 @@ constants:
 
 # The Device addresses the Reconciler knows the meaning of, but not the
 # location of. Every other address on the Device reaches the Reconciler as
-# the State Address of a Resource; these four do not, because what they are
+# the State Address of a Resource; these five do not, because what they are
 # for is mechanism — which unit reads a document, where Kodi keeps add-ons,
-# which database holds their enabled flags — and mechanism is not declared
-# (ADR 0013).
+# which database holds their enabled flags, where Kodi lists the add-ons it
+# ships with — and mechanism is not declared (ADR 0013).
 #
 # Knowing what an address means is not knowing where it is, though, so the
 # address itself is here. The Kodi add-on database carries its schema version
@@ -45,6 +45,10 @@ addresses:
   sshd_conf: /storage/.cache/services/sshd.conf
   addons: /storage/.kodi/addons
   addon_database: /storage/.kodi/userdata/Database/Addons33.db
+  # Kodi's own list of the add-ons it ships with. They live under the same
+  # address as everything else and nobody pinned them, so without this file
+  # the Run would report seven ordinary scrapers as strays.
+  addon_manifest: /usr/share/kodi/system/addon-manifest.xml
 
 # Controller-side SSH transport. The Reconciler shells out to ssh and reuses
 # the existing key-only administrator setup.
@@ -365,10 +369,19 @@ settings_documents:
         value: United States
       - setting: locale.timezone
         from_profile: timezone
-      # Add-on updates are notified, never installed unattended, so the
-      # appliance never changes underneath a viewer.
+      # Nothing installs unattended, and now nothing looks either. `1` is
+      # AUTO_UPDATES_NOTIFY, which still polls all three repositories on a
+      # timer; `general.addonnotifications` is false, so that work produces
+      # an answer nobody sees. `2` is AUTO_UPDATES_NEVER, which is the only
+      # mode that stops the timer. The Artifact Lock is the supply chain now.
+      #
+      # The cost is that "an update is available" leaves the UI, which is
+      # what makes the update proposer in ADR 0017 load-bearing.
       - setting: general.addonupdates
-        value: "1"
+        value: "2"
+        divergent: >-
+          the shell writes 0 or 1 from ADDON_UPDATE_MODE and cannot emit 2,
+          so a shell run after an apply leaves this address changed on purpose
       - setting: input.enablemouse
         value: "false"
       # File lists: a ten-foot interface, not a file manager.

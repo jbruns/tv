@@ -204,6 +204,7 @@ addresses:
   sshd_conf: {sshd_conf}
   addons: {addons}
   addon_database: {addon_database}
+  addon_manifest: {addon_manifest}
 transport:
   user: root
   port: 22
@@ -364,6 +365,21 @@ CREATE TABLE installed (
 """
 
 
+# What Kodi ships with, as `/usr/share/kodi/system/addon-manifest.xml` states
+# it. Two entries, one of them carrying the `optional` attribute two real
+# entries carry, so a reader taking the id from the element text is exercised
+# on both shapes.
+SHIPPED_WITH_KODI = "metadata.generic.albums"
+SHIPPED_WITH_KODI_OPTIONAL = "inputstream.adaptive"
+KODI_ADDON_MANIFEST = f"""\
+<?xml version="1.0"?>
+<addons>
+  <addon>{SHIPPED_WITH_KODI}</addon>
+  <addon optional="true">{SHIPPED_WITH_KODI_OPTIONAL}</addon>
+</addons>
+"""
+
+
 def addon_manifest(addon_id: str = ADDON_ID, version: str = ADDON_VERSION) -> str:
     """An `addon.xml` with its attributes spread across lines, as several real
     add-ons write it, so nothing here can be read with a pattern."""
@@ -518,6 +534,11 @@ class FakeDevice:
         return self.userdata / "Database" / "Addons33.db"
 
     @property
+    def addon_manifest(self) -> Path:
+        """Kodi's own list of the add-ons it ships with."""
+        return self.root / "usr" / "share" / "kodi" / "system" / "addon-manifest.xml"
+
+    @property
     def artifacts(self) -> Path:
         """What the stub `curl` serves, one file per URL's last segment."""
         return self.root / "artifacts"
@@ -625,6 +646,7 @@ class FakeDevice:
                 sshd_conf=SSHD_CONF,
                 addons=self.addons,
                 addon_database=self.addon_database,
+                addon_manifest=self.addon_manifest,
             )
             + document_block(
                 self.guisettings,
@@ -804,6 +826,9 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
     )
     write_document(fake.authorized_keys, f"{ADMINISTRATOR_ENTRY}\n")
     fake.localtime.parent.mkdir(parents=True, exist_ok=True)
+    # Every Run reports the add-ons nobody declared, and the Device's answer
+    # to which ones are Kodi's own is this file.
+    write_document(fake.addon_manifest, KODI_ADDON_MANIFEST)
     fake.write_profile(fake.profile_body())
     # Every Profile has an Artifact Lock. A test that is about something else
     # pins nothing, so no Run of it reaches an add-on.

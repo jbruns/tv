@@ -130,7 +130,8 @@ reason.
 
 A few State Addresses are not declared as Resources but are still paths the
 Reconciler must know: the CoreELEC timezone cache, `sshd.conf`, the add-on
-directory, and Kodi's add-on database. The Profile names them:
+directory, Kodi's add-on database, and Kodi's list of the add-ons it ships
+with. The Profile names them:
 
 ```yaml
 addresses:
@@ -138,6 +139,7 @@ addresses:
   sshd_conf: /storage/.cache/services/sshd.conf
   addons: /storage/.kodi/addons
   addon_database: /storage/.kodi/userdata/Database/Addons33.db
+  addon_manifest: /usr/share/kodi/system/addon-manifest.xml
 ```
 
 The key is a role the Reconciler knows; the value is where that role lives on
@@ -147,6 +149,12 @@ always restarts the transport — because that is mechanism, not declaration
 ([ADR 0013](../adr/0013-a-settings-document-always-takes-the-kodi-stop.md)).
 What changes across CoreELEC releases is the path, and the path is the part
 the Profile holds.
+
+`addon_manifest` is Kodi's own list of the add-ons it installs with itself.
+They live under the same address as every other add-on and nobody pinned
+them, so without this file a Run would report seven perfectly ordinary
+metadata scrapers as strays; see
+[add-ons nobody declared](#add-ons-nobody-declared).
 
 `addon_database` is the case that forced the block. Kodi versions its add-on
 database by schema (`Addons33.db` on Kodi 21, a different number on the next
@@ -553,7 +561,8 @@ Declare the value `provision-coreelec.sh` already writes, exactly as it writes
 it — `true` and `1` are different values to Kodi. The two declarations then
 agree, the Recovery Baseline and Desired State do not diverge, and a shell run
 stays a no-op. Values the shell resolves from `provision.conf` are declared as
-the resolved literal.
+the resolved literal. The one exception is declared out loud; see
+[declaring a Divergent Address](#declaring-a-divergent-address).
 
 The Profile declares eighty-one settings this way and the Reconciler holds no
 list of its own, so the eighty-second is an entry here and no code change.
@@ -569,6 +578,55 @@ the shell provisioner does, so the two agree on what "set" means.
 
 A State Address is the document plus the setting, so the same setting ID in
 two documents is two addresses and not a collision.
+
+### Declaring a Divergent Address
+
+A Divergent Address is a State Address where the Profile deliberately holds a
+value the Recovery Baseline **cannot produce**. The two disagree by intent
+rather than by mistake, and the disagreement is written down per address:
+
+```yaml
+      - setting: general.addonupdates
+        value: "2"
+        divergent: >-
+          the shell writes 0 or 1 from ADDON_UPDATE_MODE and cannot emit 2,
+          so a shell run after an apply leaves this address changed on purpose
+```
+
+`divergent` carries the reason and nothing else. An empty reason is an error
+naming the setting, and the key belongs to a setting rather than to a
+document: a document-level flag would excuse every address inside it, which is
+the blanket escape hatch
+[ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md) refuses.
+
+The reason this is a declaration and not a code path is acceptance scenario 8:
+run the shell after an `apply`, re-plan, and expect no changes. That check
+exists because one mismatched literal — `true` against `1` — gives two engines
+that revert each other forever and nothing else would catch it. A Divergent
+Address is the one Change scenario 8 is allowed to come back with, and the
+Plan says so where it is read:
+
+```
+update /storage/.kodi/userdata/guisettings.xml#general.addonupdates: 1 -> 2
+divergent: the shell writes 0 or 1 from ADDON_UPDATE_MODE and cannot emit 2, ...
+```
+
+The line is printed with the Change it explains and never on its own, so a
+converged address is silent. Recovery is unaffected: the order is shell
+baseline, then reconcile, so the Reconciler lands its value after the shell
+laid down the older one, and the Baseline is run once rather than on a
+schedule ([ADR 0010](../adr/0010-retire-the-shell-by-attrition.md)).
+
+`general.addonupdates` is the first and so far only one, in about eighty
+addresses. Kodi's `2` is `AUTO_UPDATES_NEVER`, the only mode that stops
+`CRepositoryUpdater` rescheduling its timer; `1` is `AUTO_UPDATES_NOTIFY`,
+which still polls all three repositories even though
+`general.addonnotifications` is `false` and nobody ever sees the answer. The
+Artifact Lock is the supply chain now, so that poll has no consumer. The
+honest cost is that "an update is available" leaves the UI, which makes the
+update proposer in requirement 3 of
+[ADR 0017](../adr/0017-pin-add-on-artifacts-and-patch-the-broken-ones.md)
+load-bearing rather than a nicety.
 
 ### Naming a document the Profile cannot know
 
@@ -927,6 +985,49 @@ whose declared version differs are fetched at all, so a converged Device ships
 nothing; a fresh one fetches the whole Lock, about 410 MB, and ships it inside
 the stop window. That is the one Run where the television is not yet in
 service, and `/storage` has 26.8 GB free against it.
+
+### Add-ons nobody declared
+
+Every directory under the add-on address is in the Artifact Lock, is in
+Kodi's `addon-manifest.xml`, or is not an add-on. Whatever is left is
+reported on every Run, `plan` and `apply` alike:
+
+```
+undeclared add-on: /storage/.kodi/addons/plugin.video.themoviedb.helper
+```
+
+An add-on is a directory holding an `addon.xml`. Kodi's `packages` and `temp`
+scratch directories fall out of that by observation rather than by name, which
+is the point: naming them would re-introduce the hand-maintained list the Lock
+replaced, and would still miss the next scratch directory Kodi invents. A
+`.<id>.staging` directory a killed Run left behind is skipped too.
+
+**A stray does not fail the Run.** An add-on appearing from nowhere is worth
+knowing about, but nothing has yet decided what a Run should *do* about one,
+and refusing to work for a reason nobody chose is worse than the stray
+([ADR 0007](../adr/0007-trusted-home-appliance-bar.md)). The report is made
+once, from the planning the Run opens with, so `apply` does not say it twice
+when it re-plans to verify.
+
+A missing or unparseable `addon_manifest` *does* fail the Run, naming the
+address. That is not a stray: without it every add-on Kodi ships with reads as
+one, and a report that cries wolf seven times is a report nobody reads.
+
+On the theater Ugoos today the report names exactly three:
+`plugin.video.themoviedb.helper`, `script.plexmod` and `weather.ha`. Those are
+the three the shell installs and the Lock deliberately excludes, because they
+cannot be correct without an Artifact Patch and arrive with that mechanism
+([ADR 0017](../adr/0017-pin-add-on-artifacts-and-patch-the-broken-ones.md)).
+The report goes quiet when the patch slice lands. Nothing else on the Device
+is unaccounted for.
+
+This replaces the shell's `coreelec_report_addon_inventory`, which printed a
+count and tolerated nine ids through `ADDON_UNMANAGED_ALLOWED`. Seven of those
+nine are in Kodi's manifest and are now accounted for by the manifest; the
+other two are in the Lock. The variable stays in `provision.conf` until the
+shell retires it by attrition, in the forced order the
+[write-set permission freeze](shell-write-set-permissions.md) requires
+([ADR 0010](../adr/0010-retire-the-shell-by-attrition.md)).
 
 ## The Kodi restart Effect
 
@@ -1299,7 +1400,21 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
-   Expect `plan: no changes`. The room component is the narrower form of the
+   Expect exactly one Change, and expect it to explain itself:
+
+   ```
+   update /storage/.kodi/userdata/guisettings.xml#general.addonupdates: 1 -> 2
+   divergent: the shell writes 0 or 1 from ADDON_UPDATE_MODE and cannot emit 2, ...
+   ```
+
+   That is the Divergent Address, and it is the only Change a parity plan may
+   come back with. A Change *without* a `divergent:` line under it is the
+   fault this scenario exists to catch; re-`apply` afterwards to put the
+   declared value back. Every other component below must still report
+   `plan: no changes`, because none of them writes
+   `general.addonupdates`.
+
+   The room component is the narrower form of the
    same check, and it is the one that exercises the transforms:
 
    ```console
@@ -1620,7 +1735,10 @@ The scenarios are:
     uv run coreelec-reconciler plan --room theater
     ```
 
-    Expect `plan: no changes`, and scenario 8 to stay clean.
+    The `core` component writes `general.addonupdates`, so expect exactly the
+    one Divergent Address Change described in scenario 9 and nothing else,
+    and scenario 8 to stay clean. `apply` again to put the declared value
+    back.
 16. **The platform Guard refuses a Device that is not what the Profile
     claims** — a Guard that has never refused anything is a Guard nobody has
     tested. Declare a version the Device does not hold and watch the Run stop
@@ -1713,6 +1831,87 @@ The scenarios are:
     to a key-only connection, and the `plan` after it — which is key-only and
     strict — to succeed. Expect `bootstrap` to have appended the
     administrator entry and left the lifecycle entry exactly where it was.
+
+19. **Kodi stops polling, and the poll actually stops** — the address is
+    only half the claim. Drift it, converge it, and then read Kodi's own log
+    for the repository check that must not happen.
+
+    Kodi must be stopped for the injection and started again before the Run,
+    so the wrong value reaches memory.
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    gui=/storage/.kodi/userdata/guisettings.xml
+    log=/storage/.kodi/temp/kodi.log
+
+    ug systemctl stop kodi
+    ug "sed -i 's|<setting id=\"general.addonupdates\"[^>]*>[^<]*</setting>|<setting id=\"general.addonupdates\">1</setting>|' $gui"
+    ug "grep -o '<setting id=\"general.addonupdates\"[^>]*>[^<]*' $gui"
+    ug systemctl start kodi && sleep 20
+
+    uv run coreelec-reconciler apply --room theater
+    ug systemctl restart kodi && sleep 60
+    uv run coreelec-reconciler plan --room theater
+    ```
+
+    The `[^>]*` matters for the same reason it does in scenario 15: Kodi
+    writes `default="true"` on a setting still holding its own default.
+
+    Expect the `apply` to name the address as `1 -> 2`, to print the
+    `divergent:` line under it, and to converge; expect the final `plan` to
+    report no changes, which is the half that catches a write Kodi discards
+    on exit. Then read the log across a full minute of uptime:
+
+    ```console
+    ug "grep -ci 'CRepositoryUpdater\|checking repositories for updates' $log"
+    ```
+
+    Expect `0`. A non-zero count is the timer still running, which is the
+    whole thing this address is for.
+
+20. **Every add-on on the Device is accounted for** — the inventory half.
+    Read the report, then derive the same answer independently and compare:
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+
+    uv run coreelec-reconciler plan --room theater | grep '^undeclared add-on: '
+
+    ug "cd /storage/.kodi/addons && for e in *; do
+          [ -f \"\$e\"/addon.xml ] && echo \"\$e\"; done" | sort > /tmp/held
+    ug "sed -n 's#.*<addon[^>]*>\(.*\)</addon>.*#\1#p' \
+        /usr/share/kodi/system/addon-manifest.xml" | sort > /tmp/kodis
+    uv run python -c '
+    import yaml
+    for r in yaml.safe_load(open("config/shared/ugoos-am6b-plus/coreelec-21.3/addons.yaml"))["addons"]:
+        print(r["id"])' | sort > /tmp/locked
+    comm -23 /tmp/held <(sort -u /tmp/kodis /tmp/locked)
+    rm -f /tmp/held /tmp/kodis /tmp/locked
+    ```
+
+    Expect the two lists to name the same three add-ons:
+    `plugin.video.themoviedb.helper`, `script.plexmod` and `weather.ha` —
+    the three the Lock deliberately excludes until the Artifact Patch
+    mechanism arrives
+    ([ADR 0017](../adr/0017-pin-add-on-artifacts-and-patch-the-broken-ones.md)).
+    Anything else in the report is a genuine stray and is worth finding out
+    about; a report that is **empty** on this Device means the accounting is
+    broken, not that the Device is clean.
+
+    Then prove a stray is actually seen, and that it does not stop a Run:
+
+    ```console
+    ug "mkdir -p /storage/.kodi/addons/plugin.video.nobody.declared && \
+        printf '<addon id=\"plugin.video.nobody.declared\" version=\"1.0.0\"/>' \
+        > /storage/.kodi/addons/plugin.video.nobody.declared/addon.xml"
+
+    uv run coreelec-reconciler plan --room theater    # expect exit 0
+    ug rm -rf /storage/.kodi/addons/plugin.video.nobody.declared
+    ```
+
+    Expect a fourth `undeclared add-on:` line naming it, exit `0`, and no
+    Change alongside it. Expect `packages` and `temp` never to appear: they
+    hold no `addon.xml`, which is the whole rule.
 
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.

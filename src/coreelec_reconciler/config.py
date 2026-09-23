@@ -118,10 +118,11 @@ class Addresses:
     """The Device addresses the Reconciler knows the meaning of.
 
     Every other address reaches the Reconciler as the State Address of a
-    Resource. These four do not: the Reconciler knows which unit reads the
-    timezone cache and which reads `sshd.conf`, where add-ons live, and which
-    database holds their enabled flags — but knowing what an address *means*
-    is not the same as knowing where it *is*.
+    Resource. These five do not: the Reconciler knows which unit reads the
+    timezone cache and which reads `sshd.conf`, where add-ons live, which
+    database holds their enabled flags, and where Kodi lists the add-ons it
+    ships with — but knowing what an address *means* is not the same as
+    knowing where it *is*.
 
     So the meaning stays in code and the address is declared here. The Kodi
     schema version is in the database's filename, so a Profile branched for a
@@ -133,6 +134,7 @@ class Addresses:
     sshd_conf: str
     addons: str
     addon_database: str
+    addon_manifest: str
 
 
 @dataclass(frozen=True)
@@ -199,6 +201,12 @@ class KodiSetting:
     at all. It is not the empty string, which Kodi cannot store — an empty
     node reads back as no value — and which would therefore plan a Change on
     every Run and fail its own Verification forever.
+
+    `divergent` is the reason this address deliberately holds a value the
+    Recovery Baseline cannot produce, so a shell run after an `apply` leaves
+    a Change here by intent rather than by mistake (ADR 0012). It is stated
+    per address and never as a blanket flag: an undeclared disagreement must
+    still fail, because that is the fault rule 3 was written to catch.
     """
 
     setting: str
@@ -206,6 +214,7 @@ class KodiSetting:
     declared: str
     transform: str | None = None
     named_by: str | None = None
+    divergent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -618,9 +627,29 @@ def _kodi_setting(
         "a Kodi setting",
         _mapping(source, "a Kodi setting", raw),
         required=("setting",),
-        optional=("value", "from_env", "from_profile", "unset", "transform"),
+        optional=(
+            "value",
+            "from_env",
+            "from_profile",
+            "unset",
+            "transform",
+            "divergent",
+        ),
     )
     setting = _text(source, "a Kodi setting id", mapping["setting"])
+    # Why the Recovery Baseline cannot produce this value. A key stating an
+    # empty reason is a declaration that says nothing, and a reviewer reading
+    # rule 3's one expected Change would learn nothing from it.
+    divergent: str | None = None
+    if "divergent" in mapping:
+        divergent = _text(
+            source, f"the divergent of {setting}", mapping["divergent"]
+        ).strip()
+        if not divergent:
+            raise ConfigError(
+                f"{source}: the divergent of {setting} states why the Recovery "
+                "Baseline cannot produce this value"
+            )
     # The four arms are mutually exclusive and one is mandatory. A setting
     # stating none of them is the shape a truncated line produces, and one
     # stating two says two different things about the same address.
@@ -641,6 +670,7 @@ def _kodi_setting(
             value=named.value(source, key),
             declared=key,
             named_by=key,
+            divergent=divergent,
         )
     if stated == ["unset"]:
         # Only `true`. `unset: false` would be a setting saying nothing about
@@ -655,7 +685,9 @@ def _kodi_setting(
                 f"{source}: {setting} is cleared, and a cleared setting takes "
                 "no transform"
             )
-        return KodiSetting(setting=setting, value=None, declared="unset")
+        return KodiSetting(
+            setting=setting, value=None, declared="unset", divergent=divergent
+        )
     if stated == ["from_profile"]:
         # A Profile Constant is committed and printable, so it resolves to an
         # ordinary declared value and is reported like one. `from_env` stays
@@ -679,6 +711,7 @@ def _kodi_setting(
         value=_transform(source, transform, declared),
         declared=declared,
         transform=transform,
+        divergent=divergent,
     )
 
 
@@ -782,8 +815,17 @@ def _platform(source: Path, raw: Any) -> Platform:
     )
 
 
+ADDRESS_KEYS = (
+    "timezone_cache",
+    "sshd_conf",
+    "addons",
+    "addon_database",
+    "addon_manifest",
+)
+
+
 def _addresses(source: Path, raw: Any) -> Addresses:
-    """The four Device addresses the Reconciler knows the meaning of.
+    """The Device addresses the Reconciler knows the meaning of.
 
     Every one is required and every one is absolute. A Profile that could
     omit one would leave the Reconciler holding a path of its own, which is
@@ -794,10 +836,10 @@ def _addresses(source: Path, raw: Any) -> Addresses:
         source,
         "addresses",
         _mapping(source, "addresses", raw),
-        required=("timezone_cache", "sshd_conf", "addons", "addon_database"),
+        required=ADDRESS_KEYS,
     )
     held = {}
-    for key in ("timezone_cache", "sshd_conf", "addons", "addon_database"):
+    for key in ADDRESS_KEYS:
         address = _text(source, f"the {key} address", mapping[key])
         if not address.startswith("/"):
             raise ConfigError(
