@@ -121,6 +121,34 @@ Each patch keeps the version assertion the shell makes. A version bump fails
 loudly and forces the patch to be re-reviewed, which is the safeguard that
 makes carrying patches acceptable at all.
 
+### How a patch is written and applied
+
+Patches live in `patches/<addon-id>/` beside the Lock, and the Lock record
+lists them. Each file opens with a header comment naming the add-on and the
+version it was written against; `patch` ignores leading text, and we check the
+assertion against the Lock *before* anything is fetched, so a bump that
+outruns its patches fails at once rather than after an 8 MB download.
+
+Keeping the diff in its own file rather than a YAML block scalar is what lets
+`patch` read it and a reviewer see it as a diff, in a format that is already
+whitespace-significant for a different reason.
+
+Application shells out to `patch` on the controller. We already shell out to
+`ssh` and `curl`, so an external binary is not a new category, and writing a
+diff applier to avoid a dependency we would not be taking anyway is
+reimplementing a very old tool.
+
+The shell's idempotence machinery does not survive. Its second tuple, its
+occurrence counts and its already-patched branch exist because it re-patches
+a tree that is already installed. We patch a freshly expanded archive whose
+bytes are fixed by SHA-256, so "already patched?" describes an input that
+cannot occur.
+
+What does survive is the syntax check. A clean application proves the context
+matched; it does not prove the result parses, and most patched files are
+Python that Kodi imports at boot. Compiling the patched source turns a silent
+add-on failure on the appliance into a failed Run on the controller.
+
 ## What an add-on's Observation is
 
 `/storage/.kodi/addons/<id>/addon.xml` declares the installed version, and it
@@ -130,6 +158,37 @@ cannot work: the installed tree is the *expanded* archive, so its hash is never
 the Artifact's, and three of our add-ons are deliberately patched afterwards. A
 Reconciler-written receipt on the Device was rejected because it can disagree
 with reality, while `addon.xml` is what Kodi itself believes.
+
+### A patched add-on is not identified by its version
+
+For the three patched add-ons, the version is not enough. Correcting a patch
+does not move the add-on's version, so the Device still reports `6.17.1`, the
+Plan sees no difference, and the corrected patch never ships. Since iterating
+on patches is the whole point of carrying them, this is the ordinary case
+rather than the exotic one.
+
+So a patched add-on is observed by its version *and* by the hashes of the
+files its patches touch — the list comes from the diffs' `+++` headers, so
+nothing is declared twice. The Lock records the expected post-patch hash of
+each touched file, and a command on the Reconciler regenerates them by running
+the real pipeline: fetch, prove the digest, expand, patch.
+
+Recording the result rather than recomputing it keeps `plan` offline and
+instant. The alternative is downloading and patching those add-ons on every
+Run, which puts a network round-trip in the path that runs even when nothing
+changes. It also makes a patch reviewable as "this produces exactly these
+bytes" instead of "trust the diff", which is the same argument that pinned the
+upstream bytes in the first place. The cost is generated data a human must not
+hand-edit, so a CI job filtered to the Lock and `patches/` regenerates and
+compares it — running exactly when the answer could have changed, rather than
+making every unrelated pull request depend on six upstream hosts.
+
+Encoding patch identity in the version instead — shipping `6.17.1+tv.1` — was
+rejected. Kodi parses the idiom, `1.16.0+matrix.1` proves that, but
+`skin.arctic.fuse.3` declares a dependency floor of `6.14.3` on
+`plugin.video.themoviedb.helper`, so this would rewrite the identity another
+add-on compares against to buy something the file hashes give without touching
+upstream's metadata.
 
 Because the Plan ships only add-ons whose declared version differs, the
 expensive work is bounded by the diff and is empty on a converged Device. The
