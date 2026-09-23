@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ElementTree
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
 from . import env_file
@@ -326,6 +326,58 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
         if parent is root:
             return node.get("value") if dialect == ADDON_V1 else node.text
     return None
+
+
+def _json_leaves(held: Any, prefix: str) -> Iterator[tuple[str, str]]:
+    if isinstance(held, dict) and held:
+        for key in held:
+            yield from _json_leaves(held[key], f"{prefix}.{key}" if prefix else key)
+        return
+    yield prefix, held if isinstance(held, str) else json.dumps(held, sort_keys=True)
+
+
+def undeclared(
+    document: str | None, dialect: str, declared: Iterable[str]
+) -> list[tuple[str, str]]:
+    """Every setting `document` holds that `declared` does not name, with its value.
+
+    In the XML dialects a setting Kodi marked `default` is left out. Kodi's
+    settings manager writes that attribute on every setting it holds at its
+    default, for `guisettings.xml` and an add-on's `settings.xml` alike, so a
+    setting without it is one something chose — which is the only kind worth
+    reading back. `json` and `shell_vars` have no such marker, so every
+    undeclared value is returned for those: there is no signal to filter on,
+    and guessing one would hide exactly what a survey is for.
+    """
+
+    if dialect == JSON:
+        names = set(declared)
+        return [
+            (path, value)
+            for path, value in _json_leaves(_tree(document), "")
+            if path and path not in names
+        ]
+    if dialect == SHELL_VARS:
+        names = set(declared)
+        return [
+            (key, value)
+            for key, value in _shell_vars(document).items()
+            if key not in names
+        ]
+    names = {name.casefold() for name in declared}
+    held: list[tuple[str, str]] = []
+    for node in _root(document, dialect):
+        setting = node.get("id") or ""
+        if (
+            node.tag != "setting"
+            or not setting
+            or setting.casefold() in names
+            or node.get("default") == "true"
+        ):
+            continue
+        value = node.get("value") if dialect == ADDON_V1 else node.text
+        held.append((setting, value or ""))
+    return held
 
 
 def rewrite(

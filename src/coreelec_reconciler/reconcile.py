@@ -989,8 +989,12 @@ def bootstrap(desired: DesiredState, *, out: TextIO) -> None:
     )
 
 
-def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
-    """Reconciles `desired`, raising DeviceError when it cannot be reached."""
+def _open(desired: DesiredState, out: TextIO) -> tuple[Device, DesiredState]:
+    """Names the Device, guards it, and resolves the Profile's patterns.
+
+    A document the Profile names by pattern is resolved once, before any
+    Change is planned and so before anything is written.
+    """
 
     device = Device(hostname=desired.hostname, transport=desired.transport)
     print(
@@ -999,14 +1003,21 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
     )
     _guard_identity(device, desired.hostname)
     _guard_platform(device, desired.platform)
-
-    # A document the Profile names by pattern is resolved once, before any
-    # Change is planned and so before anything is written.
-    desired = replace(
+    return device, replace(
         desired,
         documents=tuple(_locate(device, declared) for declared in desired.documents),
     )
 
+
+def _undeclared_addon_lines(device: Device, desired: DesiredState) -> Iterator[str]:
+    for stray in _undeclared_addons(device, desired):
+        yield f"undeclared add-on: {desired.addresses.addons}/{stray}"
+
+
+def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
+    """Reconciles `desired`, raising DeviceError when it cannot be reached."""
+
+    device, desired = _open(desired, out)
     changes = _plan(device, desired)
     for change in changes:
         for line in change.report():
@@ -1015,8 +1026,8 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
     # Reported once, from the planning the Run opens with, so it appears on a
     # Run that changes nothing too — which is exactly when a stray add-on is
     # the only thing worth noticing.
-    for stray in _undeclared_addons(device, desired):
-        print(f"undeclared add-on: {desired.addresses.addons}/{stray}", file=out)
+    for line in _undeclared_addon_lines(device, desired):
+        print(line, file=out)
 
     if not apply:
         print(f"plan: {_summarise(changes)}", file=out)
@@ -1034,3 +1045,115 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
             "Desired State after being applied"
         )
     print("verification: converged", file=out)
+
+
+def _declared_documents(desired: DesiredState) -> set[str]:
+    """Every document a Resource declares, with its patterns already resolved."""
+
+    return {
+        desired.authorized_keys.document,
+        *(playlist.path for playlist in desired.playlists),
+        *(node.document for node in desired.shortcut_nodes),
+        *(whole.document for whole in desired.whole_documents),
+        *(declared.document for declared in desired.documents),
+    }
+
+
+def _undeclared_entries(device: Device, desired: DesiredState) -> Iterator[str]:
+    """What sits beside a declared document and no Resource declares.
+
+    The boundary is derived from the declared documents, never listed — the
+    rule ADR 0017 sets for the Artifact Lock's boundary. The directory each
+    one sits in is walked, one level deep. A directory is named and not
+    descended into, which keeps `Thumbnails/` to one line without an
+    exclusion list. A directory holding a declared
+    document further down is not reported, because its contents are someone's.
+    """
+
+    documents = _declared_documents(desired)
+    holding = {parent for document in documents for parent in _ancestors(document)}
+    for directory in sorted({document.rpartition("/")[0] for document in documents}):
+        for name, is_directory in device.list_entries(directory):
+            path = f"{directory}/{name}"
+            if path in documents or path in holding:
+                continue
+            kind = "directory" if is_directory else "document"
+            yield f"undeclared {kind}: {path}"
+
+
+def _ancestors(path: str) -> Iterator[str]:
+    parent = path.rpartition("/")[0]
+    while parent:
+        yield parent
+        parent = parent.rpartition("/")[0]
+
+
+def _surveyed_settings(device: Device, declared: SettingsDocument) -> Iterator[str]:
+    """What one Settings Document holds that its declaration does not say.
+
+    This is the Observation `plan` makes, read the other way: not what the
+    Run would change the Device to, but what the Device holds that the
+    Profile would have to say to keep it.
+    """
+
+    document = _read_settings_document(device, declared)
+    for setting in declared.settings:
+        observed = _observe(device, declared, document, setting.setting)
+        if observed == setting.value:
+            continue
+        address = f"{declared.document}#{setting.setting}"
+        # The Observation of a credential is the credential.
+        if setting.named_by is not None:
+            yield f"declared setting differs: {address}: named by {setting.named_by}"
+            continue
+        says = "(cleared)" if setting.value is None else setting.value
+        holds = "(unset)" if observed is None else observed
+        yield (
+            f"declared setting differs: {address}: Profile says {says}, "
+            f"Device holds {holds}"
+        )
+    try:
+        held = kodi_settings.undeclared(
+            document,
+            declared.dialect,
+            (setting.setting for setting in declared.settings),
+        )
+    except kodi_settings.SettingsError as error:
+        raise DeviceError(
+            f"{declared.document} on {device.hostname} cannot be surveyed: {error}"
+        ) from error
+    for name, value in held:
+        yield f"undeclared setting: {declared.document}#{name} = {value}"
+
+
+def survey(desired: DesiredState, *, out: TextIO) -> None:
+    """Reports how the Device differs from the Profile, and mutates nothing.
+
+    Kodi must be stopped. It rewrites a Settings Document from memory as it
+    exits (ADR 0013), so a document read under it may not be what the Device
+    will hold, and a survey's findings are meant to be pasted into a Profile.
+    The report is one sorted block, so two Devices' surveys diff cleanly.
+    """
+
+    device, desired = _open(desired, out)
+    if device.service_is_active(KODI_SERVICE):
+        raise DeviceError(
+            f"{KODI_SERVICE} is active on {desired.hostname}: Kodi rewrites its "
+            "Settings Documents from memory when it exits, so what a survey "
+            "read now could be overwritten. Stop Kodi and keep it stopped — "
+            "`systemctl stop kodi`, and whatever else starts it again — then "
+            "survey again"
+        )
+
+    findings = set(_undeclared_entries(device, desired))
+    findings.update(_undeclared_addon_lines(device, desired))
+    for declared in desired.documents:
+        findings.update(_surveyed_settings(device, declared))
+
+    for finding in sorted(findings):
+        print(finding, file=out)
+    if not findings:
+        print("survey: no findings", file=out)
+    else:
+        count = len(findings)
+        print(f"survey: {count} finding" + ("s" if count > 1 else ""), file=out)

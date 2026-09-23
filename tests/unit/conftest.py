@@ -108,6 +108,12 @@ if [ "$1" = "start" ] && [ "$2" = "tz-data.service" ] \\
     ln -sf "/usr/share/zoneinfo/$TIMEZONE" "$FAKE_DEVICE_LOCALTIME"
   fi
 fi
+# Every unit reads as active unless a test stops Kodi, which is what `survey`
+# asks before it reads anything.
+if [ "$1" = "is-active" ] && [ "$3" = "kodi.service" ] \\
+   && [ -n "$FAKE_DEVICE_KODI_STOPPED" ]; then
+  exit 3
+fi
 if [ "$FAKE_DEVICE_SYSTEMCTL_REFUSES" = "$1" ]; then
   echo "systemctl: $1 refused" >&2
   exit 1
