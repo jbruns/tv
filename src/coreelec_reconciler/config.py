@@ -316,7 +316,6 @@ class WholeDocument:
     """
 
     document: str
-    source: str
     content: str
     mode: str
 
@@ -859,7 +858,7 @@ def _whole_document(source: Path, raw: Any) -> WholeDocument:
     # nothing else.
     if not MODE.fullmatch(mode):
         raise ConfigError(f"{source}: the mode of {document} is not a mode: {mode}")
-    return WholeDocument(document=document, source=named, content=content, mode=mode)
+    return WholeDocument(document=document, content=content, mode=mode)
 
 
 def _whole_documents(source: Path, raw: Any) -> tuple[WholeDocument, ...]:
