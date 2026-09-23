@@ -229,6 +229,7 @@ smart_playlists:
           operator: is
           value: "0"
 shortcut_nodes: {nodes}
+documents: {documents}
 settings_documents:
 """
 
@@ -639,6 +640,7 @@ class FakeDevice:
         extra: str = "",
         nodes: str = "[]",
         entries: str = "[]",
+        documents: str = "[]",
     ) -> str:
         """The Profile, declaring guisettings.xml and any `extra` documents."""
         declared = DEFAULT_SETTINGS if settings is None else settings
@@ -647,6 +649,7 @@ class FakeDevice:
                 directory=self.playlists_dir,
                 identity=self.identity,
                 nodes=nodes,
+                documents=documents,
                 authorized=self.authorized_keys,
                 entries=entries,
                 # The two the operating system owns are stated as the
@@ -770,6 +773,12 @@ class FakeDevice:
                 (addon_id,),
             ).fetchone()
         return None if held is None else (held[0], held[1], held[2])
+
+    def write_source(self, name: str, body: str) -> None:
+        """Writes a document's source into the Profile directory."""
+        source = self.profile_directory() / name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(body, encoding="utf-8")
 
     def write_profile(self, body: str) -> None:
         (self.profile_directory() / "profile.yaml").write_text(body, encoding="utf-8")

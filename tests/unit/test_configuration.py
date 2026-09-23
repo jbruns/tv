@@ -95,10 +95,10 @@ def test_the_shipped_configuration_is_readable(
     """The committed config/ tree must parse without a Device.
 
     It must parse without the fleet's secrets too, and without its
-    administrator key. The shipped Profile names seven values in `.env`, and
+    administrator key. The shipped Profile names eight values in `.env`, and
     CI has none of them, so the file this Run reads is a stand-in holding
     exactly the keys the Profile names; the administrator identity is a
-    stand-in for the same reason. Which six of those keys are Settings
+    stand-in for the same reason. Which six of those keys are add-on Settings
     Document addresses is asserted in `test_settings_documents.py`.
     """
     from coreelec_reconciler import main
@@ -115,6 +115,7 @@ def test_the_shipped_configuration_is_readable(
                 "NEXTPVR_PIN",
                 "MDBLIST_API_KEY",
                 "OMDB_API_KEY",
+                "KODI_WEB_PASSWORD",
             )
         )
         + f"COREELEC_LIFECYCLE_PUBLIC_KEY='{LIFECYCLE_KEY}'\n",

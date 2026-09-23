@@ -70,10 +70,7 @@ authorized_keys:
   entries:
     # Home Assistant's key for the Kodi lifecycle gateway. `restrict` is
     # implied by the entry, and the forced command is the only program this
-    # key may ever run — `/storage/.config/kodi-lifecycle`, which is still
-    # the shell's to install (LIFE-001). Between First Contact and that
-    # installer the key can authenticate and run nothing, which is safer than
-    # a key that can run anything.
+    # key may ever run — the gateway declared under `documents` below.
     #
     # The public key is a per-deployment value, so it is named rather than
     # held. It is not a secret, and the `.env` boundary is the file rather
@@ -333,6 +330,22 @@ shortcut_nodes:
         label: Restart Kodi
         icon: special://skin/extras/icons/refresh.png
 
+# Documents the Reconciler owns every byte of, each shipped as a file beside
+# this one. `source` is relative to this directory and must stay inside it, so
+# a Profile is copyable as a unit; a missing source fails when the Profile is
+# read, before any Device contact. `mode` is stated because some of these are
+# programs the Device runs.
+documents:
+  # The Kodi lifecycle gateway: the forced command of Home Assistant's key
+  # above, which accepts only `start`, `stop` and `status` and hardcodes
+  # `/usr/bin/systemctl` and `kodi.service`. The source is byte for byte what
+  # `lib/coreelec-lifecycle.sh` renders, so a shell run changes nothing here.
+  #
+  # Kodi does not read it, so writing it takes no Effect.
+  - document: /storage/.config/kodi-lifecycle
+    source: documents/kodi-lifecycle
+    mode: "0700"
+
 # Kodi settings, grouped by the Settings Document that holds them. A Settings
 # Document is shared: everything not declared here is Unmanaged State and is
 # preserved. Each document declares how it is serialised; the dialect is
@@ -419,6 +432,33 @@ settings_documents:
       # is on this fleet, so declaring it unconditionally matches the Device.
       - setting: weather.addon
         value: weather.ha
+      # Home Assistant's Kodi integration reaches the Device over JSON-RPC,
+      # which the web server carries. Plain HTTP, authenticated, on a trusted
+      # home network (ADR 0007).
+      - setting: services.webserver
+        value: "true"
+      - setting: services.webserverauthentication
+        value: "true"
+      - setting: services.webserverusername
+        value: homeassistant
+      - setting: services.webserverpassword
+        from_env: KODI_WEB_PASSWORD
+      - setting: services.webserverport
+        value: "8080"
+      - setting: services.webserverssl
+        value: "false"
+      # The EventServer is off. Its only consumer was the shell's view rebuild
+      # through `kodi-send`, which ADR 0015 replaced with the skin's own
+      # trigger, and Home Assistant speaks JSON-RPC. It listened on localhost
+      # only, so nothing off the Device could ever have been using it.
+      - setting: services.esallinterfaces
+        value: "false"
+      - setting: services.esenabled
+        value: "false"
+        divergent: >-
+          the shell writes true for the kodi-send view rebuild ADR 0015
+          retired, so a shell run after an apply leaves this address changed
+          on purpose
 
   # The Home Assistant weather add-on. Its settings definition carries no
   # version attribute, so Kodi loads and writes this document in the old flat

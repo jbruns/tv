@@ -1,9 +1,10 @@
 # Reconcile the theater Ugoos
 
-The Reconciler shadows the shell on five Resource Types on the theater Ugoos:
+The Reconciler shadows the shell on six Resource Types on the theater Ugoos:
 the eight Smart Playlists under `special://profile/playlists/video`, the four
 Arctic Fuse Shortcut Nodes under `script.skinvariables`,
-`/storage/.ssh/authorized_keys`, forty Kodi add-ons, and the Kodi settings
+`/storage/.ssh/authorized_keys`, the Kodi lifecycle gateway
+`/storage/.config/kodi-lifecycle`, forty Kodi add-ons, and the Kodi settings
 inside nine Settings Documents — `guisettings.xml`, the Home
 Assistant weather add-on's `settings.xml`, the NextPVR client's
 `instance-settings-1.xml`, TMDb Helper's `settings.xml`, Arctic Fuse 3's
@@ -14,8 +15,8 @@ still write them, holding the same values. Everything else on the Device is
 the shell provisioner's, and its declaration remains the Recovery Baseline
 ([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)).
 
-A Smart Playlist, a Shortcut Node and `authorized_keys` are documents the
-Reconciler renders whole. An add-on is a tree the Reconciler replaces whole,
+A Smart Playlist, a Shortcut Node, `authorized_keys` and a document shipped as
+a file are documents the Reconciler renders whole. An add-on is a tree the Reconciler replaces whole,
 from bytes it pinned. A Settings
 Document is not: it holds many State Addresses, almost all of them Unmanaged
 State. The Reconciler changes only the State Addresses the resolved
@@ -26,7 +27,8 @@ value.
 
 | File | Holds |
 | --- | --- |
-| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, SSH transport, who may log in, the declared Smart Playlists, the declared Shortcut Nodes, and the declared Settings Documents |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, SSH transport, who may log in, the declared Smart Playlists, the declared Shortcut Nodes, the declared documents shipped as files, and the declared Settings Documents |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/documents/` | The sources of the documents shipped as files, one file per document |
 | `config/shared/ugoos-am6b-plus/coreelec-21.3/addons.yaml` | The Artifact Lock: one record per declared add-on — its version, its URL, and the SHA-256 of the bytes that URL must return |
 | `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Settings Documents |
 | `.env` | The values Desired State names but may not carry, shared with the shell |
@@ -477,6 +479,40 @@ Applying a Shortcut Node restarts Kodi. The skin reads a node file when it
 loads, and its own shortcut editor holds the list it read, so a file written
 under a running Kodi is neither live nor safe from being written back.
 
+## Declaring a document shipped as a file
+
+A document the Reconciler owns every byte of, whose content is not generated
+from structured Desired State, is shipped as a file beside the Profile and
+declared in `documents`:
+
+```yaml
+documents:
+  - document: /storage/.config/kodi-lifecycle
+    source: documents/kodi-lifecycle
+    mode: "0700"
+```
+
+`source` is relative to the Profile directory and must stay inside it, like
+`patches/<id>/`, so a Profile is copyable as a unit. A missing or unreadable
+source is an error naming it when the Profile is read, before any Device
+contact. `mode` is required and must be an octal mode: some of these are
+programs the Device runs, and a mode nobody wrote down is how one stops being
+executable. A path declared twice is an error.
+
+The Observation is the file's content, the same as a Smart Playlist's. A
+drifted file plans as an `update` with a unified diff and is replaced whole.
+Nothing the Reconciler knows of reads one of these while it runs, so applying
+one takes no Effect.
+
+The only one today is the Kodi lifecycle gateway, the forced command of Home
+Assistant's `authorized_keys` entry. It accepts `start`, `stop` and `status`
+in `SSH_ORIGINAL_COMMAND` and nothing else, and hardcodes
+`/usr/bin/systemctl` and `kodi.service`. Its source is byte for byte what
+`coreelec_lifecycle_render_wrapper /usr/bin/systemctl` in
+`lib/coreelec-lifecycle.sh` renders, and a boundary test re-renders it to
+prove so. Kodi never reads it, so the shell's capture and restore of the Kodi
+state around its install (`LIFE-003`) has nothing to shadow.
+
 ## Declaring a Settings Document
 
 A Settings Document is an entry in `settings_documents`, naming its path on
@@ -617,8 +653,15 @@ baseline, then reconcile, so the Reconciler lands its value after the shell
 laid down the older one, and the Baseline is run once rather than on a
 schedule ([ADR 0010](../adr/0010-retire-the-shell-by-attrition.md)).
 
-`general.addonupdates` is the first and so far only one, in about eighty
-addresses. Kodi's `2` is `AUTO_UPDATES_NEVER`, the only mode that stops
+`general.addonupdates` was the first, in about eighty addresses, and
+`services.esenabled` is the second: the shell turns the EventServer on for its
+`kodi-send` view rebuild, which
+[ADR 0015](../adr/0015-trigger-the-view-rebuild-the-way-the-skin-does.md)
+replaced with the skin's own trigger. Home Assistant speaks JSON-RPC, and
+`services.esallinterfaces` is `false`, so nothing off the Device could ever
+reach it. The rest of this section is about the first.
+
+For `general.addonupdates`, Kodi's `2` is `AUTO_UPDATES_NEVER`, the only mode that stops
 `CRepositoryUpdater` rescheduling its timer; `1` is `AUTO_UPDATES_NOTIFY`,
 which still polls all three repositories even though
 `general.addonnotifications` is `false` and nobody ever sees the answer. The
@@ -1502,19 +1545,21 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
-   Expect exactly one Change, and expect it to explain itself:
+   Expect exactly two Changes, and expect each to explain itself:
 
    ```
    update /storage/.kodi/userdata/guisettings.xml#general.addonupdates: 1 -> 2
    divergent: the shell writes 0 or 1 from ADDON_UPDATE_MODE and cannot emit 2, ...
+   update /storage/.kodi/userdata/guisettings.xml#services.esenabled: true -> false
+   divergent: the shell writes true for the kodi-send view rebuild ADR 0015 retired, ...
    ```
 
-   That is the Divergent Address, and it is the only Change a parity plan may
-   come back with. A Change *without* a `divergent:` line under it is the
+   Those are the two Divergent Addresses, and they are the only Changes a
+   parity plan may come back with. A Change *without* a `divergent:` line under it is the
    fault this scenario exists to catch; re-`apply` afterwards to put the
    declared value back. Every other component below must still report
-   `plan: no changes`, because none of them writes
-   `general.addonupdates`.
+   `plan: no changes`, because none of them writes `guisettings.xml`'s
+   `services.*` addresses or `general.addonupdates`.
 
    The room component is the narrower form of the
    same check, and it is the one that exercises the transforms:
@@ -2054,6 +2099,50 @@ The scenarios are:
     Expect `1` from each of the other two, and the final `plan` to report no
     changes — the same hashes the Lock records, read back off the Device.
 
+22. **Home Assistant can reach the Device** — over JSON-RPC for state and
+    over SSH for lifecycle. Drift the web server and delete the gateway, with
+    Kodi stopped so the wrong values reach memory:
+
+    ```console
+    ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+    gui=/storage/.kodi/userdata/guisettings.xml
+
+    ug systemctl stop kodi
+    ug "sed -i -e 's|<setting id=\"services.webserverport\"[^>]*>[^<]*</setting>|<setting id=\"services.webserverport\">8081</setting>|' \
+               -e 's|<setting id=\"services.esenabled\"[^>]*>[^<]*</setting>|<setting id=\"services.esenabled\">true</setting>|' $gui"
+    ug rm /storage/.config/kodi-lifecycle
+    ug systemctl start kodi && sleep 25
+
+    uv run coreelec-reconciler apply --room theater
+    ```
+
+    Expect `create /storage/.config/kodi-lifecycle` with the whole gateway as
+    a diff, `8081 -> 8080`, and `true -> false` with its `divergent:` line.
+    Then prove the gateway *runs*, not merely that forty lines landed, by
+    executing it the way `sshd` does. Home Assistant's private key is Home
+    Assistant's, so the administrator connection stands in for it:
+
+    ```console
+    ug 'SSH_ORIGINAL_COMMAND=status /storage/.config/kodi-lifecycle; echo rc=$?'
+    ug 'SSH_ORIGINAL_COMMAND=reboot /storage/.config/kodi-lifecycle; echo rc=$?'
+    ```
+
+    Expect `running` and `rc=0`, then `Allowed commands: start, stop, status`
+    and `rc=2`. Finally, prove JSON-RPC answers with the declared credentials
+    and refuses without them, and re-plan:
+
+    ```console
+    set -a && . ./.env && set +a
+    rpc='{"jsonrpc":"2.0","id":1,"method":"JSONRPC.Ping"}'
+    curl -sS -u "homeassistant:$KODI_WEB_PASSWORD" -H 'Content-Type: application/json' \
+      -d "$rpc" http://ugoos-theater.lan.wavebe.am:8080/jsonrpc
+    curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' \
+      -d "$rpc" http://ugoos-theater.lan.wavebe.am:8080/jsonrpc
+    uv run coreelec-reconciler plan --room theater
+    ```
+
+    Expect `"result":"pong"`, then `401`, then `plan: no changes`.
+
 See [the lifecycle guide](../home-assistant/ugoos-kodi-lifecycle.md) for what
 the override changes and for the rest of the lifecycle contract.
 
@@ -2075,16 +2164,17 @@ by `apply` again.
 ## Ownership
 
 `inventory/ownership-ledger.json` records the eight declared Smart Playlists
-(`SKIN-019`-`SKIN-026`), the twenty
+(`SKIN-019`-`SKIN-026`), the twenty-eight
 `guisettings.xml` addresses the Profile declares — `CORE-001`-`CORE-005`,
-`CORE-008`-`CORE-019`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
+`CORE-008`-`CORE-027`, `SKIN-001`, `SKIN-002` and `SVC-001` — the nine the
 Room Overlay declares (`ROOM-002`-`ROOM-010`), the twelve add-on addresses
 the Profile declares (`SVC-002`-`SVC-013`), the Arctic Fuse home screen
 (`SKIN-003`-`SKIN-010`), the four Shortcut Nodes (`SKIN-011`-`SKIN-014`), the
 two view types (`SKIN-015`, `SKIN-016`), the view rebuild (`EFFECT-004`), the
 CEC power policy (`CEC-001`-`CEC-005`), the platform Guard (`PLAT-001`), the
 timezone cache (`CORE-006`), the `tz-data.service` restart (`EFFECT-002`),
-the two `authorized_keys` entries (`SSH-002`, `LIFE-002`), the `sshd.conf`
+the two `authorized_keys` entries (`SSH-002`, `LIFE-002`), the Kodi
+lifecycle gateway (`LIFE-001`), the `sshd.conf`
 pair (`SSH-003`), the host key policy (`SSH-004`), the `sshd.service`
 restart (`EFFECT-003`) and all forty-one add-on artifacts
 (`ART-001`-`ART-041`)
@@ -2110,7 +2200,9 @@ every check it makes is scoped to rows whose owner is `shell`.
 the
 two superseded playlists, stay `retired` and are not declared anywhere, and
 so does `PLAT-002`, the device-tree model check the Reconciler will never
-make. That
+make, and so do `PLAT-004`, `PLAT-005` and `LIFE-003`, the lifecycle deploy's
+second platform guard, its pre-7.2 OpenSSH fallback and its Kodi stop
+([ADR 0012](../adr/0012-shadow-the-shell-and-retire-it-wholesale.md)). That
 is the shadowing model:
 transferring a row freezes
 those shell runs
@@ -2133,8 +2225,9 @@ declarations agree there for the same reason they agree everywhere else:
 there is one source. `LIFE-002` names a seventh,
 `COREELEC_LIFECYCLE_PUBLIC_KEY`, which only the Reconciler reads: the shell
 takes the same key as a file path on `configure-kodi-lifecycle.sh`'s command
-line. Keeping both pointed at one key is the operator's, until the lifecycle
-installer moves too.
+line. Keeping both pointed at one key is the operator's until the shell
+retires. `CORE-025`, the web server password, names an eighth,
+`KODI_WEB_PASSWORD`, which both engines read from `.env`.
 
 `SSH-001`, the controller-local private key, stays with the operator. It is
 the one thing the Reconciler cannot declare, and the administrator entry in
