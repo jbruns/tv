@@ -8,6 +8,27 @@ platform boundary and migration constraint, read the
 For unique settings, use the selected room's Ugoos guide, such as the current
 [Theater Ugoos guide](../../rooms/theater/devices/ugoos-am6b-plus.md).
 
+## The display must be live at first boot
+
+Power the display on and switch it to this Device's input *before* the
+Device's first boot. Nothing on the Device stores the output mode: CoreELEC
+re-reads EDID and selects the best mode every time it boots. A Device that
+boots with no usable EDID — display off, on another input, or behind
+something not yet passing through — falls back to 1080p60 and stays there
+until the next boot.
+
+After first boot, confirm the mode:
+
+```bash
+ssh root@<hostname> cat /sys/class/display/mode   # expect 2160p60hz
+```
+
+If it reads anything else, make the display live and reboot the Device. There
+is nothing to configure and no Kodi setting to change: the Kodi interface
+always renders at 1920x1080 on this platform and is scaled to the output, so
+the output mode is the only thing that matters. See
+[ADR 0019](../adr/0019-the-profiles-scope-resolves-what-the-shell-probed.md).
+
 ## Full baseline and scoped maintenance
 
 Before any Device contact, the legacy entry points enforce the

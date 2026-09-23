@@ -36,10 +36,6 @@ _Avoid_: Target values, expected configuration
 The shell-declared configuration that restores a Device to a working state, deliberately allowed to lag current Desired State.
 _Avoid_: Desired State, fallback profile
 
-**Intent**:
-A stable, device-independent expression of Desired State that may be resolved to a device-specific representation using observed capabilities.
-_Avoid_: Raw setting value
-
 **Named Value**:
 A Desired State value that Desired State names rather than holds, resolved from the shared `.env` file on every read. It reaches the Device and nothing else: no committed file carries it, and no Run prints it.
 _Avoid_: Secret, credential, variable

@@ -135,10 +135,16 @@ reader changes behaviour, so `schema_version` is not bumped.
 Four addresses are `deferred` rather than `none`, because they are blocked on
 a mechanism rather than waiting their turn:
 
-- `CORE-028`, `CORE-029`, `ROOM-001`, and `ROOM-011` are blocked on Intent
-  resolution. Audio device, passthrough device, screen resolution, and channel
-  count cannot be known without observing a live Device's capabilities, so
-  they are Intents to resolve rather than literals to declare.
+- `CORE-028`, `CORE-029`, `ROOM-001`, and `ROOM-011` were held back on the
+  belief that audio device, passthrough device, channel count and screen
+  resolution cannot be known without observing a live Device's capabilities,
+  so they were Intents to resolve rather than literals to declare.
+  [ADR 0019](0019-the-profiles-scope-resolves-what-the-shell-probed.md)
+  settled that they are not. The Profile's directory already names the
+  hardware model and the Kodi version, which is what the shell's probe was
+  recomputing at runtime, so the first three are ordinary literals.
+  `ROOM-001` is retired: Kodi recomputes that ordinal from the live display
+  mode at every startup, so writing it is not ownership.
 
 `CORE-020`–`CORE-027`, the Kodi remote-control service cohort, were the other
 eight. They were deferred on whether the Reconciler depends on the channel
@@ -208,6 +214,15 @@ that file requires Kodi to be stopped. The shell captures and restores the
 service state because its deploy is one large transaction with backups,
 rollback directories and a pending-transaction pointer. The Reconciler writes
 a document, so the Effect it would be shadowing does not exist.
+
+`ROOM-001` is `retired` because the address does not hold what its name
+suggests. `videoscreen.resolution` is an ordinal Kodi recomputes from the live
+display mode at every startup; the stored truth is `videoscreen.screenmode`,
+which the shell never writes. The write has no effect and the correct output
+mode arrives from EDID autodetect instead.
+[ADR 0019](0019-the-profiles-scope-resolves-what-the-shell-probed.md) records
+the evidence, and `ROOM-002` already owns the whitelist that governs mode
+switching during playback.
 
 ## The CEC slice narrows the glob it shadows
 
