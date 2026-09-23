@@ -203,6 +203,9 @@ uv run coreelec-reconciler plan --room theater
 
 # Converge.
 uv run coreelec-reconciler apply --room theater
+
+# Report what the Device holds that the Profile does not; needs Kodi stopped.
+uv run coreelec-reconciler survey --room theater
 ```
 
 Transport is the system `ssh` client with the existing administrator key
@@ -1201,6 +1204,50 @@ other two are in the Lock. The variable stays in `provision.conf` until the
 shell retires it by attrition, in the forced order the
 [write-set permission freeze](shell-write-set-permissions.md) requires
 ([ADR 0010](../adr/0010-retire-the-shell-by-attrition.md)).
+
+## Surveying Unmanaged State
+
+`survey` answers one question: how does this Device differ from the Profile?
+It mutates nothing, and it is for two jobs — surveying a known-good Device
+and a factory-fresh one after `apply` and diffing the two, and reading back
+what to put in the Profile after configuring something by hand.
+
+```console
+ssh root@ugoos-theater systemctl stop kodi
+uv run coreelec-reconciler survey --room theater
+ssh root@ugoos-theater systemctl start kodi
+```
+
+It **refuses while `kodi.service` is active.** Kodi rewrites a Settings
+Document from memory when it exits
+([ADR 0013](../adr/0013-a-settings-document-always-takes-the-kodi-stop.md)),
+so a document read under it may not be what the Device goes on to hold.
+
+The report is one sorted block, so two surveys diff with no ordering noise:
+
+```
+declared setting differs: /storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml#Hub_TVShows: Profile says X, Device holds Y
+undeclared add-on: /storage/.kodi/addons/script.example
+undeclared directory: /storage/.kodi/userdata/Thumbnails
+undeclared document: /storage/.kodi/userdata/sources.xml
+undeclared setting: /storage/.kodi/userdata/guisettings.xml#audiooutput.volumesteps = 90
+```
+
+Where it looks is derived from what the Profile declares, never listed. The
+directory holding each declared document — a Settings Document, a document
+shipped as a file, a Smart Playlist, a Shortcut Node, `authorized_keys` — is
+walked one level deep. An undeclared directory is named and not descended
+into; a directory holding a declared document further down is not named at
+all. Add-ons are reported exactly as a Run reports them
+([above](#add-ons-nobody-declared)).
+
+Inside each declared Settings Document it reports every setting the Profile
+does not declare, with its value, **except one Kodi marked `default="true"`**.
+Kodi writes that attribute on every setting it holds at its default, so
+`guisettings.xml`'s several hundred defaults cost no lines. The `json` and
+`shell_vars` dialects carry no such marker, so every undeclared key in them is
+reported. A declared setting the Device holds differently is reported with
+both sides; one the Profile names from `.env` is reported by its key alone.
 
 ## The Kodi restart Effect
 

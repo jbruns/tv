@@ -20,11 +20,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("plan", "apply", "bootstrap", "record-patches"),
+        choices=("plan", "apply", "bootstrap", "survey", "record-patches"),
         help=(
             "plan reports the Changes and mutates nothing; apply converges; "
             "bootstrap makes First Contact with a Device that has no "
-            "administrator key yet; record-patches runs the artifact "
+            "administrator key yet; survey reports how the Device differs "
+            "from the Profile, mutates nothing, and needs Kodi stopped; "
+            "record-patches runs the artifact "
             "pipeline and writes what each Artifact Patch produces back into "
             "the Artifact Lock, touching no Device"
         ),
@@ -73,6 +75,8 @@ def main(
         desired = config.load(arguments.config_root, arguments.room, arguments.env_file)
         if arguments.command == "bootstrap":
             reconcile.bootstrap(desired, out=out)
+        elif arguments.command == "survey":
+            reconcile.survey(desired, out=out)
         else:
             reconcile.run(desired, apply=arguments.command == "apply", out=out)
     except config.ConfigError as error:

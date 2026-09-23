@@ -164,12 +164,27 @@ class Device:
         arrive as a path that merely does not exist.
         """
 
+        return [name for name, _ in self.list_entries(path)]
+
+    def list_entries(self, path: str) -> list[tuple[str, bool]]:
+        """Each name the directory holds, and whether it is a directory.
+
+        One round trip for the whole directory. A link to a directory counts
+        as one, because that is what anything reading through it sees.
+        """
+
         quoted = shlex.quote(path)
         listing = self._checked(
             f"listing {path}",
-            f"if [ -d {quoted} ]; then ls -A {quoted}; fi",
+            f"if [ -d {quoted} ]; then cd {quoted} || exit 1;"
+            " ls -A | while IFS= read -r entry; do"
+            ' if [ -d "$entry" ]; then printf \'d %s\\n\' "$entry";'
+            " else printf 'f %s\\n' \"$entry\"; fi;"
+            " done; fi; exit 0",
         )
-        return sorted(name for name in listing.splitlines() if name)
+        return sorted(
+            (line[2:], line[0] == "d") for line in listing.splitlines() if line[2:]
+        )
 
     def list_directories_holding(self, path: str, name: str) -> list[str]:
         """The names of the entries in `path` that hold a file called `name`.
