@@ -989,8 +989,12 @@ def bootstrap(desired: DesiredState, *, out: TextIO) -> None:
     )
 
 
-def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
-    """Reconciles `desired`, raising DeviceError when it cannot be reached."""
+def _open(desired: DesiredState, out: TextIO) -> tuple[Device, DesiredState]:
+    """Names the Device, guards it, and resolves the Profile's patterns.
+
+    A document the Profile names by pattern is resolved once, before any
+    Change is planned and so before anything is written.
+    """
 
     device = Device(hostname=desired.hostname, transport=desired.transport)
     print(
@@ -999,14 +1003,21 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
     )
     _guard_identity(device, desired.hostname)
     _guard_platform(device, desired.platform)
-
-    # A document the Profile names by pattern is resolved once, before any
-    # Change is planned and so before anything is written.
-    desired = replace(
+    return device, replace(
         desired,
         documents=tuple(_locate(device, declared) for declared in desired.documents),
     )
 
+
+def _undeclared_addon_lines(device: Device, desired: DesiredState) -> Iterator[str]:
+    for stray in _undeclared_addons(device, desired):
+        yield f"undeclared add-on: {desired.addresses.addons}/{stray}"
+
+
+def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
+    """Reconciles `desired`, raising DeviceError when it cannot be reached."""
+
+    device, desired = _open(desired, out)
     changes = _plan(device, desired)
     for change in changes:
         for line in change.report():
@@ -1015,8 +1026,8 @@ def run(desired: DesiredState, *, apply: bool, out: TextIO) -> None:
     # Reported once, from the planning the Run opens with, so it appears on a
     # Run that changes nothing too — which is exactly when a stray add-on is
     # the only thing worth noticing.
-    for stray in _undeclared_addons(device, desired):
-        print(f"undeclared add-on: {desired.addresses.addons}/{stray}", file=out)
+    for line in _undeclared_addon_lines(device, desired):
+        print(line, file=out)
 
     if not apply:
         print(f"plan: {_summarise(changes)}", file=out)
@@ -1051,10 +1062,11 @@ def _declared_documents(desired: DesiredState) -> set[str]:
 def _undeclared_entries(device: Device, desired: DesiredState) -> Iterator[str]:
     """What sits beside a declared document and no Resource declares.
 
-    The boundary is derived from the declared documents, never listed
-    (ADR 0017): the directory each one sits in is walked, one level deep. A
-    directory is named and not descended into, which keeps `Thumbnails/` to
-    one line without an exclusion list. A directory holding a declared
+    The boundary is derived from the declared documents, never listed — the
+    rule ADR 0017 sets for the Artifact Lock's boundary. The directory each
+    one sits in is walked, one level deep. A directory is named and not
+    descended into, which keeps `Thumbnails/` to one line without an
+    exclusion list. A directory holding a declared
     document further down is not reported, because its contents are someone's.
     """
 
@@ -1123,30 +1135,18 @@ def survey(desired: DesiredState, *, out: TextIO) -> None:
     The report is one sorted block, so two Devices' surveys diff cleanly.
     """
 
-    device = Device(hostname=desired.hostname, transport=desired.transport)
-    print(
-        f"device {desired.hostname} (room {desired.room}, profile {desired.profile})",
-        file=out,
-    )
-    _guard_identity(device, desired.hostname)
-    _guard_platform(device, desired.platform)
+    device, desired = _open(desired, out)
     if device.service_is_active(KODI_SERVICE):
         raise DeviceError(
             f"{KODI_SERVICE} is active on {desired.hostname}: Kodi rewrites its "
             "Settings Documents from memory when it exits, so what a survey "
-            "read now could be overwritten. Run `systemctl stop kodi` on the "
-            "Device and survey again"
+            "read now could be overwritten. Stop Kodi and keep it stopped — "
+            "`systemctl stop kodi`, and whatever else starts it again — then "
+            "survey again"
         )
-    desired = replace(
-        desired,
-        documents=tuple(_locate(device, declared) for declared in desired.documents),
-    )
 
     findings = set(_undeclared_entries(device, desired))
-    findings.update(
-        f"undeclared add-on: {desired.addresses.addons}/{stray}"
-        for stray in _undeclared_addons(device, desired)
-    )
+    findings.update(_undeclared_addon_lines(device, desired))
     for declared in desired.documents:
         findings.update(_surveyed_settings(device, declared))
 
