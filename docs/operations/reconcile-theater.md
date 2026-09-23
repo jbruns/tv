@@ -3,8 +3,7 @@
 The Reconciler shadows the shell on five Resource Types on the theater Ugoos:
 the eight Smart Playlists under `special://profile/playlists/video`, the four
 Arctic Fuse Shortcut Nodes under `script.skinvariables`,
-`/storage/.ssh/authorized_keys`, one Kodi add-on
-(`script.module.six`), and the Kodi settings
+`/storage/.ssh/authorized_keys`, forty Kodi add-ons, and the Kodi settings
 inside nine Settings Documents — `guisettings.xml`, the Home
 Assistant weather add-on's `settings.xml`, the NextPVR client's
 `instance-settings-1.xml`, TMDb Helper's `settings.xml`, Arctic Fuse 3's
@@ -807,8 +806,8 @@ for Intent resolution.
 
 ## Declaring an add-on
 
-One add-on is the Reconciler's: `script.module.six`. It is declared in the
-Artifact Lock beside the Profile, never in the Profile itself:
+Forty add-ons are the Reconciler's. They are declared in the Artifact Lock
+beside the Profile, never in the Profile itself:
 
 ```yaml
 addons:
@@ -816,9 +815,8 @@ addons:
     version: "1.16.0+matrix.1"
     url: https://mirrors.kodi.tv/addons/omega/script.module.six/script.module.six-1.16.0+matrix.1.zip
     sha256: "4197f7773f75ab9f16b3c920195acbb8b8b151b4b3c8c3e14fc4876e764e3860"
-    notes: >-
-      A leaf with no dependants and no repository semantics, chosen to prove
-      the vertical.
+    role: dependency
+    notes: ~
 ```
 
 A record names the bytes, not a place to look for bytes. The Reconciler
@@ -830,10 +828,30 @@ is exactly the case a pin exists to catch
 Appearing in the Lock is one statement: **installed at this version and
 enabled**. There is no add-on this fleet wants present but disabled, so the
 two are not separately declarable and cannot disagree with each other
-([ADR 0018](../adr/0018-enable-add-ons-in-kodis-database-while-kodi-is-stopped.md)). `notes` carries
-the rationale a reviewer of a future version bump needs — why this version and
-not the newest — and is the one field nothing but a human reads. A record with
-nothing to explain states `~`.
+([ADR 0018](../adr/0018-enable-add-ons-in-kodis-database-while-kodi-is-stopped.md)).
+
+`role` and `notes` answer two different questions and nothing but a human
+reads either. `role` is why the add-on is here at all — `chosen` is a decision
+someone made, `dependency` is a consequence of one, and `repository` is the
+kind whose enablement could invite Kodi to go and fetch something. `notes` is
+why *this version* and not the newest; a record with nothing to explain states
+`~`, which most of them do.
+
+Three add-ons the shell pins are deliberately outside the Lock: `weather.ha`,
+`script.plexmod` and `plugin.video.themoviedb.helper` cannot be correct
+without an Artifact Patch, and they arrive with the patch mechanism. Two the
+shell never pinned are inside it: `plugin.program.autocompletion` and
+`script.module.autocompletion` were installed by hand from the official Kodi
+repository and recorded in nothing but a comment. They are Profile intent, so
+they are declared like anything else someone chose.
+
+The archive's top-level directory is not required to be the add-on id, and for
+two of these pins it is not — `plugin.service.emby-next-gen` is rooted at
+`plugin.video.emby-plugin.service.emby-next-gen_11.1.27` and
+`resource.font.robotocjksc` at `resource.font.robotcjksc`, an upstream typo.
+The identity comes from `addon.xml`, which both declare correctly, and the
+tree is installed under the id the Lock pins. `weather.ha` is the third such
+archive and arrives with the patch mechanism.
 
 The Lock is a separate file from the Profile because a version bump is
 eventually a bot's edit, and a bot editing the file humans edit for settings
@@ -902,6 +920,13 @@ the database is the interface
 
 The add-on database is named by the Profile, not compiled in; see
 [Device addresses](#device-addresses).
+
+Install order does not matter. Kodi is stopped and enablement is a database
+write, so nothing sequences a dependency ahead of its dependant. Only add-ons
+whose declared version differs are fetched at all, so a converged Device ships
+nothing; a fresh one fetches the whole Lock, about 410 MB, and ships it inside
+the stop window. That is the one Run where the television is not yet in
+service, and `/storage` has 26.8 GB free against it.
 
 ## The Kodi restart Effect
 
@@ -1164,6 +1189,88 @@ The scenarios are:
    one character different, delete the tree, and `apply`: the Run must fail
    naming both digests, before it stops Kodi, and the television must still be
    up. Restore the digest afterwards.
+
+   **Then the four add-ons whose capabilities differ.** The Lock holds forty
+   records and re-shipping all of them proves nothing `script.module.six` did
+   not, at about 410 MB. Four differ from it in a specific way, so those four
+   are the drift:
+
+   | add-on | what it is the only case of |
+   | --- | --- |
+   | `skin.arctic.fuse.3` | 69 MB installed, and the active skin. Replacing its directory destroys the compiled view include |
+   | `repository.jurialmunkey` | a repository add-on — the one kind whose enablement could invite Kodi to go and fetch something |
+   | `plugin.service.emby-next-gen` | the archive's top-level directory is not the add-on id |
+   | `resource.images.studios.white` | inert bulk, nothing but files |
+
+   ```console
+   ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+   db=/storage/.kodi/userdata/Database/Addons33.db
+   four="skin.arctic.fuse.3 repository.jurialmunkey \
+     plugin.service.emby-next-gen resource.images.studios.white"
+
+   ug systemctl stop kodi
+   for id in $four; do
+     ug rm -rf "/storage/.kodi/addons/$id"
+     ug "sqlite3 $db \"DELETE FROM installed WHERE addonID='$id'\""
+   done
+   ug systemctl start kodi
+
+   uv run coreelec-reconciler apply --room theater
+   uv run coreelec-reconciler plan --room theater
+   ```
+
+   Expect four `create` lines, four `fetching` lines before a single
+   `stopping kodi.service`, and the `plan` after it to report no changes.
+   Expect nothing else: deleting the active skin's directory does not make
+   Kodi rewrite `lookandfeel.skin`, so no Settings Document Change appears
+   alongside the four.
+   Then confirm what each one was chosen to prove:
+
+   ```console
+   # The id, not the archive's directory.
+   ug ls -d /storage/.kodi/addons/plugin.service.emby-next-gen
+   ug ls /storage/.kodi/addons/ | grep -c emby-plugin    # expect 0
+
+   # The skin came back and rebuilt its own view include.
+   views=/storage/.kodi/addons/skin.arctic.fuse.3/1080i
+   ug wc -c "$views/script-skinviewtypes-includes.xml"
+   ```
+
+   The view include is the one to watch. Arctic Fuse ships it as a 190-byte
+   stub whose `onload` makes the skin regenerate the real file; replacing the
+   directory puts the stub back, and the skin rewrites it on the next skin
+   load. Expect it to be the stub immediately after the Run and several
+   kilobytes once Kodi has loaded the skin. Add-ons apply before the view
+   rebuild is armed, so this self-heals — this Run is what proves it.
+
+   Finally, check the television: the skin loads, the home screen is intact,
+   and Settings > Add-ons > My add-ons shows all four enabled.
+
+   **And the two with no Recovery Baseline.**
+   `plugin.program.autocompletion` and `script.module.autocompletion` are the
+   only add-ons the shell does not pin, so nothing else on this Device can
+   repair them. Delete both and confirm the Reconciler is what brings them
+   back:
+
+   ```console
+   ug() { ssh -i ~/.ssh/coreelec_admin_ed25519 root@ugoos-theater "$@"; }
+   db=/storage/.kodi/userdata/Database/Addons33.db
+
+   ug systemctl stop kodi
+   ug "rm -rf /storage/.kodi/addons/plugin.program.autocompletion \
+     /storage/.kodi/addons/script.module.autocompletion"
+   ug "sqlite3 $db \"DELETE FROM installed WHERE addonID LIKE '%autocompletion'\""
+   ug systemctl start kodi
+
+   uv run coreelec-reconciler apply --room theater
+   ```
+
+   Their `installed` row loses its `origin` in the process: Kodi recorded
+   `repository.xbmc.org` because someone installed them from there, and a
+   re-installed row carries the empty `origin` every other pinned add-on on
+   this Device already has. That is the intended outcome — the version is the
+   Lock's now, not the repository's — and it makes them indistinguishable
+   from the thirty-eight the shell installs the same way.
 8. **No declared setting, playlist, Shortcut Node or add-on is a `create`**
    — the shell writes every one of them, so on a provisioned Device
    none may plan as a `create`. A `create` is a misread or typo'd setting id,
@@ -1223,9 +1330,11 @@ The scenarios are:
    uv run coreelec-reconciler plan --room theater
    ```
 
-   The `addons` component is the one that covers `script.module.six`, and it
+   The `addons` component is the one that covers the Artifact Lock, and it
    is the one that proves the two engines install the same version from the
-   same bytes rather than reverting each other on every Run:
+   same bytes rather than reverting each other on every Run. Thirty-eight of
+   the forty records are pins the shell holds too, so a single transcription
+   error shows up here as a Run that never converges:
 
    ```console
    ./provision-coreelec.sh --target ugoos-theater --component addons
@@ -1637,16 +1746,31 @@ CEC power policy (`CEC-001`-`CEC-005`), the platform Guard (`PLAT-001`), the
 timezone cache (`CORE-006`), the `tz-data.service` restart (`EFFECT-002`),
 the two `authorized_keys` entries (`SSH-002`, `LIFE-002`), the `sshd.conf`
 pair (`SSH-003`), the host key policy (`SSH-004`), the `sshd.service`
-restart (`EFFECT-003`) and one add-on artifact (`ART-037`)
+restart (`EFFECT-003`) and thirty-eight add-on artifacts — `ART-001`-`ART-041`
+less `ART-005`, `ART-007` and `ART-009` —
 as
 shell-owned
 with
 `reconciler_status: accepted`, and the shell still writes them during a `core`,
-`cec`, `skin`, `services`, `addons`, `room` or `baseline` run. `ADDON-001` is
+`cec`, `skin`, `services`, `addons`, `room` or `baseline` run. The three
+missing rows are `plugin.video.themoviedb.helper`, `script.plexmod` and
+`weather.ha`, which cannot be correct without an Artifact Patch and arrive
+with the patch mechanism. `ADDON-001` is
 one row covering the enabled flag of all forty-one add-ons, so it stays
 `none` until the Reconciler declares every one of them; the Reconciler
-enabling `script.module.six` is shadowing inside a row the shell still owns
-whole. `SKIN-027` and `SKIN-028`,
+enabling thirty-eight of them is shadowing inside a row the shell still owns
+whole.
+
+The Artifact Lock also declares two add-ons that have **no ledger row at
+all**: `plugin.program.autocompletion` and `script.module.autocompletion`. The
+ledger is the inventory of what the shell *does*, and the shell never wrote
+either — it only tolerated them through `ADDON_UNMANAGED_ALLOWED`, which is
+what `ADDON-003` records. They are the first Reconciler-owned addresses with
+no shell write set, and the schema takes that shape unchanged: nothing
+requires a row per Reconciler-owned address, and `--audit` stays valid because
+every check it makes is scoped to rows whose owner is `shell`.
+
+`SKIN-027` and `SKIN-028`,
 the
 two superseded playlists, stay `retired` and are not declared anywhere, and
 so does `PLAT-002`, the device-tree model check the Reconciler will never
