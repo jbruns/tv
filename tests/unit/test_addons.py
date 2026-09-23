@@ -16,6 +16,7 @@ import shutil
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -383,7 +384,7 @@ def test_a_malformed_pin_is_refused_before_any_device_contact(
     record: dict[str, str],
     refusal: str,
 ) -> None:
-    fields: dict[str, str] = {"digest": "4" * 64}
+    fields: dict[str, Any] = {"digest": "4" * 64}
     fields.update(record)
     device.write_addons(addon_lock(**fields))
 
@@ -435,11 +436,6 @@ def test_one_addon_pinned_twice_is_refused(
     assert "script.module.six is pinned twice" in capsys.readouterr().err
 
 
-# The add-ons that cannot be correct without an Artifact Patch. They are
-# deliberately outside the Lock: the patch mechanism is its own slice and they
-# arrive with it (ADR 0017).
-PATCHED = ("weather.ha", "script.plexmod", "plugin.video.themoviedb.helper")
-
 # Installed from the official Kodi repository by hand, and recorded until now
 # in nothing but a comment beside the shell's allowlist.
 OPERATOR_INSTALLED = ("plugin.program.autocompletion", "script.module.autocompletion")
@@ -473,8 +469,12 @@ def shell_pins() -> dict[str, tuple[str, str, str]]:
     return pins
 
 
-def test_the_shipped_lock_is_the_shell_pins_less_the_patched_ones() -> None:
-    """The Lock's boundary, read from both files rather than restated."""
+def test_the_shipped_lock_is_every_shell_pin_and_the_operator_installs() -> None:
+    """The Lock's boundary, read from both files rather than restated.
+
+    With the three patched add-ons in it, every add-on this fleet installs is
+    the Reconciler's.
+    """
 
     locked = {record["id"] for record in shipped_lock()}
     by_shell = set(shell_pins())
@@ -482,7 +482,7 @@ def test_the_shipped_lock_is_the_shell_pins_less_the_patched_ones() -> None:
     assert ADDON_ID in locked
     # Dropping a pin silently would leave an add-on nobody installs, so the
     # two sets are compared rather than sampled.
-    assert locked == (by_shell - set(PATCHED)) | set(OPERATOR_INSTALLED)
+    assert locked == by_shell | set(OPERATOR_INSTALLED)
     assert set(OPERATOR_INSTALLED) & by_shell == set()
 
 

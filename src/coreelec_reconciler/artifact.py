@@ -3,12 +3,13 @@
 Everything here runs on the controller. An Artifact is a ZIP named by the
 Artifact Lock and identified by its SHA-256; this module fetches it, proves
 it is the pinned bytes, refuses a ZIP that would write outside its own
-directory, cross-checks what `addon.xml` declares against the pin, and hands
-back a tar stream of the finished tree (ADR 0017).
+directory, cross-checks what `addon.xml` declares against the pin, applies
+the add-on's Artifact Patches, and hands back a tar stream of the finished
+tree (ADR 0017).
 
-The fetch shells out to `curl`, the way the Device transport shells out to
-`ssh`: one client, one set of TLS options, and a boundary a test can stand a
-stub in front of.
+The fetch shells out to `curl`, and patching shells out to `patch`, the way
+the Device transport shells out to `ssh`: one client, one set of options, and
+a boundary a test can stand a stub in front of.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import tarfile
 import tempfile
 import xml.etree.ElementTree as ElementTree
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -34,9 +36,27 @@ TRANSFER_TIMEOUT = 300
 DEFAULT_FILE_MODE = 0o644
 DEFAULT_DIRECTORY_MODE = 0o755
 
+# Applying five small diffs to five small files is local work on files that
+# are already in memory.
+PATCH_TIMEOUT = 30
+
 
 class ArtifactError(Exception):
-    """An Artifact that could not be fetched, proven, or read."""
+    """An Artifact that could not be fetched, proven, read, or patched."""
+
+
+@dataclass(frozen=True)
+class Patch:
+    """One Artifact Patch: a unified diff, named by the file it is kept in.
+
+    `diff` opens with a header comment naming the add-on and the version the
+    diff was written against. `patch` ignores that leading text; the
+    Reconciler reads it and refuses a version the patch was not written for
+    before anything is fetched (ADR 0017).
+    """
+
+    name: str
+    diff: str
 
 
 @dataclass(frozen=True)
@@ -288,8 +308,180 @@ def _own(info: tarfile.TarInfo) -> None:
     info.gname = "root"
 
 
-def prepare(url: str, digest: str, addon_id: str, version: str) -> bytes:
-    """Fetch, prove, expand and pack one Artifact, in that order."""
+def asserted(patch: Patch) -> tuple[str, str]:
+    """The add-on and version a patch's header comment was written against.
+
+    The header is the first line: `# <add-on id> <version>`. `patch` skips
+    leading text, so the assertion costs the diff nothing and keeps the patch
+    a file `patch` can read and a reviewer can read as a diff.
+    """
+
+    header = patch.diff.split("\n", 1)[0].strip()
+    words = header.lstrip("#").split()
+    if not header.startswith("#") or len(words) != 2:
+        raise ArtifactError(
+            f"{patch.name} does not open with a header naming the add-on and "
+            "the version it was written against"
+        )
+    return words[0], words[1]
+
+
+def touched(patch: Patch) -> tuple[str, ...]:
+    """The files a patch changes, taken from its own `+++` headers.
+
+    Nothing declares this list a second time: the diff already says which
+    files it rewrites, and the Lock records the hash of each one under the
+    same names (ADR 0017).
+    """
+
+    held: list[str] = []
+    for line in patch.diff.splitlines():
+        if not line.startswith("+++ "):
+            continue
+        name = line[4:].split("\t", 1)[0].strip()
+        _, _, relative = name.partition("/")
+        candidate = Path(relative)
+        if not relative or candidate.is_absolute() or ".." in candidate.parts:
+            raise ArtifactError(f"{patch.name} names a file outside the add-on: {name}")
+        if relative not in held:
+            held.append(relative)
+    if not held:
+        raise ArtifactError(f"{patch.name} holds no diff")
+    return tuple(held)
+
+
+def _compiles(path: str, data: bytes) -> None:
+    """A patched Python file that Kodi could not import fails the Run instead.
+
+    A clean application proves the context matched; it does not prove the
+    result parses, and most patched files are imported at boot (ADR 0017).
+    """
+
+    if not path.endswith(".py"):
+        return
+    try:
+        compile(data.decode("utf-8"), path, "exec")
+    except (SyntaxError, ValueError, UnicodeDecodeError) as error:
+        raise ArtifactError(f"the patched {path} does not compile: {error}") from error
+
+
+def patched(
+    members: tuple[Member, ...], addon_id: str, patches: Sequence[Patch]
+) -> tuple[Member, ...]:
+    """The expanded Artifact with its Artifact Patches applied, or an error.
+
+    Only the files the diffs name are written out and read back, so mode and
+    timestamp come from the Artifact for every member and the tar of one
+    Artifact stays one tar. The already-patched case the shell handles does
+    not arise here: this tree was expanded from bytes a SHA-256 pins.
+    """
+
+    if not patches:
+        return members
+    held = {member.path: member for member in members}
+    with tempfile.TemporaryDirectory() as workspace:
+        root = Path(workspace) / "tree"
+        for patch in patches:
+            for path in touched(patch):
+                member = held.get(path)
+                if member is None or member.data is None:
+                    raise ArtifactError(
+                        f"{patch.name} patches {path}, which the {addon_id} "
+                        "Artifact does not hold"
+                    )
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if not target.exists():
+                    target.write_bytes(member.data)
+            diff = Path(workspace) / patch.name
+            diff.write_text(patch.diff, encoding="utf-8")
+            _patch(root, diff, patch, addon_id)
+        for patch in patches:
+            for path in touched(patch):
+                data = (root / path).read_bytes()
+                _compiles(path, data)
+                held[path] = Member(
+                    path=path,
+                    mode=held[path].mode,
+                    modified=held[path].modified,
+                    data=data,
+                )
+    return tuple(sorted(held.values(), key=lambda member: member.path))
+
+
+def _patch(root: Path, diff: Path, patch: Patch, addon_id: str) -> None:
+    """One diff applied by `patch`, whose context lines are the assertion."""
+
+    argv = [
+        "patch",
+        # The context lines are the assertion, so an application that had to
+        # ignore some of them to succeed has not asserted anything (ADR 0017).
+        "--fuzz=0",
+        "--strip=1",
+        "--directory",
+        str(root),
+        "--input",
+        str(diff),
+    ]
+    try:
+        completed = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            # A patch that cannot find what it is told to change asks a human
+            # which file to patch. There is no human here, so it reads EOF
+            # and gives up.
+            stdin=subprocess.DEVNULL,
+            timeout=PATCH_TIMEOUT,
+            check=False,
+        )
+    except FileNotFoundError as error:
+        raise ArtifactError(
+            f"patch is not installed, so {patch.name} cannot be applied"
+        ) from error
+    except subprocess.TimeoutExpired as error:
+        raise ArtifactError(f"applying {patch.name} timed out") from error
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip().splitlines()
+        reason = detail[-1] if detail else f"patch exited {completed.returncode}"
+        raise ArtifactError(
+            f"{patch.name} does not apply to the pinned {addon_id}: {reason}"
+        )
+
+
+def digests(members: tuple[Member, ...], paths: Sequence[str]) -> dict[str, str]:
+    """The SHA-256 of each named file of a prepared tree."""
+
+    held = {member.path: member for member in members}
+    recorded = {}
+    for path in paths:
+        member = held.get(path)
+        if member is None or member.data is None:
+            raise ArtifactError(f"the prepared tree holds no {path}")
+        recorded[path] = sha256(member.data).hexdigest()
+    return recorded
+
+
+def build(
+    url: str,
+    digest: str,
+    addon_id: str,
+    version: str,
+    patches: Sequence[Patch] = (),
+) -> tuple[Member, ...]:
+    """Fetch, prove, expand and patch one Artifact, in that order."""
 
     members = expand(download(url, digest), addon_id, version)
-    return tar(members, addon_id)
+    return patched(members, addon_id, patches)
+
+
+def prepare(
+    url: str,
+    digest: str,
+    addon_id: str,
+    version: str,
+    patches: Sequence[Patch] = (),
+) -> bytes:
+    """The finished tree the Device receives, as one tar stream."""
+
+    return tar(build(url, digest, addon_id, version, patches), addon_id)

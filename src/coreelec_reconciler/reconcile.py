@@ -19,12 +19,14 @@ import time
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
+from hashlib import sha256
 from typing import TextIO
 
 from . import artifact, authorized_keys, kodi_settings, shortcut
 from .config import (
     AddonArtifact,
     Addresses,
+    ConfigError,
     DesiredState,
     KodiSetting,
     Platform,
@@ -197,7 +199,10 @@ class AddonChange:
     `observed` is the version `addon.xml` declares, which is what Kodi itself
     believes, and None when the add-on is not on the Device at all.
     `enabled` is what the `installed` table holds — `True`, `False`, or None
-    when the table holds no row for it.
+    when the table holds no row for it. `divergent_files` names the patched
+    files whose bytes are not the ones the Lock records, which is the only
+    thing that catches a corrected patch: correcting one does not move the
+    add-on's version (ADR 0017).
     """
 
     addon: AddonArtifact
@@ -205,6 +210,7 @@ class AddonChange:
     action: str
     observed: str | None
     enabled: bool | None
+    divergent_files: tuple[str, ...] = ()
     effect: str | None = KODI_SERVICE
 
     @property
@@ -215,12 +221,14 @@ class AddonChange:
     def ships(self) -> bool:
         """Whether this Change fetches and replaces the tree, or only enables."""
 
-        return self.observed != self.addon.version
+        return self.observed != self.addon.version or bool(self.divergent_files)
 
     def report(self) -> Iterator[str]:
         yield f"{self.action} {self.directory}"
         observed = "(absent)" if self.observed is None else self.observed
         yield f"version: {observed} -> {self.addon.version}"
+        for path in self.divergent_files:
+            yield f"patched file: {path} is not the bytes the Artifact Lock records"
         if self.enabled is not True:
             held = "(no row)" if self.enabled is None else "0"
             yield f"enabled: {held} -> 1"
@@ -437,14 +445,17 @@ NO_ROW = ""
 
 def _observe_addon(
     device: Device, addresses: Addresses, addon: AddonArtifact
-) -> tuple[str | None, bool | None]:
-    """What the Device holds for one add-on: its declared version, and enabled.
+) -> tuple[str | None, bool | None, tuple[str, ...]]:
+    """What the Device holds for one add-on: its version, enabled, and patches.
 
-    The whole Observation is one small file and one row. Hashing the
+    Most of the Observation is one small file and one row. Hashing the
     installed tree cannot work — the tree is the *expanded* archive, so its
     hash is never the Artifact's — and a receipt the Reconciler wrote can
-    disagree with reality, while `addon.xml` is what Kodi itself believes
-    (ADR 0017).
+    disagree with reality, while `addon.xml` is what Kodi itself believes.
+
+    A patched add-on needs one thing more. Correcting a patch leaves the
+    version where it was, so the files the diffs touch are read back and
+    compared against the hashes the Lock records (ADR 0017).
     """
 
     directory = f"{addresses.addons}/{addon.id}"
@@ -463,21 +474,47 @@ def _observe_addon(
                 "refusing to replace a directory that is not the add-on it is named for"
             )
 
+    divergent: list[str] = []
+    if version == addon.version:
+        divergent = _divergent_files(device, directory, addon)
+
     held = device.sqlite(
         addresses.addon_database,
         f"SELECT enabled FROM installed WHERE addonID='{addon.id}';",
     ).strip()
     if held == NO_ROW:
-        return version, None
-    return version, held == "1"
+        return version, None, tuple(divergent)
+    return version, held == "1", tuple(divergent)
+
+
+def _divergent_files(device: Device, directory: str, addon: AddonArtifact) -> list[str]:
+    """The patched files whose bytes are not the ones the Lock records.
+
+    Read only when the declared version already matches: an add-on that is
+    being replaced anyway is replaced whole, and reading five files to
+    confirm a conclusion already reached would be Device contact for nothing.
+    """
+
+    divergent: list[str] = []
+    for path, recorded in sorted(addon.patched_files.items()):
+        if recorded is None:
+            raise ConfigError(
+                f"{path} of {addon.id} has no recorded post-patch hash, so a "
+                "patched Device cannot be told from an unpatched one: run "
+                "record-patches"
+            )
+        held = device.read(f"{directory}/{path}")
+        if held is None or sha256(held.encode("utf-8")).hexdigest() != recorded:
+            divergent.append(path)
+    return divergent
 
 
 def _plan_addons(device: Device, desired: DesiredState, changes: list[Change]) -> None:
     """One Change per add-on that is not installed at its pin, or not enabled."""
 
     for addon in desired.addons:
-        version, enabled = _observe_addon(device, desired.addresses, addon)
-        if version == addon.version and enabled is True:
+        version, enabled, divergent = _observe_addon(device, desired.addresses, addon)
+        if version == addon.version and enabled is True and not divergent:
             continue
         changes.append(
             AddonChange(
@@ -486,6 +523,7 @@ def _plan_addons(device: Device, desired: DesiredState, changes: list[Change]) -
                 action="create" if version is None else "update",
                 observed=version,
                 enabled=enabled,
+                divergent_files=divergent,
             )
         )
 
@@ -780,7 +818,7 @@ def _prepare(changes: list[Change], out: TextIO) -> dict[str, bytes]:
         addon = change.addon
         print(f"fetching {addon.id} {addon.version}", file=out)
         prepared[addon.id] = artifact.prepare(
-            addon.url, addon.sha256, addon.id, addon.version
+            addon.url, addon.sha256, addon.id, addon.version, addon.patches
         )
     return prepared
 

@@ -1,0 +1,49 @@
+name: Artifact Patches
+
+# Runs exactly when the answer could have changed. The recorded post-patch
+# hashes in the Artifact Lock are generated data, so something has to check
+# that what is committed is what the pipeline produces — but putting six
+# upstream mirrors in the path of every pull request makes an unrelated
+# one-line change fail because a mirror is down. So it runs only on the
+# pull requests that touch the Lock, the patches, or the code that
+# generates the hashes (ADR 0017).
+on:
+  pull_request:
+    paths:
+      - config/**/addons.yaml
+      - config/**/patches/**
+      - src/coreelec_reconciler/artifact.py
+      - src/coreelec_reconciler/lock.py
+      - .github/workflows/artifact-patches.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recorded:
+    name: Recorded hashes are what the pipeline produces
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.3
+          enable-cache: true
+      - name: Synchronize frozen environment
+        run: uv sync --frozen
+      # The patches are applied by this binary, so a runner without it would
+      # pass by not testing anything.
+      - name: Confirm patch is installed
+        run: patch --version
+      - name: Regenerate the recorded hashes
+        run: uv run coreelec-reconciler record-patches --room theater
+      - name: Compare against what is committed
+        run: git diff --exit-code -- 'config/**/addons.yaml'

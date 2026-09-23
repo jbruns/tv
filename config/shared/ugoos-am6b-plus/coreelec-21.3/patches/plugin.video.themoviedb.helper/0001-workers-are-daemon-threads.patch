@@ -1,0 +1,20 @@
+# plugin.video.themoviedb.helper 6.17.1
+#
+# Both worker threads are non-daemon, so a Kodi shutdown waits on them and the
+# appliance hangs at the point the television is being switched off.
+--- a/resources/tmdbhelper/lib/monitor/service.py
++++ b/resources/tmdbhelper/lib/monitor/service.py
+@@ -33,11 +33,13 @@
+     def run_cron_job(self):
+         self.cron_job = CronJobMonitor(self, update_hour=get_setting('library_autoupdate_hour', 'int'))
+         self.cron_job.setName('Cron Thread')
++        self.cron_job.daemon = True
+         self.cron_job.start()
+ 
+     def run_images_monitor(self):
+         self.images_monitor = ImagesMonitor(self)
+         self.images_monitor.setName('Image Thread')
++        self.images_monitor.daemon = True
+         self.images_monitor.start()
+ 
+     def _on_listitem(self):

@@ -1,0 +1,14 @@
+# plugin.video.themoviedb.helper 6.17.1
+#
+# `waitForAbort` returns as soon as the abort is requested, and the loop then
+# runs a full maintenance pass anyway. Rechecking after the wait is what makes
+# the thread leave promptly on shutdown.
+--- a/resources/tmdbhelper/lib/monitor/cronjob.py
++++ b/resources/tmdbhelper/lib/monitor/cronjob.py
+@@ -100,4 +100,6 @@
+ 
+         while not self.update_monitor.abortRequested() and not self.exit:
+             self.update_monitor.waitForAbort(self._poll_time)
++            if self.update_monitor.abortRequested() or self.exit:
++                return
+             self._on_poll()

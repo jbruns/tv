@@ -1,0 +1,16 @@
+# weather.ha 0.0.6.6
+#
+# The retry loop leaves `r` unbound when the request itself raises, so the
+# `if not r.ok` below the handler turns an unreachable Home Assistant into an
+# UnboundLocalError. That escapes the add-on's own RequestError handling, and
+# the add-on crashes rather than reporting the host as unreachable.
+--- a/lib/homeassistant/_adapter.py
++++ b/lib/homeassistant/_adapter.py
+@@ -65,6 +65,7 @@
+                 #raise RequestError(error_code=-1, url=url, method="POST" if post else "GET", body="")
+                 err_code_received = -1
+                 err_msg = "Unknown error"
++                continue
+             if not r.ok:
+                 #raise RequestError(error_code=r.status_code, url=url, method="POST" if post else "GET", body=r.text)
+                 err_code_received = r.status_code
