@@ -64,11 +64,15 @@ def main(
     out = out if out is not None else sys.stdout
     err = err if err is not None else sys.stderr
     try:
+        if arguments.command == "record-patches":
+            # It resolves only as far as the Artifact Lock, because that and
+            # the patches beside it are all it reads.
+            document, addons = config.lock(arguments.config_root, arguments.room)
+            lock.record(document, addons, out=out)
+            return 0
         desired = config.load(arguments.config_root, arguments.room, arguments.env_file)
         if arguments.command == "bootstrap":
             reconcile.bootstrap(desired, out=out)
-        elif arguments.command == "record-patches":
-            lock.record(desired, out=out)
         else:
             reconcile.run(desired, apply=arguments.command == "apply", out=out)
     except config.ConfigError as error:

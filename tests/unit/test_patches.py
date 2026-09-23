@@ -267,6 +267,26 @@ def test_record_patches_writes_what_the_pipeline_produces(
     assert reconcile("apply", "--room", "theater") == 0
 
 
+def test_record_patches_needs_no_transport_identity(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+) -> None:
+    """It runs where the Device is not, which is where CI compares it.
+
+    The command reads the Artifact Lock, the patches beside it and the
+    upstream Artifacts, and contacts nothing. Demanding the half of the
+    transport identity that goes on the Device would make it unrunnable on
+    a machine that has no business holding one (ADR 0011).
+    """
+
+    patched(device, recorded=None)
+    device.identity.with_name(f"{device.identity.name}.pub").unlink()
+
+    assert reconcile("record-patches", "--room", "theater") == 0
+
+    assert f'lib/six.py: "{PATCHED_SHA256}"' in device.read_addons()
+
+
 def test_record_patches_leaves_a_recorded_lock_alone(
     device: FakeDevice,
     reconcile: Callable[..., int],

@@ -19,10 +19,12 @@ as the human who wrote it left it.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from pathlib import Path
 from typing import TextIO
 
 from . import artifact
-from .config import ConfigError, DesiredState
+from .config import AddonArtifact, ConfigError
 
 # The shape of an Artifact Lock, read closely enough to find the values this
 # command owns and no more closely than that.
@@ -30,11 +32,11 @@ RECORD = re.compile(r"^(\s*)-\s+id:\s*(\S+)\s*$")
 ENTRY = re.compile(r"^(\s*)([^\s:]+):\s*(\S.*?)\s*$")
 
 
-def record(desired: DesiredState, *, out: TextIO) -> None:
+def record(document: Path, addons: Sequence[AddonArtifact], *, out: TextIO) -> None:
     """Rewrites every recorded post-patch hash the Artifact Lock holds."""
 
     recorded: dict[str, dict[str, str]] = {}
-    for addon in desired.addons:
+    for addon in addons:
         if not addon.patches:
             continue
         print(f"fetching {addon.id} {addon.version}", file=out)
@@ -43,14 +45,14 @@ def record(desired: DesiredState, *, out: TextIO) -> None:
         )
         recorded[addon.id] = artifact.digests(members, sorted(addon.patched_files))
 
-    held = desired.lock.read_text(encoding="utf-8")
+    held = document.read_text(encoding="utf-8")
     rewritten, moved = rewrite(held, recorded)
     for addon_id, path in moved:
         print(f"recorded {addon_id} {path}", file=out)
     if rewritten == held:
         print("the Artifact Lock already records every patched file", file=out)
         return
-    desired.lock.write_text(rewritten, encoding="utf-8")
+    document.write_text(rewritten, encoding="utf-8")
 
 
 def rewrite(

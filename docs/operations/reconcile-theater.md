@@ -987,9 +987,10 @@ uv run coreelec-reconciler record-patches --room theater
 It fetches each patched Artifact, proves its digest, expands it, applies the
 patches, hashes what came out, and writes the values back into the Lock —
 rewriting nothing else in the file, so every comment beside a pin survives. It
-contacts no Device. A record whose hash is `~` is one nobody has recorded, and
-a Run refuses it rather than guessing: an unrecorded hash cannot tell a
-patched Device from an unpatched one.
+contacts no Device, and needs no transport identity to run: it reads the Lock,
+the patches beside it, and the upstream Artifacts. A record whose hash is `~`
+is one nobody has recorded, and a Run refuses it rather than guessing: an
+unrecorded hash cannot tell a patched Device from an unpatched one.
 
 Regeneration lives on the Reconciler rather than in `scripts/` because it *is*
 the artifact pipeline. A tool beside it would duplicate the pipeline or reach

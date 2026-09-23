@@ -354,9 +354,6 @@ class DesiredState:
     authorized_keys: AuthorizedKeys
     playlists: tuple[SmartPlaylist, ...]
     documents: tuple[SettingsDocument, ...]
-    # Where the Artifact Lock is, so the command that records post-patch
-    # hashes rewrites the file the Profile actually read.
-    lock: Path
     addons: tuple[AddonArtifact, ...] = ()
     shortcut_nodes: tuple[ShortcutNode, ...] = ()
 
@@ -1230,14 +1227,9 @@ def _merge(
     return tuple(merged.values())
 
 
-def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
-    """Resolves the Room Overlay for `room` against the Profile it names.
+def _resolved(config_root: Path, room: str) -> tuple[Path, Mapping[str, Any], Path]:
+    """The Room Overlay for `room`, and the Profile document it names."""
 
-    `env_path` is the shared `.env`. It is read only if the resolved
-    configuration names a value in it, and always before any Device contact.
-    """
-
-    named = NamedValues(env_path)
     room_path = config_root / "rooms" / _relative(config_root, "a room", room)
     room_file = room_path / "room.yaml"
     if not room_file.is_file():
@@ -1248,14 +1240,42 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         _read(room_file),
         required=("room", "hostname", "profile", "settings_documents"),
     )
+    declared_profile = _relative(
+        room_file, "profile", _text(room_file, "profile", overlay["profile"])
+    )
+    profile_file = config_root / "shared" / declared_profile / "profile.yaml"
+    if not profile_file.is_file():
+        raise ConfigError(f"no profile.yaml for {declared_profile}: {profile_file}")
+    return room_file, overlay, profile_file
+
+
+def lock(config_root: Path, room: str) -> tuple[Path, tuple[AddonArtifact, ...]]:
+    """The Artifact Lock a room resolves to, and the records it holds.
+
+    `record-patches` runs the artifact pipeline and touches nothing else, so
+    it resolves only as far as the Lock. Demanding a transport identity of a
+    command that never contacts a Device would make it unrunnable anywhere
+    the Device is not, which includes CI (ADR 0011).
+    """
+
+    _, _, profile_file = _resolved(config_root, room)
+    document = profile_file.with_name(ADDONS)
+    return document, _addons(document)
+
+
+def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
+    """Resolves the Room Overlay for `room` against the Profile it names.
+
+    `env_path` is the shared `.env`. It is read only if the resolved
+    configuration names a value in it, and always before any Device contact.
+    """
+
+    named = NamedValues(env_path)
+    room_file, overlay, profile_file = _resolved(config_root, room)
     hostname = _text(room_file, "hostname", overlay["hostname"])
     declared_profile = _relative(
         room_file, "profile", _text(room_file, "profile", overlay["profile"])
     )
-
-    profile_file = config_root / "shared" / declared_profile / "profile.yaml"
-    if not profile_file.is_file():
-        raise ConfigError(f"no profile.yaml for {declared_profile}: {profile_file}")
     profile = _fields(
         profile_file,
         "the Profile",
@@ -1280,8 +1300,8 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
     platform = _platform(profile_file, profile["platform"])
     constants = _constants(profile_file, profile["constants"])
     addresses = _addresses(profile_file, profile["addresses"])
-    lock = profile_file.with_name(ADDONS)
-    addons = _addons(lock)
+    document = profile_file.with_name(ADDONS)
+    addons = _addons(document)
     room_documents = _documents(
         room_file, named, constants, "settings_documents", overlay["settings_documents"]
     )
@@ -1355,7 +1375,6 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         authorized_keys=authorized,
         playlists=parsed,
         documents=_merge(((profile_file, kodi), (room_file, room_documents))),
-        lock=lock,
         addons=addons,
         shortcut_nodes=tuple(
             _shortcut_node(profile_file, by_file, entry) for entry in nodes
