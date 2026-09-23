@@ -1,0 +1,35 @@
+# The Artifact Lock for the Ugoos AM6B+ / CoreELEC 21.3 Profile.
+#
+# One record per add-on: the version this Profile installs, the URL the
+# archive comes from, and the SHA-256 of the bytes that URL must return. A
+# fetch returning anything else fails the Run rather than installing
+# (ADR 0017).
+#
+# Appearing here is the statement that the add-on should be installed at this
+# version *and* enabled. The two are never independently desirable, so they
+# are one declaration that cannot disagree with itself (ADR 0018).
+#
+# This is a lock file, not a manifest. It lives beside profile.yaml rather
+# than inside it because an Action will eventually rewrite it to propose
+# version bumps, and a bot editing the file humans edit for settings turns
+# every bump into a conflict with unrelated work.
+#
+# `notes` carries the rationale a reviewer of a future version bump needs —
+# why this version and not the newest — and is the one field nothing but a
+# human reads. A record with nothing to explain states `~`.
+#
+# The shell's `provision.conf` beside this file still holds all 41 pins as
+# `ADDON_ARTIFACT` records and is untouched: it is the Recovery Baseline
+# (ADR 0010). Only the add-ons listed here are the Reconciler's.
+
+addons:
+  - id: script.module.six
+    version: "1.16.0+matrix.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.six/script.module.six-1.16.0+matrix.1.zip
+    sha256: "4197f7773f75ab9f16b3c920195acbb8b8b151b4b3c8c3e14fc4876e764e3860"
+    notes: >-
+      A leaf with no dependants and no repository semantics, chosen to prove
+      the vertical. script.plexmod, weather.ha and script.module.dateutil all
+      declare a floor of 1.15.0+matrix.1; this is the highest version the
+      Kodi Omega index publishes, which is the one Kodi's own resolver would
+      install.

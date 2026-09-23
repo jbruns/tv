@@ -872,7 +872,7 @@
       "state_address": "script.module.six",
       "role": "resource",
       "current_owner_or_executor": "shell",
-      "reconciler_status": "none",
+      "reconciler_status": "accepted",
       "shell_write_set": {
         "status": "audited",
         "items": [
