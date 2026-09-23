@@ -19,18 +19,24 @@ settings and how they are requested.
 
 ## Why configuration states intent, not the concrete value
 
-Configuration never holds the literal Kodi values for these three settings.
+The shell's configuration never holds the literal Kodi values for these three
+settings.
 It holds a symbolic intent (`hdmi-multichannel`, `hdmi`, `7.1`), and a
 pre-transaction probe resolves that intent against whatever the running Kodi
 actually offers, on every run.
 
-The concrete values are not stable facts safe to hard-code:
+The probe is the shell's choice, not a sign that the values move. On one
+board and one Kodi version all three are fixed, and the Reconciler declares
+them as literals in the Profile and the Room Overlay
+([ADR 0019](../../adr/0019-the-profiles-scope-resolves-what-the-shell-probed.md)):
 
 - `audiooutput.audiodevice` and `audiooutput.passthroughdevice` are ALSA
   device strings that embed the kernel sound-card name, e.g.
   `ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND`. `AMLAUGESOUND` is
-  a driver detail, not a hardware fact worth pinning in configuration that
-  ships to every room.
+  the Amlogic sound driver's card on this board, so it belongs with the
+  board's other platform facts. The probe keeps the shell's configuration free
+  of it; the Reconciler pins it instead, and refuses a Device whose
+  `/proc/asound/cards` does not list it.
 - `audiooutput.channels` is resolved fresh every run too, but not because its
   value moves. Kodi registers no options-filler for it: its options are a
   static table in Kodi's own `system/settings/settings.xml`, where `10` is

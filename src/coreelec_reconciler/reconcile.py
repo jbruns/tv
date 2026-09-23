@@ -275,8 +275,9 @@ def _guard_platform(device: Device, platform: Platform) -> None:
     """The Device is what the Profile claims, or the Run refuses here.
 
     This runs with the hostname Guard, before anything is planned, so a Run
-    aimed at a Device of the wrong operating system, the wrong version or the
-    wrong SoC family stops before it has written anything.
+    aimed at a Device of the wrong operating system, the wrong version, the
+    wrong SoC family or without the declared sound card stops before it has
+    written anything.
     """
 
     document = device.read(OS_RELEASE)
