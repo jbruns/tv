@@ -1209,8 +1209,9 @@ shell retires it by attrition, in the forced order the
 
 `survey` answers one question: how does this Device differ from the Profile?
 It mutates nothing, and it is for two jobs — surveying a known-good Device
-and a factory-fresh one after `apply` and diffing the two, and reading back
-what to put in the Profile after configuring something by hand.
+and a factory-fresh one after `apply` and diffing the two (the
+[retirement test](retirement-test.md)), and reading back what to put in the
+Profile after configuring something by hand.
 
 ```console
 ssh root@ugoos-theater systemctl is-active kodi   # expect inactive
@@ -1248,11 +1249,30 @@ all. Add-ons are reported exactly as a Run reports them
 
 Inside each declared Settings Document it reports every setting the Profile
 does not declare, with its value, **except one Kodi marked `default="true"`**.
-Kodi writes that attribute on every setting it holds at its default, so
-`guisettings.xml`'s several hundred defaults cost no lines. The `json` and
-`shell_vars` dialects carry no such marker, so every undeclared key in them is
-reported. A declared setting the Device holds differently is reported with
-both sides; one the Profile names from `.env` is reported by its key alone.
+`CSettingsManager::Save` writes that attribute on every setting it holds at
+its default, so `guisettings.xml`'s several hundred defaults cost no lines —
+383 of its 418 settings on the theater Ugoos.
+
+Not every document goes through that writer, and in the ones that do not the
+marker never appears, so every undeclared setting is reported whether or not
+anyone touched it:
+
+| Document | Writer | Marks defaults |
+| --- | --- | --- |
+| `guisettings.xml`, add-on `settings.xml` | `CSettingsManager::Save` | yes |
+| `addon_data/skin.*/settings.xml` | `CSkinInfo::SettingsToXML` | **no** |
+| `peripheral_data/*.xml` | the peripheral | **no** |
+| the `json` and `shell_vars` dialects | — | **no** |
+
+A skin is the sharpest case: `CSkinSetting::Serialize` writes `id` and `type`
+and nothing else, and there is no schema to recover a default from — a skin
+has no `resources/settings.xml`, because `Skin.SetString` creates a setting on
+demand. All 219 of Arctic Fuse's settings are therefore reported minus the 34
+the Profile declares. That is why both of the survey's jobs are a **diff of
+two reports** rather than a reading of one.
+
+A declared setting the Device holds differently is reported with both sides;
+one the Profile names from `.env` is reported by its key alone.
 
 ## The Kodi restart Effect
 
