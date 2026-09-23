@@ -6,6 +6,11 @@ blob case-insensitively for `coreelec`. That passes on any Device whose
 anything that copied the file. `/etc/os-release` is a defined `KEY=value`
 document, so the Guard parses it and asserts on keys instead; `/etc/release`
 is genuinely one line of free text and stays a substring match.
+
+The sound card is part of the platform too. The Profile's ALSA device strings
+embed the kernel's card name, and a string naming a card the Device does not
+have is one Kodi silently replaces with some other output. The Guard reads
+`/proc/asound/cards`, which needs no running Kodi.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ def platform_block(
     version: str = "21.3",
     device: str = "Amlogic-ng",
     release_contains: str = "Amlogic-ng.arm-21.3-Omega",
+    sound_card: str = "AMLAUGESOUND",
 ) -> str:
     return (
         "platform:\n"
@@ -29,6 +35,7 @@ def platform_block(
         f'  version: "{version}"\n'
         f"  device: {device}\n"
         f"  release_contains: {release_contains}\n"
+        f"  sound_card: {sound_card}\n"
     )
 
 
@@ -198,12 +205,74 @@ def test_a_platform_block_missing_a_key_is_an_error_naming_it(
 ) -> None:
     declare_platform(
         device,
-        'platform:\n  id: coreelec\n  version: "21.3"\n  device: Amlogic-ng\n',
+        'platform:\n  id: coreelec\n  version: "21.3"\n  device: Amlogic-ng\n'
+        "  sound_card: AMLAUGESOUND\n",
     )
 
     assert reconcile("plan", "--room", "theater") == 1
 
     assert "missing key in platform: release_contains" in capsys.readouterr().err
+
+
+def test_a_sound_card_the_device_does_not_have_is_refused_before_any_write(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    declare_platform(device, platform_block(sound_card="AMLMESONAUDIO"))
+
+    assert reconcile("apply", "--room", "theater") == 1
+
+    err = capsys.readouterr().err
+    assert "/proc/asound/cards" in err
+    assert "AMLMESONAUDIO" in err
+    # What the Device does have is named, so the fix is visible in the error.
+    assert "AMLAUGESOUND" in err
+    assert device.effects == []
+    assert not device.guisettings.exists()
+
+
+def test_a_card_name_only_in_the_long_description_does_not_satisfy_the_guard(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The ALSA `CARD=` token is the bracketed id, not the display name."""
+
+    declare_platform(device, platform_block(sound_card="AML-AUGESOUND"))
+
+    assert reconcile("plan", "--room", "theater") == 1
+
+    assert "AML-AUGESOUND" in capsys.readouterr().err
+
+
+def test_a_device_with_no_sound_cards_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    device.sound_cards.write_text("--- no soundcards ---\n", encoding="utf-8")
+
+    assert reconcile("plan", "--room", "theater") == 1
+
+    err = capsys.readouterr().err
+    assert "/proc/asound/cards" in err
+    assert "AMLAUGESOUND" in err
+
+
+def test_a_second_card_is_found_wherever_it_is_listed(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+) -> None:
+    device.sound_cards.write_text(
+        " 0 [Headset        ]: USB-Audio - USB Headset\n"
+        "                      Generic USB Headset at usb-1\n"
+        " 1 [AMLAUGESOUND   ]: AML-AUGESOUND - AML-AUGESOUND\n"
+        "                      AML-AUGESOUND\n",
+        encoding="utf-8",
+    )
+
+    assert reconcile("plan", "--room", "theater") == 0
 
 
 def test_the_shipped_profile_declares_the_theater_ugoos_identity() -> None:
@@ -214,4 +283,27 @@ def test_the_shipped_profile_declares_the_theater_ugoos_identity() -> None:
         "version": "21.3",
         "device": "Amlogic-ng",
         "release_contains": "Amlogic-ng.arm-21.3-Omega",
+        "sound_card": "AMLAUGESOUND",
+    }
+
+
+def test_the_shipped_audio_devices_name_the_card_the_guard_checks() -> None:
+    """The Guard is only worth running if it checks the card Kodi is given."""
+
+    profile = shipped_profile()
+    card = profile["platform"]["sound_card"]
+    (guisettings,) = (
+        document
+        for document in profile["settings_documents"]
+        if document["dialect"] == "guisettings"
+    )
+    devices = {
+        entry["setting"]: entry["value"]
+        for entry in guisettings["settings"]
+        if entry["setting"]
+        in ("audiooutput.audiodevice", "audiooutput.passthroughdevice")
+    }
+    assert devices == {
+        "audiooutput.audiodevice": f"ALSA:surround71:CARD={card},DEV=0|AML-AUGESOUND",
+        "audiooutput.passthroughdevice": f"ALSA:hdmi:CARD={card},DEV=0|AML-AUGESOUND",
     }

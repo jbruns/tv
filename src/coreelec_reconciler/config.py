@@ -113,6 +113,9 @@ class Platform:
     version: str
     device: str
     release_contains: str
+    # The kernel's id for the board's sound card, which the Profile's ALSA
+    # device strings embed as `CARD=`.
+    sound_card: str
 
 
 @dataclass(frozen=True)
@@ -889,7 +892,7 @@ def _platform(source: Path, raw: Any) -> Platform:
         source,
         "platform",
         _mapping(source, "platform", raw),
-        required=("id", "version", "device", "release_contains"),
+        required=("id", "version", "device", "release_contains", "sound_card"),
     )
     return Platform(
         id=_text(source, "platform id", mapping["id"]),
@@ -898,6 +901,7 @@ def _platform(source: Path, raw: Any) -> Platform:
         release_contains=_text(
             source, "platform release_contains", mapping["release_contains"]
         ),
+        sound_card=_text(source, "platform sound_card", mapping["sound_card"]),
     )
 
 
