@@ -62,6 +62,11 @@ ADDON_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~-]*")
 # so the Lock states it lowercase rather than folding case at every read.
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
+# Why an add-on is in the Profile at all. `chosen` is a decision someone made,
+# `dependency` is a consequence of one, and `repository` is the kind whose
+# enablement could invite Kodi to go and fetch something (ADR 0017).
+ADDON_ROLES = ("chosen", "dependency", "repository")
+
 
 # A setting a human declares positively that Kodi stores negatively, or as an
 # ordinal, needs a transform between the declaration and the Device. Each one
@@ -141,13 +146,16 @@ class AddonArtifact:
 
     `notes` carries the deviation rationale a reviewer of a future version
     bump needs — why this version and not the newest — and is the one field
-    nothing but a human reads.
+    nothing but a human reads. `role` answers the other question, why the
+    add-on is here at all: bumping a `chosen` add-on is a decision someone
+    makes, and bumping a `dependency` is a consequence of one (ADR 0017).
     """
 
     id: str
     version: str
     url: str
     sha256: str
+    role: str
     notes: str | None = None
 
 
@@ -806,7 +814,7 @@ def _addon(source: Path, raw: Any) -> AddonArtifact:
         source,
         "an add-on",
         _mapping(source, "an add-on", raw),
-        required=("id", "version", "url", "sha256", "notes"),
+        required=("id", "version", "url", "sha256", "role", "notes"),
     )
     addon_id = _text(source, "an add-on id", mapping["id"])
     if not ADDON_ID.fullmatch(addon_id):
@@ -828,11 +836,18 @@ def _addon(source: Path, raw: Any) -> AddonArtifact:
             f"characters: {digest}"
         )
     notes = mapping["notes"]
+    role = _text(source, f"the role of {addon_id}", mapping["role"])
+    if role not in ADDON_ROLES:
+        raise ConfigError(
+            f"{source}: the role of {addon_id} must be one of "
+            f"{', '.join(ADDON_ROLES)}: {role}"
+        )
     return AddonArtifact(
         id=addon_id,
         version=version,
         url=url,
         sha256=digest,
+        role=role,
         notes=(
             None if notes is None else _text(source, f"the notes of {addon_id}", notes)
         ),

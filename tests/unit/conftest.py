@@ -385,6 +385,7 @@ def addon_lock(
     version: str = ADDON_VERSION,
     url: str = ADDON_URL,
     digest: str = "",
+    role: str = "dependency",
     notes: str = "~",
 ) -> str:
     """The Artifact Lock, pinning one add-on."""
@@ -395,6 +396,7 @@ def addon_lock(
         f'    version: "{version}"\n'
         f"    url: {url}\n"
         f'    sha256: "{digest}"\n'
+        f"    role: {role}\n"
         f"    notes: {notes}\n"
     )
 

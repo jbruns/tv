@@ -373,6 +373,7 @@ def test_a_lock_that_is_missing_is_refused_naming_it(
         ({"version": "~1.16"}, "not a well-formed add-on version"),
         ({"url": "http://mirrors.kodi.tv/six.zip"}, "must be https://"),
         ({"digest": "4197F7773F75AB9F"}, "64 lowercase hex characters"),
+        ({"role": "transitive"}, "role of script.module.six must be one of"),
     ],
 )
 def test_a_malformed_pin_is_refused_before_any_device_contact(
@@ -391,6 +392,34 @@ def test_a_malformed_pin_is_refused_before_any_device_contact(
     assert refusal in capsys.readouterr().err
 
 
+def test_a_pin_stating_no_role_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Why an add-on is here is not derivable from anything else (ADR 0017)."""
+
+    lines = addon_lock(digest="4" * 64).splitlines(keepends=True)
+    device.write_addons(
+        "".join(line for line in lines if not line.startswith("    role:"))
+    )
+
+    assert reconcile("plan", "--room", "theater") == 1
+
+    assert "missing key in an add-on: role" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("role", ["chosen", "dependency", "repository"])
+def test_every_declared_role_is_accepted(
+    device: FakeDevice, reconcile: Callable[..., int], role: str
+) -> None:
+    pinned(device)
+    device.write_addons(addon_lock(digest=device.publish_artifact(), role=role))
+    device.install_addon()
+
+    assert reconcile("plan", "--room", "theater") == 0
+
+
 def test_one_addon_pinned_twice_is_refused(
     device: FakeDevice,
     reconcile: Callable[..., int],
@@ -406,30 +435,85 @@ def test_one_addon_pinned_twice_is_refused(
     assert "script.module.six is pinned twice" in capsys.readouterr().err
 
 
-def test_the_shipped_lock_pins_the_addon_this_slice_takes() -> None:
-    """What the fleet declares, read from the Lock rather than restated."""
+# The add-ons that cannot be correct without an Artifact Patch. They are
+# deliberately outside the Lock: the patch mechanism is its own slice and they
+# arrive with it (ADR 0017).
+PATCHED = ("weather.ha", "script.plexmod", "plugin.video.themoviedb.helper")
 
-    lock = (
-        Path(__file__).resolve().parents[2]
-        / "config"
-        / "shared"
-        / "ugoos-am6b-plus"
-        / "coreelec-21.3"
-        / "addons.yaml"
-    )
-    records = yaml.safe_load(lock.read_text(encoding="utf-8"))["addons"]
-    assert [record["id"] for record in records] == [ADDON_ID]
-    assert records[0]["version"] == ADDON_VERSION
-    assert records[0]["url"] == ADDON_URL
-    # The pin is the shell's, byte for byte: the two engines install the same
-    # Artifact or they revert each other forever.
-    baseline = lock.with_name("provision.conf").read_text(encoding="utf-8").splitlines()
-    record = next(
-        line for line in baseline if line.startswith(f"ADDON_ARTIFACT={ADDON_ID}|")
-    )
-    _, version, url, digest = record.removeprefix("ADDON_ARTIFACT=").split("|")
-    assert (records[0]["version"], records[0]["url"], records[0]["sha256"]) == (
-        version,
-        url,
-        digest,
-    )
+# Installed from the official Kodi repository by hand, and recorded until now
+# in nothing but a comment beside the shell's allowlist.
+OPERATOR_INSTALLED = ("plugin.program.autocompletion", "script.module.autocompletion")
+
+LOCK = (
+    Path(__file__).resolve().parents[2]
+    / "config"
+    / "shared"
+    / "ugoos-am6b-plus"
+    / "coreelec-21.3"
+    / "addons.yaml"
+)
+
+
+def shipped_lock() -> list[dict[str, str]]:
+    records = yaml.safe_load(LOCK.read_text(encoding="utf-8"))["addons"]
+    assert isinstance(records, list)
+    return records
+
+
+def shell_pins() -> dict[str, tuple[str, str, str]]:
+    """Every `ADDON_ARTIFACT` the Recovery Baseline declares, by add-on id."""
+
+    baseline = LOCK.with_name("provision.conf").read_text(encoding="utf-8")
+    pins = {}
+    for line in baseline.splitlines():
+        if not line.startswith("ADDON_ARTIFACT="):
+            continue
+        addon_id, version, url, digest = line.removeprefix("ADDON_ARTIFACT=").split("|")
+        pins[addon_id] = (version, url, digest)
+    return pins
+
+
+def test_the_shipped_lock_is_the_shell_pins_less_the_patched_ones() -> None:
+    """The Lock's boundary, read from both files rather than restated."""
+
+    locked = {record["id"] for record in shipped_lock()}
+    by_shell = set(shell_pins())
+
+    assert ADDON_ID in locked
+    # Dropping a pin silently would leave an add-on nobody installs, so the
+    # two sets are compared rather than sampled.
+    assert locked == (by_shell - set(PATCHED)) | set(OPERATOR_INSTALLED)
+    assert set(OPERATOR_INSTALLED) & by_shell == set()
+
+
+def test_the_shipped_lock_pins_the_bytes_the_shell_pins() -> None:
+    """Two engines install the same Artifact or they revert each other forever."""
+
+    by_shell = shell_pins()
+    for record in shipped_lock():
+        if record["id"] in OPERATOR_INSTALLED:
+            continue
+        assert (record["version"], record["url"], record["sha256"]) == by_shell[
+            record["id"]
+        ], record["id"]
+
+
+def test_every_shipped_record_states_why_the_addon_is_there() -> None:
+    """`role` is the group rationale surviving `provision.conf` (ADR 0017)."""
+
+    records = shipped_lock()
+    assert {record["role"] for record in records} == {
+        "chosen",
+        "dependency",
+        "repository",
+    }
+    # A repository add-on is the one kind whose enablement could invite Kodi
+    # to go and fetch something, so the three are named rather than counted.
+    assert {record["id"] for record in records if record["role"] == "repository"} == {
+        "repository.emby.kodi",
+        "repository.dontpanic",
+        "repository.jurialmunkey",
+    }
+    assert set(OPERATOR_INSTALLED) <= {
+        record["id"] for record in records if record["role"] == "chosen"
+    }

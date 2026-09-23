@@ -14,22 +14,299 @@
 # version bumps, and a bot editing the file humans edit for settings turns
 # every bump into a conflict with unrelated work.
 #
-# `notes` carries the rationale a reviewer of a future version bump needs —
-# why this version and not the newest — and is the one field nothing but a
-# human reads. A record with nothing to explain states `~`.
+# Two fields answer two different questions, and only a human reads either.
+# `role` answers "why is this add-on here at all": `chosen` is a decision
+# someone made, `dependency` is a consequence of one, and `repository` is the
+# kind whose enablement could invite Kodi to go and fetch something. `notes`
+# answers "why this version and not the newest", and a record with nothing to
+# explain states `~` — most of these are at the highest version their index
+# publishes, which is the version Kodi's own resolver would install.
+#
+# Three add-ons are missing on purpose: weather.ha, script.plexmod and
+# plugin.video.themoviedb.helper cannot be correct without an Artifact Patch,
+# and they arrive with the patch mechanism.
 #
 # The shell's `provision.conf` beside this file still holds all 41 pins as
 # `ADDON_ARTIFACT` records and is untouched: it is the Recovery Baseline
 # (ADR 0010). Only the add-ons listed here are the Reconciler's.
 
 addons:
+# --- Repositories -----------------------------------------------------------
+# Installed so Kodi can surface an available update in its own interface.
+# Nothing installs from them: `ADDON_UPDATE_MODE` is `notify`, and every
+# version this Profile runs is pinned here.
+  - id: repository.emby.kodi
+    version: "1.0.8"
+    url: https://kodi.emby.tv/repository.emby.kodi-1.0.8.zip
+    sha256: "03ad3e5babec40e5938f04045a5bf8fd4fc87a416d5281e43d6d5a17a58f7b17"
+    role: repository
+    notes: ~
+  - id: repository.dontpanic
+    version: "0.2.10"
+    url: https://pm4k.eu/repository.dontpanic-0.2.10.zip
+    sha256: "03222f41fbed76bfb0283ef47ae347fc96addd1c7f930491a14290481e7b3c33"
+    role: repository
+    notes: ~
+  - id: repository.jurialmunkey
+    version: "3.4"
+    url: https://jurialmunkey.github.io/repository.jurialmunkey/repository.jurialmunkey-3.4.zip
+    sha256: "972ba8bda0dd16108a1601534e547a774522d73cd2c7919ce651a2d32af7a3fd"
+    role: repository
+    notes: ~
+
+# --- Chosen -----------------------------------------------------------------
+# The add-ons someone decided this fleet should have.
+  - id: plugin.service.emby-next-gen
+    version: "11.1.27"
+    url: https://embydata.com/downloads/addons/xbmb3c/multi-repo/release/v21_omega/plugin.service.emby-next-gen/plugin.service.emby-next-gen-11.1.27.zip
+    sha256: "2ae9b76aa763cd44d4296882ecc076372bf0d2aba50b0cf08ae5797a4983c402"
+    role: chosen
+    notes: ~
+  - id: pvr.nextpvr
+    version: "21.3.2.1"
+    url: https://addons.coreelec.org/Amlogic-ng/21.3/arm/pvr.nextpvr/pvr.nextpvr-21.3.2.1.zip
+    sha256: "458b9629c13b0576e29557afc37c5fd09f679c7036152f6ee29fe5dde8d5fd35"
+    role: chosen
+    notes: >-
+      CoreELEC's own Amlogic-ng/arm build, so the version tracks the CoreELEC
+      release rather than the newest NextPVR client. Bumping it without
+      bumping CoreELEC installs a binary built against another Kodi.
+  - id: skin.arctic.fuse.3
+    version: "3.2.16"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.2.16.zip
+    sha256: "f6a82abe74e49c38411d2086b5c265583af07f76923e18ce3dc0e7f2648aadf3"
+    role: chosen
+    notes: >-
+      The Shortcut Nodes and view types this Profile declares are written
+      against this skin version, and the view include the skin compiles is
+      derived from them. A bump re-reads both and is reviewed with them.
+  - id: resource.language.en_us
+    version: "11.0.82"
+    url: https://mirrors.kodi.tv/addons/omega/resource.language.en_us/resource.language.en_us-11.0.82.zip
+    sha256: "69f5b1e6df17838d5735bb9c9b584612faaea7fb6677dd167bda6154cae0d43b"
+    role: chosen
+    notes: ~
+
+  # Arctic Fuse 3's supported optional add-ons, chosen for the skin rather
+  # than required by it. script.artistslideshow is what brings
+  # script.module.defusedxml and script.module.future below.
+  - id: script.artistslideshow
+    version: "4.2.0"
+    url: https://mirrors.kodi.tv/addons/omega/script.artistslideshow/script.artistslideshow-4.2.0.zip
+    sha256: "68688a63ac9ac074eb8d9aee4212eda07e7f52627300015eac12a0226cc4db2c"
+    role: chosen
+    notes: ~
+  - id: resource.images.arctic.waves
+    version: "0.0.2"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/repo/zips/resource.images.arctic.waves/resource.images.arctic.waves-0.0.2.zip
+    sha256: "bb97ce4d47095765b3a29893d06bd2e2807d0fc975bd7d6fcc77ae6623581f04"
+    role: chosen
+    notes: ~
+  - id: resource.images.weatherfanart.multi
+    version: "0.0.6"
+    url: https://mirrors.kodi.tv/addons/omega/resource.images.weatherfanart.multi/resource.images.weatherfanart.multi-0.0.6.zip
+    sha256: "e642b7cfd45e935b665025898036cb0a85a1f252f5295650a3e794084844b2cc"
+    role: chosen
+    notes: ~
+  - id: resource.images.moviecountryicons.maps
+    version: "0.0.1"
+    url: https://mirrors.kodi.tv/addons/omega/resource.images.moviecountryicons.maps/resource.images.moviecountryicons.maps-0.0.1.zip
+    sha256: "566cb5e98d9801f93a10dd5c0d6f57f7cfcba61d11996df2b4f9fc860d1e322b"
+    role: chosen
+    notes: ~
+  - id: resource.images.studios.white
+    version: "0.0.34"
+    url: https://mirrors.kodi.tv/addons/omega/resource.images.studios.white/resource.images.studios.white-0.0.34.zip
+    sha256: "cd6f96143e1efe423f85adcd2b0d9466ad4bcd5bcb0a4c5310b3916faf438e3e"
+    role: chosen
+    notes: ~
+  - id: resource.uisounds.fromashes
+    version: "3.0.01"
+    url: https://mirrors.kodi.tv/addons/omega/resource.uisounds.fromashes/resource.uisounds.fromashes-3.0.01.zip
+    sha256: "63fb3d37196cecf617eabde5f3c1a4b3795ee4f48ee15a242d43dbe65915d5a7"
+    role: chosen
+    notes: ~
+
+  # Installed by hand from the official Kodi repository. The shell tolerated
+  # these two without pinning them; they are Profile intent like anything
+  # else someone chose.
+  - id: plugin.program.autocompletion
+    version: "2.1.2"
+    url: https://mirrors.kodi.tv/addons/omega/plugin.program.autocompletion/plugin.program.autocompletion-2.1.2.zip
+    sha256: "0432e06967bef696ab34298d46c23143fdfde5ed30c98a1854e89b868d5d669a"
+    role: chosen
+    notes: >-
+      An operator install from the official Kodi repository that the shell
+      never pinned, recorded until now in nothing but a comment. Add-on
+      updates are `notify`, so this is the version the fleet is running.
+  - id: script.module.autocompletion
+    version: "2.1.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.autocompletion/script.module.autocompletion-2.1.1.zip
+    sha256: "e26bbc0550534f765a2a4cf82d9359142fd7b6cf97a5d6fe9ab575681899eb83"
+    role: chosen
+    notes: >-
+      The only dependency of plugin.program.autocompletion, and pinned for
+      the same reason: the shell never named it, and `notify` froze it here.
+
+# --- Dependencies -----------------------------------------------------------
+# Present because something above requires them. Which add-on requires
+# which is in `<requires>` and is not restated here.
+  - id: inputstream.adaptive
+    version: "21.5.24.1"
+    url: https://addons.coreelec.org/Amlogic-ng/21.3/arm/inputstream.adaptive/inputstream.adaptive-21.5.24.1.zip
+    sha256: "6c0eb6d2012e81f404cd233d4cf87210304387fdf120dad3bff860c2ae2ff5c8"
+    role: dependency
+    notes: >-
+      Declared optional in Kodi's own add-on manifest and not bundled by
+      CoreELEC, so it is pinned rather than inherited. CoreELEC's Amlogic-ng
+      build: the version tracks the CoreELEC release.
+  - id: inputstream.ffmpegdirect
+    version: "21.3.8.1"
+    url: https://addons.coreelec.org/Amlogic-ng/21.3/arm/inputstream.ffmpegdirect/inputstream.ffmpegdirect-21.3.8.1.zip
+    sha256: "8a1390b834eef2ae8bb52aa87a7499b28d9b16bd971428da8ef1c738ef4c0e4e"
+    role: dependency
+    notes: >-
+      CoreELEC's Amlogic-ng build, like inputstream.adaptive: the version
+      tracks the CoreELEC release rather than the newest upstream.
+
+  # Everything below comes from the Kodi Omega index or from the
+  # jurialmunkey repository at the highest version it publishes, which is
+  # the version Kodi's own resolver would install.
+  - id: resource.font.robotocjksc
+    version: "0.0.3"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/resource.font.robotocjksc/resource.font.robotocjksc-0.0.3.zip
+    sha256: "58c3e32cafbbf0984896c4ab317c820e555f3deacae977598e4a03a0f8139743"
+    role: dependency
+    notes: ~
+  - id: resource.images.studios.coloured
+    version: "0.0.24"
+    url: https://mirrors.kodi.tv/addons/omega/resource.images.studios.coloured/resource.images.studios.coloured-0.0.24.zip
+    sha256: "de985b7c671e1f171f8ac8a71a9f24f035ffabebaeee3c3a173e570d8b3c50d6"
+    role: dependency
+    notes: ~
+  - id: resource.images.weathericons.white
+    version: "0.0.6"
+    url: https://mirrors.kodi.tv/addons/omega/resource.images.weathericons.white/resource.images.weathericons.white-0.0.6.zip
+    sha256: "89466f3c5d1e269e68f9caf3a3b732bc85875f62ab3dd5536730eae19e4d5a2c"
+    role: dependency
+    notes: ~
+  - id: script.module.addon.signals
+    version: "0.0.6+matrix.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.addon.signals/script.module.addon.signals-0.0.6+matrix.1.zip
+    sha256: "a41629f328429d08d79ef3c8b59c93d6f4c06b1a6e76806babd44f2457a9a1fb"
+    role: dependency
+    notes: ~
+  - id: script.module.certifi
+    version: "2023.5.7"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.certifi/script.module.certifi-2023.5.7.zip
+    sha256: "c16d4cd2efe6e57dbb5e8d71a9beb3af213b1e3d717e8b0b24f0cbdc4c645070"
+    role: dependency
+    notes: ~
+  - id: script.module.chardet
+    version: "5.1.0"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.chardet/script.module.chardet-5.1.0.zip
+    sha256: "d5010fc55a9523d86a306ae9e6a8dea0e3248fe079b9ed37280fe86110cd766a"
+    role: dependency
+    notes: ~
+  - id: script.module.defusedxml
+    version: "0.6.0+matrix.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.defusedxml/script.module.defusedxml-0.6.0+matrix.1.zip
+    sha256: "11ca2fcf2791d5192ee7e529e3015952c12b5527637c0501da8f4ad63de522cc"
+    role: dependency
+    notes: ~
+  - id: script.module.dateutil
+    version: "2.8.2"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.dateutil/script.module.dateutil-2.8.2.zip
+    sha256: "4f264a82986bcdd6880a73a894b263a7750e3e4f2b27a0f511bf82347ac5b2db"
+    role: dependency
+    notes: ~
+  - id: script.module.future
+    version: "1.0.0+matrix.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.future/script.module.future-1.0.0+matrix.1.zip
+    sha256: "609ed33eec1ecef8b301e81909f6a089ce8ec017c9c08b711ca6603185fbc81f"
+    role: dependency
+    notes: ~
+  - id: script.module.idna
+    version: "3.10.0"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.idna/script.module.idna-3.10.0.zip
+    sha256: "c4ff34dbfab2736e9214a374d331bd6f558d8b3fea8eb7902e210749509242b3"
+    role: dependency
+    notes: ~
+  - id: script.module.infotagger
+    version: "0.0.9"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.infotagger/script.module.infotagger-0.0.9.zip
+    sha256: "5fb83664bb732bca773d420f9f5b1383be594ed88836f59178032f36bc668336"
+    role: dependency
+    notes: ~
+  - id: script.module.inputstreamhelper
+    version: "0.8.5"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.inputstreamhelper/script.module.inputstreamhelper-0.8.5.zip
+    sha256: "9330b099ba3618c2ad070d35e7659e5ca937368b13c5cb97f2aca65953eab4ba"
+    role: dependency
+    notes: ~
+  - id: script.module.iso8601
+    version: "2.0.0"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.iso8601/script.module.iso8601-2.0.0.zip
+    sha256: "ab9641dcf00e41d02345fbca28a50624ae5e7450bb5a399895d9b1a8ca2f7775"
+    role: dependency
+    notes: ~
+  - id: script.module.jurialmunkey
+    version: "0.2.35"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.jurialmunkey/script.module.jurialmunkey-0.2.35.zip
+    sha256: "80302314cdbc5a75611b0c2866eb1c7b4e93ccadaf20208ef7eb79b79c1fb749"
+    role: dependency
+    notes: ~
+  - id: script.module.kodi-six
+    version: "0.1.3.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.kodi-six/script.module.kodi-six-0.1.3.1.zip
+    sha256: "236a7a912641805e146b605c8c29ef413d748ef3f4ddf8aa8c414717d9831383"
+    role: dependency
+    notes: ~
+  - id: script.module.pysocks
+    version: "1.7.0+matrix.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.pysocks/script.module.pysocks-1.7.0+matrix.1.zip
+    sha256: "fd043d04eecbd3f34e85a9ff35c4cdab57af8a6d6e6b90317806a0f72685c03b"
+    role: dependency
+    notes: ~
+  - id: script.module.qrcode
+    version: "6.1.0+matrix.3"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.qrcode/script.module.qrcode-6.1.0+matrix.3.zip
+    sha256: "e5c01d0ff83bdb7687c3150dcda5a01896a2281c28ffe9813f6e4763ea44f132"
+    role: dependency
+    notes: ~
+  - id: script.module.requests
+    version: "2.31.0"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.requests/script.module.requests-2.31.0.zip
+    sha256: "a5704f0fd7afb4154e1beea9b5f05a002bcd75fa581a1e5fd15ece39bf2bd38a"
+    role: dependency
+    notes: ~
   - id: script.module.six
     version: "1.16.0+matrix.1"
     url: https://mirrors.kodi.tv/addons/omega/script.module.six/script.module.six-1.16.0+matrix.1.zip
     sha256: "4197f7773f75ab9f16b3c920195acbb8b8b151b4b3c8c3e14fc4876e764e3860"
-    notes: >-
-      A leaf with no dependants and no repository semantics, chosen to prove
-      the vertical. script.plexmod, weather.ha and script.module.dateutil all
-      declare a floor of 1.15.0+matrix.1; this is the highest version the
-      Kodi Omega index publishes, which is the one Kodi's own resolver would
-      install.
+    role: dependency
+    notes: ~
+  - id: script.module.urllib3
+    version: "2.2.3"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.urllib3/script.module.urllib3-2.2.3.zip
+    sha256: "740b2d63bb50eee9fb35f01c567ec8d3588c5bbd548e2b8d280932be30d82f53"
+    role: dependency
+    notes: ~
+  - id: script.module.yaml
+    version: "6.0.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.yaml/script.module.yaml-6.0.1.zip
+    sha256: "80dabcac485c8b2746d6a6399a02cbb861671436853a8694afe645492b129c90"
+    role: dependency
+    notes: ~
+  - id: script.skinvariables
+    version: "2.2.2"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.2.zip
+    sha256: "518da4abf9a9cc4404b21961a98f42993e71ad44d37c0f011a860d80a059cf93"
+    role: dependency
+    notes: ~
+  - id: script.texturemaker
+    version: "0.2.11"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.texturemaker/script.texturemaker-0.2.11.zip
+    sha256: "051bca651c467901b12fcae56ca430402427149d801fa7a7cfd1254d386a738b"
+    role: dependency
+    notes: ~
