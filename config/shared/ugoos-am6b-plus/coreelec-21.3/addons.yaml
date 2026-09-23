@@ -9,8 +9,8 @@
 # version *and* enabled. The two are never independently desirable, so they
 # are one declaration that cannot disagree with itself (ADR 0018).
 #
-# This is a lock file, not a manifest. It lives beside profile.yaml rather
-# than inside it because an Action will eventually rewrite it to propose
+# This is a lock file, not a manifest. It lives beside the Profile's other
+# files rather than inside one because an Action will eventually rewrite it to propose
 # version bumps, and a bot editing the file humans edit for settings turns
 # every bump into a conflict with unrelated work.
 #

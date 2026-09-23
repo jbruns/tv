@@ -11,12 +11,10 @@ from __future__ import annotations
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import pytest
-import yaml
 
-from .conftest import FakeDevice
+from .conftest import FakeDevice, shipped_profile
 
 UNMANAGED = """\
 <settings version="2">
@@ -333,26 +331,11 @@ def test_the_document_survives_an_interrupted_write(
     assert device.guisettings.read_text(encoding="utf-8") == converged
 
 
-def shipped_documents(path: Path) -> list[dict[str, Any]]:
-    """The Settings Documents a committed configuration file declares."""
-    declared = yaml.safe_load(path.read_text(encoding="utf-8"))["settings_documents"]
-    assert isinstance(declared, list)
-    return declared
-
-
 def shipped_settings() -> dict[str, str]:
     """The guisettings settings the committed Profile declares, in file order."""
-    profile = (
-        Path(__file__).resolve().parents[2]
-        / "config"
-        / "shared"
-        / "ugoos-am6b-plus"
-        / "coreelec-21.3"
-        / "profile.yaml"
-    )
-    document = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    document = shipped_profile()
     constants = document["constants"]
-    documents = shipped_documents(profile)
+    documents = document["settings_documents"]
     guisettings = [
         document for document in documents if document["dialect"] == "guisettings"
     ]

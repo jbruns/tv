@@ -27,7 +27,11 @@ value.
 
 | File | Holds |
 | --- | --- |
-| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, SSH transport, who may log in, the declared Smart Playlists, the declared Shortcut Nodes, the declared documents shipped as files, and the declared Settings Documents |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml` | The Profile: the platform identity, the Profile Constants, the addresses, SSH transport, and who may log in |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/playlists.yaml` | The Profile's declared Smart Playlists |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/shortcuts.yaml` | The Profile's declared Shortcut Nodes |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/documents.yaml` | The Profile's declared documents shipped as files |
+| `config/shared/ugoos-am6b-plus/coreelec-21.3/settings.yaml` | The Profile's declared Settings Documents |
 | `config/shared/ugoos-am6b-plus/coreelec-21.3/documents/` | The sources of the documents shipped as files, one file per document |
 | `config/shared/ugoos-am6b-plus/coreelec-21.3/addons.yaml` | The Artifact Lock: one record per declared add-on — its version, its URL, and the SHA-256 of the bytes that URL must return |
 | `config/rooms/theater/room.yaml` | The Room Overlay: the room, the Device hostname, the Profile it uses, and the room-scoped Settings Documents |
@@ -822,7 +826,7 @@ configuration is read and before the Device is contacted:
 
 ```console
 $ uv run coreelec-reconciler plan --room theater
-error: …/profile.yaml names NEXTPVR_PIN, which .env does not hold
+error: …/settings.yaml names NEXTPVR_PIN, which .env does not hold
 ```
 
 `.env` is bash to the shell, which sources it. The Reconciler reads it with a
@@ -1705,7 +1709,7 @@ The scenarios are:
         for s in d["settings"]:
             if s.get("unset"):
                 print(s["setting"])
-    ' config/shared/ugoos-am6b-plus/coreelec-21.3/profile.yaml)
+    ' config/shared/ugoos-am6b-plus/coreelec-21.3/settings.yaml)
 
     ug systemctl stop kodi
     ug "cp $skin ${skin}.before"

@@ -43,11 +43,21 @@ PUBLIC_KEY = re.compile(
     r"(?: ([^\x00-\x1f\x7f]*))?"
 )
 
-# The name of the Artifact Lock, which sits beside `profile.yaml` in the same
-# Profile directory rather than inside it: an Action will eventually rewrite
-# it, and a bot editing the file humans edit for settings turns every version
-# bump into a conflict (ADR 0017).
+# The name of the Artifact Lock, which sits beside the Profile's other files in
+# the same directory rather than inside any of them: an Action will eventually
+# rewrite it, and a bot editing a file humans edit for settings turns every
+# version bump into a conflict (ADR 0017).
 ADDONS = "addons.yaml"
+
+# The Profile's Smart Playlists, Shortcut Nodes, whole documents and Settings
+# Documents, one file each beside `profile.yaml`. Each holds the one top-level
+# key it is named for, and every one is required: a file gone missing must not
+# read as an empty declaration, which would plan nothing for everything it
+# held and report a converged Device.
+PLAYLISTS = "playlists.yaml"
+SHORTCUTS = "shortcuts.yaml"
+DOCUMENTS = "documents.yaml"
+SETTINGS = "settings.yaml"
 
 # The directory holding the Artifact Patches, beside the Lock. One
 # subdirectory per add-on, and the Lock record lists the files it applies
@@ -1301,8 +1311,17 @@ def _merge(
     return tuple(merged.values())
 
 
+def _block(profile_file: Path, name: str, key: str) -> tuple[Path, Any]:
+    """One of the Profile's content blocks, from the file beside it holding it."""
+
+    source = profile_file.with_name(name)
+    if not source.is_file():
+        raise ConfigError(f"no {name} beside the Profile: {source}")
+    return source, _fields(source, name, _read(source), required=(key,))[key]
+
+
 def _resolved(config_root: Path, room: str) -> tuple[Path, Mapping[str, Any], Path]:
-    """The Room Overlay for `room`, and the Profile document it names."""
+    """The Room Overlay for `room`, and the `profile.yaml` of the Profile it names."""
 
     room_path = config_root / "rooms" / _relative(config_root, "a room", room)
     room_file = room_path / "room.yaml"
@@ -1361,10 +1380,6 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
             "addresses",
             "transport",
             "authorized_keys",
-            "smart_playlists",
-            "settings_documents",
-            "shortcut_nodes",
-            "documents",
         ),
     )
     if _text(profile_file, "profile", profile["profile"]) != declared_profile:
@@ -1397,45 +1412,42 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         profile_file, named, identity, profile["authorized_keys"]
     )
 
+    playlists_file, playlists = _block(profile_file, PLAYLISTS, "smart_playlists")
     playlists = _fields(
-        profile_file,
+        playlists_file,
         "smart_playlists",
-        _mapping(profile_file, "smart_playlists", profile["smart_playlists"]),
+        _mapping(playlists_file, "smart_playlists", playlists),
         required=("directory", "kodi_directory", "playlists"),
     )
-    directory = _text(profile_file, "playlist directory", playlists["directory"])
+    directory = _text(playlists_file, "playlist directory", playlists["directory"])
     if not directory.startswith("/"):
         raise ConfigError(
-            f"{profile_file}: the playlist directory must be absolute: {directory}"
+            f"{playlists_file}: the playlist directory must be absolute: {directory}"
         )
     kodi_directory = _text(
-        profile_file, "playlist kodi_directory", playlists["kodi_directory"]
+        playlists_file, "playlist kodi_directory", playlists["kodi_directory"]
     )
     declared = playlists["playlists"]
     if not isinstance(declared, list) or not declared:
-        raise ConfigError(f"{profile_file}: smart_playlists declares no playlists")
+        raise ConfigError(f"{playlists_file}: smart_playlists declares no playlists")
     parsed = tuple(
-        _playlist(profile_file, directory, kodi_directory, raw) for raw in declared
+        _playlist(playlists_file, directory, kodi_directory, raw) for raw in declared
     )
     by_file = {Path(playlist.path).name: playlist for playlist in parsed}
 
-    kodi = _documents(
-        profile_file,
-        named,
-        constants,
-        "settings_documents",
-        profile["settings_documents"],
-    )
+    settings_file, settings = _block(profile_file, SETTINGS, "settings_documents")
+    kodi = _documents(settings_file, named, constants, "settings_documents", settings)
     if not kodi:
-        raise ConfigError(f"{profile_file}: settings_documents declares no documents")
+        raise ConfigError(f"{settings_file}: settings_documents declares no documents")
 
-    nodes = profile["shortcut_nodes"]
+    shortcuts_file, nodes = _block(profile_file, SHORTCUTS, "shortcut_nodes")
     if not isinstance(nodes, list):
         raise ConfigError(
-            f"{profile_file}: shortcut_nodes must be a list of Shortcut Nodes, "
+            f"{shortcuts_file}: shortcut_nodes must be a list of Shortcut Nodes, "
             "and an empty list when there are none"
         )
-    whole = _whole_documents(profile_file, profile["documents"])
+    documents_file, documents = _block(profile_file, DOCUMENTS, "documents")
+    whole = _whole_documents(documents_file, documents)
 
     return DesiredState(
         room=_text(room_file, "room", overlay["room"]),
@@ -1450,10 +1462,10 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         addresses=addresses,
         authorized_keys=authorized,
         playlists=parsed,
-        documents=_merge(((profile_file, kodi), (room_file, room_documents))),
+        documents=_merge(((settings_file, kodi), (room_file, room_documents))),
         addons=addons,
         shortcut_nodes=tuple(
-            _shortcut_node(profile_file, by_file, entry) for entry in nodes
+            _shortcut_node(shortcuts_file, by_file, entry) for entry in nodes
         ),
         whole_documents=whole,
     )

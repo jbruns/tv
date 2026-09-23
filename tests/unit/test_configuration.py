@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import ADMINISTRATOR_KEY, LIFECYCLE_KEY, ROOM, FakeDevice
+from .conftest import (
+    ADMINISTRATOR_KEY,
+    LIFECYCLE_KEY,
+    PROFILE_FILES,
+    ROOM,
+    FakeDevice,
+)
 
 
 def test_an_unknown_room_is_named(
@@ -149,3 +155,45 @@ def test_the_shipped_configuration_is_readable(
     err = capsys.readouterr().err
     assert "ugoos-theater" in err
     assert "ssh" in err
+
+
+@pytest.mark.parametrize("name", sorted(PROFILE_FILES.values()))
+def test_a_profile_missing_one_of_its_files_is_refused_before_the_device_is_contacted(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+) -> None:
+    """A missing file would plan nothing for a whole cohort, and say nothing."""
+
+    log = device.root / "ssh.log"
+    monkeypatch.setenv("FAKE_DEVICE_SSH_LOG", str(log))
+    (device.profile_directory() / name).unlink()
+
+    assert reconcile("apply", "--room", "theater") == 1
+
+    assert f"no {name} beside the Profile" in capsys.readouterr().err
+    assert not log.exists()
+
+
+@pytest.mark.parametrize(("key", "name"), sorted(PROFILE_FILES.items()))
+def test_a_block_left_behind_in_profile_yaml_is_rejected(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+    key: str,
+    name: str,
+) -> None:
+    """A bad merge must not leave two places a block could be declared."""
+
+    directory = device.profile_directory()
+    block = (directory / name).read_text(encoding="utf-8")
+    with (directory / "profile.yaml").open("a", encoding="utf-8") as profile:
+        profile.write(block)
+
+    assert reconcile("plan", "--room", "theater") == 1
+
+    err = capsys.readouterr().err
+    assert "profile.yaml" in err
+    assert f"unknown key in the Profile: {key}" in err

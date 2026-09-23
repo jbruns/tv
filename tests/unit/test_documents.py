@@ -1,8 +1,8 @@
 """A document the Profile ships as a file, and the Device holds byte for byte.
 
 The Kodi lifecycle gateway is forty lines of POSIX `sh`. Embedded in
-`profile.yaml` it could be neither linted nor read as shell, so the Profile
-names a file beside itself instead, and a Run renders that file whole.
+YAML it could be neither linted nor read as shell, so the Profile names a
+file beside itself instead, and a Run renders that file whole.
 
 A missing source is a configuration mistake, named before any Device contact
 rather than halfway through a Run.

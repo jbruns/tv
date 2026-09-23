@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 
-from .conftest import EXPECTED_XSP, FakeDevice
+from .conftest import EXPECTED_XSP, FakeDevice, shipped_profile_directory
 
 SECOND_PLAYLIST = """\
     - file: NewMovies.xsp
@@ -174,15 +173,7 @@ def test_an_empty_relative_base_is_rejected_rather_than_read_as_absent(
 def test_the_shipped_profile_declares_the_whole_playlist_surface() -> None:
     """Every playlist the shell writes is declared, and none is retired."""
 
-    profile = (
-        Path(__file__).resolve().parents[2]
-        / "config"
-        / "shared"
-        / "ugoos-am6b-plus"
-        / "coreelec-21.3"
-        / "profile.yaml"
-    )
-    body = profile.read_text(encoding="utf-8")
+    body = (shipped_profile_directory() / "playlists.yaml").read_text(encoding="utf-8")
 
     for name in (
         "InProgressMovies90Days.xsp",
