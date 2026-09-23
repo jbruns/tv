@@ -1213,15 +1213,20 @@ and a factory-fresh one after `apply` and diffing the two, and reading back
 what to put in the Profile after configuring something by hand.
 
 ```console
-ssh root@ugoos-theater systemctl stop kodi
+ssh root@ugoos-theater systemctl is-active kodi   # expect inactive
 uv run coreelec-reconciler survey --room theater
-ssh root@ugoos-theater systemctl start kodi
 ```
 
 It **refuses while `kodi.service` is active.** Kodi rewrites a Settings
 Document from memory when it exits
 ([ADR 0013](../adr/0013-a-settings-document-always-takes-the-kodi-stop.md)),
 so a document read under it may not be what the Device goes on to hold.
+
+Stopping Kodi by hand is not enough on the theater Ugoos: while the Sony is on,
+or the [operational override](#hardware-acceptance) is on, Home Assistant's
+lifecycle poll starts Kodi again within thirty seconds. Turn the Sony off and
+leave the override off, and Home Assistant stops Kodi itself a minute later and
+keeps it stopped. Nothing in the survey needs the television.
 
 The report is one sorted block, so two surveys diff with no ordering noise:
 
