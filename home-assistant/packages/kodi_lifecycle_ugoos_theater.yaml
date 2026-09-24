@@ -11,8 +11,8 @@ automation:
     use_blueprint:
       path: jbruns/kodi_lifecycle.yaml
       input:
-        display: media_player.bravia_xr_65a90j
+        display: media_player.sony_theater
         display_source: HDMI 4
-        kodi: media_player.theater_kodi_theater
+        kodi: media_player.ugoos_theater
         ssh_host: ugoos-theater-lifecycle
         keep_running_hold: input_boolean.ugoos_theater_keep_running_hold
