@@ -27,6 +27,7 @@ from .conftest import (
     FakeDevice,
     document_block,
     shipped_profile,
+    skin_profile,
     text_values,
     write_document,
 )
@@ -80,8 +81,7 @@ def converge_baseline(device: FakeDevice) -> None:
 
 
 def with_skin(device: FakeDevice, settings: str = CLEARED_SETTINGS) -> str:
-    """The Profile, declaring guisettings.xml and the skin document."""
-    return device.profile_body(extra=document_block(device.skin, "skin", settings))
+    return skin_profile(device, settings)
 
 
 def one_setting(body: str) -> str:
@@ -289,34 +289,6 @@ def test_a_cleared_address_converges_and_stays_converged(
     # anything but no value.
     assert reconcile("plan", "--room", "theater") == 0
     assert "plan: no changes" in capsys.readouterr().out
-
-
-def test_every_skin_node_written_is_typed(
-    device: FakeDevice,
-    reconcile: Callable[..., int],
-) -> None:
-    """Kodi's skin loader drops an untyped node, so every write is typed."""
-
-    write_document(device.skin, SKIN_ON_DEVICE)
-    device.write_profile(
-        with_skin(
-            device,
-            CLEARED_SETTINGS
-            + '      - setting: HomeSwitcher.1108.Toggle\n        value: "true"\n',
-        )
-    )
-
-    assert reconcile("apply", "--room", "theater") == 0
-
-    root = ElementTree.parse(device.skin).getroot()
-    types = {node.get("id"): node.get("type") for node in root.findall("setting")}
-    assert types["HomeSwitcher.1101.Name"] == "string"
-    # Emptied by the clear, and still typed.
-    assert types["Hub.1107.DisableSearch"] == "string"
-    # Created by the Reconciler.
-    assert types["HomeSwitcher.1108.Toggle"] == "string"
-    # Already clear, and typed when the document is rewritten around it.
-    assert types["HomeSwitcher.1104.Toggle"] == "string"
 
 
 def test_a_room_overlay_may_clear_an_address(

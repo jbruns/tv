@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import FakeDevice, document_block, shipped_profile, write_document
+from .conftest import FakeDevice, shipped_profile, write_document
 
 REASON = "the shell writes 0 or 1 and cannot emit 2"
 
@@ -36,9 +36,13 @@ DIVERGENT = f"""\
 
 
 def with_setting(device: FakeDevice, block: str) -> str:
-    """The Profile, declaring the skin document and nothing else new."""
+    """The Profile, declaring `block` as guisettings.xml's only settings.
 
-    return device.profile_body(extra=document_block(device.skin, "addon_v2", block))
+    `profile_body` ends on the guisettings.xml block's `settings:` key, so
+    `block` continues it.
+    """
+
+    return device.profile_body(settings={}, extra=block)
 
 
 def test_a_declared_divergence_is_reported_with_the_change_it_explains(
@@ -50,7 +54,7 @@ def test_a_declared_divergence_is_reported_with_the_change_it_explains(
 
     device.write_profile(with_setting(device, DIVERGENT))
     write_document(
-        device.skin,
+        device.guisettings,
         '<settings version="2">'
         '<setting id="general.addonupdates">1</setting></settings>',
     )
@@ -58,7 +62,7 @@ def test_a_declared_divergence_is_reported_with_the_change_it_explains(
     assert reconcile("plan", "--room", "theater") == 0
 
     report = capsys.readouterr().out
-    assert f"update {device.skin}#general.addonupdates: 1 -> 2" in report
+    assert f"update {device.guisettings}#general.addonupdates: 1 -> 2" in report
     assert f"divergent: {REASON}" in report
 
 
@@ -71,7 +75,7 @@ def test_an_address_that_agrees_says_nothing_about_diverging(
 
     device.write_profile(with_setting(device, DIVERGENT))
     write_document(
-        device.skin,
+        device.guisettings,
         '<settings version="2">'
         '<setting id="general.addonupdates">2</setting></settings>',
     )
@@ -111,12 +115,7 @@ def test_a_divergence_is_declared_per_address_and_not_on_the_document(
 ) -> None:
     """The safeguard is that one address diverging says nothing about the next."""
 
-    device.write_profile(
-        device.profile_body(
-            extra=document_block(device.skin, "addon_v2", DIVERGENT)
-            + f"    divergent: {REASON}\n"
-        )
-    )
+    device.write_profile(with_setting(device, DIVERGENT + f"    divergent: {REASON}\n"))
 
     assert reconcile("plan", "--room", "theater") == 1
 

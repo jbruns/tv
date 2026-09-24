@@ -72,6 +72,12 @@ def _resolves(node: ElementTree.Element, dialect: str) -> bool:
     return dialect != SKIN or node.get("type") in _SKIN_TYPES
 
 
+def _value(node: ElementTree.Element, dialect: str) -> str | None:
+    """What `node` holds, from wherever `dialect` carries it."""
+
+    return node.get("value") if dialect == ADDON_V1 else node.text
+
+
 class SettingsError(Exception):
     """A settings document that cannot be read in its declared dialect."""
 
@@ -342,7 +348,7 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
         if parent is root:
             if not _resolves(node, dialect):
                 return None
-            return node.get("value") if dialect == ADDON_V1 else node.text
+            return _value(node, dialect)
     return None
 
 
@@ -394,8 +400,7 @@ def undeclared(
             or not _resolves(node, dialect)
         ):
             continue
-        value = node.get("value") if dialect == ADDON_V1 else node.text
-        held.append((setting, value or ""))
+        held.append((setting, _value(node, dialect) or ""))
     return held
 
 

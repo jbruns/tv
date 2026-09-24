@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 import pytest
 
-from .conftest import FakeDevice, document_block, write_document
+from .conftest import FakeDevice, skin_profile, typed_values, write_document
 
 SKIN_SETTINGS = """\
       - setting: HomeSwitcher.1101.Name
@@ -28,28 +28,16 @@ SKIN_SETTINGS = """\
         value: "true"
       - setting: Hub.1107.DisableSearch
         unset: true
+      - setting: HomeSwitcher.1104.Toggle
+        unset: true
 """
-
-
-def with_skin(device: FakeDevice) -> str:
-    return device.profile_body(extra=document_block(device.skin, "skin", SKIN_SETTINGS))
-
-
-def nodes(device: FakeDevice) -> dict[str, tuple[str | None, str | None]]:
-    """Every setting the skin document holds, as id to (type, text)."""
-
-    root = ElementTree.parse(device.skin).getroot()
-    return {
-        node.get("id") or "": (node.get("type"), node.text)
-        for node in root.findall("setting")
-    }
 
 
 def test_a_fresh_skin_document_is_written_with_typed_nodes(
     device: FakeDevice,
     reconcile: Callable[..., int],
 ) -> None:
-    device.write_profile(with_skin(device))
+    device.write_profile(skin_profile(device, SKIN_SETTINGS))
 
     assert reconcile("apply", "--room", "theater") == 0
 
@@ -57,7 +45,9 @@ def test_a_fresh_skin_document_is_written_with_typed_nodes(
     # Kodi writes a skin document's root without a version, and so does the
     # shell.
     assert root.attrib == {}
-    assert nodes(device) == {
+    # A Cleared Address the document does not hold is already clear, so
+    # nothing is created for it.
+    assert typed_values(device.skin) == {
         "HomeSwitcher.1101.Name": ("string", "TV Shows"),
         "HomeSwitcher.1101.Toggle": ("string", "true"),
     }
@@ -70,7 +60,7 @@ def test_an_untyped_node_observes_as_unset_and_is_typed_when_applied(
 ) -> None:
     """The node Kodi drops must not look converged."""
 
-    device.write_profile(with_skin(device))
+    device.write_profile(skin_profile(device, SKIN_SETTINGS))
     write_document(
         device.skin,
         "<settings>"
@@ -85,25 +75,37 @@ def test_an_untyped_node_observes_as_unset_and_is_typed_when_applied(
     assert "HomeSwitcher.1101.Toggle" not in report
 
     assert reconcile("apply", "--room", "theater") == 0
-    assert nodes(device)["HomeSwitcher.1101.Name"] == ("string", "TV Shows")
+    assert typed_values(device.skin)["HomeSwitcher.1101.Name"] == ("string", "TV Shows")
 
     capsys.readouterr()
     assert reconcile("plan", "--room", "theater") == 0
     assert "HomeSwitcher.1101" not in capsys.readouterr().out
 
 
-def test_a_cleared_skin_address_is_emptied_and_stays_typed(
+def test_every_node_a_rewrite_writes_is_typed(
     device: FakeDevice,
     reconcile: Callable[..., int],
 ) -> None:
-    device.write_profile(with_skin(device))
+    """Emptied, created and already-clear nodes alike carry `type="string"`."""
+
     write_document(
         device.skin,
         "<settings>"
         '<setting id="Hub.1107.DisableSearch" type="string">true</setting>'
+        # What Kodi materialises for a skin string the skin merely references.
+        '<setting id="HomeSwitcher.1104.Toggle" />'
         "</settings>",
     )
+    device.write_profile(skin_profile(device, SKIN_SETTINGS))
 
     assert reconcile("apply", "--room", "theater") == 0
 
-    assert nodes(device)["Hub.1107.DisableSearch"] == ("string", None)
+    assert typed_values(device.skin) == {
+        # Emptied by the clear.
+        "Hub.1107.DisableSearch": ("string", None),
+        # Already clear, and rewritten with the document around it.
+        "HomeSwitcher.1104.Toggle": ("string", None),
+        # Created.
+        "HomeSwitcher.1101.Name": ("string", "TV Shows"),
+        "HomeSwitcher.1101.Toggle": ("string", "true"),
+    }

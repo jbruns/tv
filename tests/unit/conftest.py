@@ -470,6 +470,12 @@ def document_block(
     return f"  - {key}: {path}\n    dialect: {dialect}\n    settings:\n{settings}"
 
 
+def skin_profile(device: FakeDevice, settings: str) -> str:
+    """The Profile, declaring guisettings.xml and Arctic Fuse's `skin` document."""
+
+    return device.profile_body(extra=document_block(device.skin, "skin", settings))
+
+
 def write_document(document: Path, body: str) -> None:
     """Puts `body` on the fake Device, creating the directories it needs."""
 
@@ -482,6 +488,16 @@ def text_values(document: Path) -> dict[str, str | None]:
 
     root = ElementTree.parse(document).getroot()
     return {node.get("id") or "": node.text for node in root.findall("setting")}
+
+
+def typed_values(document: Path) -> dict[str, tuple[str | None, str | None]]:
+    """Every setting a `skin` document holds, as id to (type, element text)."""
+
+    root = ElementTree.parse(document).getroot()
+    return {
+        node.get("id") or "": (node.get("type"), node.text)
+        for node in root.findall("setting")
+    }
 
 
 def attribute_values(document: Path) -> dict[str, str | None]:
