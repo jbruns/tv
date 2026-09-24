@@ -12,7 +12,7 @@ integrations.
 - [Profile reference](docs/reference/profile.md)
 - [Python development](docs/development.md)
 - [Network onboarding guide](docs/network/pfsense-plus-26.07-onboarding.md)
-- [Ugoos Kodi lifecycle guide](docs/home-assistant/ugoos-kodi-lifecycle.md)
+- [Kodi Lifecycle guide](docs/home-assistant/ugoos-kodi-lifecycle.md)
 - [Theater overview](rooms/theater/README.md)
 
 ## Room index
@@ -57,9 +57,8 @@ docs/
 src/coreelec_reconciler/      The Reconciler
 config/shared/                Profiles
 config/rooms/                 Room Overlays
-scripts/                      Repository Markdown checks
+scripts/                      Repository Markdown and Home Assistant checks
 tests/unit/                   Reconciler boundary tests
-tests/                        Home Assistant package checks
 rooms/
   theater/                    Installed Theater inventory and device guides
   living/                     Living room template and device-guide index

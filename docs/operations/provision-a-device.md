@@ -21,9 +21,6 @@ On the controller:
 
 - The administrator SSH key named by the Profile exists. The current Profile
   uses `~/.ssh/coreelec_admin_ed25519`, and its `.pub` file must sit beside it.
-- Home Assistant has the Device's Keep-Running Hold available. Before any
-  `apply` that may restart Kodi, turn the Hold on so Kodi Lifecycle does not
-  stop Kodi mid-Run. Turn it off afterwards; it is persistent.
 
 Run the commands below from the repository root.
 
@@ -75,8 +72,8 @@ SSH prompts for the Device's root password. There is no stored password and no
 
 ## 5. Plan, apply, plan
 
-Turn on the Device's Keep-Running Hold before `apply` if the first `plan` shows
-Kodi setting Changes.
+Kodi Lifecycle acts only on Display transitions, so a Kodi that `apply`
+stops stays stopped until the Reconciler starts it again; no Hold is needed.
 
 ```console
 uv run coreelec-reconciler plan --room <room>
@@ -84,8 +81,7 @@ uv run coreelec-reconciler apply --room <room>
 uv run coreelec-reconciler plan --room <room>
 ```
 
-The final `plan` should report no Changes. Turn the Keep-Running Hold off when
-the Run is complete, even if the Run failed.
+The final `plan` should report no Changes.
 
 ## 6. Complete Guided Actions
 
@@ -110,8 +106,7 @@ ssh -i ~/.ssh/coreelec_admin_ed25519 root@<hostname> systemctl stop kodi
 uv run coreelec-reconciler survey --room <room>
 ```
 
-Keep the Display off while surveying, so Kodi Lifecycle does not start Kodi
-again.
+Do not turn the Display on while surveying; that starts Kodi again.
 
 ## Recovery
 

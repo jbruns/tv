@@ -16,7 +16,7 @@ and `--room theater`.
   link, to the Denon.
 - **CEC:** retain navigation, but do not let Kodi startup or shutdown power the
   Sony on or off; Home Assistant and user actions own television power.
-- **Kodi entity:** `media_player.theater_kodi_theater`
+- **Kodi entity:** `media_player.ugoos_theater`
 - **Lifecycle SSH alias:** `ugoos-theater-lifecycle`
 
 ## Shared guides

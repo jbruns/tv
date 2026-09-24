@@ -23,3 +23,11 @@ else
 fi
 
 run python3 scripts/check_markdown.py
+
+if git diff --cached --name-only | grep -q '^home-assistant/'; then
+  if command -v uv >/dev/null 2>&1; then
+    run scripts/check_home_assistant.sh
+  else
+    printf 'pre-commit: uv missing, skipping Home Assistant check_config\n' >&2
+  fi
+fi

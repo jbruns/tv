@@ -30,7 +30,12 @@ uv run mypy
 uv run pytest -q
 python3 scripts/check_markdown.py
 git diff --check
+scripts/check_home_assistant.sh
 ```
+
+`scripts/check_home_assistant.sh` runs Home Assistant's `check_config`
+against `home-assistant/`, fetching Home Assistant with `uvx`. The hook runs it
+only when a commit touches `home-assistant/`.
 
 Install the pre-commit hook so the same checks run before each commit. CI is
 Linux-only per [ADR 0011](adr/0011-linux-only-ci-and-boundary-tests.md), so on
