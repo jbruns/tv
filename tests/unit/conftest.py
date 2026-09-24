@@ -625,7 +625,7 @@ class FakeDevice:
 
     @property
     def skin(self) -> Path:
-        """Arctic Fuse's document, in the addon_v2 form."""
+        """Arctic Fuse's document, in the skin form."""
         return self.userdata / "addon_data" / "skin.arctic.fuse.3" / "settings.xml"
 
     @property

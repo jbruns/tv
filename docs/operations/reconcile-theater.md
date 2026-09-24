@@ -568,6 +568,7 @@ stopped.
 | --- | --- | --- |
 | `guisettings` | `<settings version="2"><setting id="x">y</setting></settings>` | `guisettings.xml` |
 | `addon_v2` | the same, for an add-on | an add-on whose settings definition declares a version, such as `pvr.nextpvr` |
+| `skin` | `<settings><setting id="x" type="string">y</setting></settings>` | a skin's own `settings.xml`, such as Arctic Fuse's |
 | `addon_v1` | `<setting id="x" value="y" />` | an add-on whose settings definition carries **no** version attribute, such as `weather.ha` |
 | `json` | `{"library": {"seasons": "509"}}`, addressed by dotted path | an add-on that keeps settings as JSON, such as `script.skinvariables` |
 | `shell_vars` | `TIMEZONE=America/Los_Angeles`, addressed by key | a document the operating system reads, such as `/storage/.cache/timezone` |
@@ -575,6 +576,18 @@ stopped.
 `guisettings` and `addon_v2` are the same shape on the wire. They are named
 apart because they are different documents, and what a future Kodi does to
 one it need not do to the other.
+
+`skin` carries its value as element text too, but Kodi core reads it
+(`CSkinInfo`) rather than an add-on settings manager, and that loader keeps
+only a node typed `string` or `bool`. It drops an untyped node without
+logging, so the skin starts from its own defaults and later rewrites the file
+from memory. Every node the Reconciler writes in this dialect is therefore
+typed `string`, an emptied Cleared Address included, and an untyped node
+reads as unset. Reading it as its text would let Verification report
+Convergence while the skin showed its defaults. A skin's root carries no
+version attribute, because Kodi writes it without one. The format is Kodi
+core's, not `script.skinvariables`', which only sets values through
+`Skin.SetString`.
 
 `json` is the one dialect that also picks the *parser*. A document declared
 `json` that does not parse as JSON, or whose top level is not an object, is an
@@ -778,10 +791,10 @@ removes it and will keep doing so as the Recovery Baseline; the Device
 resolves no value either way, so the two engines do not revert each other over
 the difference.
 
-The Reconciler writes no `type` attribute. `set_skin_setting` writes one, but
-Kodi's own serialiser writes only `id`, plus `default` when a value is at its
-default. `type` is the shell's invention; a node that already carries one
-keeps it through a rewrite, which is enough.
+In the `skin` dialect every node the Reconciler writes, an emptied one
+included, carries `type="string"`, as `set_skin_setting` does: Kodi's skin
+loader drops an untyped node (see [Dialects](#dialects)). A Kodi-materialised
+node that already resolves no value plans no Change of its own.
 
 **A Cleared Address is not a Managed Absence.** Nothing is deleted: the hub
 stays gone because it resolves nothing.
