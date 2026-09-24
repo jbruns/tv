@@ -138,9 +138,7 @@ data:
   command: status
 ```
 
-It runs `timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
-ugoos-theater-lifecycle status`. The reply's stdout is exactly `running`,
-`stopped`, or `failed`.
+The reply's stdout is exactly `running`, `stopped`, or `failed`.
 
 ## 4. Behaviour
 

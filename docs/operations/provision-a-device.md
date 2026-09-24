@@ -72,8 +72,13 @@ SSH prompts for the Device's root password. There is no stored password and no
 
 ## 5. Plan, apply, plan
 
-Kodi Lifecycle acts only on Display transitions, so a Kodi that `apply`
-stops stays stopped until the Reconciler starts it again; no Hold is needed.
+No Keep-Running Hold is needed. Kodi Lifecycle acts only on Display
+transitions and on Home Assistant start, so a Kodi that `apply` stops stays
+stopped until the Reconciler starts it again. Two things still reach into a
+Run: a stop delay already counting down, and Home Assistant starting while the
+Display is on. If the Display went off within the last 10 minutes, wait out the
+stop delay first, and do not change the Display or restart Home Assistant
+while `apply` runs.
 
 ```console
 uv run coreelec-reconciler plan --room <room>
