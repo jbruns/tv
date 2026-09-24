@@ -280,7 +280,7 @@ def test_a_change_arms_the_stub_and_the_restart_fires_the_rebuild(
     assert f"arming {device.compiled}" in out
     assert f"rebuilt {device.compiled}" in out
     # The stub is written while Kodi is down and the restart is what fires it:
-    # no JSON-RPC, no kodi-send, no EventServer.
+    # no JSON-RPC and no EventServer.
     assert device.effects == ["stop kodi.service", "start kodi.service"]
     assert device.compiled.read_text(encoding="utf-8") == REBUILT
 

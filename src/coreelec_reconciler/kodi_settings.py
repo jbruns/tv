@@ -28,7 +28,7 @@ picks the parser, which the XML dialects did not have to do.
 Kodi resolves a setting ID without regard to case and reads only the direct
 `<setting>` children of the root, while a recursive reader sees nested copies
 too. The canonical node is therefore the one Kodi reads: every other match at
-any depth is removed, matching the Recovery Baseline's behaviour.
+any depth is removed.
 """
 
 from __future__ import annotations
@@ -85,10 +85,8 @@ class SettingsError(Exception):
 def _empty(dialect: str) -> ElementTree.Element:
     """The root of a document the Device does not have yet.
 
-    The shell provisioner writes a version attribute for the text dialects and
-    none for `addon_v1` or a skin, so a document the Reconciler creates is the
-    document the shell would have created. Kodi writes a skin's root without
-    one too.
+    Kodi's text dialects use a versioned root. `addon_v1` documents and skin
+    settings do not; Kodi writes a skin's root without one too.
     """
 
     attributes = {} if dialect in (ADDON_V1, SKIN) else {"version": "2"}
@@ -246,8 +244,7 @@ def _holder(
 def render_json(body: Any) -> str:
     """Sorted, four-space JSON: what `script.skinvariables` writes itself.
 
-    The Recovery Baseline writes the same bytes, so the two engines agree on
-    every document this add-on reads.
+    This is the stable form the add-on writes and reads itself.
     """
 
     return json.dumps(body, ensure_ascii=False, indent=4, sort_keys=True) + "\n"
@@ -282,7 +279,7 @@ def _rewrite_shell_vars(
     declared key the document does not hold is appended.
 
     A Cleared Address removes the line. `KEY=` is not the absence of a value
-    to a shell that sources the file — it is the empty string, and
+    to a process that sources the file — it is the empty string, and
     `EnvironmentFile` would set it — so writing one would be a value rather
     than the lack of one, the same reason JSON clears by removing the key.
     """
@@ -407,13 +404,12 @@ def undeclared(
 def rewrite(
     document: str | None, dialect: str, settings: Mapping[str, str | None]
 ) -> str:
-    """`document` with `settings` set, serialised the way the shell writes it.
+    """`document` with `settings` set, in its declared dialect.
 
     A value of None is a Cleared Address. In the XML dialects, clearing writes
-    an empty node rather than removing one — the Device resolves no value from
-    either, and the two engines therefore do not revert each other over the
-    difference — but an address the document does not hold is already clear,
-    so nothing is created for it. JSON has no empty node, and `null` is a
+    an empty node rather than removing one; the Device resolves no value from
+    either. An address the document does not hold is already clear, so nothing
+    is created for it. JSON has no empty node, and `null` is a
     value rather than the absence of one, so clearing there removes the key,
     and `shell_vars` removes the line for the same reason.
 

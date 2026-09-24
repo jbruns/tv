@@ -8,14 +8,9 @@ integrations.
 ## Shared guides
 
 - [Shared room setup runbook](docs/runbook.md)
+- [Provision a Device](docs/operations/provision-a-device.md)
+- [Profile reference](docs/reference/profile.md)
 - [Python development](docs/development.md)
-- [Reconciling the theater Ugoos](docs/operations/reconcile-theater.md)
-- [Shell write-set map and permission guard](docs/reference/shell-write-set-map.md)
-- [Legacy shell write-set permissions](docs/operations/shell-write-set-permissions.md)
-- [CoreELEC system decision](docs/decisions/ugoos-coreelec-21.3-system.md)
-- [Shared Ugoos setup guide](docs/devices/ugoos-am6b-plus/coreelec-21.3.md)
-- [Ugoos provisioning operations guide](docs/operations/provision-ugoos.md)
-- [Room desired-state reference](docs/devices/ugoos-am6b-plus/room-desired-state.md)
 - [Network onboarding guide](docs/network/pfsense-plus-26.07-onboarding.md)
 - [Ugoos Kodi lifecycle guide](docs/home-assistant/ugoos-kodi-lifecycle.md)
 - [Theater overview](rooms/theater/README.md)
@@ -42,49 +37,37 @@ integrations.
 README.md                     Stable repository index
 AGENTS.md                     Working rules for agents and contributors
 CONTEXT.md                    Domain glossary
-.env.example                  Shared secret template; copy to .env locally
+.env.example                  Named Value template; copy to .env locally
 pyproject.toml                Reconciler package and tooling configuration
-provision-coreelec.sh         Shared CoreELEC baseline deployment
-configure-coreelec-addons.sh  Shared add-on validation and workflows
-configure-kodi-lifecycle.sh   Shared lifecycle gateway deployment
 .python-version               Pinned Python version
 uv.lock                       Frozen Python dependency lock
 skills-lock.json              Pinned agent skills, restored into .agents/
-.github/                      CI workflow
+.github/                      CI workflows
 .githooks/                    Local pre-commit checks; enable with core.hooksPath
 docs/
   adr/                        Architecture decision records
   agents/                     Agent working procedures
-  decisions/                  Durable system decisions
-  devices/                    Shared device setup guides
   home-assistant/             Shared Home Assistant and lifecycle guides
   network/                    Shared network onboarding and control rules
-  operations/                 Shared provisioning and reconciliation procedures
-  reference/                  Shell write-set map and other references
+  operations/                 Provisioning a Device
+  reference/                  Profile reference
   research/                   Retained historical records
   runbook.md                  Shared room setup workflow
   development.md              Python development
 src/coreelec_reconciler/      The Reconciler
-config/rooms/                 Room Overlays
 config/shared/                Profiles
-inventory/                    Ownership ledger and shell write-set map
-lib/                          Reusable shell libraries
-scripts/                      Repository and shell write-set guards
+config/rooms/                 Room Overlays
+scripts/                      Repository Markdown checks
 tests/unit/                   Reconciler boundary tests
-tests/                        Legacy shell validation coverage
+tests/                        Home Assistant package checks
 rooms/
   theater/                    Installed Theater inventory and device guides
   living/                     Living room template and device-guide index
   guest/                      Guest room template and device-guide index
   master/                     Master room template and device-guide index
-code/                         Reusable automation documentation
 home-assistant/               Deployed Home Assistant assets
 ```
 
-`provision-coreelec.sh` provisions a Device end to end and is the Recovery
-Baseline. The Reconciler shadows it on the Smart Playlist and Kodi settings
-Resource Types on the theater Ugoos: both engines write those addresses and
-hold the same values, and the shell keeps ownership until it is deleted
-wholesale. See [Reconciling the theater Ugoos](docs/operations/reconcile-theater.md),
-[Python development](docs/development.md), and
-[ADR 0012](docs/adr/0012-shadow-the-shell-and-retire-it-wholesale.md).
+The Reconciler provisions every Device from its Profile and Room Overlay. See
+[Provision a Device](docs/operations/provision-a-device.md) to run it and the
+[Profile reference](docs/reference/profile.md) to change what it declares.

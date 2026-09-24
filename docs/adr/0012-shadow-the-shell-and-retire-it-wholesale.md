@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0021
 ---
 
 # Shadow the shell, retire it wholesale, and track progress in the ledger

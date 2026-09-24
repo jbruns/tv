@@ -126,8 +126,8 @@ CURL_STUB = """#!/bin/sh
 # exercised end to end without reaching the internet. The URL's last path
 # segment names the file, the way it does on every mirror we pin.
 #
-# This is the same boundary as the stub `ssh` above: the Reconciler shells
-# out to a client, and the test stands a client in front of it.
+# This is the same boundary as the stub `ssh` above: the Reconciler invokes a
+# client, and the test stands a client in front of it.
 url=""
 output=""
 while [ $# -gt 0 ]; do
@@ -351,9 +351,8 @@ SSHD_DOCUMENT = f"""\
 # The address the Reconciler knows `tz-data.service` reads.
 TIMEZONE_CACHE = "/storage/.cache/timezone"
 
-# The one add-on this slice pins, as the Artifact Lock states it. The URL is
-# the one the shell's `provision.conf` holds; the stub `curl` serves the
-# archive the fixture builds under the same last path segment.
+# The one add-on this slice pins, as the Artifact Lock states it. The stub
+# `curl` serves the archive the fixture builds under the same last path segment.
 ADDON_ID = "script.module.six"
 ADDON_VERSION = "1.16.0+matrix.1"
 ADDON_URL = (

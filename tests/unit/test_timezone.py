@@ -8,7 +8,7 @@ verified by reading the link it wrote.
 
 `locale.timezone` in `guisettings.xml` records the same fact for Kodi. Both
 take the `timezone` Profile Constant, so the Device cannot end up showing one
-zone in Kodi and another at the shell.
+zone in Kodi and another in the operating system.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def test_the_declared_mode_is_what_the_document_is_written_with(
     reconcile: Callable[..., int],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The shell writes this one 0644, and `sshd.conf` will want 0600."""
+    """The declared mode is applied to the written document."""
 
     declare(device)
     arm_tz_data(device, monkeypatch)

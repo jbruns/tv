@@ -5,10 +5,8 @@ CoreELEC stays awake on wired LAN; Home Assistant starts and stops Kodi,
 powers off the Sony when idle, and leaves the host awake on failure. Wake-on-
 LAN, suspend, shutdown, reboot, and power-cycling are outside the lifecycle.
 
-For the platform boundary, read the
-[Ugoos AM6B+ CoreELEC 21.3 system decision](../decisions/ugoos-coreelec-21.3-system.md).
-For shared provisioning order, use
-[Provision a Ugoos CoreELEC system](../operations/provision-ugoos.md). For
+To provision the Device, use
+[Provision a Device](../operations/provision-a-device.md). For
 Sony BRAVIA setup and the theater integration prerequisites, follow the
 [Theater Sony guide](../../rooms/theater/devices/sony-xr-65a90j.md).
 
@@ -17,12 +15,10 @@ Sony BRAVIA setup and the theater integration prerequisites, follow the
 ```text
 CoreELEC wizard
 -> DHCP reservation and DNS
--> shared baseline provisioning (CEC Ignore)
--> post-deployment add-on checks
--> restricted lifecycle gateway deployment
+-> Home Assistant controller identity (section 2)
+-> Reconciler bootstrap and apply, which installs the gateway (section 3)
 -> Sony BRAVIA and Kodi integrations
 -> theater Home Assistant package
--> room-specific playback configuration
 ```
 
 ## Exact package contract
@@ -48,72 +44,12 @@ CoreELEC wizard
 | Idle Sony script | `script.ugoos_theater_power_off_idle_sony` |
 | Restricted commands | `shell_command.ugoos_theater_kodi_start`, `shell_command.ugoos_theater_kodi_stop`, `shell_command.ugoos_theater_kodi_status` |
 
-## 1. Confirm the CoreELEC baseline
+## 1. CEC power isolation
 
-Run shared baseline provisioning first:
-
-```bash
-./provision-coreelec.sh --target ugoos-theater
-```
-
-Review the generated report under `coreelec-provision-reports/`. The required
-CEC power-isolation results are:
-
-```text
-cec.tv_off_action.expected=36028
-cec.tv_off_action.observed=36028
-cec.tv_off_action.status=ok
-cec.activate_source.expected=0
-cec.activate_source.observed=0
-cec.activate_source.status=ok
-cec.wake_devices.expected=231
-cec.wake_devices.observed=231
-cec.wake_devices.status=ok
-cec.standby_devices.expected=231
-cec.standby_devices.observed=231
-cec.standby_devices.status=ok
-cec.standby_tv_on_pc_standby.expected=0
-cec.standby_tv_on_pc_standby.observed=0
-cec.standby_tv_on_pc_standby.status=ok
-```
-
+The Profile declares the CEC adapter's settings, so every `apply` holds them.
 Kodi keeps CEC enabled for navigation, but it neither claims the active source
-nor sends TV power-on or standby commands when Kodi starts or stops. The
-peripheral XML must contain direct-child settings with value attributes.
-
-### CEC-only maintenance after lifecycle control is active
-
-Before any provisioning run that may stop or restart Kodi, turn on
-`input_boolean.ugoos_theater_keep_kodi_running`, confirm the lifecycle state is
-`running`, and confirm `media_player.theater_kodi_theater` is available. Keep
-the override enabled throughout the CEC transaction and while installing and
-restarting the corrected Home Assistant package.
-
-Run only the CEC component:
-
-```bash
-./provision-coreelec.sh \
-  --target ugoos-theater \
-  --component cec \
-  --yes
-```
-
-The report must show `components.requested=cec`,
-`components.effective=cec`, `components.dependencies_added=none`,
-`deployment_state=committed`, `verification_result=pass`, and
-`verification_failures=0`, plus `status=ok` for all five CEC checks listed
-above. It must not contain an Arctic Fuse verdict. Verification retries full
-device-local samples for up to 60 seconds before the same transaction engine
-commits or rolls back the CEC-owned path.
-
-Do not turn the override off merely because the repository files are updated.
-First install `/config/packages/ugoos_theater_kodi_lifecycle.yaml`, run
-`ha core check`, restart Home Assistant, and complete the documented live
-recovery validation. Until that rollout occurs, neither the corrected package
-nor the corrected CEC policy should be treated as live. The provisioning
-rollback commands and recovery fields are unchanged; follow
-[the shared provisioning workflow](../operations/provision-ugoos.md#full-baseline-and-scoped-maintenance).
-No Sony or Denon settings or service calls are part of this maintenance run.
+nor sends TV power-on or standby commands when Kodi starts or stops. See the
+[Profile reference](../reference/profile.md#naming-a-document-the-profile-cannot-know).
 
 ## 2. Create the Home Assistant controller identity
 
@@ -129,8 +65,8 @@ ssh-keygen -t ed25519 -N '' \
 chmod 600 /config/.ssh/ugoos_kodi_lifecycle_ed25519
 ```
 
-Keep both controller key files out of this repository. The private key stays on
-Home Assistant except for the brief deployment option below.
+Keep both controller key files out of this repository. The private key never
+leaves Home Assistant.
 
 ### Authenticate the Ugoos server key before trusting it
 
@@ -160,34 +96,18 @@ fi
 rm -f /config/.ssh/ugoos-theater.candidate
 ```
 
-Install the same authenticated host entry in the deploying user's
-`$HOME/.ssh/known_hosts` for the exact hostname or address passed to `--target`.
+## 3. Install the restricted lifecycle gateway
 
-## 3. Deploy the restricted lifecycle gateway
+The Reconciler installs the gateway. Put the one-line contents of
+`/config/.ssh/ugoos_kodi_lifecycle_ed25519.pub` into the controller's `.env` as
+`COREELEC_LIFECYCLE_PUBLIC_KEY`, then run `apply` as in
+[Provision a Device](../operations/provision-a-device.md).
 
-Either securely make the controller identity available to the Mac only for
-gateway deployment, or run the command from a trusted checkout that can read
-both controller key files:
-
-```bash
-./configure-kodi-lifecycle.sh \
-  --target ugoos-theater \
-  --controller-public-key "$HOME/.ssh/ugoos_kodi_lifecycle_ed25519.pub" \
-  --controller-identity "$HOME/.ssh/ugoos_kodi_lifecycle_ed25519"
-```
-
-Neither file belongs in the repository. If you temporarily copy the Home
-Assistant private or public key to the Mac, remove that copy immediately after
-deployment.
-
-The command installs `/storage/.config/kodi-lifecycle`, replaces only the
-marked `homeassistant-ugoos-kodi-lifecycle` entry in
-`/storage/.ssh/authorized_keys`, verifies restricted `status`, `start`, `stop`,
-and arbitrary-command denial, restores the original Kodi state, and writes a
-redacted report under `coreelec-lifecycle-reports/`.
-
-Controller denial verification passes only with exit `2`, empty stdout, and
-exactly `Allowed commands: start, stop, status` on stderr.
+`apply` ships `/storage/.config/kodi-lifecycle` and writes the
+`homeassistant-ugoos-kodi-lifecycle` entry into
+`/storage/.ssh/authorized_keys` behind a forced command that runs only that
+gateway. The gateway accepts `start`, `stop` and `status`; anything else exits
+`2` with `Allowed commands: start, stop, status` on stderr.
 
 ## 4. Install the Home Assistant package
 
@@ -277,13 +197,6 @@ Valid lifecycle stdout is exactly `running`, `stopped`, or `failed`.
 
 ## 6. Operations and diagnostics
 
-Review lifecycle deployment reports on the Mac:
-
-```bash
-grep -E '^(deployment_state|key_mode|transaction|restored_state|file_rollback_state|service_restore_state|wrapper_path)=|^restricted\.' \
-  coreelec-lifecycle-reports/ugoos-theater-*.txt
-```
-
 Check Kodi service state over the administrator identity, not the restricted
 controller key:
 
@@ -315,43 +228,10 @@ To retry a failed Sony idle episode, first turn off
 `input_boolean.ugoos_theater_idle_poweroff_sent`, then run
 `script.ugoos_theater_power_off_idle_sony`.
 
-## 7. Transaction recovery and key rotation
+## 7. Key rotation
 
-Use lifecycle CLI recovery commands for an unresolved transaction; do not
-manually delete broad sections of `/storage/.ssh/authorized_keys`.
-
-```bash
-./configure-kodi-lifecycle.sh --target ugoos-theater --inspect-transaction
-./configure-kodi-lifecycle.sh --target ugoos-theater --rollback-transaction
-./configure-kodi-lifecycle.sh --target ugoos-theater --finalize-transaction
-```
-
-If the report names a transaction directory, pass that directory **exactly**:
-
-```bash
-./configure-kodi-lifecycle.sh --target ugoos-theater --inspect-transaction <transaction-dir-from-report>
-./configure-kodi-lifecycle.sh --target ugoos-theater --rollback-transaction <transaction-dir-from-report>
-./configure-kodi-lifecycle.sh --target ugoos-theater --finalize-transaction <transaction-dir-from-report>
-```
-
-Recovery modes reject `--dry-run` before any SSH call. `--inspect-transaction`
-is read-only but does connect.
-
-Use `--finalize-transaction [EXACT_DIR]` only for an already verified
-installation reported as `committed-cleanup-pending`. It retries cleanup, not
-verification or rollback. Verified rollback cleanup can similarly report
-`cleanup-pending` until the pointer is removed, then `completed`.
-
-Rollback restores and verifies both files and Kodi service state. If restoring
-Kodi fails, repair the service over the administrator channel and retry the
-same rollback; a healthy file rollback alone is not completion.
-
-For key rotation, create a new Home Assistant controller key, update
-`/config/.ssh/ugoos-kodi-lifecycle.conf` if the filename changes, then rerun
-`./configure-kodi-lifecycle.sh` with the new `--controller-public-key` and
-matching `--controller-identity`. Remove the old Home Assistant and temporary
-Mac key copies only after the replacement report shows
-`deployment_state=committed`.
-
-A complete committed-key removal with no replacement is not implemented by the
-lifecycle CLI.
+Create a new Home Assistant controller key, update
+`/config/.ssh/ugoos-kodi-lifecycle.conf` if the filename changes, put the new
+public key in `.env` as `COREELEC_LIFECYCLE_PUBLIC_KEY`, and run `apply`. The
+Reconciler replaces the marked entry, so the old key stops working in the same
+Run. Remove the old key from Home Assistant afterwards.

@@ -5,8 +5,6 @@ This context describes the desired configuration of the repository's CoreELEC/Ko
 ## Language
 
 A term is the Reconciler's unless a `_Realised by_` line names another engine.
-A term realised by the Recovery Baseline describes what the shell provisioner
-does and is not a Reconciler capability.
 
 **Device**:
 A CoreELEC/Kodi installation managed by this repository.
@@ -31,10 +29,6 @@ _Avoid_: Device profile, local override
 **Desired State**:
 The state a Profile declares that a Device must have.
 _Avoid_: Target values, expected configuration
-
-**Recovery Baseline**:
-The shell-declared configuration that restores a Device to a working state, deliberately allowed to lag current Desired State.
-_Avoid_: Desired State, fallback profile
 
 **Named Value**:
 A Desired State value that Desired State names rather than holds, resolved from the shared `.env` file on every read. It reaches the Device and nothing else: no committed file carries it, and no Run prints it.
@@ -64,14 +58,9 @@ _Avoid_: Config file, settings file
 Device state whose State Address is owned by a Resource in the resolved Profile.
 _Avoid_: Known state
 
-**Managed Absence**:
-A State Address whose Desired State is that it does not exist.
-_Avoid_: Deletion, cleanup
-_Realised by_: Recovery Baseline. The Reconciler declares no Managed Absence.
-
 **Cleared Address**:
 A State Address that exists and from which the Device resolves no value.
-_Avoid_: Managed Absence, empty setting, null value
+_Avoid_: Empty setting, null value
 _Realised by_: Settings Document. Declared `unset`, applied as an empty node.
 
 **Unmanaged State**:
@@ -81,10 +70,6 @@ _Avoid_: Drift, absent state
 **Contested Address**:
 A State Address another engine rewrites on its own schedule, so no Resource can hold a value there. Contested Addresses are left as Unmanaged State.
 _Avoid_: Volatile setting, drift, race
-
-**Divergent Address**:
-A State Address where the Profile deliberately holds a value the Recovery Baseline cannot produce, so the two disagree by intent rather than by mistake. Each one is named individually; an unnamed disagreement is still a fault.
-_Avoid_: Override, exception, drift
 
 **Observation**:
 The measured state of a Resource on a Device at a point in time.
@@ -130,11 +115,6 @@ _Avoid_: Resource, manual Resource
 The system that observes Resources, plans Changes, applies them, and independently verifies the resulting state.
 _Avoid_: Provisioner, desired configuration management engine
 
-**Component**:
-A user-facing group used to select related Resources for a Run; it is not a unit of reconciliation.
-_Avoid_: Resource
-_Realised by_: Recovery Baseline. The Reconciler has no Component selector.
-
 **Artifact**:
 Versioned content referenced by a Profile and installed or used while reconciling a Resource.
 _Avoid_: Download, payload
@@ -175,10 +155,6 @@ _Avoid_: Display on, watching, active
 **Idle Power-Off**:
 Turning a Display off after its Device has been idle for the room's idle timeout while Viewing.
 _Avoid_: Sleep timer, auto-off, standby
-
-**Pilot Phase**:
-The period in which exactly one disposable Device is managed, ending when a factory-fresh Device can be provisioned from a Profile alone.
-_Avoid_: Beta, rollout
 
 **Wife Acceptance Factor**:
 The project's quality bar: the Device just works, the configuration stays easy to maintain, and any Device is easy to snap to its Desired State.

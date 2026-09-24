@@ -2,13 +2,11 @@
 
 The item shape is upstream's default item: `label`, `icon`, `path`, `target`,
 `submenu` and `widgets`, plus the `guid` the add-on preserves when it finds one
-and invents when it does not. The bytes match what the shell provisioner
-writes, so a Device restored from the Recovery Baseline converges with no
-Change.
+and invents when it does not.
 
 `submenu` and `widgets` are written only when they hold something. The add-on
 creates either key lazily, so an absent key and an empty list are the same
-thing to it, and the Recovery Baseline writes neither.
+thing to it.
 """
 
 from __future__ import annotations

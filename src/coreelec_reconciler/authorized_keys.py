@@ -5,10 +5,10 @@ administrator first. Rendering it whole is what lets a revoked key actually
 be revoked: an entry nobody declares is not in the rendering, so the Run
 removes it.
 
-Only the `restrict` form is rendered. `lib/coreelec-lifecycle.sh` also
-renders a spelled-out fallback for OpenSSH releases older than 7.2, and the
-Device runs OpenSSH 9.9 on the only platform the Profile names, so that
-fallback guards a failure that cannot occur here (ADR 0016).
+Only the `restrict` form is rendered. The Device runs OpenSSH 9.9 on the only
+platform the Profile names, and `restrict` already implies no agent forwarding,
+no port forwarding, no pty, no user rc and no X11 forwarding there
+(ADR 0016).
 """
 
 from __future__ import annotations

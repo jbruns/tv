@@ -5,9 +5,8 @@
 # programs the Device runs.
 documents:
   # The Kodi lifecycle gateway: the forced command of Home Assistant's key
-  # in profile.yaml, which accepts only `start`, `stop` and `status` and hardcodes
-  # `/usr/bin/systemctl` and `kodi.service`. The source is byte for byte what
-  # `lib/coreelec-lifecycle.sh` renders, so a shell run changes nothing here.
+  # in profile.yaml, which accepts only `start`, `stop` and `status` and
+  # hardcodes `/usr/bin/systemctl` and `kodi.service`.
   #
   # Kodi does not read it, so writing it takes no Effect.
   - document: /storage/.config/kodi-lifecycle

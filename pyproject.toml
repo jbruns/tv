@@ -31,8 +31,6 @@ strict = true
 files = [
   "src",
   "tests/unit",
-  "scripts/check_shell_permissions.py",
-  "scripts/shell_permissions.py",
 ]
 
 [tool.pytest.ini_options]

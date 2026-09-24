@@ -170,8 +170,8 @@ def test_an_empty_relative_base_is_rejected_rather_than_read_as_absent(
     assert "relative_to" in capsys.readouterr().err
 
 
-def test_the_shipped_profile_declares_the_whole_playlist_surface() -> None:
-    """Every playlist the shell writes is declared, and none is retired."""
+def test_the_shipped_profile_declares_the_desired_playlist_surface() -> None:
+    """Every Desired State playlist is declared, and superseded ones are not."""
 
     body = (shipped_profile_directory() / "playlists.yaml").read_text(encoding="utf-8")
 
@@ -187,8 +187,7 @@ def test_the_shipped_profile_declares_the_whole_playlist_surface() -> None:
     ):
         assert f"file: {name}" in body
 
-    # The two superseded playlists are Managed Absences the shell deletes by
-    # hand; declaring either would ask the Reconciler for a mechanism it does
-    # not have (ADR 0012).
+    # The two superseded playlists are not Desired State. The operator deletes
+    # them once by hand on an in-service Device.
     assert "file: RecentlyReleasedMovies90Days.xsp" not in body
     assert "file: RecentlyReleasedMoviesCurrentYear.xsp" not in body

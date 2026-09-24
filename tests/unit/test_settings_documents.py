@@ -109,7 +109,7 @@ def test_the_addon_v1_value_is_written_as_an_attribute(
     assert reconcile("apply", "--room", "theater") == 0
 
     assert attribute_values(device.weather) == {
-        # Unmanaged State, including the credential the shell still owns.
+        # Unmanaged State, including an existing credential.
         "ha_key": "a-token",
         "ha_sun_entity_id": "sun.sun",
         "ha_weather_forecast_entity_id": "weather.openweathermap",
@@ -509,10 +509,11 @@ def test_no_declared_addon_setting_plans_as_a_create(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The shell writes all of them, so on a provisioned Device none may plan
-    as a `create`: a create is a misread setting id or a document read in the
-    wrong dialect, either of which writes a node Kodi ignores and still
-    verifies as converged (ADR 0012)."""
+    """On a provisioned Device, no declared add-on setting plans as `create`.
+
+    A create is a misread setting id or a document read in the wrong dialect,
+    either of which writes a node Kodi ignores and still verifies as converged.
+    """
     documents = shipped_addon_documents()
     device.write_env(SHIPPED_ENV)
     device.write_profile(device.profile_body(extra=profile_extra(device, documents)))

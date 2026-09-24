@@ -1,11 +1,8 @@
 """The Guard that asks the Device what it is before anything is planned.
 
-The shell concatenates `/etc/os-release` and `/etc/release` and greps the
-blob case-insensitively for `coreelec`. That passes on any Device whose
-`HOME_URL` merely mentions the project, which is every CoreELEC fork and
-anything that copied the file. `/etc/os-release` is a defined `KEY=value`
-document, so the Guard parses it and asserts on keys instead; `/etc/release`
-is genuinely one line of free text and stays a substring match.
+`/etc/os-release` is a defined `KEY=value` document, so the Guard parses it
+and asserts on keys rather than accepting a substring from an unrelated field.
+`/etc/release` is genuinely one line of free text and stays a substring match.
 
 The sound card is part of the platform too. The Profile's ALSA device strings
 embed the kernel's card name, and a string naming a card the Device does not
@@ -63,8 +60,8 @@ def test_a_device_naming_coreelec_only_in_a_url_is_refused(
 ) -> None:
     """The whole reason the Guard parses rather than greps.
 
-    This Device carries `coreelec` in two keys, and the shell's
-    case-insensitive grep over the concatenated files passes on it.
+    This Device carries `coreelec` in two unrelated keys. The Guard must
+    assert on `ID` rather than accept that substring.
     """
 
     device.os_release.write_text(
