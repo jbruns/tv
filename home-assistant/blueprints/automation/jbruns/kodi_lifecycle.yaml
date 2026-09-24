@@ -2,7 +2,8 @@ blueprint:
   name: Kodi Lifecycle
   description: >-
     Runs Kodi on a Device while its Display is on and stops it once the Display
-    has been off for the stop delay. Acts only on Display transitions and on
+    has been off for the stop delay. Turns the Display off once Kodi has been
+    idle for the idle timeout while Viewing. Acts only on transitions and on
     Home Assistant start; it never polls. See ADR 0020 in jbruns/tv.
   domain: automation
   source_url: https://github.com/jbruns/tv/blob/main/home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml
@@ -51,11 +52,24 @@ blueprint:
         minutes: 10
       selector:
         duration:
+    idle_timeout:
+      name: Idle timeout
+      description: >-
+        How long Kodi must stay idle while Viewing, the Display on and set to
+        this Device's input, before the Display is turned off.
+      default:
+        minutes: 30
+      selector:
+        duration:
 
 mode: restart
 
-variables:
+trigger_variables:
   display: !input display
+  display_source: !input display_source
+  kodi: !input kodi
+
+variables:
   ssh_host: !input ssh_host
   keep_running_hold: !input keep_running_hold
   notification_id: "kodi_lifecycle_{{ ssh_host }}"
@@ -81,8 +95,30 @@ triggers:
   - trigger: homeassistant
     event: start
     id: home_assistant_start
+  # Kodi idle and Viewing must both hold for the whole timeout, so playback,
+  # pause, or switching the Display away starts the countdown again. It needs
+  # the Display on, so it never fires during, and never cancels, a stop delay.
+  # A template trigger arms only once it has been false, so a restart while
+  # already idle and Viewing waits for the next break.
+  - trigger: template
+    value_template: >-
+      {{ is_state(kodi, 'idle')
+         and states(display) not in ['off', 'unavailable', 'unknown']
+         and is_state_attr(display, 'source', display_source) }}
+    for: !input idle_timeout
+    id: idle_while_viewing
 
 actions:
+  # Idle Power-Off. The Display turning off then runs the stop delay as usual.
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'idle_while_viewing' }}"
+    then:
+      - action: media_player.turn_off
+        target:
+          entity_id: !input display
+      - stop: Idle Power-Off turned the Display off.
+
   - variables:
       command: >-
         {% if trigger.id == 'display_on' %}start

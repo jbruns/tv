@@ -16,3 +16,20 @@ automation:
         kodi: media_player.ugoos_theater
         ssh_host: ugoos-theater-lifecycle
         keep_running_hold: input_boolean.ugoos_theater_keep_running_hold
+
+script:
+  ugoos_theater_restart_kodi:
+    alias: Theater - Restart Kodi
+    icon: mdi:restart
+    mode: single
+    sequence:
+      # A failed stop still goes on to start, so Kodi ends up running.
+      - action: shell_command.kodi_lifecycle
+        continue_on_error: true
+        data:
+          host: ugoos-theater-lifecycle
+          command: stop
+      - action: shell_command.kodi_lifecycle
+        data:
+          host: ugoos-theater-lifecycle
+          command: start
