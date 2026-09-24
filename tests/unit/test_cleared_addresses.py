@@ -27,13 +27,14 @@ from .conftest import (
     FakeDevice,
     document_block,
     shipped_profile,
+    skin_profile,
     text_values,
     write_document,
 )
 
 # What the shell leaves behind, and what Kodi leaves behind on top of it. The
 # skin document carries no version attribute because the shell provisioner
-# created it, which is still the `addon_v2` shape: a value is element text.
+# created it, which is the `skin` shape: a value is element text.
 #
 # `Hub.1107.DisableSearch` is a node the shell wrote and someone since set;
 # the other three cleared ids are the three states that all read as no value.
@@ -80,8 +81,7 @@ def converge_baseline(device: FakeDevice) -> None:
 
 
 def with_skin(device: FakeDevice, settings: str = CLEARED_SETTINGS) -> str:
-    """The Profile, declaring guisettings.xml and the skin document."""
-    return device.profile_body(extra=document_block(device.skin, "addon_v2", settings))
+    return skin_profile(device, settings)
 
 
 def one_setting(body: str) -> str:
@@ -291,37 +291,6 @@ def test_a_cleared_address_converges_and_stays_converged(
     assert "plan: no changes" in capsys.readouterr().out
 
 
-def test_no_type_attribute_is_written_and_an_existing_one_survives(
-    device: FakeDevice,
-    reconcile: Callable[..., int],
-) -> None:
-    """`type` is the shell's invention; Kodi neither writes it nor needs it.
-
-    Preserving one the shell wrote is enough, and is what keeps a shell run a
-    no-op afterwards.
-    """
-
-    write_document(device.skin, SKIN_ON_DEVICE)
-    device.write_profile(
-        with_skin(
-            device,
-            CLEARED_SETTINGS
-            + '      - setting: HomeSwitcher.1108.Toggle\n        value: "true"\n',
-        )
-    )
-
-    assert reconcile("apply", "--room", "theater") == 0
-
-    root = ElementTree.parse(device.skin).getroot()
-    types = {node.get("id"): node.get("type") for node in root.findall("setting")}
-    # Reused nodes keep the attribute they came with, cleared ones included.
-    assert types["HomeSwitcher.1101.Name"] == "string"
-    assert types["Hub.1107.DisableSearch"] == "string"
-    # Nodes the Reconciler creates and nodes Kodi created have none.
-    assert types["HomeSwitcher.1108.Toggle"] is None
-    assert types["HomeSwitcher.1104.Toggle"] is None
-
-
 def test_a_room_overlay_may_clear_an_address(
     device: FakeDevice,
     reconcile: Callable[..., int],
@@ -413,9 +382,9 @@ def test_the_shipped_profile_declares_the_arctic_fuse_document() -> None:
     cleared = tuple(entry["setting"] for entry in settings if entry.get("unset"))
     valued = [entry for entry in settings if not entry.get("unset")]
 
-    # The skin document carries no version attribute on the Device, which is
-    # still the `addon_v2` shape: a value is element text.
-    assert document["dialect"] == "addon_v2"
+    # Kodi core reads the skin document and drops an untyped node, so it is
+    # declared in the dialect that writes every node typed.
+    assert document["dialect"] == "skin"
     assert cleared == CLEARED_IDS
     assert len(settings) == 44
     assert len(valued) == 28

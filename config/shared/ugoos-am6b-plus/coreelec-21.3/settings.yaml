@@ -192,8 +192,11 @@ settings_documents:
   # the shell only when NextPVR and weather are configured. Both always are on
   # this fleet — weather.ha's own addresses are declared above — so both are
   # plain literals and no conditionality enters the schema.
+  #
+  # The dialect is `skin`, not `addon_v2`: Kodi core reads this file and drops
+  # every node not typed `string`, so each node is written typed.
   - document: /storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
-    dialect: addon_v2
+    dialect: skin
     settings:
       # The TV Shows hub. The skin builds `ActivateWindow(target, path,
       # return)` only when the target is set; with an empty target it runs the

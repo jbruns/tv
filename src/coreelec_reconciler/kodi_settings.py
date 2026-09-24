@@ -16,7 +16,10 @@ an add-on whose settings definition declares a version carry a value as
 element text; an add-on whose definition carries no version attribute, such as
 `weather.ha`, carries it in a `value` attribute instead. An add-on may keep
 its settings in JSON altogether, as `script.skinvariables` does for the view
-types it compiles. The dialect is therefore declared in the Profile and
+types it compiles. A skin's own `settings.xml` is read by Kodi core rather
+than by an add-on settings manager, and that loader drops every node not
+typed `string` or `bool`, so the `skin` dialect writes each node typed and
+reads an untyped one as unset. The dialect is therefore declared in the Profile and
 checked against the Device: a document that does not read as its declared
 dialect is an error naming the document, never a plausible empty parse that
 would report every declared address as unset. For `json` the dialect also
@@ -40,6 +43,7 @@ from . import env_file
 GUISETTINGS = "guisettings"
 ADDON_V1 = "addon_v1"
 ADDON_V2 = "addon_v2"
+SKIN = "skin"
 JSON = "json"
 SHELL_VARS = "shell_vars"
 
@@ -47,15 +51,31 @@ SHELL_VARS = "shell_vars"
 # are the same shape on the wire and are named apart because they are
 # different documents: one is Kodi core's and one is an add-on's, and what
 # Kodi does to one it need not do to the other.
-DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, JSON, SHELL_VARS)
+DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON, SHELL_VARS)
 
 # The dialects Kodi itself reads and rewrites from memory as it exits, and
 # which therefore always take the Kodi stop (ADR 0013).
-KODI_DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, JSON)
+KODI_DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON)
 
 # The dialects that carry a setting's value as element text. `addon_v1` is the
 # one that carries it in a `value` attribute.
-_TEXT_DIALECTS = (GUISETTINGS, ADDON_V2)
+_TEXT_DIALECTS = (GUISETTINGS, ADDON_V2, SKIN)
+
+# The types Kodi's skin settings loader keeps (`CSkinInfo::ParseSetting`).
+# Every other node, untyped ones included, it drops without logging.
+_SKIN_TYPES = ("string", "bool")
+
+
+def _resolves(node: ElementTree.Element, dialect: str) -> bool:
+    """Whether Kodi reads `node` at all, given it is a direct root child."""
+
+    return dialect != SKIN or node.get("type") in _SKIN_TYPES
+
+
+def _value(node: ElementTree.Element, dialect: str) -> str | None:
+    """What `node` holds, from wherever `dialect` carries it."""
+
+    return node.get("value") if dialect == ADDON_V1 else node.text
 
 
 class SettingsError(Exception):
@@ -66,11 +86,12 @@ def _empty(dialect: str) -> ElementTree.Element:
     """The root of a document the Device does not have yet.
 
     The shell provisioner writes a version attribute for the text dialects and
-    none for `addon_v1`, so a document the Reconciler creates is the document
-    the shell would have created.
+    none for `addon_v1` or a skin, so a document the Reconciler creates is the
+    document the shell would have created. Kodi writes a skin's root without
+    one too.
     """
 
-    attributes = {} if dialect == ADDON_V1 else {"version": "2"}
+    attributes = {} if dialect in (ADDON_V1, SKIN) else {"version": "2"}
     return ElementTree.Element("settings", attributes)
 
 
@@ -308,7 +329,8 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
     """The value the Device resolves for `setting`, or None when it is unset.
 
     A node that carries its value in the other dialect's place reads as unset,
-    which is what Kodi does with it.
+    which is what Kodi does with it. So does an untyped node in a `skin`
+    document.
 
     An absent node, a self-closing node and a node with no text are one
     Observation and not three: none of them resolves a value, and Kodi
@@ -324,7 +346,9 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
     root = _root(document, dialect)
     for parent, node in _matches(root, setting):
         if parent is root:
-            return node.get("value") if dialect == ADDON_V1 else node.text
+            if not _resolves(node, dialect):
+                return None
+            return _value(node, dialect)
     return None
 
 
@@ -373,10 +397,10 @@ def undeclared(
             or not setting
             or setting.casefold() in names
             or node.get("default") == "true"
+            or not _resolves(node, dialect)
         ):
             continue
-        value = node.get("value") if dialect == ADDON_V1 else node.text
-        held.append((setting, value or ""))
+        held.append((setting, _value(node, dialect) or ""))
     return held
 
 
@@ -392,6 +416,9 @@ def rewrite(
     so nothing is created for it. JSON has no empty node, and `null` is a
     value rather than the absence of one, so clearing there removes the key,
     and `shell_vars` removes the line for the same reason.
+
+    Every node written in a `skin` document is typed `string`, an emptied one
+    included, because Kodi drops an untyped one. Nothing declares a `bool`.
     """
 
     if dialect == JSON:
@@ -413,6 +440,8 @@ def rewrite(
         node.set("id", setting)
         # A node marked `default` is one Kodi feels free to overwrite.
         node.attrib.pop("default", None)
+        if dialect == SKIN:
+            node.set("type", "string")
         if value is None:
             node.attrib.pop("value", None)
             node.text = None
