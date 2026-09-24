@@ -211,8 +211,10 @@ def test_a_value_outside_the_cec_transform_domain_names_the_domain(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`ignore` is the whole domain: the shell validates the same rule as a
-    check, and passing anything else through writes a value Kodi discards."""
+    """`ignore` is the whole domain.
+
+    Passing anything else through writes a value Kodi discards.
+    """
     device.write_profile(
         with_cec(
             device,
@@ -247,9 +249,11 @@ def shipped_cec_document() -> dict[str, Any]:
 
 
 def test_the_shipped_profile_declares_the_five_cec_addresses() -> None:
-    """The pattern is the bus prefix Kodi writes, deliberately narrower than
-    the shell's `*CEC*.xml`, which matches on the adapter's name and so finds
-    nothing for an adapter that calls itself anything else (ADR 0012)."""
+    """The pattern is the bus prefix Kodi writes.
+
+    The adapter name is hardware-reported and may vary, so the fixed `cec_`
+    prefix is the stable part to match.
+    """
     document = shipped_cec_document()
 
     assert "document" not in document
@@ -292,9 +296,11 @@ def test_no_declared_cec_setting_plans_as_a_create(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The shell writes all five, so on a provisioned Device none may plan as
-    a `create`: a create is a misread setting id, which writes a node Kodi
-    ignores and still verifies as converged (ADR 0012)."""
+    """On a provisioned Device, no declared CEC setting plans as `create`.
+
+    A create is a misread setting id, which writes a node Kodi ignores and
+    still verifies as converged.
+    """
     document = shipped_cec_document()
     device.write_profile(device.profile_body(extra=shipped_cec_block(device)))
     write_document(
@@ -345,10 +351,11 @@ def test_a_nested_copy_does_not_survive_beside_the_canonical_node(
     device: FakeDevice,
     reconcile: Callable[..., int],
 ) -> None:
-    """`Peripheral::LoadPersistedSettings` reads only the direct children of
-    the root, so a nested copy is a value Kodi never resolves. The shell hunts
-    them down before writing and the Reconciler must leave the document in the
-    same state."""
+    """`Peripheral::LoadPersistedSettings` reads only direct root children.
+
+    A nested copy is a value Kodi never resolves, so it must not survive beside
+    the canonical node.
+    """
     device.write_profile(with_cec(device))
     write_document(
         device.cec,
@@ -368,6 +375,6 @@ def test_a_nested_copy_does_not_survive_beside_the_canonical_node(
         "standby_pc_on_tv_standby": "36028",
     }
     # The nested copies are gone; the element that held them is Unmanaged
-    # State and stays, emptied, exactly as the shell leaves it.
+    # State and stays, emptied.
     root = ElementTree.parse(device.cec).getroot()
     assert [node.tag for node in root.iter("setting")] == ["setting", "setting"]

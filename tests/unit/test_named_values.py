@@ -7,8 +7,8 @@ instead, and the value is read at load time, before any Device contact.
 
 The rule these tests hold to is that the value never leaves the Device write:
 it is not in a committed file, not in `plan` or `apply` output, and not in an
-error message. What is named is the key, which is documented in
-`config/README.md` and `.env.example` and is not itself a secret.
+error message. What is named is the key, which is documented in `.env.example`
+and is not itself a secret.
 """
 
 from __future__ import annotations

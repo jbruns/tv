@@ -436,10 +436,6 @@ def test_one_addon_pinned_twice_is_refused(
     assert "script.module.six is pinned twice" in capsys.readouterr().err
 
 
-# Installed from the official Kodi repository by hand, and recorded until now
-# in nothing but a comment beside the shell's allowlist.
-OPERATOR_INSTALLED = ("plugin.program.autocompletion", "script.module.autocompletion")
-
 LOCK = (
     Path(__file__).resolve().parents[2]
     / "config"
@@ -456,50 +452,8 @@ def shipped_lock() -> list[dict[str, str]]:
     return records
 
 
-def shell_pins() -> dict[str, tuple[str, str, str]]:
-    """Every `ADDON_ARTIFACT` the Recovery Baseline declares, by add-on id."""
-
-    baseline = LOCK.with_name("provision.conf").read_text(encoding="utf-8")
-    pins = {}
-    for line in baseline.splitlines():
-        if not line.startswith("ADDON_ARTIFACT="):
-            continue
-        addon_id, version, url, digest = line.removeprefix("ADDON_ARTIFACT=").split("|")
-        pins[addon_id] = (version, url, digest)
-    return pins
-
-
-def test_the_shipped_lock_is_every_shell_pin_and_the_operator_installs() -> None:
-    """The Lock's boundary, read from both files rather than restated.
-
-    With the three patched add-ons in it, every add-on this fleet installs is
-    the Reconciler's.
-    """
-
-    locked = {record["id"] for record in shipped_lock()}
-    by_shell = set(shell_pins())
-
-    assert ADDON_ID in locked
-    # Dropping a pin silently would leave an add-on nobody installs, so the
-    # two sets are compared rather than sampled.
-    assert locked == by_shell | set(OPERATOR_INSTALLED)
-    assert set(OPERATOR_INSTALLED) & by_shell == set()
-
-
-def test_the_shipped_lock_pins_the_bytes_the_shell_pins() -> None:
-    """Two engines install the same Artifact or they revert each other forever."""
-
-    by_shell = shell_pins()
-    for record in shipped_lock():
-        if record["id"] in OPERATOR_INSTALLED:
-            continue
-        assert (record["version"], record["url"], record["sha256"]) == by_shell[
-            record["id"]
-        ], record["id"]
-
-
 def test_every_shipped_record_states_why_the_addon_is_there() -> None:
-    """`role` is the group rationale surviving `provision.conf` (ADR 0017)."""
+    """`role` records why each add-on is in the Lock (ADR 0017)."""
 
     for record in shipped_lock():
         # Kodi's own naming, so the one role a reader can check from outside

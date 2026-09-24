@@ -1,8 +1,4 @@
-"""Rendering a Smart Playlist as the .xsp document Kodi reads.
-
-The bytes match what the shell provisioner writes, so a Device restored from
-the Recovery Baseline converges with no Change.
-"""
+"""Rendering a Smart Playlist as the .xsp document Kodi reads."""
 
 from __future__ import annotations
 

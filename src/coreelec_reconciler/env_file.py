@@ -1,10 +1,8 @@
 """Reading the shared `.env`, which holds what no committed file may.
 
 Desired State names a value here rather than holding it: the Profile carries
-the key, and the value is read from this file. The shell entry points source
-it as bash; the Reconciler does not. It reads it with the strict grammar
-below, the posture `provision.conf` already takes (`config/README.md`), so a
-line is data and never shell syntax.
+the key, and the value is read from this file. The Reconciler reads it with
+the strict grammar below, so a line is data and never executable syntax.
 
 The grammar is narrower than bash's on purpose. Every line this repository's
 `.env.example` produces is a quoted scalar, and a line outside the grammar is
@@ -28,7 +26,7 @@ from pathlib import Path
 ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)")
 
 # What a bare, unquoted value may hold. Anything else — whitespace, a quote, a
-# shell metacharacter — is a value bash would have read differently, so it
+# bash metacharacter — is a value bash would have read differently, so it
 # must be quoted.
 BARE = re.compile(r"[A-Za-z0-9_./:@%+,=-]*")
 
@@ -52,7 +50,7 @@ def _value(where: str, key: str, raw: str) -> str:
         inner = raw[1:-1]
         if any(character in inner for character in EXPANDS):
             raise EnvError(
-                f"{where}: {key} is double-quoted around a character the shell "
+                f"{where}: {key} is double-quoted around a character bash "
                 "would expand; single-quote it instead"
             )
         return inner
@@ -79,7 +77,7 @@ def parse(text: str, where: str | None = None) -> dict[str, str]:
     message.
 
     The grammar is shared with the `shell_vars` dialect, because both read
-    the same shape for the same reason: a line is data and never shell
+    the same shape for the same reason: a line is data and never executable
     syntax, whatever the file is called.
     """
 
@@ -102,17 +100,17 @@ def parse(text: str, where: str | None = None) -> dict[str, str]:
 def serialise(value: str) -> str:
     """`value` as a line's right-hand side, quoted only when it must be.
 
-    The shell provisioner writes these values bare, so anything the bare
-    grammar accepts is written bare and the two engines produce the same
-    bytes.
+    CoreELEC reads `shell_vars` documents through service files and scripts,
+    so anything the bare grammar accepts is written bare. Values that need
+    quoting are quoted in a form those readers preserve.
 
     A value holding a single quote is double-quoted instead, which is what
     `SSH_ARGS` needs: CoreELEC's own value for it is
     `-o 'PasswordAuthentication no'`, and the quotes are the point — `sshd`
     is started as `/usr/sbin/sshd -D $SSH_ARGS`, so the option and its
-    argument have to survive the shell's word splitting as two words rather
-    than three. Double quotes are only safe where the shell would expand
-    nothing inside them, so a value holding both a single quote and an
+    argument have to survive the command interpreter's word splitting as two
+    words rather than three. Double quotes are only safe where bash would
+    expand nothing inside them, so a value holding both a single quote and an
     expanding character cannot be written at all.
     """
 
@@ -122,7 +120,7 @@ def serialise(value: str) -> str:
         return f"'{value}'"
     if any(character in value for character in EXPANDS) or '"' in value:
         raise EnvError(
-            "a value holding a single quote and a character the shell would "
+            "a value holding a single quote and a character bash would "
             "expand cannot be written"
         )
     return f'"{value}"'

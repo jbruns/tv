@@ -18,7 +18,7 @@
 # Every `guid` is declared. The add-on invents `guid-{random}` for an item
 # that carries none, which would differ on every Run and plan a Change
 # forever. The existing ids do not derive cleanly from anything, so they are
-# stated as the Recovery Baseline writes them.
+# stated explicitly.
 #
 # Applying any of these restarts Kodi: the skin reads a node file when it
 # loads, and its own shortcut editor holds the list it read.

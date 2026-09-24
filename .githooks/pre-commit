@@ -22,5 +22,4 @@ else
   printf 'pre-commit: uv or pyproject.toml missing, skipping Python checks\n' >&2
 fi
 
-run python3 scripts/check_shell_permissions.py --audit
 run python3 scripts/check_markdown.py

@@ -182,11 +182,6 @@ class SettingChange:
             if self.setting.transform is not None:
                 origin = f" ({self.setting.transform} of {self.setting.declared})"
             yield f"{self.action} {self.address}: {observed} -> {desired}{origin}"
-        # Printed with the Change rather than once at the top, because the
-        # moment it is needed is rule 3: run the shell, re-plan, and read the
-        # one Change that came back. A declared divergence says so there.
-        if self.setting.divergent is not None:
-            yield f"divergent: {self.setting.divergent}"
 
 
 @dataclass(frozen=True)

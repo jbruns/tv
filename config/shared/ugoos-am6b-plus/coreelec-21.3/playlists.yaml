@@ -1,13 +1,11 @@
 # Kodi Smart Playlists. The directory is the physical path behind
 # special://profile/playlists/video on CoreELEC. Each file is one State
-# Address, listed in the order provision-coreelec.sh writes them so the two
-# sides read side by side.
+# Address.
 #
 # RecentlyReleasedMovies90Days.xsp and RecentlyReleasedMoviesCurrentYear.xsp
-# are absent on purpose. The shell deletes both because a newer playlist
-# superseded them, and a factory-fresh Device never had either; declaring
-# either would ask for a Managed Absence the Reconciler does not have and does
-# not yet need (ADR 0012).
+# are absent on purpose. A newer playlist superseded both; they are not
+# Desired State, and the operator deletes them once by hand on an in-service
+# Device.
 smart_playlists:
   directory: /storage/.kodi/userdata/playlists/video
   # How Kodi addresses that same directory from inside a skin. A Shortcut Node
@@ -79,9 +77,7 @@ smart_playlists:
         # The current and the previous release year. Kodi's `year` field is
         # numeric and has no relative operator, so the two bounds are offsets
         # from the current year, resolved on every read. A literal here would
-        # be correct until 1 January and then disagree with the shell, which
-        # renders the same two bounds from today's date, for the rest of the
-        # year.
+        # be correct until 1 January and then wrong for the rest of the year.
         - field: year
           operator: greaterthan
           value: -2

@@ -4,10 +4,9 @@
 # declared and never sniffed, so a corrupt or truncated document fails naming
 # itself instead of reading as a plausible other shape.
 #
-# Each value matches what provision-coreelec.sh writes, so the Recovery
-# Baseline and Desired State do not diverge and a shell run remains a no-op
-# (ADR 0012). Adding a setting is an entry here and no code change; the two
-# Device checks that go with it are in docs/operations/reconcile-theater.md.
+# Adding a setting is an entry here and no code change. On a provisioned
+# Device a declared address must not plan as `create`: a typo'd id would
+# otherwise write a node Kodi ignores and still verify as converged.
 #
 # A setting states exactly one of `value`, `from_env` and `unset`. `from_env`
 # names a key in the shared .env file, which is where a value this committed
@@ -44,9 +43,6 @@ settings_documents:
       # what makes the update proposer in ADR 0017 load-bearing.
       - setting: general.addonupdates
         value: "2"
-        divergent: >-
-          the shell writes 0 or 1 from ADDON_UPDATE_MODE and cannot emit 2,
-          so a shell run after an apply leaves this address changed on purpose
       - setting: input.enablemouse
         value: "false"
       # File lists: a ten-foot interface, not a file manager.
@@ -83,16 +79,15 @@ settings_documents:
       # hdmi: the bitstream, untouched.
       - setting: audiooutput.passthroughdevice
         value: ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
-      # These name add-ons the shell installs. The Reconciler never runs on a
-      # bare Device, so nothing here installs them; an add-on that is missing
-      # shows up as a setting Kodi discards, which the hardware acceptance run
+      # These name add-ons declared in the Artifact Lock. An add-on that is
+      # missing shows up as a setting Kodi discards, which Device acceptance
       # catches.
       - setting: lookandfeel.skin
         value: skin.arctic.fuse.3
       - setting: lookandfeel.soundskin
         value: resource.uisounds.fromashes
-      # The shell writes this one only when weather is configured. It always
-      # is on this fleet, so declaring it unconditionally matches the Device.
+      # Weather is always configured on this fleet, so the weather add-on is
+      # unconditional Desired State.
       - setting: weather.addon
         value: weather.ha
       # Home Assistant's Kodi integration reaches the Device over JSON-RPC,
@@ -110,18 +105,13 @@ settings_documents:
         value: "8080"
       - setting: services.webserverssl
         value: "false"
-      # The EventServer is off. Its only consumer was the shell's view rebuild
-      # through `kodi-send`, which ADR 0015 replaced with the skin's own
-      # trigger, and Home Assistant speaks JSON-RPC. It listened on localhost
+      # The EventServer is off. Nothing consumes it: the view rebuild uses the
+      # skin's own trigger (ADR 0015), and Home Assistant speaks JSON-RPC. It listened on localhost
       # only, so nothing off the Device could ever have been using it.
       - setting: services.esallinterfaces
         value: "false"
       - setting: services.esenabled
         value: "false"
-        divergent: >-
-          the shell writes true for the kodi-send view rebuild ADR 0015
-          retired, so a shell run after an apply leaves this address changed
-          on purpose
 
   # The Home Assistant weather add-on. Its settings definition carries no
   # version attribute, so Kodi loads and writes this document in the old flat
@@ -164,8 +154,7 @@ settings_documents:
         value: NextPVR
 
   # TMDb Helper's metadata provider credentials. Both name their values, so
-  # this whole document is named and none of it is held here. The shell writes
-  # these two addresses and nothing else in the file.
+  # this whole document is named and none of it is held here.
   - document: /storage/.kodi/userdata/addon_data/plugin.video.themoviedb.helper/settings.xml
     dialect: addon_v2
     settings:
@@ -184,14 +173,12 @@ settings_documents:
   # Profile comparing "" against that would plan a Change on every Run
   # forever.
   #
-  # The shell removes a node it clears and the Reconciler blanks it. Both
-  # leave the Device resolving no value, so the two engines do not revert each
-  # other. See docs/operations/reconcile-theater.md, "Clearing an address".
+  # A Cleared Address converges when the Device resolves no value. For the skin
+  # dialect the Reconciler writes an empty typed node when it must change a
+  # value, and it leaves already-clear addresses alone.
   #
-  # `HomeSwitcher.1107.Toggle` and `optionstiles.03.include` are written by
-  # the shell only when NextPVR and weather are configured. Both always are on
-  # this fleet — weather.ha's own addresses are declared above — so both are
-  # plain literals and no conditionality enters the schema.
+  # `HomeSwitcher.1107.Toggle` and `optionstiles.03.include` are plain
+  # literals because NextPVR and weather are always part of this fleet.
   #
   # The dialect is `skin`, not `addon_v2`: Kodi core reads this file and drops
   # every node not typed `string`, so each node is written typed.
@@ -261,14 +248,12 @@ settings_documents:
         unset: true
 
       # The 1104 hub is disabled: the six fields that decide whether it
-      # renders and where it would go are cleared. It is a Cleared Address
-      # cohort and not a Managed Absence — the hub stays gone because it
-      # resolves nothing, not because anything is deleted.
+      # renders and where it would go are cleared. The hub stays gone because
+      # it resolves nothing, not because anything is deleted.
       #
       # `Name`, `Mode` and `Icon` are Contested Addresses: Arctic Fuse writes
       # them on every skin load. They are inert while `Toggle` is empty, so
-      # they stay Unmanaged State, which is the line
-      # provision-coreelec.sh's own verifier already draws (:3316-3327).
+      # they stay Unmanaged State.
       - setting: HomeSwitcher.1104.Toggle
         unset: true
       - setting: HomeSwitcher.1104.Shortcut.Path
@@ -322,15 +307,14 @@ settings_documents:
   # win that merge and owning the rest would drift the moment Arctic Fuse adds
   # a content type.
   #
-  # 509 and 549 are Kodi view ids. They are declared as the literals the
-  # Recovery Baseline writes rather than as anything this file claims to
-  # decode.
+  # 509 and 549 are Kodi view ids. They are declared as literals rather than
+  # as anything this file claims to decode.
   #
   # `compiles_to` names the include the add-on builds from this document. It
   # is stale the moment the source changes and nothing else rebuilds it, so
   # the Run writes the skin's own trigger stub over it and lets the Kodi
   # restart it was taking anyway fire the rebuild (ADR 0015). No JSON-RPC, no
-  # kodi-send, no EventServer.
+  # EventServer.
   - document: /storage/.kodi/userdata/addon_data/script.skinvariables/skin.arctic.fuse.3-viewtypes.json
     dialect: json
     compiles_to: /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
@@ -349,10 +333,8 @@ settings_documents:
   # the Profile cannot know the filename: a `cec_` bus prefix Kodi controls
   # and an adapter name the adapter reports. `document_glob` states the
   # pattern instead, and a Run resolves it against the Device and refuses
-  # unless exactly one document matches. The bus prefix is deliberately
-  # narrower than the shell's `*CEC*.xml`, which matches on the adapter's name
-  # and so finds nothing for an adapter that calls itself anything else
-  # (ADR 0012).
+  # unless exactly one document matches. The bus prefix is deliberately narrow:
+  # the adapter name is hardware-reported and may vary.
   #
   # Kodi rebuilds this document from memory when it exits, the same as every
   # other Settings Document here, so applying any of these takes the Kodi stop.
@@ -361,8 +343,7 @@ settings_documents:
     settings:
       # What Kodi does when the television says it is going to standby:
       # nothing. `ignore` is Kodi's localisation ID 36028, and that is the
-      # whole domain of the transform — the shell has the same rule as a
-      # check, and here it is the schema.
+      # whole domain of the transform, and the schema enforces that.
       - setting: standby_pc_on_tv_standby
         value: ignore
         transform: cec_tv_off_action
@@ -371,9 +352,8 @@ settings_documents:
       - setting: activate_source
         value: "0"
       # Which devices Kodi wakes and puts to standby with itself. Kodi stores
-      # the selection as an opaque code; `231` is what the shell writes and
-      # what the Device holds, and it is declared as the literal the Recovery
-      # Baseline produces rather than as anything this file claims to decode.
+      # the selection as an opaque code; `231` is the Device value, declared as
+      # a literal rather than as anything this file claims to decode.
       - setting: wake_devices
         value: "231"
       - setting: standby_devices
@@ -403,8 +383,8 @@ settings_documents:
   #
   # Mode is what CoreELEC gives it. `oe.py`'s `set_service` writes the file
   # with a plain `open` and no `chmod`, which is why `avahi.conf`,
-  # `crond.conf`, `samba.conf` and `bluez.conf` are all 0644. The shell's 0600
-  # is the departure, and the file holds no secret.
+  # `crond.conf`, `samba.conf` and `bluez.conf` are all 0644. The file holds
+  # no secret.
   #
   # A Device whose first-boot wizard left the password enabled holds these
   # same two keys with the insecure values, so this plans as two Changes and

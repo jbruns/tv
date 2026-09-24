@@ -20,13 +20,9 @@ inventory, not in repository room documentation.
 
 ## 2. Wire and configure device and network prerequisites
 
-Install the hardware according to the room documents. For Ugoos/CoreELEC rooms,
-use the
-[shared Ugoos setup guide](devices/ugoos-am6b-plus/coreelec-21.3.md) for media
-preparation, first boot, and shared device validation. Configure the display,
+Install the hardware according to the room documents. Configure the display,
 receiver, remote, and control prerequisites needed for the installed signal
-path and integrations. Defer room-specific playback settings until after the
-room package is installed.
+path and integrations.
 
 Use wired Ethernet for every network-managed device.
 
@@ -38,14 +34,18 @@ for DHCP reservations, local DNS, and the required firewall rules.
 - Use the [shared Wake-on-LAN guide](network/wake-on-lan.md) only for optional
   wake workflows outside the always-awake Ugoos lifecycle.
 
-## 3. Provision the Ugoos baseline, add-ons, and restricted gateway
+## 3. Provision the Device
 
-For Ugoos/CoreELEC rooms, follow
-[Provision a Ugoos CoreELEC system](operations/provision-ugoos.md). That guide
-covers the shared order: CoreELEC wizard, DHCP reservation and DNS, `.env`
-preparation, baseline provisioning, post-deployment add-on checks, and
-restricted lifecycle gateway deployment before Home Assistant integrations and
-package installation.
+For Ugoos/CoreELEC rooms, add the room's Room Overlay and follow
+[Provision a Device](operations/provision-a-device.md): card imaging, the
+first-boot wizard, First Contact, `apply`, and the Guided Actions. The Room
+Overlay carries the room's Display, Dolby Vision, resolution whitelist and
+audio passthrough Desired State, so one `apply` provisions all of it; the
+[Profile reference](reference/profile.md) describes how to declare them.
+
+`.env` must hold Home Assistant's lifecycle public key before `apply`, so create
+that key first, as section 2 of the
+[lifecycle guide](home-assistant/ugoos-kodi-lifecycle.md) describes.
 
 ## 4. Configure native Home Assistant integrations and stable IDs
 
@@ -61,22 +61,9 @@ packages if needed, run `ha core check`, then restart or reload Home Assistant
 as required by the selected guide. For the theater lifecycle package, follow
 [Ugoos Kodi lifecycle Home Assistant operations](home-assistant/ugoos-kodi-lifecycle.md).
 
-## 6. Apply room playback settings, verify, and back up device state
+## 6. Verify and keep recovery media
 
-For Ugoos/CoreELEC rooms, apply the room's display, Dolby Vision, resolution
-whitelist, and audio passthrough desired state with the `room` provisioning
-component, with the display powered on and switched to this device's HDMI
-input:
-
-```bash
-./provision-coreelec.sh --target <hostname-or-IP> --component room --room <room>
-```
-
-The configuration keys, the display mode string format, and the report
-statuses are documented in the
-[room desired-state reference](devices/ugoos-am6b-plus/room-desired-state.md).
-Then verify the installed room behaves as documented: playback, device
-control, network reachability, and Home Assistant automations all match the
-selected guides. Create backups and copy them to another system. For Ugoos
-devices, keep the proven removable media as recovery media until any optional
-migration is complete.
+Verify the installed room behaves as documented: playback, device control,
+network reachability, and Home Assistant automations all match the selected
+guides. Recovery is re-imaging the card and provisioning again, so keep the
+proven removable media until any optional eMMC migration is complete.

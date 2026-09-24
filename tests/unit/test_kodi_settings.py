@@ -390,9 +390,11 @@ def test_every_declared_setting_plans_as_an_update_on_a_provisioned_device(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The shell writes all of them, so on a provisioned Device none may plan
-    as a `create`: a create is a misread setting id, which would write a node
-    Kodi ignores and still verify as converged (ADR 0012)."""
+    """On a provisioned Device, no declared address may plan as a `create`.
+
+    A create is a misread setting id, which would write a node Kodi ignores
+    and still verify as converged.
+    """
     declared = shipped_settings()
     device.write_profile(device.profile_body(declared))
     write_document(

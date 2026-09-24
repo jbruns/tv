@@ -6,23 +6,12 @@ never contacted a Device; it is archived at the `m3-archive` tag and removed
 from the working tree. See
 [ADR 0008](adr/0008-restart-from-a-walking-skeleton.md) for what went wrong and
 [ADR 0007](adr/0007-trusted-home-appliance-bar.md) for the bar that replaces
-it. Today it manages one Resource on one Device: see
-[reconciling the theater Ugoos](operations/reconcile-theater.md).
+it. It provisions every Device: see
+[Provision a Device](operations/provision-a-device.md) and the
+[Profile reference](reference/profile.md).
 
-The rest of Device provisioning is still the shell provisioner. See
-[the Ugoos provisioning operations guide](operations/provision-ugoos.md).
-
-## What else remains
-
-Two standard-library helpers outside the package:
-
-- `scripts/check_shell_permissions.py` and `scripts/shell_permissions.py` —
-  the fail-closed write-set permission guard the shell provisioner calls
-  before it mutates a Device. `provision-coreelec.sh`,
-  `configure-coreelec-addons.sh`, and `configure-kodi-lifecycle.sh` depend on
-  this at runtime. It reads `inventory/shell-write-sets.json` and
-  `inventory/ownership-ledger.json`.
-- `scripts/check_markdown.py` — repository Markdown and link validation.
+`scripts/check_markdown.py` is the one helper outside the package: repository
+Markdown and link validation.
 
 ## Setup
 
@@ -39,7 +28,6 @@ uv run ruff check .
 uv run ruff format --check src tests/unit scripts
 uv run mypy
 uv run pytest -q
-python3 scripts/check_shell_permissions.py --audit
 python3 scripts/check_markdown.py
 git diff --check
 ```
@@ -67,17 +55,3 @@ Bypass it with `git commit --no-verify` when you need to.
   reach inside modules weld the implementation in place.
 - **No platform-specific code.** Where behaviour differs, choose the option
   that works everywhere and accept the weaker guarantee.
-
-## Legacy shell tests
-
-Retained as manual reference evidence. They are not part of CI. Run them when
-investigating legacy shell behavior:
-
-```console
-for test_script in tests/test-*.sh; do
-  case "$test_script" in
-    *test-helper.sh) continue ;;
-  esac
-  bash "$test_script"
-done
-```

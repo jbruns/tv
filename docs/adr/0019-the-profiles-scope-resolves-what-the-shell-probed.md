@@ -10,8 +10,8 @@ Four State Addresses were deferred as Intents: `audiooutput.audiodevice`,
 against a **running** Kodi over JSON-RPC, reading the options Kodi offers for
 each setting, and matching a stable label to whatever opaque value that
 Device happens to expose
-([`provision-coreelec.sh:3768`](../../provision-coreelec.sh#L3768),
-[`:3928-3945`](../../provision-coreelec.sh#L3928-L3945)).
+([`provision-coreelec.sh:3768`](https://github.com/jbruns/tv/blob/d604fe6e2d0e7eb910d7f82fcd3e355ce361dded/provision-coreelec.sh#L3768),
+[`:3928-3945`](https://github.com/jbruns/tv/blob/d604fe6e2d0e7eb910d7f82fcd3e355ce361dded/provision-coreelec.sh#L3928-L3945)).
 
 The Reconciler will not do this. It never probes a running Kodi. Three of the
 four values are declared as literals, because the Profile's directory already

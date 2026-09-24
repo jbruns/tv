@@ -1,8 +1,8 @@
 """Talking to a Device over ssh.
 
-The transport shells out to the system `ssh` client and reuses the existing
+The transport invokes the system `ssh` client and reuses the existing
 key-only administrator setup. Remote commands are `sh` scripts whose embedded
-paths are quoted, so a path is data rather than shell syntax.
+paths are quoted, so a path is data rather than executable syntax.
 
 There is a second arm, used by First Contact alone: the same client with
 public-key authentication turned off, so the operator is prompted for the
@@ -160,7 +160,7 @@ class Device:
         The transport stays dumb on purpose: it returns names, and matching a
         pattern against them happens in Python. A glob handed to the remote
         `sh` would be the one thing this module does not do — an unmatched
-        shell glob expands to itself, so a pattern matching nothing would
+        glob expands to itself, so a pattern matching nothing would
         arrive as a path that merely does not exist.
         """
 
@@ -191,7 +191,7 @@ class Device:
 
         One round trip, because the alternative is a read per entry and this
         answers a question about fifty of them. The `*` is expanded by the
-        remote shell rather than handed to it as a pattern to match: an empty
+        remote `sh` rather than handed to it as a pattern to match: an empty
         directory expands it to itself, and `[ -f "*"/name ]` is false, so
         nothing is reported. Dot entries are skipped, which is what is wanted
         — a staging directory a killed Run left behind is not a find.
@@ -322,8 +322,8 @@ class Device:
 
         `ssh` prompts on the terminal, so neither stream is captured. The
         program rides on stdin — an argv word is joined by the client and
-        re-parsed by the Device's login shell, which would lose its quoting
-        in transit.
+        re-parsed by the Device's login command interpreter, which would lose
+        its quoting in transit.
 
         The identity Guard every ordinary Run opens with is the first thing
         the program does, for the same reason and before the same line: a

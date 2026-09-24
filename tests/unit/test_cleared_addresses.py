@@ -32,12 +32,11 @@ from .conftest import (
     write_document,
 )
 
-# What the shell leaves behind, and what Kodi leaves behind on top of it. The
-# skin document carries no version attribute because the shell provisioner
-# created it, which is the `skin` shape: a value is element text.
+# What Kodi may leave behind. The skin document carries no version attribute,
+# which is the `skin` shape: a value is element text.
 #
-# `Hub.1107.DisableSearch` is a node the shell wrote and someone since set;
-# the other three cleared ids are the three states that all read as no value.
+# `Hub.1107.DisableSearch` is an existing node someone set; the other three
+# cleared ids are the three states that all read as no value.
 SKIN_ON_DEVICE = """\
 <settings>
     <setting id="HomeSwitcher.1101.Name" type="string">TV Shows</setting>
@@ -230,11 +229,10 @@ def test_applying_a_clear_writes_an_empty_node_rather_than_removing_it(
     assert reconcile("apply", "--room", "theater") == 0
 
     held = text_values(device.skin)
-    # The node the shell wrote a value into is still there, holding none.
+    # The node that held a value is still there, holding none.
     assert "Hub.1107.DisableSearch" in held
     assert held["Hub.1107.DisableSearch"] is None
-    # The shell removes such a node instead. Both leave the Device resolving
-    # no value, so the two engines do not revert each other over it.
+    # An empty typed node resolves no value, which is the Desired State.
     assert '<setting id="Hub.1107.DisableSearch"' in device.skin.read_text(
         encoding="utf-8"
     )
@@ -316,8 +314,7 @@ SKIN_PATH = "/storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
 # The sixteen ids the home screen must resolve nothing from. Restated here
 # rather than derived, because this is the list a typo would quietly shorten
 # and nothing on the Device can catch: a wrong id resolves no value, matches
-# `unset`, and reports converged forever
-# (ADR 0012, "Rule 2 does not reach a Cleared Address").
+# `unset`, and reports converged forever.
 CLEARED_IDS = (
     "HomeSwitcher.1103.Shortcut.Target",
     "HomeSwitcher.1103.Spotlight.Label",
@@ -337,12 +334,11 @@ CLEARED_IDS = (
     "optionstiles.03.target",
 )
 
-# The three the shell clears and the Reconciler deliberately does not declare.
+# The three Arctic Fuse addresses the Reconciler deliberately does not declare.
 # Arctic Fuse rewrites them on every skin load — the theater Ugoos holds
-# `Custom` and `Standard` for the first two — so declaring them would give two
-# engines that revert each other at every restart. They are inert while
-# `HomeSwitcher.1104.Toggle` is empty, which is the field that decides whether
-# the hub renders at all.
+# `Custom` and `Standard` for the first two — so declaring them would plan a
+# Change at every restart. They are inert while `HomeSwitcher.1104.Toggle` is
+# empty, which is the field that decides whether the hub renders at all.
 ARCTIC_FUSE_OWNS = (
     "HomeSwitcher.1104.Name",
     "HomeSwitcher.1104.Mode",
@@ -401,10 +397,10 @@ def test_no_valued_arctic_fuse_setting_plans_as_a_create(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The shell writes every valued address, so none may plan as a `create`.
+    """No valued address may plan as `create` on a provisioned Device.
 
-    The cleared ones are absent from the Device here, which is the state the
-    shell leaves them in, and they must plan as nothing at all.
+    The cleared ones are absent from the Device here, and they must plan as
+    nothing at all.
     """
 
     converge_baseline(device)

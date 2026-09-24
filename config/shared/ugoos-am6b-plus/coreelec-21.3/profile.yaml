@@ -1,9 +1,5 @@
 # Reconciler-owned Desired State for the Ugoos AM6B+ / CoreELEC 21.3 Profile.
 #
-# This file is read by the Reconciler only. The shell entry points keep reading
-# provision.conf in this directory, which is left untouched as the Recovery
-# Baseline (ADR 0010).
-#
 # This file says what a Device in this Profile is, what it is called, how to
 # reach it, and who may log in. What it declares for the Device is in four files
 # beside it, one concern each: playlists.yaml, shortcuts.yaml, documents.yaml and
@@ -59,7 +55,7 @@ addresses:
   # the Run would report seven ordinary scrapers as strays.
   addon_manifest: /usr/share/kodi/system/addon-manifest.xml
 
-# Controller-side SSH transport. The Reconciler shells out to ssh and reuses
+# Controller-side SSH transport. The Reconciler invokes ssh and reuses
 # the existing key-only administrator setup.
 transport:
   user: root
@@ -68,7 +64,7 @@ transport:
 
 # Who may log in to a Device in this Profile, declared whole. An entry nobody
 # declares here is removed from the Device, which is what makes a revoked key
-# actually revoked; the shell's append-if-absent can only ever grow the file.
+# actually revoked.
 #
 # The administrator entry is not here and cannot be. It is derived from the
 # public half of the identity above, because a Profile that can name an

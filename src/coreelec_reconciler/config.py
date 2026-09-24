@@ -32,10 +32,9 @@ DOCUMENT_MODE = "0600"
 AUTHORIZED_KEYS_MODE = "0600"
 
 # One OpenSSH public key line: a key type, a base64 blob, and an optional
-# comment carrying no control characters. This is the shell's grammar
-# (`lib/coreelec-ssh.sh`), enforced here for the same reason — the line is
-# embedded in a program a Device runs, and a validated line can hold no
-# newline and no here-document delimiter.
+# comment carrying no control characters. The line is embedded in a program a
+# Device runs, and a validated line can hold no newline and no here-document
+# delimiter.
 PUBLIC_KEY = re.compile(
     r"(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)"
     r"|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)"
@@ -94,17 +93,15 @@ ADDON_ROLES = ("chosen", "dependency", "repository")
 TRANSFORMS: dict[str, dict[str, str]] = {
     "invert": {"true": "false", "false": "true"},
     "dolby_vision_mode": {"tv-led": "0", "player-led": "1"},
-    # Kodi's localisation ID for the CEC "Ignore" action. The shell reads it
-    # from a variable and then rejects every value but that one, so the domain
-    # is declared here instead and the schema carries the validation.
+    # Kodi's localisation ID for the CEC "Ignore" action. The domain is a
+    # single value, so the schema carries that validation.
     "cec_tv_off_action": {"ignore": "36028"},
 }
 
 # A rule that selects on the calendar cannot state a literal. A Profile saying
-# `year greaterthan 2024` is true until 1 January and wrong every day after,
-# and the shell renders the same rule from today's date, so the two would
-# disagree annually and never converge. Such a rule declares an offset and the
-# base the offset is measured from, and the base is resolved on every read.
+# `year greaterthan 2024` is true until 1 January and wrong every day after.
+# Such a rule declares an offset and the base the offset is measured from, and
+# the base is resolved on every read.
 RELATIVE_BASES: dict[str, Callable[[datetime.date], int]] = {
     "current_year": lambda today: today.year,
 }
@@ -233,12 +230,6 @@ class KodiSetting:
     at all. It is not the empty string, which Kodi cannot store — an empty
     node reads back as no value — and which would therefore plan a Change on
     every Run and fail its own Verification forever.
-
-    `divergent` is the reason this address deliberately holds a value the
-    Recovery Baseline cannot produce, so a shell run after an `apply` leaves
-    a Change here by intent rather than by mistake (ADR 0012). It is stated
-    per address and never as a blanket flag: an undeclared disagreement must
-    still fail, because that is the fault rule 3 was written to catch.
     """
 
     setting: str
@@ -246,7 +237,6 @@ class KodiSetting:
     declared: str
     transform: str | None = None
     named_by: str | None = None
-    divergent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -363,9 +353,8 @@ class AuthorizedKeys:
     """Who may log in to the Device, declared whole.
 
     The Reconciler owns every byte of this document, so an entry nobody
-    declared is removed rather than tolerated. Appending if absent — what the
-    shell does — can only ever grow the file, which means a revoked key is
-    never actually revoked.
+    declared is removed rather than tolerated. Otherwise a revoked key would
+    never actually be revoked.
 
     `entries` begins with the administrator entry, which is derived from the
     public half of the identity the Run authenticates with and is never
@@ -653,7 +642,7 @@ def _shortcut_node(
         raise ConfigError(f"{source}: {document} declares no shortcuts")
     shortcuts = _shortcuts(source, playlists, declared)
     # The add-on finds an item by walking the whole tree for its guid, so a
-    # guid repeated at any depth is one shortcut shadowing another.
+    # guid repeated at any depth makes one shortcut hide another.
     seen: set[str] = set()
     for shortcut in _walk(shortcuts):
         if shortcut.guid in seen:
@@ -685,23 +674,9 @@ def _kodi_setting(
             "from_profile",
             "unset",
             "transform",
-            "divergent",
         ),
     )
     setting = _text(source, "a Kodi setting id", mapping["setting"])
-    # Why the Recovery Baseline cannot produce this value. A key stating an
-    # empty reason is a declaration that says nothing, and a reviewer reading
-    # rule 3's one expected Change would learn nothing from it.
-    divergent: str | None = None
-    if "divergent" in mapping:
-        divergent = _text(
-            source, f"the divergent of {setting}", mapping["divergent"]
-        ).strip()
-        if not divergent:
-            raise ConfigError(
-                f"{source}: the divergent of {setting} states why the Recovery "
-                "Baseline cannot produce this value"
-            )
     # The four arms are mutually exclusive and one is mandatory. A setting
     # stating none of them is the shape a truncated line produces, and one
     # stating two says two different things about the same address.
@@ -722,7 +697,6 @@ def _kodi_setting(
             value=named.value(source, key),
             declared=key,
             named_by=key,
-            divergent=divergent,
         )
     if stated == ["unset"]:
         # Only `true`. `unset: false` would be a setting saying nothing about
@@ -737,9 +711,7 @@ def _kodi_setting(
                 f"{source}: {setting} is cleared, and a cleared setting takes "
                 "no transform"
             )
-        return KodiSetting(
-            setting=setting, value=None, declared="unset", divergent=divergent
-        )
+        return KodiSetting(setting=setting, value=None, declared="unset")
     if stated == ["from_profile"]:
         # A Profile Constant is committed and printable, so it resolves to an
         # ordinary declared value and is reported like one. `from_env` stays
@@ -763,7 +735,6 @@ def _kodi_setting(
         value=_transform(source, transform, declared),
         declared=declared,
         transform=transform,
-        divergent=divergent,
     )
 
 
@@ -1155,8 +1126,8 @@ def _administrator_key(identity: Path) -> AuthorizedKey:
 
     This is derived rather than declared, so the one key that must never be
     absent from the document cannot be got wrong by a Profile. The comment
-    is the key file's own, which is what the shell installs, so a Device the
-    shell last wrote and a Device this wrote hold the same line.
+    is the key file's own, so First Contact and ordinary Runs render the same
+    administrator line.
     """
 
     public = identity.with_name(f"{identity.name}.pub")
@@ -1180,9 +1151,8 @@ def _authorized_key(source: Path, named: NamedValues, raw: Any) -> AuthorizedKey
         required=("comment", "from_env", "forced_command"),
     )
     comment = _text(source, "an authorized key comment", mapping["comment"])
-    # The comment is how an entry is found and read, by a human and by the
-    # shell's own installer, which replaces the line carrying this marker.
-    # A comment holding whitespace would split into two words, and the second
+    # The comment is how an entry is found and read by a human. A comment
+    # holding whitespace would split into two words, and the second
     # would not be part of the comment at all.
     if not comment or comment.split() != [comment]:
         raise ConfigError(

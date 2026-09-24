@@ -45,8 +45,8 @@ def test_the_declared_document_is_the_whole_set_of_entries(
 ) -> None:
     """A key nobody declares is removed, which is what revoking one means.
 
-    The shell appends if absent, so its file can only ever grow. Declaring
-    the document whole is what makes the Reconciler able to take a key away.
+    Appending if absent can only ever grow the file. Declaring the document
+    whole is what makes the Reconciler able to take a key away.
     """
 
     declare_lifecycle_key(device)
@@ -253,8 +253,8 @@ def test_hardening_writes_the_option_sshd_is_started_with(
     held = device.sshd_conf.read_text(encoding="utf-8")
     assert held == SSHD_RECONCILED
     assert held.splitlines()[0] == SSHD_HARDENED.splitlines()[0]
-    # What CoreELEC gives the file, not the shell's 0600: `oe.py` writes it
-    # with a plain `open` and no `chmod`, and the file holds no secret.
+    # What CoreELEC gives the file: `oe.py` writes it with a plain `open` and
+    # no `chmod`, and the file holds no secret.
     assert oct(device.sshd_conf.stat().st_mode & 0o777) == "0o644"
 
 

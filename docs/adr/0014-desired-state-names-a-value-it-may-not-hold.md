@@ -10,7 +10,7 @@ TMDb Helper's `mdblist_apikey` and `omdb_apikey`. Four are credentials. The
 other two are the endpoints those credentials authenticate to, and
 `provision.conf` rejects both keys naming them — the shell treats the whole of
 `.env` as one boundary rather than sorting it into credentials and addresses
-([`config/README.md`](../../config/README.md)).
+([`config/README.md`](https://github.com/jbruns/tv/blob/d604fe6e2d0e7eb910d7f82fcd3e355ce361dded/config/README.md)).
 
 A Profile is committed. It therefore cannot carry any of the six, and the
 first question this slice had to answer was whether declaring the two
@@ -67,7 +67,7 @@ the only reader, but it makes every Run carry a preamble that is silent when
 forgotten in one direction — a stale exported value from an earlier shell is
 indistinguishable from a fresh one — and it moves a step out of the tool and
 into an operator's memory. The command in
-[reconciling the theater Ugoos](../operations/reconcile-theater.md) stays one
+[reconciling the theater Ugoos](https://github.com/jbruns/tv/blob/d604fe6e2d0e7eb910d7f82fcd3e355ce361dded/docs/operations/reconcile-theater.md) stays one
 line.
 
 ## Considered and rejected

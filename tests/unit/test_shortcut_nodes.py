@@ -34,9 +34,8 @@ POWER_OFF = """\
         icon: special://skin/extras/icons/power.png
 """
 
-# The bytes the Recovery Baseline writes: sorted keys, four-space indent, one
-# trailing newline. Value parity is what keeps the two engines from reverting
-# each other, so it is stated here in full rather than recomputed.
+# The add-on's stable JSON form: sorted keys, four-space indent, one trailing
+# newline. It is stated here in full rather than recomputed.
 EXPECTED_HOME_WIDGETS = """\
 [
     {

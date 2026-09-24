@@ -1,7 +1,7 @@
 """A document the Profile ships as a file, and the Device holds byte for byte.
 
 The Kodi lifecycle gateway is forty lines of POSIX `sh`. Embedded in
-YAML it could be neither linted nor read as shell, so the Profile names a
+YAML it could be neither linted nor read as a script, so the Profile names a
 file beside itself instead, and a Run renders that file whole.
 
 A missing source is a configuration mistake, named before any Device contact
@@ -13,7 +13,6 @@ These tests drive the Reconciler through its public entry point only
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -212,28 +211,3 @@ def test_the_shipped_gateway_is_the_forced_command_of_home_assistants_key() -> N
         "source": SOURCE,
         "mode": "0700",
     }
-
-
-def test_the_shipped_gateway_is_what_the_recovery_baseline_renders() -> None:
-    """Rule 3 of ADR 0012: a shell run after an `apply` changes nothing here.
-
-    The renderer is the shell's own, invoked the way its deploy invokes it,
-    so the parity is derived rather than asserted.
-    """
-
-    rendered = subprocess.run(
-        [
-            "bash",
-            "-c",
-            "source lib/coreelec-lifecycle.sh && "
-            "coreelec_lifecycle_render_wrapper /usr/bin/systemctl",
-        ],
-        cwd=REPOSITORY,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    shipped = (PROFILE_DIRECTORY / shipped_gateway()["source"]).read_text(
-        encoding="utf-8"
-    )
-    assert shipped == rendered

@@ -7,8 +7,8 @@ directory, cross-checks what `addon.xml` declares against the pin, applies
 the add-on's Artifact Patches, and hands back a tar stream of the finished
 tree (ADR 0017).
 
-The fetch shells out to `curl`, and patching shells out to `patch`, the way
-the Device transport shells out to `ssh`: one client, one set of options, and
+The fetch invokes `curl`, and patching invokes `patch`, the way
+the Device transport invokes `ssh`: one client, one set of options, and
 a boundary a test can stand a stub in front of.
 """
 
@@ -372,8 +372,8 @@ def patched(
 
     Only the files the diffs name are written out and read back, so mode and
     timestamp come from the Artifact for every member and the tar of one
-    Artifact stays one tar. The already-patched case the shell handles does
-    not arise here: this tree was expanded from bytes a SHA-256 pins.
+    Artifact stays one tar. An already-patched tree cannot arise here: this
+    tree was expanded from bytes a SHA-256 pins.
     """
 
     if not patches:

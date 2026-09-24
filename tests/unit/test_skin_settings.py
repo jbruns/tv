@@ -42,8 +42,7 @@ def test_a_fresh_skin_document_is_written_with_typed_nodes(
     assert reconcile("apply", "--room", "theater") == 0
 
     root = ElementTree.parse(device.skin).getroot()
-    # Kodi writes a skin document's root without a version, and so does the
-    # shell.
+    # Kodi writes a skin document's root without a version.
     assert root.attrib == {}
     # A Cleared Address the document does not hold is already clear, so
     # nothing is created for it.

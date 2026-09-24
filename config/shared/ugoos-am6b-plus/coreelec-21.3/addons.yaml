@@ -29,10 +29,6 @@
 # diff produces — a patched add-on is observed by its version *and* by those
 # hashes, because correcting a patch does not move the version. Those hashes
 # are generated: run `record-patches` rather than editing them by hand.
-#
-# The shell's `provision.conf` beside this file still holds all 41 pins as
-# `ADDON_ARTIFACT` records and is untouched: it is the Recovery Baseline
-# (ADR 0010). Only the add-ons listed here are the Reconciler's.
 
 addons:
 # --- Repositories -----------------------------------------------------------
@@ -173,18 +169,17 @@ addons:
     role: chosen
     notes: ~
 
-  # Installed by hand from the official Kodi repository. The shell tolerated
-  # it without pinning it; it is Profile intent like anything else someone
-  # chose. Its one dependency is below.
+  # Installed by hand from the official Kodi repository. It is Profile intent
+  # like anything else someone chose. Its one dependency is below.
   - id: plugin.program.autocompletion
     version: "2.1.2"
     url: https://mirrors.kodi.tv/addons/omega/plugin.program.autocompletion/plugin.program.autocompletion-2.1.2.zip
     sha256: "0432e06967bef696ab34298d46c23143fdfde5ed30c98a1854e89b868d5d669a"
     role: chosen
     notes: >-
-      An operator install from the official Kodi repository that the shell
-      never pinned, recorded until now in nothing but a comment. Add-on
-      updates are `notify`, so this is the version the fleet is running.
+      An operator install from the official Kodi repository, now recorded in
+      the Artifact Lock. Add-on updates are `notify`, so this is the version
+      the fleet is running.
 
 # --- Dependencies -----------------------------------------------------------
 # Bumping one of these is a consequence of a decision above, never a decision.
@@ -195,8 +190,8 @@ addons:
     sha256: "e26bbc0550534f765a2a4cf82d9359142fd7b6cf97a5d6fe9ab575681899eb83"
     role: dependency
     notes: >-
-      Required by plugin.program.autocompletion, and unpinned for the same
-      reason it was: the shell never named either of them.
+      Required by plugin.program.autocompletion, and pinned because that chosen
+      add-on is now recorded in the Artifact Lock.
   - id: inputstream.adaptive
     version: "21.5.24.1"
     url: https://addons.coreelec.org/Amlogic-ng/21.3/arm/inputstream.adaptive/inputstream.adaptive-21.5.24.1.zip
