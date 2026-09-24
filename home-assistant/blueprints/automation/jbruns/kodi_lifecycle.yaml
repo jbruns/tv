@@ -11,7 +11,7 @@ blueprint:
   input:
     display:
       name: Display
-      description: The media player for the screen this Device's video reaches.
+      description: The media player for this Device's Display.
       selector:
         entity:
           filter:
@@ -73,8 +73,10 @@ triggers:
     id: display_on
   - trigger: state
     entity_id: !input display
+    not_from:
+      - unavailable
+      - unknown
     to: "off"
-    for: !input stop_delay
     id: display_off
   - trigger: homeassistant
     event: start
@@ -105,21 +107,21 @@ actions:
         data:
           source: !input display_source
 
-  # The stop delay does not survive a restart, so start it again rather than
-  # stopping Kodi straight away. A Display that comes on meanwhile restarts
-  # this automation through display_on.
+  # The stop delay. A trigger's `for` would be cancelled by the Display
+  # dropping to unavailable in standby, and does not survive a restart, so
+  # wait here instead: only the Display coming on ends the wait early.
   - if:
       - condition: template
-        value_template: "{{ trigger.id == 'home_assistant_start' and command == 'stop' }}"
+        value_template: "{{ command == 'stop' }}"
     then:
-      - wait_template: "{{ not is_state(display, 'off') }}"
+      - wait_template: "{{ states(display) not in ['off', 'unavailable', 'unknown'] }}"
         timeout: !input stop_delay
         continue_on_timeout: true
       - if:
           - condition: template
             value_template: "{{ wait.completed }}"
         then:
-          - stop: The Display left off before the stop delay ended.
+          - stop: The Display came on before the stop delay ended.
 
   - if:
       - condition: template

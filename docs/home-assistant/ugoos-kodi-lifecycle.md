@@ -247,8 +247,9 @@ is written once and instantiated per Device. It acts only on transitions:
 
 - The Display turning on from `off` starts Kodi and selects the Device's input
   once. Switching input afterwards is left alone.
-- The Display staying `off` for the stop delay (default 10 minutes) stops Kodi,
-  unless the Keep-Running Hold is on.
+- The Display turning `off` for the stop delay (default 10 minutes) stops Kodi,
+  unless the Keep-Running Hold is on. Only the Display coming on ends the delay
+  early; dropping to `unavailable` in standby does not.
 - Only `off` counts as off. Changes to or from `unavailable` or `unknown` do
   nothing.
 - On Home Assistant start, a Display that is on starts Kodi without selecting

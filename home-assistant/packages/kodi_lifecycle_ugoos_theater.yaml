@@ -16,5 +16,3 @@ automation:
         kodi: media_player.theater_kodi_theater
         ssh_host: ugoos-theater-lifecycle
         keep_running_hold: input_boolean.ugoos_theater_keep_running_hold
-        stop_delay:
-          minutes: 10
