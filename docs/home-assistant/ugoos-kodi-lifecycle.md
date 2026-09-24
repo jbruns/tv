@@ -5,6 +5,10 @@ CoreELEC stays awake on wired LAN; Home Assistant starts and stops Kodi,
 powers off the Sony when idle, and leaves the host awake on failure. Wake-on-
 LAN, suspend, shutdown, reboot, and power-cycling are outside the lifecycle.
 
+The polling package below is being replaced by the event-driven Kodi Lifecycle
+blueprint ([ADR 0020](../adr/0020-kodi-lifecycle-is-event-driven-home-assistant-blueprints.md)).
+Section 8 installs it. The two must never run at the same time.
+
 To provision the Device, use
 [Provision a Device](../operations/provision-a-device.md). For
 Sony BRAVIA setup and the theater integration prerequisites, follow the
@@ -235,3 +239,69 @@ Create a new Home Assistant controller key, update
 public key in `.env` as `COREELEC_LIFECYCLE_PUBLIC_KEY`, and run `apply`. The
 Reconciler replaces the marked entry, so the old key stops working in the same
 Run. Remove the old key from Home Assistant afterwards.
+
+## 8. Kodi Lifecycle blueprint
+
+The blueprint `home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml`
+is written once and instantiated per Device. It acts only on transitions:
+
+- The Display turning on from `off` starts Kodi and selects the Device's input
+  once. Switching input afterwards is left alone.
+- The Display staying `off` for the stop delay (default 10 minutes) stops Kodi,
+  unless the Keep-Running Hold is on.
+- Only `off` counts as off. Changes to or from `unavailable` or `unknown` do
+  nothing.
+- On Home Assistant start, a Display that is on starts Kodi without selecting
+  the input. A Display that is off restarts the stop delay; Kodi is never
+  stopped straight away.
+
+It never polls. A Kodi stopped by hand stays stopped until the next Display
+transition, lifting the Keep-Running Hold does not stop Kodi by itself, and
+systemd, not Home Assistant, restarts a Kodi that crashes. A failed `start` or
+`stop` raises one persistent notification per Device,
+`kodi_lifecycle_<ssh host alias>`, which the next successful command clears.
+Each run's decisions are in the automation's traces.
+
+### Inputs
+
+| Input | Theater value |
+|---|---|
+| Display | `media_player.bravia_xr_65a90j` |
+| Display source | `HDMI 4`, as it appears in the Display's `source_list` |
+| Kodi media player | `media_player.theater_kodi_theater` |
+| SSH host alias | `ugoos-theater-lifecycle` |
+| Keep-Running Hold | `input_boolean.ugoos_theater_keep_running_hold` |
+| Stop delay | 10 minutes |
+
+### Install
+
+1. Disable the polling package: in Settings -> Automations & scenes, search
+   for `Theater -` and turn off every automation it lists. Home Assistant
+   restores that off state across restarts. Leave the package installed.
+2. Import the blueprint from Settings -> Automations & scenes -> Blueprints ->
+   Import Blueprint, using
+   `https://github.com/jbruns/tv/blob/main/home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml`.
+   It lands at `/config/blueprints/automation/jbruns/kodi_lifecycle.yaml`.
+   Re-import it the same way after it changes.
+3. Copy `home-assistant/packages/kodi_lifecycle.yaml`, which holds the one
+   templated `shell_command.kodi_lifecycle`, and
+   `home-assistant/packages/kodi_lifecycle_ugoos_theater.yaml`, the theater
+   instance and its Keep-Running Hold, into `/config/packages/`.
+4. `/config/.ssh/ugoos-kodi-lifecycle.conf` needs one `Host` block per Device;
+   the theater's is already there from section 4.
+5. Run `ha core check`, then restart Home Assistant Core.
+
+From Developer Tools -> Actions, check the gateway with:
+
+```yaml
+action: shell_command.kodi_lifecycle
+data:
+  host: ugoos-theater-lifecycle
+  command: status
+```
+
+To add a Device, add its `Host` block to the SSH config and copy the theater
+instance package with the new Device's entities, alias, and Hold.
+
+To go back to the polling package, turn off `Theater - Kodi Lifecycle` before
+turning the package's automations back on.

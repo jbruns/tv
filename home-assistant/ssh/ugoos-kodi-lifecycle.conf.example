@@ -1,3 +1,7 @@
+# One Host block per Device. The alias is the Kodi Lifecycle blueprint's
+# SSH host input; copy the block and change Host and HostName for another
+# Device.
+
 Host ugoos-theater-lifecycle
   HostName ugoos-theater.lan.wavebe.am
   User root

@@ -1,0 +1,20 @@
+# The theater's Kodi Lifecycle: the blueprint instantiated for ugoos-theater.
+# Import the blueprint first; see docs/home-assistant/ugoos-kodi-lifecycle.md.
+input_boolean:
+  ugoos_theater_keep_running_hold:
+    name: Theater - Keep-Running Hold
+    icon: mdi:play-lock
+
+automation:
+  - id: kodi_lifecycle_ugoos_theater
+    alias: Theater - Kodi Lifecycle
+    use_blueprint:
+      path: jbruns/kodi_lifecycle.yaml
+      input:
+        display: media_player.bravia_xr_65a90j
+        display_source: HDMI 4
+        kodi: media_player.theater_kodi_theater
+        ssh_host: ugoos-theater-lifecycle
+        keep_running_hold: input_boolean.ugoos_theater_keep_running_hold
+        stop_delay:
+          minutes: 10

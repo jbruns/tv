@@ -1,0 +1,7 @@
+# Shared by every Device's Kodi Lifecycle instance. The blueprint passes the
+# Device's SSH Host alias and one gateway command: start, stop or status.
+# Because the arguments are templated, Home Assistant runs this without a shell.
+shell_command:
+  kodi_lifecycle: >-
+    timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf
+    {{ host }} {{ command }}
