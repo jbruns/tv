@@ -260,9 +260,10 @@ is written once and instantiated per Device. It acts only on transitions:
   the stop delay then stops Kodi. Viewing means the Display is on with its
   `source` set to the Device's input. Kodi being idle and Viewing must both
   hold for the whole timeout, so playback, pause, or switching the Display
-  to another input or its own apps starts the countdown again. A Home Assistant
-  restart during the countdown also starts it again, from the next change to
-  Kodi or the Display.
+  to another input or its own apps starts the countdown again. If Home
+  Assistant restarts, or this automation is reloaded, while Kodi is idle and
+  Viewing, there is no countdown until one of those breaks it and it holds
+  again.
 
 It never polls. A Kodi stopped by hand stays stopped until the next Display
 transition, lifting the Keep-Running Hold does not stop Kodi by itself, and

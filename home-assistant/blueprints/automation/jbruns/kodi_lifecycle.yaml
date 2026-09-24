@@ -98,6 +98,8 @@ triggers:
   # Kodi idle and Viewing must both hold for the whole timeout, so playback,
   # pause, or switching the Display away starts the countdown again. It needs
   # the Display on, so it never fires during, and never cancels, a stop delay.
+  # A template trigger arms only once it has been false, so a restart while
+  # already idle and Viewing waits for the next break.
   - trigger: template
     value_template: >-
       {{ is_state(kodi, 'idle')
