@@ -255,6 +255,14 @@ is written once and instantiated per Device. It acts only on transitions:
 - On Home Assistant start, a Display that is on starts Kodi without selecting
   the input. A Display that is off restarts the stop delay; Kodi is never
   stopped straight away.
+- Idle Power-Off: once the Kodi media player has been `idle` for the idle
+  timeout (default 30 minutes) while Viewing, the Display is turned off, and
+  the stop delay then stops Kodi. Viewing means the Display is on with its
+  `source` set to the Device's input. Kodi being idle and Viewing must both
+  hold for the whole timeout, so playback, pause, or switching the Display
+  to another input or its own apps starts the countdown again. A Home Assistant
+  restart during the countdown also starts it again, from the next change to
+  Kodi or the Display.
 
 It never polls. A Kodi stopped by hand stays stopped until the next Display
 transition, lifting the Keep-Running Hold does not stop Kodi by itself, and
@@ -267,12 +275,21 @@ Each run's decisions are in the automation's traces.
 
 | Input | Theater value |
 |---|---|
-| Display | `media_player.bravia_xr_65a90j` |
+| Display | `media_player.sony_theater` |
 | Display source | `HDMI 4`, as it appears in the Display's `source_list` |
-| Kodi media player | `media_player.theater_kodi_theater` |
+| Kodi media player | `media_player.ugoos_theater` |
 | SSH host alias | `ugoos-theater-lifecycle` |
 | Keep-Running Hold | `input_boolean.ugoos_theater_keep_running_hold` |
 | Stop delay | 10 minutes |
+| Idle timeout | 30 minutes |
+
+### Restart Kodi
+
+`script.ugoos_theater_restart_kodi` (`Theater - Restart Kodi`) runs the
+gateway's `stop`, then `start`. A failed `stop` still goes on to `start`. It
+never reboots the Device. Run it from the script's page in Settings ->
+Automations & scenes -> Scripts, or add it to a dashboard. If Kodi does not
+come back, check the script's trace and the Home Assistant log.
 
 ### Install
 
@@ -287,7 +304,8 @@ Each run's decisions are in the automation's traces.
 3. Copy `home-assistant/packages/kodi_lifecycle.yaml`, which holds the one
    templated `shell_command.kodi_lifecycle`, and
    `home-assistant/packages/kodi_lifecycle_ugoos_theater.yaml`, the theater
-   instance and its Keep-Running Hold, into `/config/packages/`.
+   instance, its Keep-Running Hold, and its Restart Kodi script, into
+   `/config/packages/`.
 4. `/config/.ssh/ugoos-kodi-lifecycle.conf` needs one `Host` block per Device;
    the theater's is already there from section 4.
 5. Run `ha core check`, then restart Home Assistant Core.
