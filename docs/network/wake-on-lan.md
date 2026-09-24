@@ -2,8 +2,7 @@
 
 Use this alongside [device network onboarding](pfsense-plus-26.07-onboarding.md)
 only for optional wake workflows. Wake-on-LAN is outside the always-awake
-Ugoos/CoreELEC lifecycle: the lifecycle package does not send WoL and does not
-depend on it.
+Kodi Lifecycle: it does not send WoL and does not depend on it.
 
 ## Shared design
 

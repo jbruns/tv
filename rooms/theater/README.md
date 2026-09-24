@@ -42,7 +42,7 @@ IoT: Sony XR-65A90J, Denon AVR-X4700H, Home Assistant
    the room's playback settings.
 3. Configure the native Sony BRAVIA, Kodi, and Denon Home Assistant
    integrations and their documented stable entity IDs.
-4. Install the Theater Home Assistant package by following the
+4. Install the theater's Kodi Lifecycle by following the
    [shared lifecycle guide](../../docs/home-assistant/ugoos-kodi-lifecycle.md).
 5. Apply the room playback settings in the [Sony](devices/sony-xr-65a90j.md) and
    [Denon](devices/denon-avr-x4700h.md) guides, then verify playback, device

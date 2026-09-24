@@ -51,15 +51,15 @@ that key first, as section 2 of the
 
 Add the room's native integrations after the devices have their managed network
 identities. For theater this includes Sony BRAVIA, Kodi, and Denon as
-applicable. Confirm the exact entity IDs expected by the room package before
-enabling automations.
+applicable. Confirm the exact entity IDs expected by the room's Kodi Lifecycle
+instance before enabling automations.
 
-## 5. Install any room package
+## 5. Install the room's Kodi Lifecycle
 
-Copy the required SSH/config assets and package YAML into Home Assistant, enable
-packages if needed, run `ha core check`, then restart or reload Home Assistant
-as required by the selected guide. For the theater lifecycle package, follow
-[Ugoos Kodi lifecycle Home Assistant operations](home-assistant/ugoos-kodi-lifecycle.md).
+Import the Kodi Lifecycle blueprint, copy the SSH config and the room's
+instance package into Home Assistant, run `ha core check`, then restart Home
+Assistant, as [Kodi Lifecycle in Home Assistant](home-assistant/ugoos-kodi-lifecycle.md)
+describes.
 
 ## 6. Verify and keep recovery media
 

@@ -16,7 +16,7 @@ Use the [theater signal topology](../README.md#signal-topology). The Denon is th
 - Enable **ARC/eARC** for the **MONITOR 1** television path.
 - Set **Network Control** to **Always On** so Home Assistant can monitor and control the receiver in standby.
 - In Home Assistant, add **Denon AVR Network Receivers** under **Settings > Devices & services** using discovery or the reserved address.
-- Receiver state and control are independent of the Ugoos lifecycle package.
+- Receiver state and control are independent of the Kodi Lifecycle.
 
 ## Source
 

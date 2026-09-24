@@ -41,7 +41,6 @@ target-version = "py314"
 line-length = 88
 extend-exclude = [
   "scripts/check_markdown.py",
-  "tests/home-assistant-ugoos-fixture.py",
 ]
 
 [tool.ruff.lint]

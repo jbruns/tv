@@ -1,61 +1,48 @@
-# Ugoos Kodi lifecycle Home Assistant operations
+# Kodi Lifecycle in Home Assistant
 
-This guide deploys and operates the theater's always-awake CoreELEC lifecycle.
-CoreELEC stays awake on wired LAN; Home Assistant starts and stops Kodi,
-powers off the Sony when idle, and leaves the host awake on failure. Wake-on-
-LAN, suspend, shutdown, reboot, and power-cycling are outside the lifecycle.
+This guide deploys and operates the Kodi Lifecycle: Home Assistant starting
+Kodi on a Device while its Display is on and stopping it once the Display has
+been off for a while
+([ADR 0020](../adr/0020-kodi-lifecycle-is-event-driven-home-assistant-blueprints.md)).
+CoreELEC stays awake on wired LAN throughout. Wake-on-LAN, suspend, shutdown,
+reboot, and power-cycling are outside the lifecycle.
 
-The polling package below is being replaced by the event-driven Kodi Lifecycle
-blueprint ([ADR 0020](../adr/0020-kodi-lifecycle-is-event-driven-home-assistant-blueprints.md)).
-Section 8 installs it. The two must never run at the same time.
+The logic is one blueprint, instantiated per Device:
+
+| File in this repository | Deployed to |
+|---|---|
+| `home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml` | `/config/blueprints/automation/jbruns/kodi_lifecycle.yaml` |
+| `home-assistant/packages/kodi_lifecycle.yaml` | `/config/packages/kodi_lifecycle.yaml` |
+| `home-assistant/packages/kodi_lifecycle_ugoos_theater.yaml` | `/config/packages/kodi_lifecycle_ugoos_theater.yaml` |
+| `home-assistant/ssh/ugoos-kodi-lifecycle.conf.example` | `/config/.ssh/ugoos-kodi-lifecycle.conf` |
+
+`kodi_lifecycle.yaml` holds the one templated `shell_command.kodi_lifecycle`
+every Device shares. Each Device then has its own instance package: the
+automation built from the blueprint, its Keep-Running Hold, and its Restart
+Kodi script.
 
 To provision the Device, use
 [Provision a Device](../operations/provision-a-device.md). For
 Sony BRAVIA setup and the theater integration prerequisites, follow the
 [Theater Sony guide](../../rooms/theater/devices/sony-xr-65a90j.md).
 
+Kodi keeps CEC enabled for navigation, but the Profile declares the CEC
+adapter settings so Kodi neither claims the active source nor powers the
+Display on or off when it starts or stops. See the
+[Profile reference](../reference/profile.md#naming-a-document-the-profile-cannot-know).
+
 ## Deployment order
 
 ```text
 CoreELEC wizard
 -> DHCP reservation and DNS
--> Home Assistant controller identity (section 2)
--> Reconciler bootstrap and apply, which installs the gateway (section 3)
--> Sony BRAVIA and Kodi integrations
--> theater Home Assistant package
+-> Home Assistant controller identity (section 1)
+-> Reconciler bootstrap and apply, which installs the gateway (section 2)
+-> Display and Kodi integrations
+-> blueprint and instance package (section 3)
 ```
 
-## Exact package contract
-
-| Value | Exact ID/path |
-|---|---|
-| Sony entity | `media_player.bravia_xr_65a90j` |
-| Kodi entity | `media_player.theater_kodi_theater` |
-| Ugoos lifecycle host | `ugoos-theater.lan.wavebe.am` via SSH alias `ugoos-theater-lifecycle` |
-| Home Assistant private key | `/config/.ssh/ugoos_kodi_lifecycle_ed25519` |
-| Home Assistant known hosts | `/config/.ssh/known_hosts` |
-| Home Assistant SSH config | `/config/.ssh/ugoos-kodi-lifecycle.conf` |
-| Package file | `/config/packages/ugoos_theater_kodi_lifecycle.yaml` |
-| Keep-running helper | `input_boolean.ugoos_theater_keep_kodi_running` |
-| Idle timeout helper | `input_number.ugoos_theater_idle_timeout_minutes` |
-| Lifecycle state helper | `input_text.ugoos_theater_kodi_lifecycle_state` |
-| Last command helper | `input_text.ugoos_theater_last_lifecycle_command` |
-| Last reconciliation helper | `input_datetime.ugoos_theater_last_reconciliation` |
-| Observation epoch helper | `input_datetime.ugoos_theater_observation_started` |
-| Observation-ready helper | `input_boolean.ugoos_theater_observation_ready` |
-| Error summary helper | `input_text.ugoos_theater_last_lifecycle_error` |
-| Reconciler script | `script.ugoos_theater_reconcile_kodi` |
-| Idle Sony script | `script.ugoos_theater_power_off_idle_sony` |
-| Restricted commands | `shell_command.ugoos_theater_kodi_start`, `shell_command.ugoos_theater_kodi_stop`, `shell_command.ugoos_theater_kodi_status` |
-
-## 1. CEC power isolation
-
-The Profile declares the CEC adapter's settings, so every `apply` holds them.
-Kodi keeps CEC enabled for navigation, but it neither claims the active source
-nor sends TV power-on or standby commands when Kodi starts or stops. See the
-[Profile reference](../reference/profile.md#naming-a-document-the-profile-cannot-know).
-
-## 2. Create the Home Assistant controller identity
+## 1. Create the Home Assistant controller identity
 
 In Home Assistant Terminal & SSH, create the dedicated unattended controller
 key. Do not overwrite an existing controller identity:
@@ -100,7 +87,7 @@ fi
 rm -f /config/.ssh/ugoos-theater.candidate
 ```
 
-## 3. Install the restricted lifecycle gateway
+## 2. Install the restricted lifecycle gateway
 
 The Reconciler installs the gateway. Put the one-line contents of
 `/config/.ssh/ugoos_kodi_lifecycle_ed25519.pub` into the controller's `.env` as
@@ -113,93 +100,130 @@ The Reconciler installs the gateway. Put the one-line contents of
 gateway. The gateway accepts `start`, `stop` and `status`; anything else exits
 `2` with `Allowed commands: start, stop, status` on stderr.
 
-## 4. Install the Home Assistant package
+## 3. Install the blueprint and the theater instance
 
 1. Copy `home-assistant/ssh/ugoos-kodi-lifecycle.conf.example` to
-   `/config/.ssh/ugoos-kodi-lifecycle.conf`.
-2. Copy `home-assistant/packages/ugoos_theater_kodi_lifecycle.yaml` to
-   `/config/packages/ugoos_theater_kodi_lifecycle.yaml`.
-3. Enable packages in `/config/configuration.yaml` if needed:
+   `/config/.ssh/ugoos-kodi-lifecycle.conf`. It needs one `Host` block per
+   Device.
+2. Import the blueprint from Settings -> Automations & scenes -> Blueprints ->
+   Import Blueprint, using
+   `https://github.com/jbruns/tv/blob/main/home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml`.
+   Re-import it the same way after it changes.
+3. Copy `home-assistant/packages/kodi_lifecycle.yaml` and
+   `home-assistant/packages/kodi_lifecycle_ugoos_theater.yaml` into
+   `/config/packages/`. Delete `/config/packages/ugoos_theater_kodi_lifecycle.yaml`
+   if it is still there: it is the retired polling package, and it must not
+   run beside the blueprint. Enable packages in `/config/configuration.yaml` if
+   needed:
 
    ```yaml
    homeassistant:
      packages: !include_dir_named packages
    ```
 
-4. Configure the Sony BRAVIA and Kodi integrations, then confirm Home Assistant
-   exposes `media_player.bravia_xr_65a90j` and
-   `media_player.theater_kodi_theater`. Update a room-specific package if the
-   integration-generated IDs differ before enabling automations.
+4. Configure the Display and Kodi integrations and confirm the entity IDs in
+   the instance package exist. For the theater those are
+   `media_player.sony_theater` and `media_player.ugoos_theater`.
+5. Run `ha core check`, then restart Home Assistant Core.
 
-Run validation and restart/reload:
+CI runs Home Assistant's `check_config` against these same files; run
+`scripts/check_home_assistant.sh` to do the same locally.
 
-```bash
-ha core check
+From Developer Tools -> Actions, check the gateway with:
+
+```yaml
+action: shell_command.kodi_lifecycle
+data:
+  host: ugoos-theater-lifecycle
+  command: status
 ```
 
-Restart Home Assistant Core after installing or updating this package so the
-helpers, scripts, automations, and shell commands load together. For later
-supported YAML reloads use `homeassistant.reload_all`. Test all three
-restricted commands from Developer Tools -> Actions:
+The reply's stdout is exactly `running`, `stopped`, or `failed`.
 
-```text
-shell_command.ugoos_theater_kodi_status
-shell_command.ugoos_theater_kodi_start
-shell_command.ugoos_theater_kodi_stop
-```
+## 4. Behaviour
 
-Each command has the static form:
+The automation acts only on transitions:
 
-```text
-timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf ugoos-theater-lifecycle <start|stop|status>
-```
+- The Display turning on from `off` starts Kodi and selects the Device's input
+  once. Switching input afterwards is left alone.
+- The Display turning `off` for the stop delay stops Kodi, unless the
+  Keep-Running Hold is on. Only the Display coming on ends the delay early;
+  dropping to `unavailable` in standby does not.
+- Only `off` counts as off. Changes to or from `unavailable` or `unknown` do
+  nothing.
+- On Home Assistant start, a Display that is on starts Kodi without selecting
+  the input. A Display that is off restarts the stop delay; Kodi is never
+  stopped straight away.
+- Idle Power-Off: once the Kodi media player has been `idle` for the idle
+  timeout while Viewing, the Display is turned off, and the stop delay then
+  stops Kodi. Viewing means the Display is on with its `source` set to the
+  Device's input. Kodi being idle and Viewing must both hold for the whole
+  timeout, so playback, pause, or switching the Display to another input or
+  its own apps starts the countdown again. If Home Assistant restarts, or the
+  automation is reloaded, while Kodi is idle and Viewing, there is no
+  countdown until one of those breaks it and it holds again.
 
-Valid lifecycle stdout is exactly `running`, `stopped`, or `failed`.
+It never polls. A Kodi stopped by hand, or by the Reconciler during a Run,
+stays stopped until the next Display transition, so provisioning needs no
+Hold. Lifting the Keep-Running Hold does not stop Kodi by itself. systemd, not
+Home Assistant, restarts a Kodi that crashes. The automation never suspends,
+shuts down, reboots, power-cycles, or sends Wake-on-LAN to the Device.
 
-## 5. Runtime contract
+### Inputs
 
-- Stop-Kodi-while-display-off is enabled by default.
-- The Sony must be continuously `off` for **60 seconds within the current
-  observation epoch** before Home Assistant stops Kodi. Home Assistant start,
-  package reload, observed SSH recovery, unexpected stopped or failed to
-  running service recovery, and Kodi availability recovery reset that epoch.
-- A normal difference between the polled Kodi service state and the
-  minute-refreshed desired-state sensor does not reset the observation epoch.
-  Reconciliation computes the desired state again from current inputs, so a
-  stale sensor cannot restart Kodi immediately after a confirmed Sony-off stop.
-- `input_number.ugoos_theater_idle_timeout_minutes` defaults to **30 minutes**.
-- Kodi input-idle probing runs every 15 seconds while the Kodi entity is
-  reachable. Idle evidence expires after 30 seconds, so stale positive evidence
-  cannot survive two missed probe intervals.
-- `input_boolean.ugoos_theater_keep_kodi_running` is a persistent operational
-  override. Turning it on keeps Kodi running after Sony-off or idle-driven Sony
-  power-off until an operator turns it off.
-- When a reconciliation wants Kodi `running`, the package waits up to
-  **90 seconds** for `media_player.theater_kodi_theater` to become JSON-RPC
-  available.
-- Sony idle power-off is latched once per episode, including on a
-  **30-second** confirmation timeout or action exception. Only genuine
-  playback/input activity or an explicit operator retry rearms it.
-- Missing or stale input-idle evidence inhibits Sony power-off.
-- A configured Sony in `unknown` or `unavailable` demands `running`; those
-  states alone are not configuration errors.
-- Lifecycle failures leave CoreELEC awake and notify; failed SSH cannot promise
-  that Kodi started. Sony power-off failure leaves Kodi running without
-  repeated off requests.
-- A start or stop command can exceed the 15-second SSH client deadline after
-  the device has already converged. When the 30-second status poll then reads
-  the currently desired state authoritatively, it clears that one operation's
-  stale diagnostic and dismisses its notification. `running` also requires
-  JSON-RPC readiness before it counts as start convergence. Observed states
-  that differ from the desired state, `failed` results, unreachable hosts, and
-  unrelated operation errors are all preserved.
-- The package never suspends, shuts down, reboots, power-cycles, or sends
-  Wake-on-LAN to the Ugoos.
-- Kodi CEC remains available for remote navigation but is provisioned not to
-  power the Sony on or off. Deliberate Sony power-off remains owned by Home
-  Assistant and the user.
+| Input | Meaning | Theater value |
+|---|---|---|
+| Display | The Display's media player | `media_player.sony_theater` |
+| Display source | The Device's input, exactly as in the Display's `source_list` | `HDMI 4` |
+| Kodi media player | The Kodi integration's media player | `media_player.ugoos_theater` |
+| SSH host alias | The Device's `Host` in the SSH config | `ugoos-theater-lifecycle` |
+| Keep-Running Hold | An `input_boolean`; while on, Kodi is never stopped | `input_boolean.ugoos_theater_keep_running_hold` |
+| Stop delay | How long the Display must stay off before Kodi stops | 10 minutes (default) |
+| Idle timeout | How long Kodi must be idle while Viewing before the Display turns off | 30 minutes (default) |
+
+## 5. Add a Device
+
+1. Provision the Device and let `apply` install its gateway, as in sections 1
+   and 2. The same controller key serves every Device.
+2. Add a `Host` block for it to `/config/.ssh/ugoos-kodi-lifecycle.conf`, and
+   authenticate its host key into `/config/.ssh/known_hosts` as in section 1.
+3. Copy `kodi_lifecycle_ugoos_theater.yaml` to
+   `kodi_lifecycle_<device>.yaml`. Give the automation, the Hold, and the
+   Restart Kodi script new IDs and names, and set the Device's Display,
+   Display source, Kodi media player, and SSH host alias.
+4. Run `scripts/check_home_assistant.sh`, deploy the package, run
+   `ha core check`, and restart Home Assistant Core.
 
 ## 6. Operations and diagnostics
+
+### Restart Kodi
+
+`script.ugoos_theater_restart_kodi` (`Theater - Restart Kodi`) runs the
+gateway's `stop`, then `start`. A failed `stop` still goes on to `start`. It
+never reboots the Device. Run it from the script's page in Settings ->
+Automations & scenes -> Scripts, or add it to a dashboard.
+
+### Automation traces
+
+Each run of `Theater - Kodi Lifecycle` records its trigger, the command it
+chose, the stop-delay wait, and the gateway's reply. Open the automation in
+Settings -> Automations & scenes and choose Traces. A run that ended early
+names why in its `stop` step, for example "The Keep-Running Hold is on." or
+"The Display came on before the stop delay ended." The Restart Kodi script has
+traces too.
+
+A failed `start` or `stop` raises one persistent notification per Device,
+`kodi_lifecycle_<ssh host alias>`, naming the gateway's exit code and output.
+The next successful command clears it; the next Display transition tries
+again.
+
+### From a shell
+
+From Home Assistant, ask the gateway directly:
+
+```bash
+timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf ugoos-theater-lifecycle status
+```
 
 Check Kodi service state over the administrator identity, not the restricted
 controller key:
@@ -216,22 +240,6 @@ ssh -i "$HOME/.ssh/coreelec_admin_ed25519" root@ugoos-theater \
   "grep -Fq 'homeassistant-ugoos-kodi-lifecycle' /storage/.ssh/authorized_keys && printf 'marker-present\n'"
 ```
 
-From Home Assistant, inspect command behavior and logs:
-
-```bash
-timeout 15s ssh -F /config/.ssh/ugoos-kodi-lifecycle.conf ugoos-theater-lifecycle status
-ha core logs | grep -E 'ugoos_theater|Kodi lifecycle|Kodi idle|Sony idle' || true
-```
-
-In the UI, inspect the package helpers and persistent notifications beginning
-`ugoos_theater_kodi_lifecycle`, plus `ugoos_theater_kodi_idle_probe`,
-`ugoos_theater_kodi_idle_poweroff`, and `ugoos_theater_kodi_configuration`.
-
-To retry lifecycle convergence, run `script.ugoos_theater_reconcile_kodi`.
-To retry a failed Sony idle episode, first turn off
-`input_boolean.ugoos_theater_idle_poweroff_sent`, then run
-`script.ugoos_theater_power_off_idle_sony`.
-
 ## 7. Key rotation
 
 Create a new Home Assistant controller key, update
@@ -239,89 +247,3 @@ Create a new Home Assistant controller key, update
 public key in `.env` as `COREELEC_LIFECYCLE_PUBLIC_KEY`, and run `apply`. The
 Reconciler replaces the marked entry, so the old key stops working in the same
 Run. Remove the old key from Home Assistant afterwards.
-
-## 8. Kodi Lifecycle blueprint
-
-The blueprint `home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml`
-is written once and instantiated per Device. It acts only on transitions:
-
-- The Display turning on from `off` starts Kodi and selects the Device's input
-  once. Switching input afterwards is left alone.
-- The Display turning `off` for the stop delay (default 10 minutes) stops Kodi,
-  unless the Keep-Running Hold is on. Only the Display coming on ends the delay
-  early; dropping to `unavailable` in standby does not.
-- Only `off` counts as off. Changes to or from `unavailable` or `unknown` do
-  nothing.
-- On Home Assistant start, a Display that is on starts Kodi without selecting
-  the input. A Display that is off restarts the stop delay; Kodi is never
-  stopped straight away.
-- Idle Power-Off: once the Kodi media player has been `idle` for the idle
-  timeout (default 30 minutes) while Viewing, the Display is turned off, and
-  the stop delay then stops Kodi. Viewing means the Display is on with its
-  `source` set to the Device's input. Kodi being idle and Viewing must both
-  hold for the whole timeout, so playback, pause, or switching the Display
-  to another input or its own apps starts the countdown again. If Home
-  Assistant restarts, or this automation is reloaded, while Kodi is idle and
-  Viewing, there is no countdown until one of those breaks it and it holds
-  again.
-
-It never polls. A Kodi stopped by hand stays stopped until the next Display
-transition, lifting the Keep-Running Hold does not stop Kodi by itself, and
-systemd, not Home Assistant, restarts a Kodi that crashes. A failed `start` or
-`stop` raises one persistent notification per Device,
-`kodi_lifecycle_<ssh host alias>`, which the next successful command clears.
-Each run's decisions are in the automation's traces.
-
-### Inputs
-
-| Input | Theater value |
-|---|---|
-| Display | `media_player.sony_theater` |
-| Display source | `HDMI 4`, as it appears in the Display's `source_list` |
-| Kodi media player | `media_player.ugoos_theater` |
-| SSH host alias | `ugoos-theater-lifecycle` |
-| Keep-Running Hold | `input_boolean.ugoos_theater_keep_running_hold` |
-| Stop delay | 10 minutes |
-| Idle timeout | 30 minutes |
-
-### Restart Kodi
-
-`script.ugoos_theater_restart_kodi` (`Theater - Restart Kodi`) runs the
-gateway's `stop`, then `start`. A failed `stop` still goes on to `start`. It
-never reboots the Device. Run it from the script's page in Settings ->
-Automations & scenes -> Scripts, or add it to a dashboard. If Kodi does not
-come back, check the script's trace and the Home Assistant log.
-
-### Install
-
-1. Disable the polling package: in Settings -> Automations & scenes, search
-   for `Theater -` and turn off every automation it lists. Home Assistant
-   restores that off state across restarts. Leave the package installed.
-2. Import the blueprint from Settings -> Automations & scenes -> Blueprints ->
-   Import Blueprint, using
-   `https://github.com/jbruns/tv/blob/main/home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml`.
-   It lands at `/config/blueprints/automation/jbruns/kodi_lifecycle.yaml`.
-   Re-import it the same way after it changes.
-3. Copy `home-assistant/packages/kodi_lifecycle.yaml`, which holds the one
-   templated `shell_command.kodi_lifecycle`, and
-   `home-assistant/packages/kodi_lifecycle_ugoos_theater.yaml`, the theater
-   instance, its Keep-Running Hold, and its Restart Kodi script, into
-   `/config/packages/`.
-4. `/config/.ssh/ugoos-kodi-lifecycle.conf` needs one `Host` block per Device;
-   the theater's is already there from section 4.
-5. Run `ha core check`, then restart Home Assistant Core.
-
-From Developer Tools -> Actions, check the gateway with:
-
-```yaml
-action: shell_command.kodi_lifecycle
-data:
-  host: ugoos-theater-lifecycle
-  command: status
-```
-
-To add a Device, add its `Host` block to the SSH config and copy the theater
-instance package with the new Device's entities, alias, and Hold.
-
-To go back to the polling package, turn off `Theater - Kodi Lifecycle` before
-turning the package's automations back on.
