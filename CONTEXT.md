@@ -155,6 +155,27 @@ _Avoid_: Widget, static playlist
 An entry in a skin's menu or widget list naming what to open: a Smart Playlist, a window, or a built-in command. Shortcut Nodes nest.
 _Avoid_: Widget, menu item, tile
 
+**Display**:
+The screen in a Device's room that the Device's video reaches.
+_Avoid_: TV, Sony, screen
+
+**Kodi Lifecycle**:
+Starting and stopping Kodi on a running Device so that Kodi runs while its Display is on and is stopped once the Display has been off for a while. It is a runtime behaviour, not Desired State, and the Reconciler plays no part in it.
+_Avoid_: Desired Kodi state, reconciliation, power management
+_Realised by_: Home Assistant.
+
+**Keep-Running Hold**:
+An operator's standing instruction that Kodi keep running on a Device whatever its Display does, until the operator lifts it.
+_Avoid_: Override, keep-alive, maintenance mode
+
+**Viewing**:
+The condition in which a Device's Display is on and selected to that Device's input. A Display that is on but showing another input or its own apps is not Viewing.
+_Avoid_: Display on, watching, active
+
+**Idle Power-Off**:
+Turning a Display off after its Device has been idle for the room's idle timeout while Viewing.
+_Avoid_: Sleep timer, auto-off, standby
+
 **Pilot Phase**:
 The period in which exactly one disposable Device is managed, ending when a factory-fresh Device can be provisioned from a Profile alone.
 _Avoid_: Beta, rollout
