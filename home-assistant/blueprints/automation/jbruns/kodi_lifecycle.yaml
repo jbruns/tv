@@ -1,0 +1,159 @@
+blueprint:
+  name: Kodi Lifecycle
+  description: >-
+    Runs Kodi on a Device while its Display is on and stops it once the Display
+    has been off for the stop delay. Acts only on Display transitions and on
+    Home Assistant start; it never polls. See ADR 0020 in jbruns/tv.
+  domain: automation
+  source_url: https://github.com/jbruns/tv/blob/main/home-assistant/blueprints/automation/jbruns/kodi_lifecycle.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    display:
+      name: Display
+      description: The media player for this Device's Display.
+      selector:
+        entity:
+          filter:
+            domain: media_player
+    display_source:
+      name: Display source
+      description: >-
+        This Device's input on the Display, exactly as it appears in the
+        Display's source_list attribute, for example "HDMI 4".
+      selector:
+        text:
+    kodi:
+      name: Kodi media player
+      description: The Kodi integration's media player for this Device.
+      selector:
+        entity:
+          filter:
+            integration: kodi
+            domain: media_player
+    ssh_host:
+      name: SSH host alias
+      description: >-
+        The Device's Host alias in /config/.ssh/ugoos-kodi-lifecycle.conf.
+      selector:
+        text:
+    keep_running_hold:
+      name: Keep-Running Hold
+      description: While on, Kodi is never stopped, whatever the Display does.
+      selector:
+        entity:
+          filter:
+            domain: input_boolean
+    stop_delay:
+      name: Stop delay
+      description: How long the Display must stay off before Kodi stops.
+      default:
+        minutes: 10
+      selector:
+        duration:
+
+mode: restart
+
+variables:
+  display: !input display
+  ssh_host: !input ssh_host
+  keep_running_hold: !input keep_running_hold
+  notification_id: "kodi_lifecycle_{{ ssh_host }}"
+
+triggers:
+  # Only `off` counts as off. A Display moving to or from unavailable or
+  # unknown is not a transition this automation acts on.
+  - trigger: state
+    entity_id: !input display
+    from: "off"
+    not_to:
+      - "off"
+      - unavailable
+      - unknown
+    id: display_on
+  - trigger: state
+    entity_id: !input display
+    not_from:
+      - unavailable
+      - unknown
+    to: "off"
+    id: display_off
+  - trigger: homeassistant
+    event: start
+    id: home_assistant_start
+
+actions:
+  - variables:
+      command: >-
+        {% if trigger.id == 'display_on' %}start
+        {% elif trigger.id == 'display_off' %}stop
+        {% elif is_state(display, 'off') %}stop
+        {% elif states(display) in ['unavailable', 'unknown'] %}none
+        {% else %}start
+        {% endif %}
+  - condition: template
+    value_template: "{{ command in ['start', 'stop'] }}"
+
+  # Select the input once, as the Display comes on. Switching input later is
+  # left alone.
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'display_on' }}"
+    then:
+      - action: media_player.select_source
+        continue_on_error: true
+        target:
+          entity_id: !input display
+        data:
+          source: !input display_source
+
+  # The stop delay. A trigger's `for` would be cancelled by the Display
+  # dropping to unavailable in standby, and does not survive a restart, so
+  # wait here instead: only the Display coming on ends the wait early.
+  - if:
+      - condition: template
+        value_template: "{{ command == 'stop' }}"
+    then:
+      - wait_template: "{{ states(display) not in ['off', 'unavailable', 'unknown'] }}"
+        timeout: !input stop_delay
+        continue_on_timeout: true
+      - if:
+          - condition: template
+            value_template: "{{ wait.completed }}"
+        then:
+          - stop: The Display came on before the stop delay ended.
+
+  - if:
+      - condition: template
+        value_template: "{{ command == 'stop' and is_state(keep_running_hold, 'on') }}"
+    then:
+      - stop: The Keep-Running Hold is on.
+
+  - action: shell_command.kodi_lifecycle
+    continue_on_error: true
+    response_variable: gateway
+    data:
+      host: "{{ ssh_host }}"
+      command: "{{ command }}"
+  - variables:
+      expected: "{{ 'running' if command == 'start' else 'stopped' }}"
+      reply: "{{ gateway | default({}) }}"
+      succeeded: >-
+        {{ reply.get('returncode', -1) == 0 and reply.get('stdout', '') == expected }}
+  - if:
+      - condition: template
+        value_template: "{{ succeeded }}"
+    then:
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: "{{ notification_id }}"
+    else:
+      - action: persistent_notification.create
+        data:
+          notification_id: "{{ notification_id }}"
+          title: "Kodi {{ command }} failed on {{ ssh_host }}"
+          message: >-
+            The gateway {{ 'did not reply' if reply == {} else
+            'exited ' ~ reply.get('returncode') ~ ' with "' ~
+            (reply.get('stderr') or reply.get('stdout') or 'no output') ~ '"' }}.
+            Expected "{{ expected }}". The next Display transition tries again.
