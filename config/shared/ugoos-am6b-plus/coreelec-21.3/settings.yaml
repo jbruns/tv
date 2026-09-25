@@ -112,7 +112,12 @@ settings_documents:
         value: "false"
       - setting: services.esenabled
         value: "false"
-
+      # Follow the output mode CoreELEC picks from EDID; a fresh Kodi pins 2160p60.
+      - setting: videoscreen.screenmode
+        value: DESKTOP
+      # WS-Discovery (SMB share browsing) is off on the Device in service.
+      - setting: services.wsdiscovery
+        value: "false"
   # The Home Assistant weather add-on. Its settings definition carries no
   # version attribute, so Kodi loads and writes this document in the old flat
   # form: the value is an attribute, not element text.
