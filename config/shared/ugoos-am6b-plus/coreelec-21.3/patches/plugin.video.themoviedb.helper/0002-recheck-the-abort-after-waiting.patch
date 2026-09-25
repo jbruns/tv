@@ -1,4 +1,4 @@
-# plugin.video.themoviedb.helper 6.17.1
+# plugin.video.themoviedb.helper 6.17.4
 #
 # `waitForAbort` returns as soon as the abort is requested, and the loop then
 # runs a full maintenance pass anyway. Rechecking after the wait is what makes

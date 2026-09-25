@@ -97,9 +97,9 @@ addons:
     channel: emby-v21
     notes: ~
   - id: plugin.video.themoviedb.helper
-    version: "6.17.1"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.17.1.zip
-    sha256: "52ce3389076b138a8c0069bab5ee316e7c2e84ab74488044cd7ec18faae68f59"
+    version: "6.17.4"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.17.4.zip
+    sha256: "49b3dfdccff46fa9217c8fdd984bbb9ecacab31da0e49851046abc3ec0d67d8b"
     role: chosen
     channel: jurialmunkey-omega
     notes: ~
