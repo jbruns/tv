@@ -19,7 +19,8 @@ as the human who wrote it left it.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
@@ -98,3 +99,111 @@ def rewrite(
             f"the Artifact Lock has nowhere to record {path} of {addon_id}"
         )
     return rewritten, moved
+
+
+@dataclass(frozen=True)
+class Pin:
+    """What an Update Proposal moves one record of the Lock to.
+
+    `role` and `channel` are read only for a record new to the Lock; an
+    existing record keeps its own, and its `notes`, exactly as written.
+    """
+
+    id: str
+    version: str
+    url: str
+    sha256: str
+    role: str = "dependency"
+    channel: str | None = None
+    patches: tuple[str, ...] = ()
+    patched_files: Mapping[str, str] = field(default_factory=dict)
+
+
+def repin(document: str, pins: Sequence[Pin]) -> str:
+    """The Lock with each pin's record moved, and any new record appended.
+
+    Like `rewrite`, this edits lines rather than round-tripping YAML, so the
+    comments explaining each pin survive the proposal that moves it. A record
+    is its `- id:` line and every line after it indented past that line.
+    """
+
+    lines = document.splitlines(keepends=True)
+    wanted = {pin.id: pin for pin in pins}
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        held = RECORD.match(lines[index])
+        if held is None or held.group(2) not in wanted:
+            output.append(lines[index])
+            index += 1
+            continue
+        indent = len(held.group(1))
+        end = index + 1
+        while end < len(lines) and lines[end].startswith(" " * (indent + 2)):
+            end += 1
+        output.extend(_repinned(lines[index:end], indent, wanted.pop(held.group(2))))
+        index = end
+    text = "".join(output)
+    for pin in pins:
+        if pin.id not in wanted:
+            continue
+        if not text.endswith("\n"):
+            text += "\n"
+        text += "".join(
+            [
+                f"  - id: {pin.id}\n",
+                *_entries(pin, 4, ("version", "url", "sha256")),
+                f"    role: {pin.role}\n",
+                f"    channel: {pin.channel or '~'}\n",
+                "    notes: ~\n",
+                *_entries(pin, 4, ("patches", "patched_files")),
+            ]
+        )
+    return text
+
+
+def _entries(pin: Pin, indent: int, keys: Sequence[str]) -> list[str]:
+    pad = " " * indent
+    held: list[str] = []
+    for key in keys:
+        if key == "version":
+            held.append(f'{pad}version: "{pin.version}"\n')
+        elif key == "url":
+            held.append(f"{pad}url: {pin.url}\n")
+        elif key == "sha256":
+            held.append(f'{pad}sha256: "{pin.sha256}"\n')
+        elif key == "patches" and pin.patches:
+            held.append(f"{pad}patches:\n")
+            held.extend(f"{pad}  - {name}\n" for name in pin.patches)
+        elif key == "patched_files" and pin.patched_files:
+            held.append(f"{pad}patched_files:\n")
+            held.extend(
+                f'{pad}  {path}: "{digest}"\n'
+                for path, digest in sorted(pin.patched_files.items())
+            )
+    return held
+
+
+def _repinned(block: list[str], indent: int, pin: Pin) -> list[str]:
+    """One record's lines, with the entries a proposal owns replaced."""
+
+    pad = " " * (indent + 2)
+    owned = ("version", "url", "sha256", "patches", "patched_files")
+    entries: list[tuple[str | None, list[str]]] = [(None, [block[0]])]
+    for line in block[1:]:
+        entry = ENTRY.match(line) or re.match(r"^(\s*)([^\s:]+):\s*$", line)
+        if entry is not None and entry.group(1) == pad:
+            entries.append((entry.group(2), [line]))
+        else:
+            entries[-1][1].append(line)
+    output: list[str] = []
+    for key, held in entries:
+        if key in owned:
+            output.extend(_entries(pin, indent + 2, (key,)))
+        else:
+            output.extend(held)
+    present = {key for key, _ in entries}
+    output.extend(
+        _entries(pin, indent + 2, [key for key in owned if key not in present])
+    )
+    return output

@@ -124,7 +124,9 @@ exit 0
 CURL_STUB = """#!/bin/sh
 # Stub curl: serves a pinned Artifact from a local directory, so the fetch is
 # exercised end to end without reaching the internet. The URL's last path
-# segment names the file, the way it does on every mirror we pin.
+# segment names the file, the way it does on every mirror we pin. A file at
+# the URL's whole path, less its query, is served first: every Release
+# Channel's index is called addons.xml.
 #
 # This is the same boundary as the stub `ssh` above: the Reconciler invokes a
 # client, and the test stands a client in front of it.
@@ -146,6 +148,12 @@ name="${url##*/}"
 if [ -n "$FAKE_ARTIFACT_REFUSES" ]; then
   echo "curl: (22) The requested URL returned error: 404" >&2
   exit 22
+fi
+whole="${url#https://}"
+whole="${whole%%\?*}"
+if [ -f "$FAKE_ARTIFACT_DIR/$whole" ]; then
+  cp "$FAKE_ARTIFACT_DIR/$whole" "$output"
+  exit 0
 fi
 if [ ! -f "$FAKE_ARTIFACT_DIR/$name" ]; then
   echo "curl: (22) The requested URL returned error: 404" >&2

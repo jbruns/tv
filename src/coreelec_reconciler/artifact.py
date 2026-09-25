@@ -74,7 +74,20 @@ class Member:
 
 
 def download(url: str, digest: str) -> bytes:
-    """The pinned bytes, or an error. Different bytes are never installed.
+    """The pinned bytes, or an error. Different bytes are never installed."""
+
+    blob = fetch(url)
+    observed = sha256(blob).hexdigest()
+    if observed != digest:
+        raise ArtifactError(
+            f"{url} is {observed} and the Artifact Lock pins {digest}: "
+            "refusing to install bytes nobody pinned"
+        )
+    return blob
+
+
+def fetch(url: str) -> bytes:
+    """Whatever `url` returns, or an error. Nothing here proves the bytes.
 
     `curl` writes to a file rather than to a pipe so that a transfer it
     abandons partway cannot be mistaken for a short archive: `--fail` and the
@@ -123,15 +136,7 @@ def download(url: str, digest: str) -> bytes:
             detail = completed.stderr.strip().splitlines()
             reason = detail[-1] if detail else f"curl exited {completed.returncode}"
             raise ArtifactError(f"{url} could not be fetched: {reason}")
-        blob = target.read_bytes()
-
-    observed = sha256(blob).hexdigest()
-    if observed != digest:
-        raise ArtifactError(
-            f"{url} is {observed} and the Artifact Lock pins {digest}: "
-            "refusing to install bytes nobody pinned"
-        )
-    return blob
+        return target.read_bytes()
 
 
 def _safe_entry(addon_id: str, name: str) -> str:
@@ -409,22 +414,66 @@ def patched(
     return tuple(sorted(held.values(), key=lambda member: member.path))
 
 
-def _patch(root: Path, diff: Path, patch: Patch, addon_id: str) -> None:
-    """One diff applied by `patch`, whose context lines are the assertion."""
+def attempt(
+    members: tuple[Member, ...], patch: Patch, *, reverse: bool = False
+) -> tuple[bool, str]:
+    """Whether one diff applies to a tree, and what `patch` said about it.
 
+    It runs on a scratch copy of the files the diff touches, so nothing is
+    kept. Reversed, a clean application means the tree already holds what
+    the diff would write. On a failure the reject hunks are returned too,
+    because they are what a human rewrites the patch from (ADR 0022).
+    """
+
+    held = {member.path: member for member in members}
+    with tempfile.TemporaryDirectory() as workspace:
+        root = Path(workspace) / "tree"
+        root.mkdir()
+        for path in touched(patch):
+            member = held.get(path)
+            if member is None or member.data is None:
+                return False, f"the tree holds no {path}"
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(member.data)
+        diff = Path(workspace) / patch.name
+        diff.write_text(patch.diff, encoding="utf-8")
+        rejects = Path(workspace) / "rejects"
+        completed = _run_patch(
+            root,
+            diff,
+            patch,
+            # A diff that looks already applied is a failure here rather than
+            # a question: which way round it applies is the whole answer.
+            ("--forward", *(("--reverse",) if reverse else ())),
+            ("--reject-file", str(rejects)),
+        )
+        said = (completed.stdout + completed.stderr).strip()
+        if completed.returncode != 0 and rejects.is_file():
+            said += "\n" + rejects.read_text(encoding="utf-8", errors="replace")
+        return completed.returncode == 0, said
+
+
+def _run_patch(
+    root: Path,
+    diff: Path,
+    patch: Patch,
+    *options: tuple[str, ...],
+) -> subprocess.CompletedProcess[str]:
     argv = [
         "patch",
         # The context lines are the assertion, so an application that had to
         # ignore some of them to succeed has not asserted anything (ADR 0017).
         "--fuzz=0",
         "--strip=1",
+        *(word for option in options for word in option),
         "--directory",
         str(root),
         "--input",
         str(diff),
     ]
     try:
-        completed = subprocess.run(
+        return subprocess.run(
             argv,
             capture_output=True,
             text=True,
@@ -441,6 +490,12 @@ def _patch(root: Path, diff: Path, patch: Patch, addon_id: str) -> None:
         ) from error
     except subprocess.TimeoutExpired as error:
         raise ArtifactError(f"applying {patch.name} timed out") from error
+
+
+def _patch(root: Path, diff: Path, patch: Patch, addon_id: str) -> None:
+    """One diff applied by `patch`, whose context lines are the assertion."""
+
+    completed = _run_patch(root, diff, patch)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip().splitlines()
         reason = detail[-1] if detail else f"patch exited {completed.returncode}"

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from . import artifact, config, lock, reconcile
+from . import artifact, config, lock, proposal, reconcile
 from .device import DeviceError
 
 DESCRIPTION = "Reconcile a CoreELEC Device with its declared Desired State."
@@ -20,7 +20,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "command",
-        choices=("plan", "apply", "bootstrap", "survey", "record-patches"),
+        choices=(
+            "plan",
+            "apply",
+            "bootstrap",
+            "survey",
+            "record-patches",
+            "propose-updates",
+        ),
         help=(
             "plan reports the Changes and mutates nothing; apply converges; "
             "bootstrap makes First Contact with a Device that has no "
@@ -28,13 +35,35 @@ def _parser() -> argparse.ArgumentParser:
             "from the Profile, mutates nothing, and needs Kodi stopped; "
             "record-patches runs the artifact "
             "pipeline and writes what each Artifact Patch produces back into "
-            "the Artifact Lock, touching no Device"
+            "the Artifact Lock, touching no Device; propose-updates writes an "
+            "Update Proposal for every newer Stable Release every Artifact "
+            "Lock's Release Channels offer, touching no Device and no GitHub"
         ),
     )
     parser.add_argument(
         "--room",
-        required=True,
-        help="the room whose Room Overlay names the Device",
+        help=(
+            "the room whose Room Overlay names the Device; every command but "
+            "propose-updates needs one"
+        ),
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        help=(
+            "propose-updates only: an empty directory to write one "
+            "subdirectory per Update Proposal into"
+        ),
+    )
+    parser.add_argument(
+        "--declined",
+        action="append",
+        default=[],
+        metavar="PROFILE/ID@VERSION",
+        help=(
+            "propose-updates only: a version whose proposal was closed "
+            "unmerged, which is not proposed again; repeatable"
+        ),
     )
     parser.add_argument(
         "--config-root",
@@ -62,10 +91,27 @@ def main(
 ) -> int:
     """Runs one Run. Returns 0 when the Device is at its Desired State."""
 
-    arguments = _parser().parse_args(argv)
+    parser = _parser()
+    arguments = parser.parse_args(argv)
+    if arguments.command == "propose-updates":
+        if arguments.out is None:
+            parser.error("propose-updates needs --out")
+    elif arguments.room is None:
+        parser.error(f"{arguments.command} needs --room")
     out = out if out is not None else sys.stdout
     err = err if err is not None else sys.stderr
     try:
+        if arguments.command == "propose-updates":
+            # A channel that could not be reached was skipped and named, and
+            # the run fails at the end so next week's run is the recovery.
+            proposed = proposal.propose(
+                arguments.config_root,
+                arguments.out,
+                arguments.declined,
+                stdout=out,
+                err=err,
+            )
+            return 0 if proposed else 1
         if arguments.command == "record-patches":
             # It resolves only as far as the Artifact Lock, because that and
             # the patches beside it are all it reads.
