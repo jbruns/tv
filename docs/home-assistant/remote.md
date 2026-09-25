@@ -1,0 +1,108 @@
+# Remote in Home Assistant
+
+This guide installs and operates a room's Remote, a Sanytron Astrion. It runs
+the stock HaRemote app and shows a Home Assistant dashboard built from RosCard
+cards. Every key on its TV page goes to the room's Display, which passes
+navigation to the Device over CEC and volume to the AVR
+([ADR 0024](../adr/0024-the-remote-drives-the-room-through-its-display.md)).
+The Remote adds no automations or scripts. Power on and off switch only the
+Display, and the [Kodi Lifecycle](ugoos-kodi-lifecycle.md) starts and stops
+Kodi as usual.
+
+Each room has its own dashboard:
+
+| File in this repository | Deployed to |
+|---|---|
+| `home-assistant/packages/remote_theater.yaml` | `/config/packages/remote_theater.yaml` |
+| `home-assistant/dashboards/remote_theater.yaml` | `/config/dashboards/remote_theater.yaml` |
+
+The package registers the YAML-mode dashboard `remote-theater`. It is hidden
+from the sidebar. The dashboard file holds the pages.
+
+## 1. Prerequisites
+
+- The room's Display integration is configured. For the theater, the Sony
+  BRAVIA integration provides `media_player.sony_theater` and
+  `remote.sony_theater`. The Sony has **Remote start** on and **BRAVIA Sync
+  control** on, as in the [Sony guide](../../rooms/theater/devices/sony-xr-65a90j.md).
+- RosCard is installed through HACS as a **Lovelace** repository. Settings ->
+  Dashboards -> Resources lists its `RosCard.js`.
+- The Astrion integration is **not** needed. It adds the Remote's IR blaster,
+  and nothing uses IR yet.
+
+RosCard's README names its cards `custom:ros-*`, but the cards it actually
+installs are `custom:aiks-*`, for example `custom:aiks-tv-card`. Copy card
+types from these dashboard files, not from the README.
+
+## 2. Create the Remotes user
+
+The Remote logs in as its own non-admin user, not as an operator.
+
+1. Settings -> People -> Users -> Add user. Name it `Remotes`, turn on
+   **Can only log in from the local network**, and leave **Administrator** off.
+2. Log in as `Remotes`. Under Profile -> Security, create a long-lived access
+   token named after the Remote, for example `astrion-theater`.
+3. Pair the Remote with that token by following Sanytron's
+   [getting started](https://hub.sanytron.com/support/astrion/getting-started)
+   steps.
+4. If the Remote was paired with another user's token before, revoke that
+   token from its owner's Profile -> Security.
+
+Every Remote shares the `Remotes` user and has its own token. Revoking a token
+disconnects that Remote only.
+
+## 3. Deploy the dashboard
+
+1. Run `scripts/check_home_assistant.sh`.
+2. Copy both files in the table above to the paths shown.
+3. Run `ha core check`, then restart Home Assistant Core. Packages must be
+   enabled, as in the [Kodi Lifecycle guide](ugoos-kodi-lifecycle.md). If
+   `configuration.yaml` already declares `lovelace: dashboards:`, move those
+   dashboards into a package too. Home Assistant will not merge two
+   `dashboards` mappings.
+4. Later changes to the dashboard file need no restart. Refresh the dashboard
+   on the Remote instead.
+
+## 4. Set up the Remote
+
+These settings live on the Remote, not in this repository. Set them on every
+new or reset Remote:
+
+1. Point HaRemote at the room's dashboard, `remote-theater`.
+2. In the HaRemote app, go to Settings -> TV Card -> shortcut configuration and
+   turn **Global Buttons** off. The TV page's key map then applies while it is
+   showing.
+3. Refresh the Remote's data. RosCard issue
+   [#31](https://github.com/yyqclhy/RosCard/issues/31) reports that the
+   refresh sometimes loads an empty view. If it does, refresh again.
+
+## 5. Check it on the hardware
+
+The first time a Remote is set up in a room, check each row with Kodi showing
+on the Display and record what happened. Where a key doesn't work, change its
+`value` in the dashboard file to another of the Display's own code names. To
+list them, call `remote.send_command` on `remote.sony_theater` with the
+command `Test`. The integration then logs every code name the Sony supports.
+
+| Check | Expected |
+|---|---|
+| Power with the Display off | The Sony comes on, and the Kodi Lifecycle starts Kodi on HDMI 4 |
+| Power with the Display on | The Sony turns off. Kodi stops after the stop delay |
+| D-pad, OK, Back | Kodi moves, selects and goes back, with no noticeable lag or dropped presses |
+| Hold a d-pad key | Record whether it repeats |
+| Home, Menu | Record what Kodi or the Sony does |
+| Play, Pause | Kodi plays and pauses. In a Sony app, that app does |
+| Volume up and down, Mute | The Denon's volume changes |
+| Hold volume | Record whether it repeats |
+| App list | Launches the chosen Sony app |
+| Dashboard choice | Record whether HaRemote lets you pick a dashboard, a view, or neither |
+
+## 6. Add a room
+
+1. Copy `remote_theater.yaml` in both `packages/` and `dashboards/` to
+   `remote_<room>.yaml`.
+2. In the package, rename the dashboard to `remote-<room>`, and change its
+   title and filename.
+3. In the dashboard, replace the Display's `media_player` and `remote` entity
+   IDs, and set `tv_name`.
+4. Follow sections 2 to 5 for the new Remote.

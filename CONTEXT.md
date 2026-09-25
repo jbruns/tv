@@ -184,6 +184,11 @@ _Avoid_: Display on, watching, active
 Turning a Display off after its Device has been idle for the room's idle timeout while Viewing.
 _Avoid_: Sleep timer, auto-off, standby
 
+**Remote**:
+A handheld controller that operates its room's Display, Device, audio and lighting, and the home's climate. It is not a Device.
+_Avoid_: Astrion, controller, remote control
+_Realised by_: Home Assistant.
+
 **Wife Acceptance Factor**:
 The project's quality bar: the Device just works, the configuration stays easy to maintain, and any Device is easy to snap to its Desired State.
 _Avoid_: Reliability, production readiness

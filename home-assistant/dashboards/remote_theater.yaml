@@ -1,0 +1,31 @@
+# The theater's Remote dashboard. Every key goes to the Display, which carries
+# it to Kodi over CEC and volume to the Denon (ADR 0024). The card's type is
+# aiks-tv-card, whatever RosCard's README calls it. `value` is the Sony's own
+# remote code name for remote.send_command, or a media_player action name.
+title: Theater Remote
+views:
+  - title: TV
+    path: tv
+    cards:
+      - type: custom:aiks-tv-card
+        tv_name: Theater
+        tv_type: android_tv
+        media_play_entity: media_player.sony_theater
+        source: media_player.sony_theater
+        entities:
+          - {key: POWER_ON, type: media_player, entity_id: media_player.sony_theater, value: turn_on}
+          - {key: POWER_OFF, type: media_player, entity_id: media_player.sony_theater, value: turn_off}
+          - {key: UP, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Up}
+          - {key: DOWN, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Down}
+          - {key: LEFT, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Left}
+          - {key: RIGHT, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Right}
+          - {key: CENTER, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Confirm}
+          - {key: BACK, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Return}
+          - {key: HOME, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Home}
+          - {key: MENU, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: ActionMenu}
+          - {key: PLAY, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Play}
+          - {key: PAUSE, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Pause}
+          - {key: VOLUME_UP, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: VolumeUp}
+          - {key: VOLUME_DOWN, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: VolumeDown}
+          - {key: MUTE, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Mute}
+          - {key: UN_MUTE, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Mute}

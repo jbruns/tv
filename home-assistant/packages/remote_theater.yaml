@@ -1,0 +1,9 @@
+# The theater's Remote dashboard. See docs/home-assistant/remote.md.
+lovelace:
+  dashboards:
+    remote-theater:
+      mode: yaml
+      title: Theater Remote
+      icon: mdi:remote-tv
+      show_in_sidebar: false
+      filename: dashboards/remote_theater.yaml

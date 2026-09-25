@@ -47,3 +47,5 @@ IoT: Sony XR-65A90J, Denon AVR-X4700H, Home Assistant
 5. Apply the room playback settings in the [Sony](devices/sony-xr-65a90j.md) and
    [Denon](devices/denon-avr-x4700h.md) guides, then verify playback, device
    control, network reachability, and automations.
+6. Set up the theater's Remote with the
+   [Remote guide](../../docs/home-assistant/remote.md).
