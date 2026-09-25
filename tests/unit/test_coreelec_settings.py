@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from .conftest import FakeDevice, shipped_profile, write_document
+from .conftest import FakeDevice, document_block, shipped_profile, write_document
 
 OE_SETTINGS = (
     "/storage/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml"
@@ -36,12 +36,6 @@ FIRST_BOOT = """\
 """
 
 
-def oe_settings(device: FakeDevice) -> Path:
-    return (
-        device.userdata / "addon_data" / "service.coreelec.settings" / "oe_settings.xml"
-    )
-
-
 def shipped_document() -> dict[str, Any]:
     return next(
         document
@@ -55,13 +49,14 @@ def declare_shipped(device: FakeDevice) -> dict[str, str]:
     declared = {entry["setting"]: entry["value"] for entry in document["settings"]}
     device.write_profile(
         device.profile_body(
-            extra=f"  - document: {oe_settings(device)}\n"
-            f"    dialect: {document['dialect']}\n"
-            f'    mode: "{document["mode"]}"\n'
-            "    settings:\n"
-            + "".join(
-                f'      - setting: {setting}\n        value: "{value}"\n'
-                for setting, value in declared.items()
+            extra=document_block(
+                device.oe_settings,
+                document["dialect"],
+                "".join(
+                    f'      - setting: {setting}\n        value: "{value}"\n'
+                    for setting, value in declared.items()
+                ),
+                mode=document["mode"],
             )
         )
     )
@@ -95,11 +90,11 @@ def test_the_settings_converge_under_the_kodi_stop_and_keep_the_rest(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     declare_shipped(device)
-    write_document(oe_settings(device), FIRST_BOOT)
+    write_document(device.oe_settings, FIRST_BOOT)
 
     assert reconcile("apply", "--room", "theater") == 0
 
-    assert held(oe_settings(device)) == {
+    assert held(device.oe_settings) == {
         "system.wizard_completed": "True",
         "system.hostname": "ugoos-theater",
         "updates.AutoUpdate": "manual",
@@ -107,10 +102,9 @@ def test_the_settings_converge_under_the_kodi_stop_and_keep_the_rest(
         "updates.SubmitStats": "0",
     }
     assert (
-        ElementTree.parse(oe_settings(device)).getroot().find("addon_config")
-        is not None
+        ElementTree.parse(device.oe_settings).getroot().find("addon_config") is not None
     )
-    assert oe_settings(device).stat().st_mode & 0o777 == 0o644
+    assert device.oe_settings.stat().st_mode & 0o777 == 0o644
     assert device.effects == ["stop kodi.service", "start kodi.service"]
     capsys.readouterr()
 
@@ -126,7 +120,7 @@ def test_a_device_holding_other_values_plans_each_as_an_update(
 ) -> None:
     declared = declare_shipped(device)
     write_document(
-        oe_settings(device),
+        device.oe_settings,
         "<coreelec>\n  <settings>\n    <updates>\n"
         "      <AutoUpdate>auto</AutoUpdate>\n"
         "      <UpdateNotify>1</UpdateNotify>\n"
@@ -149,11 +143,11 @@ def test_a_document_that_is_not_coreelecs_is_named_before_kodi_is_stopped(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     declare_shipped(device)
-    write_document(oe_settings(device), '<settings version="2" />\n')
+    write_document(device.oe_settings, '<settings version="2" />\n')
 
     assert reconcile("apply", "--room", "theater") == 1
 
     err = capsys.readouterr().err
-    assert str(oe_settings(device)) in err
-    assert "coreelec" in err
+    assert str(device.oe_settings) in err
+    assert "root element is settings" in err
     assert device.effects == []

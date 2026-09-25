@@ -499,14 +499,22 @@ def indent(block: str) -> str:
 
 
 def document_block(
-    path: Path | str, dialect: str, settings: str, key: str = "document"
+    path: Path | str,
+    dialect: str,
+    settings: str,
+    key: str = "document",
+    mode: str | None = None,
 ) -> str:
     """One entry in a `settings_documents` list.
 
     `key` is `document` for a literal path and `document_glob` for a pattern.
     """
 
-    return f"  - {key}: {path}\n    dialect: {dialect}\n    settings:\n{settings}"
+    declared_mode = "" if mode is None else f'    mode: "{mode}"\n'
+    return (
+        f"  - {key}: {path}\n    dialect: {dialect}\n{declared_mode}"
+        f"    settings:\n{settings}"
+    )
 
 
 def skin_profile(device: FakeDevice, settings: str) -> str:
@@ -682,6 +690,16 @@ class FakeDevice:
     def skin(self) -> Path:
         """Arctic Fuse's document, in the skin form."""
         return self.userdata / "addon_data" / "skin.arctic.fuse.3" / "settings.xml"
+
+    @property
+    def oe_settings(self) -> Path:
+        """CoreELEC's own settings, in the coreelec form."""
+        return (
+            self.userdata
+            / "addon_data"
+            / "service.coreelec.settings"
+            / "oe_settings.xml"
+        )
 
     @property
     def peripheral_data(self) -> Path:

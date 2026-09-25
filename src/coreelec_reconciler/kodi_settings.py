@@ -60,10 +60,10 @@ COREELEC = "coreelec"
 # Kodi does to one it need not do to the other.
 DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON, SHELL_VARS, COREELEC)
 
-# The dialects Kodi itself reads and rewrites from memory as it exits, and
-# which therefore always take the Kodi stop (ADR 0013). `coreelec` does not
-# rewrite from memory, but the add-on reads it only as its service starts
-# inside Kodi, so a Change there takes effect through the same stop.
+# The dialects read inside Kodi, whose Changes therefore always take the Kodi
+# stop (ADR 0013). Kodi rewrites all but `coreelec` from memory as it exits;
+# `service.coreelec.settings` reads its document only as its service starts,
+# so a Change there takes effect through the same stop.
 KODI_DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON, COREELEC)
 
 # The dialects that carry a setting's value as element text. `addon_v1` is the
