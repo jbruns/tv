@@ -22,6 +22,18 @@
 #
 # Applying any of these restarts Kodi: the skin reads a node file when it
 # loads, and its own shortcut editor holds the list it read.
+#
+# Restarting is not enough to show a changed node. `script.skinvariables`
+# compiles every node into the generator include when Home loads, and skips
+# that compile while the Skin String `script-skinvariables-generator-hash`
+# matches a hash the node files are not part of. So a Run that changes a node
+# clears that hash while Kodi is stopped. The compile then runs and stores a
+# fresh hash, and the Run waits until the include has changed (ADR 0023).
+rebuild:
+  trigger:
+    document: /storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml
+    setting: script-skinvariables-generator-hash
+  compiles_to: /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinvariables-generator-includes-.xml
 shortcut_nodes:
   # The widget row on the home screen.
   - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-homewidgets.json

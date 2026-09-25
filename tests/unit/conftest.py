@@ -96,6 +96,22 @@ fi
 if [ "$1" = "start" ] && [ -n "$FAKE_DEVICE_COMPILED" ]; then
   printf '%s' "$FAKE_DEVICE_COMPILED_BODY" > "$FAKE_DEVICE_COMPILED"
 fi
+# Loading Home compiles the Shortcut Nodes into the generator include, unless
+# the skin still holds a generator hash. Each build numbers itself, so no two
+# builds are the same bytes.
+if [ "$1" = "start" ] && [ -n "$FAKE_DEVICE_GENERATOR" ] \\
+   && ! grep -q 'id="script-skinvariables-generator-hash" type="string">[^<]' \\
+        "$FAKE_DEVICE_SKIN_DOCUMENT" 2>/dev/null; then
+  build=0
+  if [ -f "$FAKE_DEVICE_GENERATOR_BUILDS" ]; then
+    read build < "$FAKE_DEVICE_GENERATOR_BUILDS"
+  fi
+  build=$((build + 1))
+  echo "$build" > "$FAKE_DEVICE_GENERATOR_BUILDS"
+  mkdir -p "$(dirname "$FAKE_DEVICE_GENERATOR")"
+  printf '<includes><!-- build %s --></includes>\\n' "$build" \\
+    > "$FAKE_DEVICE_GENERATOR"
+fi
 # tz-data.service is a oneshot reading TIMEZONE from the cache document and
 # relinking /var/run/localtime.
 if [ "$1" = "start" ] && [ "$2" = "tz-data.service" ] \\
@@ -389,6 +405,10 @@ PROFILE_FILES = {
     "documents": "documents.yaml",
     "settings_documents": "settings.yaml",
 }
+
+# Every top-level key a Profile file holds, including the ones a file may
+# hold beside the block it is named for.
+BLOCK_FILES = {**PROFILE_FILES, "rebuild": "shortcuts.yaml"}
 
 # Kodi's `installed` table, as Addons33 declares it (`AddonDatabase.cpp`).
 # The fake Device holds the real schema so a statement that names a column
@@ -695,6 +715,17 @@ class FakeDevice:
         )
 
     @property
+    def generator(self) -> Path:
+        """The include `script.skinvariables` compiles the Shortcut Nodes into."""
+        return (
+            self.userdata.parent
+            / "addons"
+            / "skin.arctic.fuse.3"
+            / "1080i"
+            / "script-skinvariables-generator-includes-.xml"
+        )
+
+    @property
     def cec(self) -> Path:
         """The CEC adapter's document, whose name the Profile cannot state."""
         return self.peripheral_data / "cec_CEC_Adapter.xml"
@@ -860,7 +891,7 @@ class FakeDevice:
         for line in body.splitlines(keepends=True):
             key = re.match(r"([A-Za-z_]\w*):", line)
             if key:
-                target = PROFILE_FILES.get(key.group(1), "profile.yaml")
+                target = BLOCK_FILES.get(key.group(1), "profile.yaml")
             files[target].append(line)
         for name, lines in files.items():
             (self.profile_directory() / name).write_text(
@@ -951,6 +982,11 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
     # pins nothing, so no Run of it reaches an add-on.
     fake.write_addons(NO_ADDONS)
     fake.write_room(ROOM)
+    # Starting Kodi compiles the Shortcut Nodes whenever the skin holds no
+    # generator hash, the way Home's onload does.
+    monkeypatch.setenv("FAKE_DEVICE_GENERATOR", str(fake.generator))
+    monkeypatch.setenv("FAKE_DEVICE_GENERATOR_BUILDS", str(tmp_path / "builds"))
+    monkeypatch.setenv("FAKE_DEVICE_SKIN_DOCUMENT", str(fake.skin))
     yield fake
 
 
