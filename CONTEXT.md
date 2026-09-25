@@ -68,8 +68,12 @@ Device state that no Resource in the resolved Profile owns and that reconciliati
 _Avoid_: Drift, absent state
 
 **Contested Address**:
-A State Address another engine rewrites on its own schedule, so no Resource can hold a value there. Contested Addresses are left as Unmanaged State.
+A State Address another engine rewrites on its own schedule, so no Resource can hold a value there. Contested Addresses are left as Unmanaged State. A Run may fire a Rebuild Trigger there.
 _Avoid_: Volatile setting, drift, race
+
+**Rebuild Trigger**:
+A write that makes another engine regenerate an artifact it compiles, and that the engine undoes by regenerating. A Run fires one without owning the address it writes.
+_Avoid_: Cache bust, force rebuild, arm
 
 **Observation**:
 The measured state of a Resource on a Device at a point in time.

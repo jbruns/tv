@@ -19,7 +19,13 @@ from typing import Any
 
 import pytest
 
-from .conftest import FakeDevice, shipped_profile
+from .conftest import (
+    FakeDevice,
+    document_block,
+    shipped_profile,
+    typed_values,
+    write_document,
+)
 
 NEW_SHOWS = """\
       - guid: coreelec-home-new-shows
@@ -49,17 +55,74 @@ EXPECTED_HOME_WIDGETS = """\
 """
 
 
+HASH = "script-skinvariables-generator-hash"
+
+# The skin as a Device in service holds it: the compile has run and stored its
+# hash, so starting Kodi compiles nothing until something clears it.
+SKIN_IN_SERVICE = f"""\
+<settings version="2">
+    <setting id="{HASH}" type="string">6fc5f91b67075f117acd90822b8eb180</setting>
+    <setting id="HomeSwitcher.1101.Toggle" type="string">True</setting>
+</settings>
+"""
+
+SKIN_WITHOUT_HASH = """\
+<settings version="2">
+    <setting id="HomeSwitcher.1101.Toggle" type="string">True</setting>
+</settings>
+"""
+
+OLD_INCLUDE = "<includes><!-- compiled before this Run --></includes>\n"
+
+
 def node_block(document: Path, shortcuts: str) -> str:
     """One entry in a Profile's `shortcut_nodes` list."""
 
     return f"\n  - document: {document}\n    shortcuts:\n{shortcuts}"
 
 
-def declare(device: FakeDevice, shortcuts: str, document: Path | None = None) -> None:
-    """Writes a Profile declaring one Shortcut Node holding `shortcuts`."""
+def rebuild_block(device: FakeDevice) -> str:
+    return (
+        "rebuild:\n"
+        "  trigger:\n"
+        f"    document: {device.skin}\n"
+        f"    setting: {HASH}\n"
+        f"  compiles_to: {device.generator}\n"
+    )
+
+
+def declare(
+    device: FakeDevice,
+    shortcuts: str,
+    document: Path | None = None,
+    settings: dict[str, str] | None = None,
+) -> None:
+    """Writes a Profile declaring one Shortcut Node holding `shortcuts`.
+
+    The skin's own document is declared beside it, because that is where the
+    Rebuild Trigger lives.
+    """
 
     where = document if document is not None else device.nodes / "homewidgets.json"
-    device.write_profile(device.profile_body(nodes=node_block(where, shortcuts)))
+    device.write_profile(
+        device.profile_body(
+            settings=settings,
+            nodes=node_block(where, shortcuts),
+            extra=document_block(
+                device.skin,
+                "skin",
+                '      - setting: HomeSwitcher.1101.Toggle\n        value: "True"\n',
+            ),
+        )
+        + rebuild_block(device)
+    )
+
+
+def in_service(device: FakeDevice, skin: str = SKIN_IN_SERVICE) -> None:
+    """The skin document and the include a Device already in service holds."""
+
+    write_document(device.skin, skin)
+    write_document(device.generator, OLD_INCLUDE)
 
 
 def test_a_node_lands_in_the_add_ons_own_shape_and_a_second_plan_is_empty(
@@ -348,6 +411,122 @@ def test_the_skins_own_node_files_are_left_alone(
     ]
 
 
+def test_a_changed_node_clears_the_generator_hash_and_waits_for_the_compile(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The node files are not in the hash the skin compares, so on a Device in
+    service a restart alone recompiles nothing (#169). Clearing the hash while
+    Kodi is stopped is the Rebuild Trigger, and the restart fires it."""
+
+    in_service(device)
+    declare(device, NEW_SHOWS)
+
+    assert reconcile("apply", "--room", "theater") == 0
+
+    out = capsys.readouterr().out
+    assert f"arming {device.generator}" in out
+    assert f"rebuilt {device.generator}" in out
+    assert device.effects == ["stop kodi.service", "start kodi.service"]
+    assert device.generator.read_text(encoding="utf-8") != OLD_INCLUDE
+    # Cleared and still typed, because Kodi drops an untyped skin setting.
+    assert typed_values(device.skin)[HASH] == ("string", None)
+
+
+def test_a_run_that_changes_no_node_leaves_the_hash_alone(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    in_service(device)
+    declare(device, NEW_SHOWS)
+    assert reconcile("apply", "--room", "theater") == 0
+    # The compile stored a fresh hash, which is what disarms the trigger.
+    in_service(device)
+    capsys.readouterr()
+
+    declare(device, NEW_SHOWS, settings={"videolibrary.flattentvshows": "2"})
+    assert reconcile("apply", "--room", "theater") == 0
+
+    out = capsys.readouterr().out
+    assert "videolibrary.flattentvshows" in out
+    assert "arming" not in out
+    assert typed_values(device.skin)[HASH] == (
+        "string",
+        "6fc5f91b67075f117acd90822b8eb180",
+    )
+    assert device.generator.read_text(encoding="utf-8") == OLD_INCLUDE
+
+
+def test_an_include_that_never_compiles_fails_the_run_with_kodi_back_up(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A Run that armed the rebuild and never saw it must not report success."""
+
+    monkeypatch.delenv("FAKE_DEVICE_GENERATOR")
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    in_service(device)
+    declare(device, NEW_SHOWS)
+
+    assert reconcile("apply", "--room", "theater") == 1
+
+    err = capsys.readouterr().err
+    assert f"{device.generator}" in err
+    assert "was not rebuilt" in err
+    # Fail Forward: the television came back before the Run gave up.
+    assert device.effects == ["stop kodi.service", "start kodi.service"]
+
+
+def test_a_skin_document_without_the_hash_gains_none(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An absent hash already makes the skin compile, so nothing is created."""
+
+    in_service(device, SKIN_WITHOUT_HASH)
+    declare(device, NEW_SHOWS)
+
+    assert reconcile("apply", "--room", "theater") == 0
+
+    assert f"rebuilt {device.generator}" in capsys.readouterr().out
+    assert HASH not in typed_values(device.skin)
+
+
+def test_nodes_without_a_rebuild_are_refused_before_device_contact(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    where = device.nodes / "homewidgets.json"
+    device.write_profile(device.profile_body(nodes=node_block(where, NEW_SHOWS)))
+
+    assert reconcile("apply", "--room", "theater") == 1
+
+    assert "needs a rebuild" in capsys.readouterr().err
+    assert device.effects == []
+
+
+def test_a_rebuild_trigger_outside_a_declared_skin_document_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    where = device.nodes / "homewidgets.json"
+    device.write_profile(
+        device.profile_body(nodes=node_block(where, NEW_SHOWS)) + rebuild_block(device)
+    )
+
+    assert reconcile("apply", "--room", "theater") == 1
+
+    assert "not a skin Settings Document" in capsys.readouterr().err
+    assert device.effects == []
+
+
 def test_the_shipped_profile_declares_six_node_files_and_every_guid() -> None:
     profile = shipped_profile()
     nodes: list[dict[str, Any]] = profile["shortcut_nodes"]
@@ -369,3 +548,18 @@ def test_the_shipped_profile_declares_six_node_files_and_every_guid() -> None:
             assert shortcut["guid"]
             if "playlist" in shortcut:
                 assert shortcut["playlist"] in declared
+
+
+def test_the_shipped_profile_rebuilds_the_generator_include() -> None:
+    profile = shipped_profile()
+    skin = "/storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
+
+    assert profile["rebuild"] == {
+        "trigger": {"document": skin, "setting": HASH},
+        "compiles_to": "/storage/.kodi/addons/skin.arctic.fuse.3/1080i/"
+        "script-skinvariables-generator-includes-.xml",
+    }
+    assert any(
+        document["document"] == skin and document["dialect"] == "skin"
+        for document in profile["settings_documents"]
+    )

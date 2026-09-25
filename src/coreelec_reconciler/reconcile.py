@@ -31,6 +31,7 @@ from .config import (
     KodiSetting,
     Platform,
     SettingsDocument,
+    ShortcutRebuild,
 )
 from .device import Device, DeviceError
 from .playlist import render
@@ -702,13 +703,44 @@ def _write_settings(device: Device, declared: SettingsDocument) -> None:
     )
 
 
-def _await_rebuild(device: Device, compiled: str, out: TextIO) -> None:
-    """Waits until the add-on has compiled the include over the stub.
+def _arm_shortcut_rebuild(
+    device: Device, desired: DesiredState, rebuild: ShortcutRebuild, out: TextIO
+) -> tuple[str, str | None]:
+    """Clears the generator hash, and returns the include to wait on.
 
-    Having written the stub, the Run knows exactly what it is waiting to stop
-    seeing, so "changed from what we wrote" is an edge rather than a guess.
-    The parse is what catches a read taken mid-write, which returns a partial
-    or empty file.
+    The include is read first, while Kodi is stopped, so the wait knows what
+    it must stop seeing. The document is read after every declared setting
+    in it was written. A document without the hash is written back without
+    one: an empty hash and an absent one both make the skin compile
+    (ADR 0023).
+    """
+
+    print(f"arming {rebuild.compiles_to}", file=out)
+    stale = device.read(rebuild.compiles_to)
+    declared = next(
+        document
+        for document in desired.documents
+        if document.document == rebuild.document
+    )
+    observed = _read_settings_document(device, declared)
+    if observed is not None:
+        device.write(
+            declared.document,
+            kodi_settings.rewrite(observed, declared.dialect, {rebuild.setting: None}),
+            mode=declared.mode,
+        )
+    return rebuild.compiles_to, stale
+
+
+def _await_rebuild(
+    device: Device, compiled: str, stale: str | None, out: TextIO
+) -> None:
+    """Waits until the add-on has compiled the include over `stale`.
+
+    `stale` is what the Run knows the include held before Kodi started: the
+    stub it wrote, or what it read while Kodi was stopped. So "changed from
+    that" is an edge rather than a guess. The parse is what catches a read
+    taken mid-write, which returns a partial or empty file.
     """
 
     print(f"waiting for {compiled}", file=out)
@@ -716,7 +748,7 @@ def _await_rebuild(device: Device, compiled: str, out: TextIO) -> None:
         if attempt:
             time.sleep(REBUILD_DELAY)
         observed = device.read(compiled)
-        if observed is None or observed == VIEW_REBUILD_STUB:
+        if observed is None or observed == stale:
             continue
         try:
             ElementTree.fromstring(observed)
@@ -861,7 +893,7 @@ def _apply(
         device.stop_service(unit)
 
     applied: list[Change] = []
-    armed: list[str] = []
+    armed: list[tuple[str, str | None]] = []
     failure: DeviceError | None = None
     try:
         for change in changes:
@@ -895,7 +927,14 @@ def _apply(
         ):
             print(f"arming {compiled}", file=out)
             device.write(compiled, VIEW_REBUILD_STUB)
-            armed.append(compiled)
+            armed.append((compiled, VIEW_REBUILD_STUB))
+        rebuild = desired.shortcut_rebuild
+        nodes = {node.document for node in desired.shortcut_nodes}
+        if rebuild is not None and any(
+            isinstance(change, DocumentChange) and change.address in nodes
+            for change in changes
+        ):
+            armed.append(_arm_shortcut_rebuild(device, desired, rebuild, out))
     except DeviceError as error:
         failure = error
 
@@ -935,8 +974,8 @@ def _apply(
             )
         if TZ_DATA_SERVICE in units:
             _verify_timezone(device, desired.addresses, changes, out)
-        for compiled in armed:
-            _await_rebuild(device, compiled, out)
+        for compiled, stale in armed:
+            _await_rebuild(device, compiled, stale, out)
 
     if failure is not None:
         raise failure

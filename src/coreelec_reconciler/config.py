@@ -328,6 +328,24 @@ class ShortcutNode:
 
 
 @dataclass(frozen=True)
+class ShortcutRebuild:
+    """The Rebuild Trigger that makes a changed Shortcut Node reach the skin.
+
+    `script.skinvariables` compiles every node into `compiles_to`, and skips
+    the compile while the Skin String `setting` in `document` matches a hash
+    that leaves the node files out. Clearing it while Kodi is stopped makes
+    the next skin load compile, and the compile stores a fresh hash (ADR 0023).
+
+    `document` is one of the Profile's `skin` Settings Documents, which is
+    where Kodi keeps a Skin String.
+    """
+
+    document: str
+    setting: str
+    compiles_to: str
+
+
+@dataclass(frozen=True)
 class WholeDocument:
     """A document the Reconciler owns every byte of, shipped as a file.
 
@@ -403,6 +421,7 @@ class DesiredState:
     documents: tuple[SettingsDocument, ...]
     addons: tuple[AddonArtifact, ...] = ()
     shortcut_nodes: tuple[ShortcutNode, ...] = ()
+    shortcut_rebuild: ShortcutRebuild | None = None
     whole_documents: tuple[WholeDocument, ...] = ()
 
 
@@ -681,6 +700,44 @@ def _walk(shortcuts: Iterable[Shortcut]) -> Iterator[Shortcut]:
         yield shortcut
         yield from _walk(shortcut.submenu)
         yield from _walk(shortcut.widgets)
+
+
+def _shortcut_rebuild(
+    source: Path, documents: Iterable[SettingsDocument], raw: Any
+) -> ShortcutRebuild:
+    mapping = _fields(
+        source,
+        "rebuild",
+        _mapping(source, "rebuild", raw),
+        required=("trigger", "compiles_to"),
+    )
+    trigger = _fields(
+        source,
+        "the rebuild trigger",
+        _mapping(source, "the rebuild trigger", mapping["trigger"]),
+        required=("document", "setting"),
+    )
+    document = _text(source, "the rebuild trigger document", trigger["document"])
+    setting = _text(source, "the rebuild trigger setting", trigger["setting"])
+    compiles_to = _text(source, "the rebuild compiles_to", mapping["compiles_to"])
+    if not compiles_to.startswith("/"):
+        raise ConfigError(
+            f"{source}: the rebuild compiles_to must be absolute: {compiles_to}"
+        )
+    # The Run clears the hash in the same document, in the same stop, as the
+    # settings it declares there, so it must be one the Profile already reads
+    # as a skin document.
+    if not any(
+        declared.document == document
+        and not declared.is_glob
+        and declared.dialect == kodi_settings.SKIN
+        for declared in documents
+    ):
+        raise ConfigError(
+            f"{source}: the rebuild trigger document is not a skin Settings "
+            f"Document the Profile declares: {document}"
+        )
+    return ShortcutRebuild(document=document, setting=setting, compiles_to=compiles_to)
 
 
 def _kodi_setting(
@@ -1490,7 +1547,17 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
     if not kodi:
         raise ConfigError(f"{settings_file}: settings_documents declares no documents")
 
-    shortcuts_file, nodes = _block(profile_file, SHORTCUTS, "shortcut_nodes")
+    shortcuts_file = profile_file.with_name(SHORTCUTS)
+    if not shortcuts_file.is_file():
+        raise ConfigError(f"no {SHORTCUTS} beside the Profile: {shortcuts_file}")
+    shortcuts_block = _fields(
+        shortcuts_file,
+        SHORTCUTS,
+        _read(shortcuts_file),
+        required=("shortcut_nodes",),
+        optional=("rebuild",),
+    )
+    nodes = shortcuts_block["shortcut_nodes"]
     if not isinstance(nodes, list):
         raise ConfigError(
             f"{shortcuts_file}: shortcut_nodes must be a list of Shortcut Nodes, "
@@ -1498,6 +1565,17 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         )
     documents_file, documents = _block(profile_file, DOCUMENTS, "documents")
     whole = _whole_documents(documents_file, documents)
+    merged = _merge(((settings_file, kodi), (room_file, room_documents)))
+    rebuild = None
+    if "rebuild" in shortcuts_block:
+        rebuild = _shortcut_rebuild(shortcuts_file, merged, shortcuts_block["rebuild"])
+    elif nodes:
+        # Without it, a changed node is written and never compiled, and the
+        # Run reports success for a home screen that did not change (#169).
+        raise ConfigError(
+            f"{shortcuts_file}: shortcut_nodes needs a rebuild, or a changed "
+            "node never reaches the skin"
+        )
 
     return DesiredState(
         room=_text(room_file, "room", overlay["room"]),
@@ -1512,10 +1590,11 @@ def load(config_root: Path, room: str, env_path: Path) -> DesiredState:
         addresses=addresses,
         authorized_keys=authorized,
         playlists=parsed,
-        documents=_merge(((settings_file, kodi), (room_file, room_documents))),
+        documents=merged,
         addons=addons,
         shortcut_nodes=tuple(
             _shortcut_node(shortcuts_file, by_file, entry) for entry in nodes
         ),
+        shortcut_rebuild=rebuild,
         whole_documents=whole,
     )
