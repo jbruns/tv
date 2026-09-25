@@ -124,7 +124,9 @@ exit 0
 CURL_STUB = """#!/bin/sh
 # Stub curl: serves a pinned Artifact from a local directory, so the fetch is
 # exercised end to end without reaching the internet. The URL's last path
-# segment names the file, the way it does on every mirror we pin.
+# segment names the file, the way it does on every mirror we pin. A file at
+# the URL's whole path, less its query, is served first: every Release
+# Channel's index is called addons.xml.
 #
 # This is the same boundary as the stub `ssh` above: the Reconciler invokes a
 # client, and the test stands a client in front of it.
@@ -146,6 +148,12 @@ name="${url##*/}"
 if [ -n "$FAKE_ARTIFACT_REFUSES" ]; then
   echo "curl: (22) The requested URL returned error: 404" >&2
   exit 22
+fi
+whole="${url#https://}"
+whole="${whole%%\?*}"
+if [ -f "$FAKE_ARTIFACT_DIR/$whole" ]; then
+  cp "$FAKE_ARTIFACT_DIR/$whole" "$output"
+  exit 0
 fi
 if [ ! -f "$FAKE_ARTIFACT_DIR/$name" ]; then
   echo "curl: (22) The requested URL returned error: 404" >&2
@@ -360,9 +368,18 @@ ADDON_URL = (
     f"{ADDON_ID}-{ADDON_VERSION}.zip"
 )
 
+# The Release Channel the one pinned add-on comes from, named the way the
+# Lock names it.
+ADDON_CHANNEL = "kodi-omega"
+ADDON_CHANNELS = (
+    "channels:\n"
+    f"  {ADDON_CHANNEL}:\n"
+    "    addons_xml: https://mirrors.kodi.tv/addons/omega/addons.xml.gz\n"
+)
+
 # An Artifact Lock pinning nothing. Every Profile has the file; most tests
 # are about something else, so theirs is empty.
-NO_ADDONS = "addons: []\n"
+NO_ADDONS = "channels: {}\naddons: []\n"
 
 # The Profile's four content blocks, each in its own file beside
 # `profile.yaml`. Everything else stays in `profile.yaml`.
@@ -430,16 +447,19 @@ def addon_lock(
     notes: str = "~",
     patches: tuple[str, ...] = (),
     patched_files: Mapping[str, str | None] | None = None,
+    channel: str = ADDON_CHANNEL,
+    channels: str = ADDON_CHANNELS,
 ) -> str:
     """The Artifact Lock, pinning one add-on."""
 
     record = (
-        "addons:\n"
+        channels + "addons:\n"
         f"  - id: {addon_id}\n"
         f'    version: "{version}"\n'
         f"    url: {url}\n"
         f'    sha256: "{digest}"\n'
         f"    role: {role}\n"
+        f"    channel: {channel}\n"
         f"    notes: {notes}\n"
     )
     if patches:

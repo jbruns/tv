@@ -1,0 +1,55 @@
+name: Update Proposals
+
+# Proposes every newer Stable Release the Artifact Locks' Release Channels
+# offer, one pull request per add-on, and never merges one (ADR 0022). The
+# pull requests are opened with a fine-grained personal access token scoped
+# to this repository with Contents, Pull requests, Issues (for the label) and
+# Workflows read/write, because a pull request opened with the workflow's own
+# token triggers no other workflow, and `ci` and `artifact-patches` must run
+# on these. Workflows lets a branch rebuilt on a main whose workflows changed
+# be pushed.
+on:
+  schedule:
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-proposals
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    name: Propose Stable Releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.UPDATE_PROPOSALS_TOKEN }}
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.3
+          enable-cache: true
+      - name: Synchronize frozen environment
+        run: uv sync --frozen
+      # The patch verdicts come from this binary, so a runner without it
+      # would call every Artifact Patch Stale.
+      - name: Confirm patch is installed
+        run: patch --version
+      - name: Open, refresh and close the proposals
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_PROPOSALS_TOKEN }}
+        run: |
+          git config user.name "tv update proposals"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/update_proposals.sh

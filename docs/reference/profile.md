@@ -54,12 +54,15 @@ uv run coreelec-reconciler plan --room theater
 uv run coreelec-reconciler apply --room theater
 uv run coreelec-reconciler survey --room theater
 uv run coreelec-reconciler record-patches --room theater
+uv run coreelec-reconciler propose-updates --out DIR [--declined KEY ...]
 ```
 
+`--room` is required by every command except `propose-updates`.
 `--config-root` defaults to `config`. `--env-file` defaults to `.env`.
 `plan` mutates nothing. `apply` performs a Run and then plans again for
 Verification. `survey` mutates nothing and refuses to run while Kodi is active.
-`record-patches` touches no Device.
+`record-patches` touches no Device. `propose-updates` touches no Device either;
+see [Update Proposals](#update-proposals).
 
 Tests and maintainer scripts treat the package entry point as the boundary,
 per [ADR 0011](../adr/0011-linux-only-ci-and-boundary-tests.md). Do not write
@@ -392,16 +395,21 @@ room's stable video declaration is the whitelist and Dolby Vision settings.
 
 ## Add-ons
 
-`addons.yaml` is the Artifact Lock. Each record declares the installed version,
-source URL, SHA-256 digest, role, and notes:
+`addons.yaml` is the Artifact Lock. It names its Release Channels, and each
+record declares the installed version, source URL, SHA-256 digest, role,
+Release Channel, and notes:
 
 ```yaml
+channels:
+  dontpanic-omega:
+    addons_xml: https://raw.githubusercontent.com/pannal/dontpanickodi/master/omega/zips/addons.xml
 addons:
   - id: script.plexmod
     version: "1.3.19"
     url: https://raw.githubusercontent.com/pannal/dontpanickodi/eba134ac09bfe4916b3511d1e377bf6bb03a947e/omega/zips/script.plexmod/script.plexmod-1.3.19.zip
     sha256: "885b48b724a525a1412df09db8c69f4ec0eebb6da06d6e0509df097b3ac19816"
     role: chosen
+    channel: dontpanic-omega
     notes: >-
       The latest published stable PM4K release, taken from an immutable commit
       in the publisher's own Don't Panic repository rather than from the
@@ -418,6 +426,14 @@ database while Kodi is stopped. See
 `role` is one of `chosen`, `dependency` and `repository`. `notes` explains why
 this version is pinned when there is something to explain; otherwise it is
 `~`.
+
+`channel` names an entry in the top-level `channels:` map, or is `~` when no
+index publishes the add-on; `notes` then says why. Each channel declares
+exactly one of `addons_xml`, the URL of a Kodi repository index (plain or
+gzipped), or `github_tags`, an `owner/repo` whose tags are the versions. A
+version is compared only against its own channel, because one id can sit at
+different versions in different indexes. See
+[ADR 0022](../adr/0022-propose-stable-releases-and-triage-the-patches-they-touch.md).
 
 ### Artifact Patches
 
@@ -458,6 +474,40 @@ Everything that can fail on the controller fails before Kodi is stopped:
 fetching, digest verification, archive safety checks, patch application and
 syntax checks. Apply then stops Kodi once, ships all needed add-ons, updates
 the database, starts Kodi, and verifies Convergence.
+
+### Update Proposals
+
+`propose-updates` reads every `addons.yaml` under the config root, asks each
+record's Release Channel for its newest stable version (Kodi's version order;
+anything containing `alpha`, `beta`, `rc` or `~` is a prerelease), and writes
+one Update Proposal per add-on that moved:
+
+```text
+DIR/<profile>/<id>/proposal.json   branch, title, draft, key
+DIR/<profile>/<id>/body.md         pull request body
+DIR/<profile>/<id>/files/...       changed files, relative to the config root
+DIR/<profile>/<id>/deleted         files to remove, one per line
+```
+
+A dependency the new version needs at a higher version rides along in the same
+proposal. Each Artifact Patch is triaged as Carried (re-headed and re-hashed),
+Obsolete (dropped, for a reviewer to confirm) or Stale (kept; the proposal is a
+draft and the Lock will not load until the patch is rewritten). A requirement
+new to the Lock that exactly one channel offers is added; otherwise the
+proposal is a draft. `--declined KEY` skips a `<profile>/<id>@<version>` a
+reviewer already closed. The command exits 1 if any channel was unreachable.
+
+`.github/workflows/update-proposals.yml` runs it weekly and on dispatch through
+`scripts/update_proposals.sh`, which opens or refreshes one pull request per
+proposal on `update/<profile>/<id>`. A closed, unmerged proposal is read back as
+declined; a proposal the workflow closes itself because it no longer applies is
+labelled `update-superseded`. The workflow needs a fine-grained personal access
+token in the `UPDATE_PROPOSALS_TOKEN` secret with Contents, Pull requests,
+Issues and Workflows write access to this repository, so that its pushes
+trigger CI. Workflows is needed because each branch is rebuilt on the current
+`main`, which may have changed a workflow.
+Accepting a proposal still means reconciling a Device and checking the
+acceptance items in its body before merging.
 
 ## Effects
 
