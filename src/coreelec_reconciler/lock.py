@@ -124,7 +124,8 @@ def repin(document: str, pins: Sequence[Pin]) -> str:
 
     Like `rewrite`, this edits lines rather than round-tripping YAML, so the
     comments explaining each pin survive the proposal that moves it. A record
-    is its `- id:` line and every line after it indented past that line.
+    is its `- id:` line and every line after it indented past that line,
+    including blank lines inside it.
     """
 
     lines = document.splitlines(keepends=True)
@@ -138,9 +139,14 @@ def repin(document: str, pins: Sequence[Pin]) -> str:
             index += 1
             continue
         indent = len(held.group(1))
-        end = index + 1
-        while end < len(lines) and lines[end].startswith(" " * (indent + 2)):
-            end += 1
+        end = scan = index + 1
+        # A blank line is inside the record only if the record continues past it.
+        while scan < len(lines) and (
+            lines[scan].startswith(" " * (indent + 2)) or not lines[scan].strip()
+        ):
+            scan += 1
+            if lines[scan - 1].strip():
+                end = scan
         output.extend(_repinned(lines[index:end], indent, wanted.pop(held.group(2))))
         index = end
     text = "".join(output)

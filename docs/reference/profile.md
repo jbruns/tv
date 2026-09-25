@@ -502,8 +502,10 @@ reviewer already closed. The command exits 1 if any channel was unreachable.
 proposal on `update/<profile>/<id>`. A closed, unmerged proposal is read back as
 declined; a proposal the workflow closes itself because it no longer applies is
 labelled `update-superseded`. The workflow needs a fine-grained personal access
-token in the `UPDATE_PROPOSALS_TOKEN` secret with Contents, Pull requests and
-Issues write access to this repository, so that its pushes trigger CI.
+token in the `UPDATE_PROPOSALS_TOKEN` secret with Contents, Pull requests,
+Issues and Workflows write access to this repository, so that its pushes
+trigger CI. Workflows is needed because each branch is rebuilt on the current
+`main`, which may have changed a workflow.
 Accepting a proposal still means reconciling a Device and checking the
 acceptance items in its body before merging.
 

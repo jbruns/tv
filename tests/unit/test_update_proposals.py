@@ -107,7 +107,9 @@ def publish_release(
     )
 
 
-def pin(device: FakeDevice, patches: bool = False, extra: str = "") -> str:
+def pin(
+    device: FakeDevice, patches: bool = False, extra: str = "", notes: str = "~"
+) -> str:
     """Pins the add-on at its current version, as the Lock holds it today."""
 
     digest = device.publish_artifact()
@@ -117,6 +119,7 @@ def pin(device: FakeDevice, patches: bool = False, extra: str = "") -> str:
         addon_lock(
             digest=digest,
             channels=CHANNELS,
+            notes=notes,
             patches=(PATCH_NAME,) if patches else (),
             patched_files=(
                 {"lib/six.py": hashlib.sha256(PATCHED.encode()).hexdigest()}
@@ -306,6 +309,22 @@ def test_a_carried_patch_is_rewritten_and_recorded(
     assert metadata(out)["draft"] is False
 
 
+def test_a_note_with_a_paragraph_break_stays_in_its_record(
+    device: FakeDevice, propose: Callable[..., tuple[int, Path]]
+) -> None:
+    pin(device, patches=True, notes=">-\n      First paragraph.\n\n      Second one.")
+    publish_release(device, NEWER, six="NEW = True\nSIX = True\n")
+    publish_index(device, f"{KODI}/addons.xml.gz", [manifest(ADDON_ID, NEWER)])
+    publish_index(device, f"{JURIALMUNKEY}/addons.xml", [])
+
+    code, out = propose()
+
+    assert code == 0
+    lock = proposed_lock(out)
+    assert "      First paragraph.\n\n      Second one.\n    patches:\n" in lock
+    assert lock.count("patched_files:") == 1
+
+
 def test_an_obsolete_patch_is_removed(
     device: FakeDevice, propose: Callable[..., tuple[int, Path]]
 ) -> None:
@@ -404,6 +423,27 @@ def test_a_new_requirement_two_channels_offer_makes_a_draft(
     text = body(out)
     assert "script.module.new" in text
     assert "kodi-omega" in text and "jurialmunkey-omega" in text
+
+
+def test_a_new_requirement_is_not_settled_while_a_channel_is_unreachable(
+    device: FakeDevice, propose: Callable[..., tuple[int, Path]]
+) -> None:
+    """The channel that did not answer might have offered it too."""
+
+    pin(device)
+    publish_release(device, NEWER, requires=[("script.module.new", "1.0.0")])
+    publish_index(
+        device,
+        f"{KODI}/addons.xml.gz",
+        [manifest(ADDON_ID, NEWER), manifest("script.module.new", "1.0.1")],
+    )
+
+    code, out = propose()
+
+    assert code == 1
+    assert metadata(out)["draft"] is True
+    assert "script.module.new" not in proposed_lock(out)
+    assert "jurialmunkey-omega" in body(out)
 
 
 def test_a_dependency_bump_a_floor_forces_rides_in_that_proposal(

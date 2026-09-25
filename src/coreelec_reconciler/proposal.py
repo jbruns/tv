@@ -300,8 +300,8 @@ class Proposal:
         return f"Update {self.primary.id} to {self.primary.version} in {self.profile}"
 
 
-class Run:
-    """One pass over every Artifact Lock. Fetches are shared between Locks."""
+class Sweep:
+    """One pass over every Artifact Lock, fetching each index and Artifact once."""
 
     def __init__(self, err: TextIO) -> None:
         self.err = err
@@ -349,7 +349,7 @@ def propose(
 ) -> bool:
     """Writes every Update Proposal. False if anything had to be skipped."""
 
-    run = Run(err)
+    run = Sweep(err)
     held = set(declined)
     if out.exists() and any(out.iterdir()):
         raise config.ConfigError(f"the proposal directory is not empty: {out}")
@@ -379,7 +379,7 @@ def propose(
 
 
 def _proposals(
-    run: Run, document: Path, profile: str, declined: set[str]
+    run: Sweep, document: Path, profile: str, declined: set[str]
 ) -> list[Proposal]:
     channels, records = config.artifact_lock(document)
     listings = {
@@ -421,7 +421,7 @@ def _proposals(
 
 
 def _compose(
-    run: Run,
+    run: Sweep,
     profile: str,
     primary: Move,
     pinned: Mapping[str, config.AddonArtifact],
@@ -531,16 +531,20 @@ def _required(
         and (offered := listing.newest(name)) is not None
         and (not floor or compare(offered, floor) >= 0)
     ]
-    if len(offering) != 1:
+    unreachable = sorted(name for name, listing in listings.items() if not listing)
+    if len(offering) != 1 or unreachable:
         where = (
             ", ".join(
                 f"{listing.channel.name} ({offered})" for listing, offered in offering
             )
             or "no channel the Lock names"
         )
+        missing = (
+            f" ({', '.join(unreachable)} could not be read)" if unreachable else ""
+        )
         proposal.drafts.append(
             f"{move.id} {move.version} newly requires `{name}` "
-            f"{floor or '(any version)'}, and it is offered by {where}. "
+            f"{floor or '(any version)'}, and it is offered by {where}{missing}. "
             "Add it to the Lock by hand"
         )
         return None
@@ -555,7 +559,7 @@ def _required(
     )
 
 
-def _fetch(run: Run, proposal: Proposal, move: Move) -> None:
+def _fetch(run: Sweep, proposal: Proposal, move: Move) -> None:
     """The proposed Artifact, and the pinned one it is compared against."""
 
     blob = run.fetch(move.url)

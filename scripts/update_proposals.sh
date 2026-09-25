@@ -7,7 +7,7 @@
 # nobody resolves a conflict in a bot branch by hand. Nothing here merges.
 #
 # Needs gh and jq, and GH_TOKEN set to a token that can push and open pull
-# requests. A pull request opened with the workflow's own token triggers no
+# requests, and push a main whose workflows changed (the Workflows permission). A pull request opened with the workflow's own token triggers no
 # other workflow, and `ci` and `artifact-patches` must run on these.
 
 set -euo pipefail
@@ -68,9 +68,13 @@ while IFS= read -r -d '' meta; do
     && [ "$(git rev-parse "origin/${branch}^")" = "$(git rev-parse "origin/${BASE}")" ] \
     && git diff --quiet "origin/${branch}" HEAD; then
     printf 'unchanged %s\n' "${branch}"
-  else
-    git push -q --force origin "HEAD:refs/heads/${branch}"
+  elif git push -q --force origin "HEAD:refs/heads/${branch}"; then
     printf 'pushed %s\n' "${branch}"
+  else
+    # One refused push still lets every other proposal open.
+    printf 'error: could not push %s\n' "${branch}" >&2
+    status=1
+    continue
   fi
 
   number="$(gh pr list --head "${branch}" --state open --json number \
@@ -84,10 +88,10 @@ while IFS= read -r -d '' meta; do
       --body-file "${proposal}/body.md" ${flags[@]+"${flags[@]}"}
   else
     gh pr edit "${number}" --title "${title}" --body-file "${proposal}/body.md"
-    held="$(gh pr view "${number}" --json isDraft --jq .isDraft)"
-    if [ "${draft}" = "true" ] && [ "${held}" = "false" ]; then
+    was_draft="$(gh pr view "${number}" --json isDraft --jq .isDraft)"
+    if [ "${draft}" = "true" ] && [ "${was_draft}" = "false" ]; then
       gh pr ready "${number}" --undo
-    elif [ "${draft}" = "false" ] && [ "${held}" = "true" ]; then
+    elif [ "${draft}" = "false" ] && [ "${was_draft}" = "true" ]; then
       gh pr ready "${number}"
     fi
   fi
@@ -102,8 +106,8 @@ if [ "${status}" -eq 0 ]; then
     --description "Closed by the Update Proposals workflow" > /dev/null
   while read -r number branch; do
     keep=false
-    for held in ${proposed[@]+"${proposed[@]}"}; do
-      if [ "${held}" = "${branch}" ]; then
+    for open_branch in ${proposed[@]+"${proposed[@]}"}; do
+      if [ "${open_branch}" = "${branch}" ]; then
         keep=true
       fi
     done

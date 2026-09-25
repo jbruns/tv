@@ -3,9 +3,11 @@ name: Update Proposals
 # Proposes every newer Stable Release the Artifact Locks' Release Channels
 # offer, one pull request per add-on, and never merges one (ADR 0022). The
 # pull requests are opened with a fine-grained personal access token scoped
-# to this repository with Contents and Pull requests read/write, because a
-# pull request opened with the workflow's own token triggers no other
-# workflow, and `ci` and `artifact-patches` must run on these.
+# to this repository with Contents, Pull requests, Issues (for the label) and
+# Workflows read/write, because a pull request opened with the workflow's own
+# token triggers no other workflow, and `ci` and `artifact-patches` must run
+# on these. Workflows lets a branch rebuilt on a main whose workflows changed
+# be pushed.
 on:
   schedule:
     - cron: "23 7 * * 1"
