@@ -127,6 +127,30 @@ _Avoid_: Pin list, manifest, catalogue
 A targeted correction a Profile applies to an Artifact it does not publish, carrying its own assertion of the Artifact version it was written against.
 _Avoid_: Fix, override, transform
 
+**Release Channel**:
+A publisher's list of the add-on versions it offers for one Kodi version, and where an add-on's Stable Releases are found.
+_Avoid_: Index, feed, repository
+
+**Stable Release**:
+An add-on version its Release Channel offers that is not marked as a prerelease.
+_Avoid_: Latest version, newest release
+
+**Update Proposal**:
+A reviewed request to move an add-on's Artifact Lock pin to a newer Stable Release, carrying a verdict on each Artifact Patch it touches. It is never accepted by the thing that raised it.
+_Avoid_: Bump, upgrade PR, auto-update
+
+**Carried Patch**:
+An Artifact Patch that still applies to the proposed version unchanged.
+_Avoid_: Rebased patch
+
+**Obsolete Patch**:
+An Artifact Patch whose corrected text the proposed version already contains. That is evidence upstream fixed the fault, not proof, so a reviewer confirms it before the patch is dropped.
+_Avoid_: Upstreamed patch, redundant patch
+
+**Stale Patch**:
+An Artifact Patch that neither applies to the proposed version nor is already contained in it, so it must be rewritten before the Update Proposal can be accepted.
+_Avoid_: Broken patch, conflicting patch
+
 **Smart Playlist**:
 A Kodi-defined saved query whose typed rules, ordering, and result limit select media for playback or navigation.
 _Avoid_: Widget, static playlist
