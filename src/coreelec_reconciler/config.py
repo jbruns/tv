@@ -85,6 +85,9 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 # enablement could invite Kodi to go and fetch something (ADR 0017).
 ADDON_ROLES = ("chosen", "dependency", "repository")
 
+# A GitHub repository, as `owner/name`, whose tags a Release Channel reads.
+GITHUB_REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+")
+
 
 # A setting a human declares positively that Kodi stores negatively, or as an
 # ordinal, needs a transform between the declaration and the Device. Each one
@@ -157,6 +160,21 @@ class Addresses:
 
 
 @dataclass(frozen=True)
+class Channel:
+    """A Release Channel, named once in the Artifact Lock (ADR 0022).
+
+    It is either a Kodi repository's `addons.xml` for this Kodi version, in
+    which case an add-on's Artifacts sit beside it at
+    `<id>/<id>-<version>.zip`, or a GitHub repository whose tags are the
+    versions. Exactly one of the two is set.
+    """
+
+    name: str
+    addons_xml: str | None = None
+    github_tags: str | None = None
+
+
+@dataclass(frozen=True)
 class AddonArtifact:
     """One record of the Artifact Lock: an add-on, pinned to bytes.
 
@@ -178,6 +196,10 @@ class AddonArtifact:
     move the add-on's version, so the version alone would never ship the
     correction. A hash of None is one nothing has recorded yet, which
     `record-patches` fills in (ADR 0017).
+
+    `channel` names the Release Channel in the Lock's `channels:` map that
+    the pin came from, and which `propose-updates` watches. It is None for
+    an add-on no channel lists (ADR 0022).
     """
 
     id: str
@@ -186,6 +208,7 @@ class AddonArtifact:
     sha256: str
     role: str
     notes: str | None = None
+    channel: str | None = None
     patches: tuple[artifact.Patch, ...] = ()
     patched_files: Mapping[str, str | None] = MappingProxyType({})
 
@@ -1003,14 +1026,52 @@ def _patched_files(
     return MappingProxyType(held)
 
 
-def _addon(source: Path, raw: Any) -> AddonArtifact:
+def _channel(source: Path, name: Any, raw: Any) -> Channel:
+    """One entry of the Lock's `channels:` map."""
+
+    name = _text(source, "a channel name", name)
+    where = f"the channel {name}"
+    mapping = _fields(
+        source,
+        where,
+        _mapping(source, where, raw),
+        required=(),
+        optional=("addons_xml", "github_tags"),
+    )
+    if len(mapping) != 1:
+        raise ConfigError(
+            f"{source}: {where} must state exactly one of addons_xml and github_tags"
+        )
+    if "addons_xml" in mapping:
+        url = _text(source, f"the addons_xml of {where}", mapping["addons_xml"])
+        if not url.startswith("https://") or len(url) <= len("https://"):
+            raise ConfigError(
+                f"{source}: the addons_xml of {where} must be https://: {url}"
+            )
+        return Channel(name=name, addons_xml=url)
+    repository = _text(source, f"the github_tags of {where}", mapping["github_tags"])
+    if not GITHUB_REPOSITORY.fullmatch(repository):
+        raise ConfigError(
+            f"{source}: the github_tags of {where} must be owner/repository: "
+            f"{repository}"
+        )
+    return Channel(name=name, github_tags=repository)
+
+
+def _channels(source: Path, raw: Any) -> dict[str, Channel]:
+    mapping = _mapping(source, "channels", raw)
+    held = (_channel(source, name, value) for name, value in mapping.items())
+    return {channel.name: channel for channel in held}
+
+
+def _addon(source: Path, raw: Any, channels: Mapping[str, Channel]) -> AddonArtifact:
     """One record of the Artifact Lock, rejected here rather than mid-Run."""
 
     mapping = _fields(
         source,
         "an add-on",
         _mapping(source, "an add-on", raw),
-        required=("id", "version", "url", "sha256", "role", "notes"),
+        required=("id", "version", "url", "sha256", "role", "channel", "notes"),
         optional=("patches", "patched_files"),
     )
     addon_id = _text(source, "an add-on id", mapping["id"])
@@ -1039,6 +1100,14 @@ def _addon(source: Path, raw: Any) -> AddonArtifact:
             f"{source}: the role of {addon_id} must be one of "
             f"{', '.join(ADDON_ROLES)}: {role}"
         )
+    channel = mapping["channel"]
+    if channel is not None:
+        channel = _text(source, f"the channel of {addon_id}", channel)
+        if channel not in channels:
+            raise ConfigError(
+                f"{source}: {addon_id} names the channel {channel}, which the "
+                "Artifact Lock's channels do not name"
+            )
     patches = _patches(source, addon_id, version, mapping.get("patches"))
     return AddonArtifact(
         id=addon_id,
@@ -1049,6 +1118,7 @@ def _addon(source: Path, raw: Any) -> AddonArtifact:
         notes=(
             None if notes is None else _text(source, f"the notes of {addon_id}", notes)
         ),
+        channel=channel,
         patches=patches,
         patched_files=_patched_files(
             source, addon_id, patches, mapping.get("patched_files")
@@ -1064,23 +1134,33 @@ def _addons(source: Path) -> tuple[AddonArtifact, ...]:
     fleet and report a converged Device.
     """
 
+    return artifact_lock(source)[1]
+
+
+def artifact_lock(
+    source: Path,
+) -> tuple[dict[str, Channel], tuple[AddonArtifact, ...]]:
+    """The Release Channels an Artifact Lock names, and the records it holds."""
+
     if not source.is_file():
         raise ConfigError(f"no {ADDONS} beside the Profile: {source}")
-    declared = _fields(
-        source, "the Artifact Lock", _read(source), required=("addons",)
-    )["addons"]
+    document = _fields(
+        source, "the Artifact Lock", _read(source), required=("channels", "addons")
+    )
+    channels = _channels(source, document["channels"])
+    declared = document["addons"]
     if not isinstance(declared, list):
         raise ConfigError(
             f"{source}: addons must be a list of records, and an empty list "
             "when the Profile installs none"
         )
-    records = tuple(_addon(source, entry) for entry in declared)
+    records = tuple(_addon(source, entry, channels) for entry in declared)
     seen: set[str] = set()
     for record in records:
         if record.id in seen:
             raise ConfigError(f"{source}: {record.id} is pinned twice")
         seen.add(record.id)
-    return records
+    return channels, records
 
 
 def _constants(source: Path, raw: Any) -> dict[str, str]:

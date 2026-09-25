@@ -428,12 +428,85 @@ def test_one_addon_pinned_twice_is_refused(
 ) -> None:
     device.write_addons(
         addon_lock(digest="4" * 64)
-        + addon_lock(digest="5" * 64).removeprefix("addons:")
+        + addon_lock(digest="5" * 64).split("addons:\n", 1)[1]
     )
 
     assert reconcile("plan", "--room", "theater") == 1
 
     assert "script.module.six is pinned twice" in capsys.readouterr().err
+
+
+def test_a_pin_naming_a_channel_the_lock_does_not_name_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    device.write_addons(addon_lock(digest="4" * 64, channel="kodi-nexus"))
+
+    assert reconcile("plan", "--room", "theater") == 1
+
+    assert "script.module.six names the channel kodi-nexus" in (capsys.readouterr().err)
+
+
+def test_a_pin_stating_no_channel_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A pin with no Release Channel says so with `~`, never by omission."""
+
+    lines = addon_lock(digest="4" * 64).splitlines(keepends=True)
+    device.write_addons(
+        "".join(line for line in lines if not line.startswith("    channel:"))
+    )
+
+    assert reconcile("plan", "--room", "theater") == 1
+
+    assert "missing key in an add-on: channel" in capsys.readouterr().err
+
+
+def test_a_pin_with_no_channel_plans_like_any_other(
+    device: FakeDevice, reconcile: Callable[..., int]
+) -> None:
+    device.write_addons(
+        addon_lock(digest=device.publish_artifact(), channel="~", channels="").replace(
+            "addons:", "channels: {}\naddons:", 1
+        )
+    )
+    device.create_addon_database()
+
+    assert reconcile("apply", "--room", "theater") == 0
+
+    assert device.addon_row(ADDON_ID) == (1, 0, "")
+
+
+@pytest.mark.parametrize(
+    ("channel", "refusal"),
+    [
+        ("    addons_xml: http://mirrors.kodi.tv/addons.xml\n", "must be https://"),
+        ("    github_tags: not a repository\n", "must be owner/repository"),
+        (
+            "    addons_xml: https://mirrors.kodi.tv/addons.xml\n"
+            "    github_tags: owner/repository\n",
+            "exactly one of addons_xml and github_tags",
+        ),
+        ("    datadir: https://mirrors.kodi.tv/\n", "unknown key in the channel"),
+    ],
+)
+def test_a_malformed_channel_is_refused(
+    device: FakeDevice,
+    reconcile: Callable[..., int],
+    capsys: pytest.CaptureFixture[str],
+    channel: str,
+    refusal: str,
+) -> None:
+    device.write_addons(
+        addon_lock(digest="4" * 64, channels=f"channels:\n  kodi-omega:\n{channel}")
+    )
+
+    assert reconcile("plan", "--room", "theater") == 1
+
+    assert refusal in capsys.readouterr().err
 
 
 LOCK = (
@@ -470,3 +543,14 @@ def test_every_shipped_record_states_why_the_addon_is_there() -> None:
     roles = {record["id"]: record["role"] for record in shipped_lock()}
     assert roles["plugin.program.autocompletion"] == "chosen"
     assert roles["script.module.autocompletion"] == "dependency"
+
+
+def test_every_shipped_record_names_a_channel_the_lock_names() -> None:
+    """The one pin no Release Channel lists says why in its `notes`."""
+
+    document = yaml.safe_load(LOCK.read_text(encoding="utf-8"))
+    for record in document["addons"]:
+        if record["channel"] is None:
+            assert record["notes"], record["id"]
+        else:
+            assert record["channel"] in document["channels"], record["id"]
