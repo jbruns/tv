@@ -1,8 +1,8 @@
-# The theater's Remote dashboard. Every key goes to the Display, which carries
-# it to Kodi over CEC and volume to the Denon (ADR 0024). The card's type is
+# The theater's Remote dashboard. Power goes to the Display. Every other key
+# goes to select.theater_remote_keys, which sends it to Kodi, the Sony or the
+# Denon (ADR 0025). `value` is the select option. The card's type is
 # aiks-tv-card, whatever RosCard's README calls it. The card carries every field
-# RosCard's editor saves, including a fixed uuid. `value` is the Sony's own
-# remote code name for remote.send_command, or a media_player action name.
+# RosCard's editor saves, including a fixed uuid.
 title: Theater Remote
 views:
   - title: TV
@@ -22,17 +22,17 @@ views:
         entities:
           - {key: POWER_ON, type: media_player, entity_id: media_player.sony_theater, value: turn_on}
           - {key: POWER_OFF, type: media_player, entity_id: media_player.sony_theater, value: turn_off}
-          - {key: UP, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Up}
-          - {key: DOWN, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Down}
-          - {key: LEFT, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Left}
-          - {key: RIGHT, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Right}
-          - {key: CENTER, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Confirm}
-          - {key: BACK, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Return}
-          - {key: HOME, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Home}
-          - {key: MENU, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: ActionMenu}
-          - {key: PLAY, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Play}
-          - {key: PAUSE, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Pause}
-          - {key: VOLUME_UP, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: VolumeUp}
-          - {key: VOLUME_DOWN, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: VolumeDown}
-          - {key: MUTE, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Mute}
-          - {key: UN_MUTE, type: remote, remote_type: normal, entity_id: remote.sony_theater, value: Mute}
+          - {key: UP, type: select, entity_id: select.theater_remote_keys, value: Up}
+          - {key: DOWN, type: select, entity_id: select.theater_remote_keys, value: Down}
+          - {key: LEFT, type: select, entity_id: select.theater_remote_keys, value: Left}
+          - {key: RIGHT, type: select, entity_id: select.theater_remote_keys, value: Right}
+          - {key: CENTER, type: select, entity_id: select.theater_remote_keys, value: Select}
+          - {key: BACK, type: select, entity_id: select.theater_remote_keys, value: Back}
+          - {key: HOME, type: select, entity_id: select.theater_remote_keys, value: Home}
+          - {key: MENU, type: select, entity_id: select.theater_remote_keys, value: Menu}
+          - {key: PLAY, type: select, entity_id: select.theater_remote_keys, value: Play}
+          - {key: PAUSE, type: select, entity_id: select.theater_remote_keys, value: Pause}
+          - {key: VOLUME_UP, type: select, entity_id: select.theater_remote_keys, value: VolumeUp}
+          - {key: VOLUME_DOWN, type: select, entity_id: select.theater_remote_keys, value: VolumeDown}
+          - {key: MUTE, type: select, entity_id: select.theater_remote_keys, value: Mute}
+          - {key: UN_MUTE, type: select, entity_id: select.theater_remote_keys, value: Unmute}

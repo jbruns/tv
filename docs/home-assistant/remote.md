@@ -2,12 +2,14 @@
 
 This guide installs and operates a room's Remote, a Sanytron Astrion. It runs
 the stock Astrion Launcher and shows a Home Assistant dashboard built from RosCard
-cards. Every key on its TV page goes to the room's Display, which passes
-navigation to the Device over CEC and volume to the AVR
-([ADR 0024](../adr/0024-the-remote-drives-the-room-through-its-display.md)).
-The Remote adds no automations or scripts. Power on and off switch only the
-Display, and the [Kodi Lifecycle](ugoos-kodi-lifecycle.md) starts and stops
-Kodi as usual.
+cards. Power on and off switch only the Display, and the
+[Kodi Lifecycle](ugoos-kodi-lifecycle.md) starts and stops Kodi as usual. Every
+other key on its TV page goes to the room's key router, which sends it on
+([ADR 0025](../adr/0025-the-remote-sends-keys-to-whatever-the-display-is-showing.md)):
+
+- Volume goes to the AVR, 2 dB per press. Mute toggles the AVR's mute.
+- While Viewing, other keys go to Kodi.
+- Otherwise they go to the Display as its own remote codes.
 
 Each room has its own dashboard:
 
@@ -17,8 +19,10 @@ Each room has its own dashboard:
 | `home-assistant/dashboards/remote_theater.yaml` | `/config/dashboards/remote_theater.yaml` |
 
 The package registers the YAML-mode dashboard `remote-theater`, which is
-hidden from the sidebar, and `select.theater_sony_apps`, the Remote's app list.
-The Sony's `source_list` holds only its inputs, so selecting an option launches
+hidden from the sidebar, and two template selects. `select.theater_remote_keys`
+is the key router: each TV-card key selects its own option. It also holds the
+Kodi method and Sony code for each key, and the volume step.
+`select.theater_sony_apps` is the Remote's app list. The Sony's `source_list` holds only its inputs, so selecting an option launches
 that app with `media_player.play_media`. To offer another app, add its title
 exactly as Media -> Theater TV -> Applications shows it. The dashboard file
 holds the pages.
@@ -79,7 +83,7 @@ added.
    dashboards into a package too. Home Assistant will not merge two
    `dashboards` mappings.
 4. A later change to the dashboard file alone needs no restart: refresh the
-   Remote instead. A change to the package's app list needs Developer Tools ->
+   Remote instead. A change to either select needs Developer Tools ->
    YAML -> Template entities to be reloaded.
 
 ## 4. Set up the Remote
@@ -98,9 +102,10 @@ new or reset Remote:
 ## 5. Check it on the hardware
 
 The first time a Remote is set up in a room, check each row with Kodi showing
-on the Display and record what happened. Where a key doesn't work, change its
-`value` in the dashboard file to another of the Display's own code names. To
-list them, call `remote.send_command` on `remote.sony_theater` with the
+on the Display, then again in a Sony app, and record what happened. Where a key
+doesn't work, fix its Kodi method or Sony code in the key router. A failing
+press is logged in Settings -> System -> Logs under the router's name. To list
+the Sony's code names, call `remote.send_command` on `remote.sony_theater` with the
 command `Test`. The integration then logs every code name the Sony supports.
 
 | Check | Expected |
@@ -108,11 +113,14 @@ command `Test`. The integration then logs every code name the Sony supports.
 | Power with the Display off | The Sony comes on, and the Kodi Lifecycle starts Kodi on HDMI 4 |
 | Power with the Display on | The Sony turns off. Kodi stops after the stop delay |
 | D-pad, OK, Back | Kodi moves, selects and goes back, with no noticeable lag or dropped presses |
-| Hold a d-pad key | Record whether it repeats |
-| Home, Menu | Record what Kodi or the Sony does |
-| Play, Pause | Kodi plays and pauses. In a Sony app, that app does |
-| Volume up and down, Mute | The Denon's volume changes |
-| Hold volume | Record whether it repeats |
+| Hold a d-pad key | It repeats |
+| Home, Menu | Kodi's home screen, and Kodi's context menu |
+| Play, Pause | Kodi plays and pauses |
+| D-pad, OK, Back, Play, Pause in a Sony app | The Sony app responds |
+| Volume up and down | The Denon moves 2 dB per press |
+| Mute, pressed twice | The Denon mutes, then unmutes |
+| Hold volume | It repeats |
+| Volume feedback | Record where the level shows: on the Sony, on the Remote, or nowhere |
 | App list | Launches YouTube on the Sony |
 
 ## 6. Add a room
@@ -120,10 +128,10 @@ command `Test`. The integration then logs every code name the Sony supports.
 1. Copy `remote_theater.yaml` in both `packages/` and `dashboards/` to
    `remote_<room>.yaml`.
 2. In the package, rename the dashboard to `remote-<room>`, and change its
-   title and filename. Rename the app-list select, and change its unique ID and
-   Display.
-3. In the dashboard, replace the Display's `media_player` and `remote` entity
-   IDs and the app-list `source`, set `tv_name`, and give the card a new
-   `uuid`.
+   title and filename. Rename both selects and change their unique IDs. In
+   the key router, set the Display, its `remote`, its input for Viewing, the
+   AVR and the Kodi media player. In the app list, set the Display.
+3. In the dashboard, replace the Display's `media_player`, the key router
+   and the app-list `source`, set `tv_name`, and give the card a new `uuid`.
 4. Decide how the new Remote sees only its own room's cards (see section 2),
    then follow sections 2 to 5 for it.

@@ -25,3 +25,91 @@ template:
             data:
               media_content_id: "{{ option }}"
               media_content_type: app
+
+      # Every key but power, as the Remote's TV card names it (ADR 0025). Volume
+      # goes to the Denon. Other keys go to Kodi while Viewing, and to the Sony
+      # otherwise. A key pressed while the last one is still running is
+      # dropped, so a held key never queues up.
+      - name: Theater - Remote keys
+        unique_id: remote_theater_remote_keys
+        default_entity_id: select.theater_remote_keys
+        icon: mdi:remote-tv
+        optimistic: true
+        options: >-
+          {{ ['Up', 'Down', 'Left', 'Right', 'Select', 'Back', 'Home', 'Menu',
+              'Play', 'Pause', 'VolumeUp', 'VolumeDown', 'Mute', 'Unmute'] }}
+        select_option:
+          - variables:
+              key: "{{ option }}"
+              display: media_player.sony_theater
+              display_remote: remote.sony_theater
+              avr: media_player.denon_theater
+              viewing: >-
+                {{ is_state(display, 'on')
+                   and is_state_attr(display, 'source', 'HDMI 4') }}
+              kodi_methods:
+                Up: Input.Up
+                Down: Input.Down
+                Left: Input.Left
+                Right: Input.Right
+                Select: Input.Select
+                Back: Input.Back
+                Home: Input.Home
+                Menu: Input.ContextMenu
+              sony_codes:
+                Up: Up
+                Down: Down
+                Left: Left
+                Right: Right
+                Select: Confirm
+                Back: Return
+                Home: Home
+                Menu: ActionMenu
+                Play: Play
+                Pause: Pause
+              # The denonavr integration maps -80 dB..+18 dB onto 0..0.98, so
+              # 0.02 is 2 dB.
+              volume_step: 0.02
+          - choose:
+              - conditions: "{{ key in ['VolumeUp', 'VolumeDown'] }}"
+                sequence:
+                  - variables:
+                      level: "{{ state_attr(avr, 'volume_level') }}"
+                  - condition: template
+                    value_template: "{{ level is number }}"
+                  - action: media_player.volume_set
+                    target:
+                      entity_id: "{{ avr }}"
+                    data:
+                      volume_level: >-
+                        {% set step = volume_step if key == 'VolumeUp' else -volume_step %}
+                        {{ [0, [level + step, 0.98] | min] | max | round(2) }}
+              - conditions: "{{ key in ['Mute', 'Unmute'] }}"
+                sequence:
+                  - action: media_player.volume_mute
+                    target:
+                      entity_id: "{{ avr }}"
+                    data:
+                      is_volume_muted: >-
+                        {{ key == 'Mute' and not state_attr(avr, 'is_volume_muted') }}
+              - conditions: "{{ viewing and key in ['Play', 'Pause'] }}"
+                sequence:
+                  - action: kodi.call_method
+                    target:
+                      entity_id: media_player.ugoos_theater
+                    data:
+                      method: Input.ExecuteAction
+                      action: "{{ key | lower }}"
+              - conditions: "{{ viewing }}"
+                sequence:
+                  - action: kodi.call_method
+                    target:
+                      entity_id: media_player.ugoos_theater
+                    data:
+                      method: "{{ kodi_methods[key] }}"
+            default:
+              - action: remote.send_command
+                target:
+                  entity_id: "{{ display_remote }}"
+                data:
+                  command: "{{ sony_codes[key] }}"
