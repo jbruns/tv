@@ -343,9 +343,9 @@ addons:
     channel: jurialmunkey-omega
     notes: ~
   - id: script.module.inputstreamhelper
-    version: "0.8.5"
-    url: https://mirrors.kodi.tv/addons/omega/script.module.inputstreamhelper/script.module.inputstreamhelper-0.8.5.zip
-    sha256: "9330b099ba3618c2ad070d35e7659e5ca937368b13c5cb97f2aca65953eab4ba"
+    version: "0.8.6"
+    url: https://mirrors.kodi.tv/addons/omega/script.module.inputstreamhelper/script.module.inputstreamhelper-0.8.6.zip
+    sha256: "326ff6182802c7fc3967df254823c84ba39eedacae03b1349eb4acafcb231801"
     role: dependency
     channel: kodi-omega
     notes: ~
