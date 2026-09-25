@@ -307,8 +307,12 @@ settings_documents:
   # win that merge and owning the rest would drift the moment Arctic Fuse adds
   # a content type.
   #
-  # 509 and 549 are Kodi view ids. They are declared as literals rather than
-  # as anything this file claims to decode.
+  # 583 and 584 are Kodi view ids. They are declared as literals rather than
+  # as anything this file claims to decode. They are specific to the skin
+  # version: 3.3.2 renumbered its list views (FlixArt moved from 509 to 583,
+  # FlixArt 2 from 549 to 584). script.skinvariables resets an id a content
+  # type doesn't allow back to the skin's default, and a stale id shows up as
+  # a Run that "still differs" after the rebuild.
   #
   # `compiles_to` names the include the add-on builds from this document. It
   # is stale the moment the source changes and nothing else rebuilds it, so
@@ -320,9 +324,9 @@ settings_documents:
     compiles_to: /storage/.kodi/addons/skin.arctic.fuse.3/1080i/script-skinviewtypes-includes.xml
     settings:
       - setting: library.seasons
-        value: "509"
+        value: "583"
       - setting: library.episodes
-        value: "549"
+        value: "584"
 
   # The HDMI-CEC power policy. The Device keeps CEC *navigation* — the Sony's
   # remote drives Kodi — while the two boxes' power states stay decoupled, so

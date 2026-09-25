@@ -356,4 +356,4 @@ def test_the_shipped_profile_declares_both_view_types_and_the_artifact() -> None
     assert viewtypes[0]["compiles_to"] == COMPILED
     assert {
         setting["setting"]: setting["value"] for setting in viewtypes[0]["settings"]
-    } == {"library.seasons": "509", "library.episodes": "549"}
+    } == {"library.seasons": "583", "library.episodes": "584"}
