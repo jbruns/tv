@@ -1,4 +1,4 @@
-# plugin.video.themoviedb.helper 6.17.1
+# plugin.video.themoviedb.helper 6.17.4
 #
 # Both worker threads are non-daemon, so a Kodi shutdown waits on them and the
 # appliance hangs at the point the television is being switched off.
