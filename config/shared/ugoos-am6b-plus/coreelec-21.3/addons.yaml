@@ -161,9 +161,9 @@ addons:
       lib/homeassistant/_adapter.py: "0f1ffeb438a91c18c865101cc181450b8f7430dedb5cc30df5711377e87c17a4"
       resources/settings.xml: "c2ab0d8da2fa70124b3e7e31fd4c14070f2b532d404588ad68d1a3a7d957dd9a"
   - id: resource.language.en_us
-    version: "11.0.82"
-    url: https://mirrors.kodi.tv/addons/omega/resource.language.en_us/resource.language.en_us-11.0.82.zip
-    sha256: "69f5b1e6df17838d5735bb9c9b584612faaea7fb6677dd167bda6154cae0d43b"
+    version: "11.0.83"
+    url: https://mirrors.kodi.tv/addons/omega/resource.language.en_us/resource.language.en_us-11.0.83.zip
+    sha256: "0bbcdd595b95beb71a3d2076804f4c8006ea4eba950c518f2c45841fc7468f01"
     role: chosen
     channel: kodi-omega
     notes: ~
