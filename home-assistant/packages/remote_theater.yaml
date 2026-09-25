@@ -7,3 +7,21 @@ lovelace:
       icon: mdi:remote-tv
       show_in_sidebar: false
       filename: dashboards/remote_theater.yaml
+
+# The Sony's source_list holds only its inputs, so the Remote's app list is
+# this select. Choosing an option launches that Sony app.
+template:
+  - select:
+      - name: Theater - Sony apps
+        unique_id: remote_theater_sony_apps
+        default_entity_id: select.theater_sony_apps
+        icon: mdi:apps
+        optimistic: true
+        options: "{{ ['YouTube'] }}"
+        select_option:
+          - action: media_player.play_media
+            target:
+              entity_id: media_player.sony_theater
+            data:
+              media_content_id: "{{ option }}"
+              media_content_type: app

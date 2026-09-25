@@ -1,7 +1,7 @@
 # Remote in Home Assistant
 
 This guide installs and operates a room's Remote, a Sanytron Astrion. It runs
-the stock HaRemote app and shows a Home Assistant dashboard built from RosCard
+the stock Astrion Launcher and shows a Home Assistant dashboard built from RosCard
 cards. Every key on its TV page goes to the room's Display, which passes
 navigation to the Device over CEC and volume to the AVR
 ([ADR 0024](../adr/0024-the-remote-drives-the-room-through-its-display.md)).
@@ -16,8 +16,17 @@ Each room has its own dashboard:
 | `home-assistant/packages/remote_theater.yaml` | `/config/packages/remote_theater.yaml` |
 | `home-assistant/dashboards/remote_theater.yaml` | `/config/dashboards/remote_theater.yaml` |
 
-The package registers the YAML-mode dashboard `remote-theater`. It is hidden
-from the sidebar. The dashboard file holds the pages.
+The package registers the YAML-mode dashboard `remote-theater`, which is
+hidden from the sidebar, and `select.theater_sony_apps`, the Remote's app list.
+The Sony's `source_list` holds only its inputs, so selecting an option launches
+that app with `media_player.play_media`. To offer another app, add its title
+exactly as Media -> Theater TV -> Applications shows it. The dashboard file
+holds the pages.
+
+The Remote does not open one chosen dashboard. It reads every RosCard card on
+every dashboard its user can see, and shows only those. Standard Lovelace cards
+never reach it. A view or dashboard named `default` or `home` clashes with the
+Remote's launcher, so don't use those names.
 
 ## 1. Prerequisites
 
@@ -43,13 +52,14 @@ The Remote logs in as its own non-admin user, not as an operator.
 2. Log in as `Remotes`. Under Profile -> Security, create a long-lived access
    token named after the Remote, for example `astrion-theater`.
 3. Pair the Remote with that token by following Sanytron's
-   [getting started](https://hub.sanytron.com/support/astrion/getting-started)
-   steps.
+   [pairing guide](https://hub.sanytron.com/support/astrion/pair-home-assistant).
 4. If the Remote was paired with another user's token before, revoke that
    token from its owner's Profile -> Security.
 
-Every Remote shares the `Remotes` user and has its own token. Revoking a token
-disconnects that Remote only.
+Revoking a token disconnects that Remote only. Because a Remote shows every
+RosCard card its user can see, one shared user works for only one room. How a
+second room's Remote is kept to its own cards is decided when that Remote is
+added.
 
 ## 3. Deploy the dashboard
 
@@ -60,19 +70,20 @@ disconnects that Remote only.
    `configuration.yaml` already declares `lovelace: dashboards:`, move those
    dashboards into a package too. Home Assistant will not merge two
    `dashboards` mappings.
-4. Later changes to the dashboard file need no restart. Refresh the dashboard
-   on the Remote instead.
+4. A later change to the dashboard file alone needs no restart: refresh the
+   Remote instead. A change to the package's app list needs Developer Tools ->
+   YAML -> Template entities to be reloaded.
 
 ## 4. Set up the Remote
 
 These settings live on the Remote, not in this repository. Set them on every
 new or reset Remote:
 
-1. Point HaRemote at the room's dashboard, `remote-theater`.
-2. In the HaRemote app, go to Settings -> TV Card -> shortcut configuration and
+1. On the Remote, go to Settings -> TV Card -> shortcut configuration and
    turn **Global Buttons** off. The TV page's key map then applies while it is
    showing.
-3. Refresh the Remote's data. RosCard issue
+2. Pull down from the top of the home screen and tap Refresh. The Remote
+   caches what it reads, so it needs this after every dashboard change. RosCard issue
    [#31](https://github.com/yyqclhy/RosCard/issues/31) reports that the
    refresh sometimes loads an empty view. If it does, refresh again.
 
@@ -94,15 +105,16 @@ command `Test`. The integration then logs every code name the Sony supports.
 | Play, Pause | Kodi plays and pauses. In a Sony app, that app does |
 | Volume up and down, Mute | The Denon's volume changes |
 | Hold volume | Record whether it repeats |
-| App list | Launches the chosen Sony app |
-| Dashboard choice | Record whether HaRemote lets you pick a dashboard, a view, or neither |
+| App list | Launches YouTube on the Sony |
 
 ## 6. Add a room
 
 1. Copy `remote_theater.yaml` in both `packages/` and `dashboards/` to
    `remote_<room>.yaml`.
 2. In the package, rename the dashboard to `remote-<room>`, and change its
-   title and filename.
+   title and filename. Rename the app-list select, and change its unique ID and
+   Display.
 3. In the dashboard, replace the Display's `media_player` and `remote` entity
-   IDs, and set `tv_name`.
-4. Follow sections 2 to 5 for the new Remote.
+   IDs and the app-list `source`, and set `tv_name`.
+4. Decide how the new Remote sees only its own room's cards (see section 2),
+   then follow sections 2 to 5 for it.

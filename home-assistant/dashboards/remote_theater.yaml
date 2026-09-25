@@ -11,7 +11,7 @@ views:
         tv_name: Theater
         tv_type: android_tv
         media_play_entity: media_player.sony_theater
-        source: media_player.sony_theater
+        source: select.theater_sony_apps
         entities:
           - {key: POWER_ON, type: media_player, entity_id: media_player.sony_theater, value: turn_on}
           - {key: POWER_OFF, type: media_player, entity_id: media_player.sony_theater, value: turn_off}
