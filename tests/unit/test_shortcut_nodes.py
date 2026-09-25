@@ -348,7 +348,7 @@ def test_the_skins_own_node_files_are_left_alone(
     ]
 
 
-def test_the_shipped_profile_declares_four_node_files_and_every_guid() -> None:
+def test_the_shipped_profile_declares_six_node_files_and_every_guid() -> None:
     profile = shipped_profile()
     nodes: list[dict[str, Any]] = profile["shortcut_nodes"]
 
@@ -356,6 +356,8 @@ def test_the_shipped_profile_declares_four_node_files_and_every_guid() -> None:
         "skinvariables-shortcut-homewidgets.json",
         "skinvariables-shortcut-1101widgets.json",
         "skinvariables-shortcut-1102widgets.json",
+        "skinvariables-shortcut-1101submenu.json",
+        "skinvariables-shortcut-1102submenu.json",
         "skinvariables-shortcut-powermenu.json",
     ]
 

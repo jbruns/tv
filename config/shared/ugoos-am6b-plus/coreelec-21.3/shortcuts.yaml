@@ -2,8 +2,8 @@
 # screens, and the power menu. Each file is rendered whole — every byte is the
 # Reconciler's — and each is declared by name.
 #
-# The directory is never enumerated. The Device holds six node files there and
-# these four are ours; `skinvariables-shortcut-homesubmenu.json` and
+# The directory is never enumerated. The Device holds eight node files there
+# and these six are ours; `skinvariables-shortcut-homesubmenu.json` and
 # `-searchwidgets.json` are the skin's own, carrying generated `guid-…` ids,
 # and owning the directory would delete two working files on the first Run.
 #
@@ -75,6 +75,51 @@ shortcut_nodes:
         target: videos
       - guid: coreelec-movies-new
         playlist: NewMovies.xsp
+        target: videos
+
+  # The TV Shows hub's submenu, which pivots the library. Selecting the hub
+  # itself opens the library root (HomeSwitcher.1101.Shortcut.Path in
+  # settings.yaml); pressing up on it opens this list instead. The skin
+  # compiles each top-level item into `skinvariables-1101submenu-staticitems`.
+  #
+  # These are `videodb://` paths rather than `library://` nodes, the same as
+  # the hub's own shortcut: the Device's userdata library overrides Kodi's
+  # nodes, and these views should not depend on what is in it.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1101submenu.json
+    shortcuts:
+      - guid: coreelec-tv-submenu-years
+        path: videodb://tvshows/years/
+        label: "$LOCALIZE[652]"
+        icon: special://skin/extras/icons/year.png
+        target: videos
+      - guid: coreelec-tv-submenu-genres
+        path: videodb://tvshows/genres/
+        label: "$LOCALIZE[135]"
+        icon: special://skin/extras/icons/genre.png
+        target: videos
+      - guid: coreelec-tv-submenu-recently-added
+        path: videodb://recentlyaddedepisodes/
+        label: "$LOCALIZE[20382]"
+        icon: special://skin/extras/icons/recentlyadded.png
+        target: videos
+
+  # The Movies hub's submenu: the same three pivots, movie values.
+  - document: /storage/.kodi/userdata/addon_data/script.skinvariables/nodes/skin.arctic.fuse.3/skinvariables-shortcut-1102submenu.json
+    shortcuts:
+      - guid: coreelec-movies-submenu-years
+        path: videodb://movies/years/
+        label: "$LOCALIZE[652]"
+        icon: special://skin/extras/icons/year.png
+        target: videos
+      - guid: coreelec-movies-submenu-genres
+        path: videodb://movies/genres/
+        label: "$LOCALIZE[135]"
+        icon: special://skin/extras/icons/genre.png
+        target: videos
+      - guid: coreelec-movies-submenu-recently-added
+        path: videodb://recentlyaddedmovies/
+        label: "$LOCALIZE[20382]"
+        icon: special://skin/extras/icons/recentlyadded.png
         target: videos
 
   # The power menu. Every entry is a Kodi builtin rather than a playlist, and
