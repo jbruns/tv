@@ -43,6 +43,11 @@ RosCard's README names its cards `custom:ros-*`, but the cards it actually
 installs are `custom:aiks-*`, for example `custom:aiks-tv-card`. Copy card
 types from these dashboard files, not from the README.
 
+A card must carry every field RosCard's editor saves, including a `uuid`. The
+Remote shows "View is empty" for a card written without them. Give each new
+card its own fixed `uuid`, for example from `python3 -c 'import uuid;
+print(uuid.uuid4())'`, and never reuse one.
+
 ## 2. Create the Remotes user
 
 The Remote logs in as its own non-admin user, not as an operator.
@@ -51,9 +56,12 @@ The Remote logs in as its own non-admin user, not as an operator.
    **Can only log in from the local network**, and leave **Administrator** off.
 2. Log in as `Remotes`. Under Profile -> Security, create a long-lived access
    token named after the Remote, for example `astrion-theater`.
-3. Pair the Remote with that token by following Sanytron's
+3. Still as `Remotes`, go to Profile -> General. Set the default dashboard to
+   the room's Remote dashboard, for example Theater Remote. Choose **Change
+   order and hide items** for the sidebar, and hide every item.
+4. Pair the Remote with that token by following Sanytron's
    [pairing guide](https://hub.sanytron.com/support/astrion/pair-home-assistant).
-4. If the Remote was paired with another user's token before, revoke that
+5. If the Remote was paired with another user's token before, revoke that
    token from its owner's Profile -> Security.
 
 Revoking a token disconnects that Remote only. Because a Remote shows every
@@ -115,6 +123,7 @@ command `Test`. The integration then logs every code name the Sony supports.
    title and filename. Rename the app-list select, and change its unique ID and
    Display.
 3. In the dashboard, replace the Display's `media_player` and `remote` entity
-   IDs and the app-list `source`, and set `tv_name`.
+   IDs and the app-list `source`, set `tv_name`, and give the card a new
+   `uuid`.
 4. Decide how the new Remote sees only its own room's cards (see section 2),
    then follow sections 2 to 5 for it.
