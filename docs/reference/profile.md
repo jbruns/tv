@@ -298,6 +298,7 @@ The dialect is declared and never guessed:
 | `addon_v1` | flat add-on settings XML | `weather.ha` and CEC |
 | `json` | dotted paths into JSON | skin view types |
 | `shell_vars` | `KEY=value` lines | timezone and `sshd.conf` |
+| `coreelec` | `module.Setting` in CoreELEC's XML | `oe_settings.xml` |
 
 Kodi rewrites `guisettings`, add-on, skin and peripheral Settings Documents
 from memory when it exits. That is why a Settings Document Change always takes

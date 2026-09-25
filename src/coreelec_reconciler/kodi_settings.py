@@ -25,6 +25,12 @@ dialect is an error naming the document, never a plausible empty parse that
 would report every declared address as unset. For `json` the dialect also
 picks the parser, which the XML dialects did not have to do.
 
+`service.coreelec.settings` keeps its own document in a shape of its own:
+`<coreelec><settings><module><Setting>value</Setting></module></settings>`,
+read by tag name rather than by id. The `coreelec` dialect addresses a value
+there as `module.Setting`, exactly as the add-on's `read_setting(module,
+setting)` names it, and tag names are case-sensitive to it.
+
 Kodi resolves a setting ID without regard to case and reads only the direct
 `<setting>` children of the root, while a recursive reader sees nested copies
 too. The canonical node is therefore the one Kodi reads: every other match at
@@ -46,16 +52,19 @@ ADDON_V2 = "addon_v2"
 SKIN = "skin"
 JSON = "json"
 SHELL_VARS = "shell_vars"
+COREELEC = "coreelec"
 
 # Every dialect this module can read and write. `guisettings` and `addon_v2`
 # are the same shape on the wire and are named apart because they are
 # different documents: one is Kodi core's and one is an add-on's, and what
 # Kodi does to one it need not do to the other.
-DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON, SHELL_VARS)
+DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON, SHELL_VARS, COREELEC)
 
 # The dialects Kodi itself reads and rewrites from memory as it exits, and
-# which therefore always take the Kodi stop (ADR 0013).
-KODI_DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON)
+# which therefore always take the Kodi stop (ADR 0013). `coreelec` does not
+# rewrite from memory, but the add-on reads it only as its service starts
+# inside Kodi, so a Change there takes effect through the same stop.
+KODI_DIALECTS = (GUISETTINGS, ADDON_V1, ADDON_V2, SKIN, JSON, COREELEC)
 
 # The dialects that carry a setting's value as element text. `addon_v1` is the
 # one that carries it in a `value` attribute.
@@ -310,6 +319,70 @@ def _rewrite_shell_vars(
     return "".join(f"{line}\n" for line in kept)
 
 
+def _coreelec_root(document: str | None) -> ElementTree.Element:
+    """The root of `oe_settings.xml`, in the add-on's own empty shape if absent."""
+
+    if document is None or not document.strip():
+        root = ElementTree.Element("coreelec")
+        ElementTree.SubElement(root, "addon_config")
+        ElementTree.SubElement(root, "settings")
+        return root
+    try:
+        root = ElementTree.fromstring(document)
+    except ElementTree.ParseError as error:
+        raise SettingsError(str(error)) from error
+    if root.tag != "coreelec":
+        raise SettingsError(
+            f"its root element is {root.tag}, and a {COREELEC} document's is coreelec"
+        )
+    return root
+
+
+def _coreelec_address(setting: str) -> tuple[str, str]:
+    module, _, name = setting.partition(".")
+    if not module or not name or "." in name:
+        raise SettingsError(
+            f"{setting} is not a {COREELEC} address, which is module.Setting"
+        )
+    return module, name
+
+
+def _observe_coreelec(document: str | None, setting: str) -> str | None:
+    module, name = _coreelec_address(setting)
+    node = _coreelec_root(document).find(f"settings/{module}/{name}")
+    return None if node is None or not node.text else node.text
+
+
+def _rewrite_coreelec(document: str | None, settings: Mapping[str, str | None]) -> str:
+    """`document` with `settings` set; a Cleared Address is an empty node."""
+
+    root = _coreelec_root(document)
+    for setting, value in settings.items():
+        module, name = _coreelec_address(setting)
+        node = root.find(f"settings/{module}/{name}")
+        if node is None:
+            if value is None:
+                continue
+            holder = root.find("settings")
+            if holder is None:
+                holder = ElementTree.SubElement(root, "settings")
+            parent = holder.find(module)
+            if parent is None:
+                parent = ElementTree.SubElement(holder, module)
+            node = ElementTree.SubElement(parent, name)
+        node.text = value
+    # Tabs, as the add-on's `toprettyxml` writes it.
+    return _serialise(root, "\t")
+
+
+def _serialise(root: ElementTree.Element, indent: str) -> str:
+    tree = ElementTree.ElementTree(root)
+    ElementTree.indent(tree, space=indent)
+    raw: bytes = ElementTree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    body = raw.decode("utf-8")
+    return body if body.endswith("\n") else body + "\n"
+
+
 def validate(document: str | None, dialect: str) -> None:
     """Raises SettingsError unless `document` reads as `dialect`."""
 
@@ -318,6 +391,9 @@ def validate(document: str | None, dialect: str) -> None:
         return
     if dialect == SHELL_VARS:
         _shell_vars(document)
+        return
+    if dialect == COREELEC:
+        _coreelec_root(document)
         return
     _root(document, dialect)
 
@@ -340,6 +416,8 @@ def observe(document: str | None, dialect: str, setting: str) -> str | None:
         return _observe_json(document, setting)
     if dialect == SHELL_VARS:
         return _shell_vars(document).get(setting)
+    if dialect == COREELEC:
+        return _observe_coreelec(document, setting)
     root = _root(document, dialect)
     for parent, node in _matches(root, setting):
         if parent is root:
@@ -366,7 +444,7 @@ def undeclared(
     settings manager writes that attribute on every setting it holds at its
     default, for `guisettings.xml` and an add-on's `settings.xml` alike, so a
     setting without it is one something chose — which is the only kind worth
-    reading back. `json` and `shell_vars` have no such marker, so every
+    reading back. `json`, `shell_vars` and `coreelec` have no such marker, so every
     undeclared value is returned for those: there is no signal to filter on,
     and guessing one would hide exactly what a survey is for.
     """
@@ -384,6 +462,15 @@ def undeclared(
             (key, value)
             for key, value in _shell_vars(document).items()
             if key not in names
+        ]
+    if dialect == COREELEC:
+        names = set(declared)
+        settings = _coreelec_root(document).find("settings")
+        return [
+            (f"{module.tag}.{node.tag}", node.text or "")
+            for module in (settings if settings is not None else [])
+            for node in module
+            if f"{module.tag}.{node.tag}" not in names
         ]
     names = {name.casefold() for name in declared}
     held: list[tuple[str, str]] = []
@@ -421,6 +508,8 @@ def rewrite(
         return _rewrite_json(document, settings)
     if dialect == SHELL_VARS:
         return _rewrite_shell_vars(document, settings)
+    if dialect == COREELEC:
+        return _rewrite_coreelec(document, settings)
     root = _root(document, dialect)
     for setting, value in settings.items():
         node = None
@@ -448,8 +537,4 @@ def rewrite(
             node.text = None
             node.set("value", value)
 
-    tree = ElementTree.ElementTree(root)
-    ElementTree.indent(tree, space="    ")
-    raw: bytes = ElementTree.tostring(root, encoding="UTF-8", xml_declaration=True)
-    body = raw.decode("utf-8")
-    return body if body.endswith("\n") else body + "\n"
+    return _serialise(root, "    ")

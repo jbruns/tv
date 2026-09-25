@@ -408,3 +408,26 @@ settings_documents:
         value: "-o 'PasswordAuthentication no'"
       - setting: SSHD_DISABLE_PW_AUTH
         value: "true"
+
+  # CoreELEC's own updater, from `service.coreelec.settings`' Updates menu.
+  # The add-on reads these three once, as its service starts inside Kodi, and
+  # keeps them in memory; the Kodi stop every Settings Document takes is what
+  # makes a Change here take effect.
+  #
+  # `manual` never downloads a build, `UpdateNotify` 0 shows neither the
+  # toast nor the download prompt, and `SubmitStats` 0 adds `&nostats` to the
+  # request. Nothing here stops the request itself: the add-on still asks
+  # update.coreelec.org every six hours and ignores the answer. Moving to a
+  # new CoreELEC is a new Profile, not something the Device decides.
+  #
+  # Mode is what the add-on gives it, for the same reason as sshd.conf's.
+  - document: /storage/.kodi/userdata/addon_data/service.coreelec.settings/oe_settings.xml
+    dialect: coreelec
+    mode: "0644"
+    settings:
+      - setting: updates.AutoUpdate
+        value: manual
+      - setting: updates.UpdateNotify
+        value: "0"
+      - setting: updates.SubmitStats
+        value: "0"
