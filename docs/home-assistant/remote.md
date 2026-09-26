@@ -35,7 +35,10 @@ The package holds two template selects and one automation:
   after the Denon comes on, the automation mutes and unmutes it so that Home
   Assistant sees its real state.
 
-`dashboard.json` holds the Remote's page and its key bindings. The Home
+`dashboard.json` holds the Remote's two pages and its key bindings. The TV
+page shows Kodi, the AVR and the app list. Swiping left opens the room page:
+the room's lights, with brightness, and the thermostat's setpoint and mode.
+The hardware keys do the same thing on both pages. The Home
 Assistant URL and token are entered on the Remote itself and are never in
 this file.
 
@@ -138,6 +141,13 @@ The integration then logs every code name the Sony supports.
 | Hold volume | It repeats quickly |
 | Mute, pressed twice, after a power cycle | The Denon mutes, then unmutes |
 | App list | Launches YouTube on the Sony |
+| Tap a light, drag its slider | The light toggles, and its brightness follows the slider |
+| Thermostat steppers, mode chips, power | The setpoint moves 1 °F per press, and the mode and off follow the chips and power |
+| Volume and d-pad on the room page | They still drive the AVR and the Display |
+
+After any touch on the screen, the first d-pad, OK or Page key is lost.
+Android 8.1 consumes it to leave touch mode before the launcher sees it. Every
+later press works, and the other keys are unaffected.
 
 To see which key the Remote sent, read its key log while pressing keys:
 
@@ -159,5 +169,6 @@ This lasts until the Remote reboots.
    Display. In the mute resync, set the AVR, or drop it if the room's AVR
    does not have the problem.
 3. In the room's `dashboard.json`, replace the Display, the AVR, the Kodi
-   media player, the key router and the app list.
+   media player, the key router and the app list. On the room page, rename
+   the page and set the room's lights and thermostat.
 4. Follow sections 3 to 6 for the new Remote.

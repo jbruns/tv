@@ -2,7 +2,7 @@
   "startPage": 0,
   "pages": [
     {
-      "name": "Theater",
+      "name": "TV",
       "cards": [
         {
           "type": "media_player",
@@ -28,6 +28,33 @@
           "options": {
             "entity_id": "select.theater_sony_apps",
             "name": "Sony apps"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Theater",
+      "cards": [
+        {
+          "type": "light",
+          "options": {
+            "entity_id": "light.theater_sconces",
+            "name": "Sconces"
+          }
+        },
+        {
+          "type": "light",
+          "options": {
+            "entity_id": "light.theater",
+            "name": "Lights"
+          }
+        },
+        {
+          "type": "climate",
+          "options": {
+            "entity_id": "climate.thermostat",
+            "name": "Thermostat",
+            "step": 1
           }
         }
       ]
