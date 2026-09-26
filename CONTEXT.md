@@ -187,7 +187,7 @@ _Avoid_: Sleep timer, auto-off, standby
 **Remote**:
 A handheld controller that operates its room's Display, Device, audio and lighting, and the home's climate. It is not a Device.
 _Avoid_: Astrion, controller, remote control
-_Realised by_: Home Assistant.
+_Realised by_: Home Assistant, and the launcher on the Remote.
 
 **Wife Acceptance Factor**:
 The project's quality bar: the Device just works, the configuration stays easy to maintain, and any Device is easy to snap to its Desired State.

@@ -1,12 +1,5 @@
-# The theater's Remote dashboard. See docs/home-assistant/remote.md.
-lovelace:
-  dashboards:
-    remote-theater:
-      mode: yaml
-      title: Theater Remote
-      icon: mdi:remote-tv
-      show_in_sidebar: false
-      filename: dashboards/remote_theater.yaml
+# The theater's Remote, whose hardware keys are bound in
+# remotes/theater/dashboard.json. See docs/home-assistant/remote.md.
 
 # The Sony's source_list holds only its inputs, so the Remote's app list is
 # this select. Choosing an option launches that Sony app.
@@ -26,10 +19,10 @@ template:
               media_content_id: "{{ option }}"
               media_content_type: app
 
-      # Every key but power (ADR 0025). Volume goes to the Denon. Other keys go
-      # to Kodi while Viewing, and to the Sony otherwise. A key pressed while
-      # the last one is still running is dropped, so a held key never queues
-      # up.
+      # Every key but power and volume (ADRs 0025 and 0026). Mute toggles the
+      # Denon's mute. Other keys go to Kodi while Viewing, and to the Sony
+      # otherwise. A key pressed while the last one is still running is
+      # dropped, so a held key never queues up.
       - name: Theater - Remote keys
         unique_id: remote_theater_remote_keys
         default_entity_id: select.theater_remote_keys
@@ -37,9 +30,8 @@ template:
         optimistic: true
         options: >-
           {{ ['Up', 'Down', 'Left', 'Right', 'Select', 'Back', 'Home', 'Menu',
-              'Play', 'Pause', 'PlayPause', 'Stop', 'Rewind', 'FastForward',
-              'PageUp', 'PageDown', 'VolumeUp', 'VolumeDown', 'Mute',
-              'Unmute'] }}
+              'PlayPause', 'Stop', 'Rewind', 'FastForward', 'PageUp',
+              'PageDown', 'Mute'] }}
         select_option:
           - variables:
               key: "{{ option }}"
@@ -62,8 +54,6 @@ template:
                 Select: select
                 Back: back
                 Menu: menu
-                Play: play
-                Pause: pause
                 PlayPause: play
                 Stop: stop
                 Rewind: reverse
@@ -79,39 +69,20 @@ template:
                 Back: Return
                 Home: Home
                 Menu: ActionMenu
-                Play: Play
-                Pause: Pause
                 PlayPause: Play
                 Stop: Stop
                 Rewind: Rewind
                 FastForward: Forward
                 PageUp: ChannelUp
                 PageDown: ChannelDown
-              # The denonavr integration maps -80 dB..+18 dB onto 0..0.98, so
-              # 0.02 is 2 dB.
-              volume_step: 0.02
           - choose:
-              - conditions: "{{ key in ['VolumeUp', 'VolumeDown'] }}"
-                sequence:
-                  - variables:
-                      level: "{{ state_attr(avr, 'volume_level') }}"
-                  - condition: template
-                    value_template: "{{ level is number }}"
-                  - action: media_player.volume_set
-                    target:
-                      entity_id: "{{ avr }}"
-                    data:
-                      volume_level: >-
-                        {% set step = volume_step if key == 'VolumeUp' else -volume_step %}
-                        {{ [0, [level + step, 0.98] | min] | max | round(2) }}
-              - conditions: "{{ key in ['Mute', 'Unmute'] }}"
+              - conditions: "{{ key == 'Mute' }}"
                 sequence:
                   - action: media_player.volume_mute
                     target:
                       entity_id: "{{ avr }}"
                     data:
-                      is_volume_muted: >-
-                        {{ key == 'Mute' and not state_attr(avr, 'is_volume_muted') }}
+                      is_volume_muted: "{{ not state_attr(avr, 'is_volume_muted') }}"
               - conditions: "{{ viewing and key == 'Home' }}"
                 sequence:
                   - action: kodi.call_method

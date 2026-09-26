@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR-0026
 ---
 
 # The Remote sends keys to whatever the Display is showing
