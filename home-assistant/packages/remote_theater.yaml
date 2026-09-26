@@ -1,0 +1,141 @@
+# The theater's Remote, whose hardware keys are bound in
+# remotes/theater/dashboard.json. See docs/home-assistant/remote.md.
+
+# The Sony's source_list holds only its inputs, so the Remote's app list is
+# this select. Choosing an option launches that Sony app.
+template:
+  - select:
+      - name: Theater - Sony apps
+        unique_id: remote_theater_sony_apps
+        default_entity_id: select.theater_sony_apps
+        icon: mdi:apps
+        optimistic: true
+        options: "{{ ['YouTube'] }}"
+        select_option:
+          - action: media_player.play_media
+            target:
+              entity_id: media_player.sony_theater
+            data:
+              media_content_id: "{{ option }}"
+              media_content_type: app
+
+      # Every key but power and volume (ADRs 0025 and 0026). Mute toggles the
+      # Denon's mute. Other keys go to Kodi while Viewing, and to the Sony
+      # otherwise. A key pressed while the last one is still running is
+      # dropped, so a held key never queues up.
+      - name: Theater - Remote keys
+        unique_id: remote_theater_remote_keys
+        default_entity_id: select.theater_remote_keys
+        icon: mdi:remote-tv
+        optimistic: true
+        options: >-
+          {{ ['Up', 'Down', 'Left', 'Right', 'Select', 'Back', 'Home', 'Menu',
+              'PlayPause', 'Stop', 'Rewind', 'FastForward', 'PageUp',
+              'PageDown', 'Mute'] }}
+        select_option:
+          - variables:
+              key: "{{ option }}"
+              display: media_player.sony_theater
+              display_remote: remote.sony_theater
+              avr: media_player.denon_theater
+              viewing: >-
+                {{ is_state(display, 'on')
+                   and is_state_attr(display, 'source', 'HDMI 4') }}
+              # Kodi remote buttons. Input.ButtonEvent goes through Kodi's
+              # keymap, so each window gives the key its own meaning: in
+              # full-screen video Left steps back and OK opens the OSD, which
+              # Input.Left and Input.Select would not do. Home has no remote
+              # button and uses Input.Home.
+              kodi_buttons:
+                Up: up
+                Down: down
+                Left: left
+                Right: right
+                Select: select
+                Back: back
+                Menu: menu
+                PlayPause: play
+                Stop: stop
+                Rewind: reverse
+                FastForward: forward
+                PageUp: pageplus
+                PageDown: pageminus
+              sony_codes:
+                Up: Up
+                Down: Down
+                Left: Left
+                Right: Right
+                Select: Confirm
+                Back: Return
+                Home: Home
+                Menu: ActionMenu
+                PlayPause: Play
+                Stop: Stop
+                Rewind: Rewind
+                FastForward: Forward
+                PageUp: ChannelUp
+                PageDown: ChannelDown
+          - choose:
+              - conditions: "{{ key == 'Mute' }}"
+                sequence:
+                  - action: media_player.volume_mute
+                    target:
+                      entity_id: "{{ avr }}"
+                    data:
+                      is_volume_muted: "{{ not state_attr(avr, 'is_volume_muted') }}"
+              - conditions: "{{ viewing and key == 'Home' }}"
+                sequence:
+                  - action: kodi.call_method
+                    target:
+                      entity_id: media_player.ugoos_theater
+                    data:
+                      method: Input.Home
+              - conditions: "{{ viewing }}"
+                sequence:
+                  - action: kodi.call_method
+                    target:
+                      entity_id: media_player.ugoos_theater
+                    data:
+                      method: Input.ButtonEvent
+                      button: "{{ kodi_buttons[key] }}"
+                      keymap: R1
+            default:
+              - action: remote.send_command
+                target:
+                  entity_id: "{{ display_remote }}"
+                data:
+                  command: "{{ sony_codes[key] }}"
+
+# The Sony mutes the Denon as it turns off. The Denon unmutes itself at power-on
+# without telling the denonavr integration, which then still reports it muted,
+# so the Mute key sends unmute and nothing happens. A real mute-then-unmute
+# makes the Denon report its state again. The Denon ignores commands for a few
+# seconds after it wakes, and nothing is playing yet by then.
+automation:
+  - id: remote_theater_denon_mute_resync
+    alias: Theater - Resync the Denon's mute at power-on
+    triggers:
+      - trigger: state
+        entity_id: media_player.denon_theater
+        from: "off"
+        to: "on"
+        for:
+          seconds: 5
+    conditions:
+      - condition: state
+        entity_id: media_player.denon_theater
+        attribute: is_volume_muted
+        state: true
+    actions:
+      - action: media_player.volume_mute
+        target:
+          entity_id: media_player.denon_theater
+        data:
+          is_volume_muted: true
+      - delay:
+          milliseconds: 500
+      - action: media_player.volume_mute
+        target:
+          entity_id: media_player.denon_theater
+        data:
+          is_volume_muted: false

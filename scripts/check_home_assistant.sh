@@ -1,6 +1,8 @@
 #!/bin/bash
 # Runs Home Assistant's check_config against the repository's blueprints and
-# packages, laid out as they are deployed under /config. Needs uv.
+# packages, laid out as they are deployed under /config. Needs uv. Each
+# Remote's dashboard.json is also parsed, since nothing else reads it before
+# it reaches the Remote.
 #
 # check_config only logs an automation it cannot build from its blueprint, and
 # still exits 0, so any logged error fails the check too.
@@ -28,3 +30,7 @@ if grep -Eq '^(ERROR|CRITICAL)' "${config}/check.log"; then
   printf 'check_config logged errors\n' >&2
   exit 1
 fi
+
+for dashboard in "${repo}"/remotes/*/dashboard.json; do
+  python3 -m json.tool "${dashboard}" > /dev/null
+done

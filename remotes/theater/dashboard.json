@@ -1,0 +1,86 @@
+{
+  "startPage": 0,
+  "pages": [
+    {
+      "name": "TV",
+      "cards": [
+        {
+          "type": "media_player",
+          "options": {
+            "entity_id": "media_player.ugoos_theater",
+            "name": "Kodi",
+            "use_media_info": true,
+            "media_controls": "previous,play_pause,next",
+            "volume_controls": ""
+          }
+        },
+        {
+          "type": "media_player",
+          "options": {
+            "entity_id": "media_player.denon_theater",
+            "name": "Denon",
+            "show_volume_level": true,
+            "volume_controls": "mute,set"
+          }
+        },
+        {
+          "type": "select",
+          "options": {
+            "entity_id": "select.theater_sony_apps",
+            "name": "Sony apps"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Theater",
+      "cards": [
+        {
+          "type": "light",
+          "options": {
+            "entity_id": "light.theater_sconces",
+            "name": "Sconces"
+          }
+        },
+        {
+          "type": "light",
+          "options": {
+            "entity_id": "light.theater",
+            "name": "Lights"
+          }
+        },
+        {
+          "type": "climate",
+          "options": {
+            "entity_id": "climate.thermostat",
+            "name": "Thermostat",
+            "step": 1
+          }
+        }
+      ]
+    }
+  ],
+  "hotkeys": [
+    { "key": "POWER", "service": "media_player.toggle", "entityId": "media_player.sony_theater" },
+    { "key": "VOLUME_UP", "service": "media_player.volume_up", "entityId": "media_player.denon_theater" },
+    { "key": "VOLUME_DOWN", "service": "media_player.volume_down", "entityId": "media_player.denon_theater" },
+    { "key": "MUTE", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Mute" } },
+    { "key": "UP", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Up" } },
+    { "key": "DOWN", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Down" } },
+    { "key": "LEFT", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Left" } },
+    { "key": "RIGHT", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Right" } },
+    { "key": "CENTER", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Select" } },
+    { "key": "BACK", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Back" } },
+    { "key": "HOME", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Home" } },
+    { "key": "MAIN", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Menu" } },
+    { "key": "PLAY", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "PlayPause" } },
+    { "key": "STOP", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Stop" } },
+    { "key": "REWIND", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "Rewind" } },
+    { "key": "FASTFORWARD", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "FastForward" } },
+    { "key": "PAGE_UP", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "PageUp" } },
+    { "key": "PAGE_DOWN", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "PageDown" } }
+  ],
+  "longHotkeys": [
+    { "key": "HOME", "openOverlay": "settings" }
+  ]
+}

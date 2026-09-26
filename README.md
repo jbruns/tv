@@ -13,6 +13,7 @@ integrations.
 - [Python development](docs/development.md)
 - [Network onboarding guide](docs/network/pfsense-plus-26.07-onboarding.md)
 - [Kodi Lifecycle guide](docs/home-assistant/ugoos-kodi-lifecycle.md)
+- [Remote guide](docs/home-assistant/remote.md)
 - [Theater overview](rooms/theater/README.md)
 
 ## Room index
@@ -47,7 +48,7 @@ skills-lock.json              Pinned agent skills, restored into .agents/
 docs/
   adr/                        Architecture decision records
   agents/                     Agent working procedures
-  home-assistant/             Shared Home Assistant and lifecycle guides
+  home-assistant/             Shared Home Assistant, lifecycle and Remote guides
   network/                    Shared network onboarding and control rules
   operations/                 Provisioning a Device
   reference/                  Profile reference
