@@ -16,6 +16,8 @@ room's `dashboard.json` binds each hardware key to a Home Assistant action:
   Mute toggles the AVR's mute. While Viewing, other keys go to Kodi as its own
   remote's buttons, so each Kodi screen gives them their usual meaning.
   Otherwise they go to the Display as its own remote codes.
+- Holding Home opens the launcher's settings panel, which leads to Wi-Fi and
+  Android's own settings.
 
 | File in this repository | Deployed to |
 |---|---|
@@ -118,6 +120,12 @@ To return to the stock launcher, run `adb uninstall com.custom.astrion.debug`.
    curl -F file=@remotes/theater/dashboard.json http://<remote>:8080/dashboard.json
    ```
 
+4. Set the time zone. The Remote gets its time from the network, but it ships
+   set to America/New_York, and with no cellular signal, automatic time zone
+   never corrects it. Hold **Home** for two seconds to open the launcher's
+   settings panel, tap **Android system**, then **Date & time**. Turn off
+   **Automatic time zone** and select the home's time zone.
+
 ## 6. Check it on the hardware
 
 The first time a Remote is set up in a room, check each row with Kodi showing
@@ -131,6 +139,7 @@ The integration then logs every code name the Sony supports.
 | Power with the Display off | The Sony comes on, and the Kodi Lifecycle starts Kodi on HDMI 4 |
 | Power with the Display on | The Sony turns off. Kodi stops after the stop delay |
 | D-pad, OK, Back, Home, Menu in Kodi's menus | Kodi moves, selects, goes back, goes home and opens the context menu |
+| Hold Home | The launcher's settings panel opens, with Wi-Fi and Android system |
 | Hold a d-pad key | It repeats quickly, and stops when released |
 | Page Up, Page Down in a list | Kodi pages up and down |
 | Play/Pause, Stop, Rewind, Fast Forward | Kodi plays and pauses, stops, rewinds and fast-forwards |

@@ -79,5 +79,8 @@
     { "key": "FASTFORWARD", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "FastForward" } },
     { "key": "PAGE_UP", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "PageUp" } },
     { "key": "PAGE_DOWN", "service": "select.select_option", "entityId": "select.theater_remote_keys", "data": { "option": "PageDown" } }
+  ],
+  "longHotkeys": [
+    { "key": "HOME", "openOverlay": "settings" }
   ]
 }
