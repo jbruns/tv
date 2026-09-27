@@ -17,7 +17,7 @@ consecutive samples agree (provision-coreelec.sh:3954-4075). About a hundred
 lines, an authenticated HTTP channel, a UDP datagram, and a settle loop whose
 own comment concedes that it "does not adjudicate the outcome".
 
-**The Reconciler does none of that. It writes the skin's own trigger stub over
+**Riar does none of that. It writes the skin's own trigger stub over
 the compiled include and restarts Kodi, which it was going to do anyway.**
 
 ## The skin says so
@@ -47,9 +47,9 @@ runs even when the source is untouched.
 ## Why the stub is authored rather than restored
 
 The skin ships the file deliberately untracked, so there is no pristine copy to
-put back. The Reconciler writes a minimal include defining `Action_BuildViews`
+put back. Riar writes a minimal include defining `Action_BuildViews`
 with the `RunScript(script.skinvariables,action=buildviews)` onload. This is
-the one place in the slice where the Reconciler authors skin internals instead
+the one place in the slice where Riar authors skin internals instead
 of shadowing the shell, and it is pinned by a test.
 
 Emptying the file instead would not work: the reference would resolve to the
@@ -62,7 +62,7 @@ loaded, so the Run waits. It polls the compiled include until the content
 differs from the stub and parses as well-formed XML.
 
 The shell's digest-repeat exists because `kodi-send` left it blind to the
-starting content. Having written the stub, the Reconciler knows exactly what it
+starting content. Having written the stub, Riar knows exactly what it
 is waiting to stop seeing, so "changed from what we wrote" is an edge rather
 than a guess. The parse is what catches the partial write the shell's own
 comment warns about — reading mid-write returns an empty file — which a
@@ -74,12 +74,12 @@ writing: `script-skinviewtypes-hash`, the source hash, and
 `script-skinviewtypes-checksum`, the md5 of the file it wrote. On the theater
 Ugoos the stored checksum equals the compiled include's md5 exactly. Both are
 Skin Strings, so they reach `addon_data/skin.arctic.fuse.3/settings.xml` only
-when Kodi exits. They are Contested Addresses and the Reconciler declares
+when Kodi exits. They are Contested Addresses and Riar declares
 neither.
 
 ## What this costs and what it buys
 
-The cost is that the rebuild is coupled to a Kodi restart. The Reconciler
+The cost is that the rebuild is coupled to a Kodi restart. Riar
 already takes that Effect once per Run for Settings Documents
 ([ADR 0013](0013-a-settings-document-always-takes-the-kodi-stop.md)), so the
 slice adds none.

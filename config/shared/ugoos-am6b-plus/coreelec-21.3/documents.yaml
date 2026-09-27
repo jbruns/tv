@@ -1,4 +1,4 @@
-# Documents the Reconciler owns every byte of, each shipped as a file beside
+# Documents Riar owns every byte of, each shipped as a file beside
 # this one. `source` is relative to this directory and must stay inside it, so
 # a Profile is copyable as a unit; a missing source fails when the Profile is
 # read, before any Device contact. `mode` is stated because some of these are

@@ -14,9 +14,9 @@ write cannot truncate a file Kodi needs — and re-running after an interruption
 must be proven on hardware, not assumed.
 
 Exclusive ownership survives but is narrowed to execution: exactly one engine
-may write a given State Address, while both the shell and the Reconciler may
+may write a given State Address, while both the shell and Riar may
 declare it. Overlapping declarations are expected rather than a validation
 error, so no ledger is required to prove they are disjoint; the only thing
 needing enforcement is that the shell does not execute a Resource the
-Reconciler owns. This supersedes ADR 0003, whose broader reading of ownership
+Riar owns. This supersedes ADR 0003, whose broader reading of ownership
 justified a 169-row ownership ledger and 1,617 lines of validation.

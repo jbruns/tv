@@ -107,7 +107,7 @@ def test_the_shipped_configuration_is_readable(
     stand-in for the same reason. Which six of those keys are add-on Settings
     Document addresses is asserted in `test_settings_documents.py`.
     """
-    from coreelec_reconciler import main
+    from riar import main
 
     config_root = Path(__file__).resolve().parents[2] / "config"
     env_file = tmp_path / ".env"

@@ -43,7 +43,7 @@ Give the wizard only the answers needed to make a Manageable Device:
 - Network: wired Ethernet with DHCP.
 - SSH: enabled, with a temporary root password.
 
-Skip the rest. The Reconciler carries Desired State after First Contact.
+Skip the rest. Riar carries Desired State after First Contact.
 
 ## 3. Clear old host keys after a re-image
 
@@ -64,7 +64,7 @@ Use only names or addresses that actually resolve to the Device.
 the administrator key, then proves key-only access in a new connection.
 
 ```console
-uv run coreelec-reconciler bootstrap --room <room>
+uv run riar bootstrap --room <room>
 ```
 
 SSH prompts for the Device's root password. There is no stored password and no
@@ -74,16 +74,16 @@ SSH prompts for the Device's root password. There is no stored password and no
 
 No Keep-Running Hold is needed. Kodi Lifecycle acts only on Display
 transitions and on Home Assistant start, so a Kodi that `apply` stops stays
-stopped until the Reconciler starts it again. Two things still reach into a
+stopped until Riar starts it again. Two things still reach into a
 Run: a stop delay already counting down, and Home Assistant starting while the
 Display is on. If the Display went off within the last 10 minutes, wait out the
 stop delay first, and do not change the Display or restart Home Assistant
 while `apply` runs.
 
 ```console
-uv run coreelec-reconciler plan --room <room>
-uv run coreelec-reconciler apply --room <room>
-uv run coreelec-reconciler plan --room <room>
+uv run riar plan --room <room>
+uv run riar apply --room <room>
+uv run riar plan --room <room>
 ```
 
 The final `plan` should report no Changes.
@@ -108,14 +108,14 @@ Kodi must be stopped and kept stopped while surveying:
 
 ```console
 ssh -i ~/.ssh/coreelec_admin_ed25519 root@<hostname> systemctl stop kodi
-uv run coreelec-reconciler survey --room <room>
+uv run riar survey --room <room>
 ```
 
 Do not turn the Display on while surveying; that starts Kodi again.
 
 ## Recovery
 
-There is no rollback. The Reconciler fails forward: if a Run is interrupted or
+There is no rollback. Riar fails forward: if a Run is interrupted or
 reports a non-converged Device, fix the cause and run `apply` again.
 
 Disaster recovery is to re-image the card and run this procedure again.

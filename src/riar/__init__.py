@@ -1,4 +1,4 @@
-"""The CoreELEC Reconciler.
+"""Riar: reconcile CoreELEC Devices with their declared Desired State.
 
 `main` is the package's public entry point; nothing else here is public and
 tests may not import past it (ADR 0011).

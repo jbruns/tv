@@ -1,6 +1,6 @@
 """Shared fixtures.
 
-These tests drive the Reconciler only through its public entry point
+These tests drive Riar only through its public entry point
 (ADR 0011). The fake Device is a local temporary directory plus a stub `ssh`
 on PATH; there is no fake-device framework.
 """
@@ -27,7 +27,7 @@ SSH_STUB = """#!/bin/sh
 # Stub ssh: runs the remote command locally with the stub directory first on
 # PATH, so `hostname` and `mv` resolve to the shims beside this script.
 #
-# The Reconciler names five Device paths of its own — the three the platform
+# Riar names five Device paths of its own — the three the platform
 # Guard reads, the timezone cache whose unit it knows, and the link that unit
 # writes — and those are the operating system's, not a tmp_path a Profile can
 # state. They are rewritten
@@ -144,7 +144,7 @@ CURL_STUB = """#!/bin/sh
 # the URL's whole path, less its query, is served first: every Release
 # Channel's index is called addons.xml.
 #
-# This is the same boundary as the stub `ssh` above: the Reconciler invokes a
+# This is the same boundary as the stub `ssh` above: Riar invokes a
 # client, and the test stands a client in front of it.
 url=""
 output=""
@@ -318,7 +318,7 @@ SOUND_CARDS = """\
 # The administrator key pair the fake Device is reached with. Only the public
 # half is ever read — every connection in these tests goes through the stub
 # `ssh` above — so the private half is a placeholder and the public half is
-# the line the Reconciler derives the administrator entry from.
+# the line Riar derives the administrator entry from.
 ADMINISTRATOR_KEY = (
     "ssh-ed25519 "
     "AAAAC3NzaC1lZDI1NTE5AAAAIAdministratorKeyForBoundaryTestsOnly0 "
@@ -341,16 +341,16 @@ LIFECYCLE_ENTRIES = f"""
       forced_command: /storage/.config/kodi-lifecycle
 """
 
-# The address the Reconciler knows `sshd.service` reads, and CoreELEC's own
+# The address Riar knows `sshd.service` reads, and CoreELEC's own
 # two keys inside it.
 SSHD_CONF = "/storage/.cache/services/sshd.conf"
 SSHD_HARDENED = """\
 SSH_ARGS="-o 'PasswordAuthentication no'"
 SSHD_DISABLE_PW_AUTH="true"
 """
-# What the Reconciler leaves. `SSH_ARGS` is byte-identical to CoreELEC's,
+# What Riar leaves. `SSH_ARGS` is byte-identical to CoreELEC's,
 # because the quotes are load-bearing; `SSHD_DISABLE_PW_AUTH` is written bare
-# like every other `shell_vars` value the Reconciler writes, and the settings
+# like every other `shell_vars` value Riar writes, and the settings
 # add-on strips quotes when it reads it back
 # (`services.py:488`: `.replace('"', '')`).
 SSHD_RECONCILED = """\
@@ -372,7 +372,7 @@ SSHD_DOCUMENT = f"""\
         value: "true"
 """
 
-# The address the Reconciler knows `tz-data.service` reads.
+# The address Riar knows `tz-data.service` reads.
 TIMEZONE_CACHE = "/storage/.cache/timezone"
 
 # The one add-on this slice pins, as the Artifact Lock states it. The stub
@@ -631,7 +631,7 @@ class FakeDevice:
 
     @property
     def authorized_keys(self) -> Path:
-        """Who may log in, which the Reconciler renders whole."""
+        """Who may log in, which Riar renders whole."""
         return self.root / "storage" / ".ssh" / "authorized_keys"
 
     @property
@@ -1012,7 +1012,7 @@ def device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDevi
 def reconcile(device: FakeDevice) -> Callable[..., int]:
     """Runs the CLI against the fake Device and returns its exit code."""
 
-    from coreelec_reconciler import main
+    from riar import main
 
     def run(*argv: str) -> int:
         return main(

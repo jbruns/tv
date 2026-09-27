@@ -17,7 +17,7 @@ changed Shortcut Node never reached the skin on a Device already in service
 skin's Settings Document during the Kodi stop it already takes, and waits for
 the include to be recompiled.** This is a Rebuild Trigger on a Contested
 Address. The Run writes the hash once, and the skin disarms the trigger by
-storing a fresh hash after it compiles. The Reconciler declares no value
+storing a fresh hash after it compiles. Riar declares no value
 there. This follows [ADR 0015](0015-trigger-the-view-rebuild-the-way-the-skin-does.md):
 a file write while Kodi is stopped, fired by the restart the Run was already
 taking.

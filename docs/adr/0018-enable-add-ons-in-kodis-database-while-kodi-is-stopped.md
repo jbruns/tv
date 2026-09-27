@@ -14,7 +14,7 @@ and `EnableAddon` is `UPDATE installed SET enabled=1, disabledReason=0`.
 Crucially, `SyncInstalled` only inserts rows for ids that are on disk and *not
 already in the table*.
 
-So the Reconciler writes the row itself, with `enabled=1`, while Kodi is
+So Riar writes the row itself, with `enabled=1`, while Kodi is
 stopped — which the Run already is, because add-on directories cannot be
 replaced under a running Kodi. Kodi then starts, finds nothing to add, and the
 add-on is enabled.
@@ -35,9 +35,9 @@ and start for every Run that installs anything.
 And it creates a circular dependency. JSON-RPC needs the Kodi web server, which
 is `CORE-020`–`CORE-027` — the cohort
 [ADR 0012](0012-shadow-the-shell-and-retire-it-wholesale.md) deferred precisely
-because we had not decided whether the Reconciler depends on that channel.
+because we had not decided whether Riar depends on that channel.
 Using it would mean configuring the channel from a Run that needs it. This ADR
-is that decision: the Reconciler does not speak JSON-RPC, so those eight
+is that decision: Riar does not speak JSON-RPC, so those eight
 addresses are no longer deferred. They still have to be configured, because
 Home Assistant's lifecycle package waits on that endpoint, but no Run needs
 them.

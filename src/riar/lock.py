@@ -7,7 +7,7 @@ its patches touch, because correcting a patch does not move the version
 real pipeline — fetch, prove the digest, expand, patch — and writes the
 result into the record that named the patches.
 
-It lives on the Reconciler rather than in `scripts/` because it *is* the
+It lives on Riar rather than in `scripts/` because it *is* the
 artifact pipeline. A tool beside it would either duplicate the pipeline or
 reach past the package boundary ADR 0011 protects.
 

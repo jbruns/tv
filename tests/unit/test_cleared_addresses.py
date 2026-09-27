@@ -10,7 +10,7 @@ arm cannot be spelled as either of the first two:
 - `value: null` is what a truncated `value:` line reads as, so accepting it
   would make a typo silently mean "clear this".
 
-These tests drive the Reconciler through its public entry point only
+These tests drive Riar through its public entry point only
 (ADR 0011).
 """
 
@@ -334,7 +334,7 @@ CLEARED_IDS = (
     "optionstiles.03.target",
 )
 
-# The three Arctic Fuse addresses the Reconciler deliberately does not declare.
+# The three Arctic Fuse addresses Riar deliberately does not declare.
 # Arctic Fuse rewrites them on every skin load — the theater Ugoos holds
 # `Custom` and `Standard` for the first two — so declaring them would plan a
 # Change at every restart. They are inert while `HomeSwitcher.1104.Toggle` is

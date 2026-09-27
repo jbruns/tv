@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# Restart the Reconciler from a walking skeleton
+# Restart Riar from a walking skeleton
 
 Milestones M0 through M3 produced 29,582 lines of production Python and 20,627
 lines of tests that manage one Resource Type, offline, having never contacted a

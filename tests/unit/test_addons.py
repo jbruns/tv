@@ -4,7 +4,7 @@ Declared in the Artifact Lock, downloaded, proven against its pin, expanded on
 the controller, shipped, and enabled in Kodi's own database while Kodi is
 stopped (ADR 0017, ADR 0018).
 
-These tests drive the Reconciler only through its public entry point
+These tests drive Riar only through its public entry point
 (ADR 0011). The pinned archive is built here and served by the stub `curl`;
 the add-on database is the real SQLite engine holding Kodi's real schema.
 """

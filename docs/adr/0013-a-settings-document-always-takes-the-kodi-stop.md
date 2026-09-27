@@ -4,7 +4,7 @@ status: accepted
 
 # A Settings Document always takes the Kodi stop
 
-The Reconciler manages `guisettings.xml` by stopping `kodi.service`, re-reading
+Riar manages `guisettings.xml` by stopping `kodi.service`, re-reading
 the document, merging, and writing once, because Kodi holds the document in
 memory and rewrites it from memory as it exits. Extending that Resource Type to
 the other Settings Documents — add-on `settings.xml` in both of Kodi's dialects,
@@ -81,7 +81,7 @@ reason already recorded: a document that could state its unit could omit it,
 and here an omitted unit fails exactly the silent way — the write lands, the
 document converges, the Run reports `verification: converged`, and
 `/var/run/localtime` keeps yesterday's zone with nothing to notice. The
-Reconciler therefore holds the unit beside the rest of what it knows about
+Riar therefore holds the unit beside the rest of what it knows about
 `tz-data.service`: the address it reads, the link it writes, and the zone
 directory that link points into. A Profile naming one of those four facts
-while the Reconciler holds the other three could only split them.
+while Riar holds the other three could only split them.

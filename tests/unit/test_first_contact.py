@@ -46,7 +46,7 @@ def test_the_declared_document_is_the_whole_set_of_entries(
     """A key nobody declares is removed, which is what revoking one means.
 
     Appending if absent can only ever grow the file. Declaring the document
-    whole is what makes the Reconciler able to take a key away.
+    whole is what makes Riar able to take a key away.
     """
 
     declare_lifecycle_key(device)

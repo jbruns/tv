@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# The Reconciler owns First Contact
+# Riar owns First Contact
 
 CoreELEC's first-boot wizard offers to enable SSH, and its final step offers to
 change the root password — an offer that is easy to accept as-is. A freshly
@@ -10,12 +10,12 @@ imaged Device therefore sits on the home network with SSH open on a default
 password, and closing that window is the first thing anyone would want to do.
 The ownership ledger recorded `SSH-001` and `SSH-002` as
 `unmanaged-inventory-fact` owned by the operator, which read as a decision that
-the Reconciler would inherit key access rather than establish it. That is not
+Riar would inherit key access rather than establish it. That is not
 what the Recovery Baseline does: `provision-coreelec.sh:5988-6015` installs the
 administrator key over a temporary password session and then proves key-only
 authentication before hardening anything.
 
-The Reconciler takes the same job. `SSH-002` becomes a Reconciler-owned
+Riar takes the same job. `SSH-002` becomes a Riar-owned
 Resource, and `SSH-001` — the controller-local private key — stays with the
 operator, who supplies the key the Devices share.
 
@@ -53,7 +53,7 @@ remove as well as add, which is what reconciling the address means.
 The administrator entry is not declared. It is derived from the public half of
 the identity the Run is already authenticating with, because a Profile that can
 name an administrator key is a Profile that can name the wrong one and lock the
-Reconciler out of its own Device. The lifecycle key is named as a `.env` key
+Riar out of its own Device. The lifecycle key is named as a `.env` key
 through the existing `from_env` arm. It is a public key and therefore not a
 secret, so this widens `.env` slightly beyond ADR 0014's framing: `.env` holds
 per-deployment values, and secrecy is a property of some of them rather than

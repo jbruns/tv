@@ -16,7 +16,7 @@ something the shell wrote, so neither one waits for this.
 So the shell has been deleted, along with everything that existed only to
 support it: its entry points and libraries, its configuration, its tests, the
 ownership ledger, the write-set permission guard, and every operations,
-device and decision document built around it. The Reconciler is the only
+device and decision document built around it. Riar is the only
 engine. The documentation was rewritten from scratch rather than edited, so
 that no manual describes an engine that no longer exists.
 

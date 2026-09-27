@@ -6,7 +6,7 @@ Documents it shares — and the declared settings the Device holds differently.
 It mutates nothing, and refuses to read under a running Kodi, which rewrites
 its documents from memory when it exits.
 
-These tests drive the Reconciler through its public entry point only
+These tests drive Riar through its public entry point only
 (ADR 0011).
 """
 

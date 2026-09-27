@@ -10,7 +10,7 @@ and we want to know, but nothing has decided what a Run should *do* about one,
 and refusing to work for a reason nobody chose is worse than the stray
 (ADR 0007).
 
-These tests drive the Reconciler through its public entry point only
+These tests drive Riar through its public entry point only
 (ADR 0011).
 """
 
@@ -177,7 +177,7 @@ def test_the_manifest_address_is_declared_rather_than_held_in_code(
     reconcile: Callable[..., int],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A Device path reaches the Reconciler from the Profile (ADR 0018)."""
+    """A Device path reaches Riar from the Profile (ADR 0018)."""
 
     device.write_profile(
         device.profile_body().replace(

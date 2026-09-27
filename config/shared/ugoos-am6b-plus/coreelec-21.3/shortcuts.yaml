@@ -1,6 +1,6 @@
 # Arctic Fuse's Shortcut Nodes: the widget rows under the home and hub
 # screens, and the power menu. Each file is rendered whole — every byte is the
-# Reconciler's — and each is declared by name.
+# Riar's — and each is declared by name.
 #
 # The directory is never enumerated. The Device holds eight node files there
 # and these six are ours; `skinvariables-shortcut-homesubmenu.json` and

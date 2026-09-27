@@ -4,7 +4,7 @@ status: accepted
 
 # Build to a trusted home-appliance bar, not an audit bar
 
-The Reconciler manages home streaming appliances on a trusted single-user home
+Riar manages home streaming appliances on a trusted single-user home
 network, so its quality bar is Wife Acceptance Factor: the Device just works,
 the code and configuration stay easy to maintain, and each Device is easy to
 snap to its Desired State. Disaster recovery is reprovisioning from scratch,

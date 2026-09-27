@@ -1,6 +1,6 @@
 """Reconciling Kodi settings inside guisettings.xml against a fake Device.
 
-guisettings.xml is a shared document: the Reconciler owns the State Addresses
+guisettings.xml is a shared document: Riar owns the State Addresses
 the Profile declares and must leave every other setting alone. Kodi rewrites
 the document from memory when it exits, so the restart Effect is part of the
 Resource Type rather than a courtesy.
@@ -112,7 +112,7 @@ def test_a_case_variant_resolves_to_the_one_node_kodi_reads(
 ) -> None:
     """Kodi resolves a setting ID without regard to case, so the differently
     cased node is the same setting and must not survive alongside the one the
-    Reconciler writes."""
+    Riar writes."""
     write_document(
         device,
         '<settings version="2">\n'

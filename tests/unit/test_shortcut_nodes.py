@@ -1,6 +1,6 @@
 """Arctic Fuse's Shortcut Nodes.
 
-A Shortcut Node is a whole JSON document the Reconciler renders: the widget
+A Shortcut Node is a whole JSON document Riar renders: the widget
 rows under the home and hub screens, and the power menu. Every byte is
 declared, so the Observation is the rendering and nothing inside the file is
 Unmanaged State.

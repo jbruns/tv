@@ -1,4 +1,4 @@
-# Reconciler-owned Desired State for the Ugoos AM6B+ / CoreELEC 21.3 Profile.
+# Riar-owned Desired State for the Ugoos AM6B+ / CoreELEC 21.3 Profile.
 #
 # This file says what a Device in this Profile is, what it is called, how to
 # reach it, and who may log in. What it declares for the Device is in four files
@@ -9,7 +9,7 @@ profile: ugoos-am6b-plus/coreelec-21.3
 
 # What a Device in this Profile is claimed to be. Every Run asserts it against
 # the Device before anything is planned; which file holds which key is the
-# Reconciler's business.
+# Riar's business.
 #
 # None of this is derived from the directory name above. `ugoos-am6b-plus` is
 # for humans, and the Device's own model string is `UGOOS AM6`, with no "plus"
@@ -33,8 +33,8 @@ platform:
 constants:
   timezone: America/Los_Angeles
 
-# The Device addresses the Reconciler knows the meaning of, but not the
-# location of. Every other address on the Device reaches the Reconciler as
+# The Device addresses Riar knows the meaning of, but not the
+# location of. Every other address on the Device reaches Riar as
 # the State Address of a Resource; these five do not, because what they are
 # for is mechanism — which unit reads a document, where Kodi keeps add-ons,
 # which database holds their enabled flags, where Kodi lists the add-ons it
@@ -43,7 +43,7 @@ constants:
 # Knowing what an address means is not knowing where it is, though, so the
 # address itself is here. The Kodi add-on database carries its schema version
 # in its filename, so a Profile branched for a future Kodi changes one line
-# rather than forking the Reconciler (ADR 0018). No Device address lives in
+# rather than forking Riar (ADR 0018). No Device address lives in
 # code.
 addresses:
   timezone_cache: /storage/.cache/timezone
@@ -55,7 +55,7 @@ addresses:
   # the Run would report seven ordinary scrapers as strays.
   addon_manifest: /usr/share/kodi/system/addon-manifest.xml
 
-# Controller-side SSH transport. The Reconciler invokes ssh and reuses
+# Controller-side SSH transport. Riar invokes ssh and reuses
 # the existing key-only administrator setup.
 transport:
   user: root
@@ -68,7 +68,7 @@ transport:
 #
 # The administrator entry is not here and cannot be. It is derived from the
 # public half of the identity above, because a Profile that can name an
-# administrator key can name the wrong one and lock the Reconciler out of its
+# administrator key can name the wrong one and lock Riar out of its
 # own Device (ADR 0016).
 authorized_keys:
   document: /storage/.ssh/authorized_keys

@@ -1,7 +1,6 @@
 # Python development
 
-The Reconciler is `coreelec-reconciler`, a `src/` package imported as
-`coreelec_reconciler`. Milestones M0 through M3 built an implementation that
+Riar is `riar`, a `src/` package of the same name. Milestones M0 through M3 built an implementation that
 never contacted a Device; it is archived at the `m3-archive` tag and removed
 from the working tree. See
 [ADR 0008](adr/0008-restart-from-a-walking-skeleton.md) for what went wrong and

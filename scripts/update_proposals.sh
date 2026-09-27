@@ -1,7 +1,7 @@
 #!/bin/bash
 # Opens, refreshes and closes the Update Proposal pull requests (ADR 0022).
 #
-# `coreelec-reconciler propose-updates` writes the proposals as files and talks
+# `riar propose-updates` writes the proposals as files and talks
 # to no GitHub; this is the half that does. Each proposal lives on
 # update/<profile>/<id>, rebuilt from main and force-pushed every run, so
 # nobody resolves a conflict in a bot branch by hand. Nothing here merges.
@@ -41,7 +41,7 @@ done < <(gh pr list --state closed --limit 1000 \
 # A channel that cannot be reached is skipped and fails the run, after every
 # other proposal has been opened.
 status=0
-uv run coreelec-reconciler propose-updates --out "${out}" ${declined[@]+"${declined[@]}"} \
+uv run riar propose-updates --out "${out}" ${declined[@]+"${declined[@]}"} \
   || status=$?
 
 proposed=()

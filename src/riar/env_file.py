@@ -1,7 +1,7 @@
 """Reading the shared `.env`, which holds what no committed file may.
 
 Desired State names a value here rather than holding it: the Profile carries
-the key, and the value is read from this file. The Reconciler reads it with
+the key, and the value is read from this file. Riar reads it with
 the strict grammar below, so a line is data and never executable syntax.
 
 The grammar is narrower than bash's on purpose. Every line this repository's

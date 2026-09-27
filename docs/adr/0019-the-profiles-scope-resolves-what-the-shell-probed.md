@@ -13,7 +13,7 @@ Device happens to expose
 ([`provision-coreelec.sh:3768`](https://github.com/jbruns/tv/blob/d604fe6e2d0e7eb910d7f82fcd3e355ce361dded/provision-coreelec.sh#L3768),
 [`:3928-3945`](https://github.com/jbruns/tv/blob/d604fe6e2d0e7eb910d7f82fcd3e355ce361dded/provision-coreelec.sh#L3928-L3945)).
 
-The Reconciler will not do this. It never probes a running Kodi. Three of the
+Riar will not do this. It never probes a running Kodi. Three of the
 four values are declared as literals, because the Profile's directory already
 names the hardware model and the Kodi version
 (`config/shared/ugoos-am6b-plus/coreelec-21.3/`) and that scope is what the
@@ -61,9 +61,9 @@ is exactly what `ugoos-am6b-plus/coreelec-21.3` names. It is not a per-Device
 discovery, and it is readable **without Kodi**: `/proc/asound/cards` on the
 Device reports `0 [AMLAUGESOUND ]: AML-AUGESOUND - AML-AUGESOUND`.
 
-The Reconciler reads that file before writing either address and fails the Run
+Riar reads that file before writing either address and fails the Run
 if the pinned card is absent. Re-reading `guisettings.xml` afterwards only
-proves the Reconciler wrote what it meant to; it cannot show that Kodi will
+proves Riar wrote what it meant to; it cannot show that Kodi will
 accept the string. The failure this catches is Kodi silently falling back to a
 different output, which presents as "no audio" and is expensive to trace back
 to a card name.

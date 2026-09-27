@@ -39,7 +39,7 @@ README.md                     Stable repository index
 AGENTS.md                     Working rules for agents and contributors
 CONTEXT.md                    Domain glossary
 .env.example                  Named Value template; copy to .env locally
-pyproject.toml                Reconciler package and tooling configuration
+pyproject.toml                Riar package and tooling configuration
 .python-version               Pinned Python version
 uv.lock                       Frozen Python dependency lock
 skills-lock.json              Pinned agent skills, restored into .agents/
@@ -55,11 +55,11 @@ docs/
   research/                   Retained historical records
   runbook.md                  Shared room setup workflow
   development.md              Python development
-src/coreelec_reconciler/      The Reconciler
+src/riar/                     Riar
 config/shared/                Profiles
 config/rooms/                 Room Overlays
 scripts/                      Repository Markdown and Home Assistant checks
-tests/unit/                   Reconciler boundary tests
+tests/unit/                   Riar boundary tests
 rooms/
   theater/                    Installed Theater inventory and device guides
   living/                     Living room template and device-guide index
@@ -68,6 +68,7 @@ rooms/
 home-assistant/               Deployed Home Assistant assets
 ```
 
-The Reconciler provisions every Device from its Profile and Room Overlay. See
-[Provision a Device](docs/operations/provision-a-device.md) to run it and the
-[Profile reference](docs/reference/profile.md) to change what it declares.
+Riar (Irish: to administer or manage) provisions every Device from its Profile
+and Room Overlay. See [Provision a Device](docs/operations/provision-a-device.md)
+to run it and the [Profile reference](docs/reference/profile.md) to change what
+it declares.

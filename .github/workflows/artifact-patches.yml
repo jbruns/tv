@@ -12,8 +12,8 @@ on:
     paths:
       - config/**/addons.yaml
       - config/**/patches/**
-      - src/coreelec_reconciler/artifact.py
-      - src/coreelec_reconciler/lock.py
+      - src/riar/artifact.py
+      - src/riar/lock.py
       - .github/workflows/artifact-patches.yml
   workflow_dispatch:
 
@@ -44,6 +44,6 @@ jobs:
       - name: Confirm patch is installed
         run: patch --version
       - name: Regenerate the recorded hashes
-        run: uv run coreelec-reconciler record-patches --room theater
+        run: uv run riar record-patches --room theater
       - name: Compare against what is committed
         run: git diff --exit-code -- 'config/**/addons.yaml'
