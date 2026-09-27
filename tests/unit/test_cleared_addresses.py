@@ -311,7 +311,7 @@ def test_a_room_overlay_may_clear_an_address(
 
 SKIN_PATH = "/storage/.kodi/userdata/addon_data/skin.arctic.fuse.3/settings.xml"
 
-# The sixteen ids the home screen must resolve nothing from. Restated here
+# The twelve ids the home screen must resolve nothing from. Restated here
 # rather than derived, because this is the list a typo would quietly shorten
 # and nothing on the Device can catch: a wrong id resolves no value, matches
 # `unset`, and reports converged forever.
@@ -326,10 +326,6 @@ CLEARED_IDS = (
     "HomeSwitcher.1104.Spotlight.Label",
     "HomeSwitcher.1104.Spotlight.Path",
     "HomeSwitcher.1104.Spotlight.Target",
-    "Hub.1107.DisableSearch",
-    "Hub.1107.DisableChannels",
-    "Hub.1107.DisableGroups",
-    "Hub.1107.DisableRecordings",
     "optionstiles.03.path",
     "optionstiles.03.target",
 )
@@ -343,6 +339,17 @@ ARCTIC_FUSE_OWNS = (
     "HomeSwitcher.1104.Name",
     "HomeSwitcher.1104.Mode",
     "HomeSwitcher.1104.Icon",
+)
+
+# The PVR hub's section switches are skin bools (`Skin.HasSetting`), which
+# Kodi keeps apart from skin strings and creates as false on first read. Riar
+# writes only strings, so a declaration here would retype Kodi's bool and
+# re-plan after every restart.
+SKIN_BOOLS = (
+    "Hub.1107.DisableSearch",
+    "Hub.1107.DisableChannels",
+    "Hub.1107.DisableGroups",
+    "Hub.1107.DisableRecordings",
 )
 
 
@@ -382,7 +389,7 @@ def test_the_shipped_profile_declares_the_arctic_fuse_document() -> None:
     # declared in the dialect that writes every node typed.
     assert document["dialect"] == "skin"
     assert cleared == CLEARED_IDS
-    assert len(settings) == 44
+    assert len(settings) == 40
     assert len(valued) == 28
     # Nothing in this document names a value, and nothing clears with a value.
     assert all("from_env" not in entry for entry in settings)
@@ -390,6 +397,7 @@ def test_the_shipped_profile_declares_the_arctic_fuse_document() -> None:
     # The three Arctic Fuse writes for itself are declared neither way.
     declared = {entry["setting"] for entry in settings}
     assert declared.isdisjoint(ARCTIC_FUSE_OWNS)
+    assert declared.isdisjoint(SKIN_BOOLS)
 
 
 def test_no_valued_arctic_fuse_setting_plans_as_a_create(

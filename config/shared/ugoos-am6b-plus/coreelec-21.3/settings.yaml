@@ -272,17 +272,12 @@ settings_documents:
       - setting: HomeSwitcher.1104.Spotlight.Target
         unset: true
 
-      # The PVR hub, on, with none of its four sections disabled.
+      # The PVR hub, on. Its four `Hub.1107.Disable*` section switches are
+      # skin bools (`Skin.HasSetting`), which Kodi keeps apart from strings
+      # and creates as false on first read. False is what the appliance
+      # wants, so they stay Unmanaged State.
       - setting: HomeSwitcher.1107.Toggle
         value: "true"
-      - setting: Hub.1107.DisableSearch
-        unset: true
-      - setting: Hub.1107.DisableChannels
-        unset: true
-      - setting: Hub.1107.DisableGroups
-        unset: true
-      - setting: Hub.1107.DisableRecordings
-        unset: true
 
       - setting: HomeSwitcher.1108.Toggle
         value: "true"
