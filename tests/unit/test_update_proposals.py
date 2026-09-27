@@ -5,7 +5,7 @@ Channel for a newer Stable Release, and writes one Update Proposal per add-on:
 the rewritten Lock, the patch changes, and a body a reviewer reads. It talks
 to no GitHub and no Device (ADR 0022).
 
-These tests drive the Reconciler only through its public entry point
+These tests drive Riar only through its public entry point
 (ADR 0011). The channels are local fixtures served by the stub `curl`, and
 the patches are tried by the real `patch`.
 """
@@ -152,7 +152,7 @@ def record(
 def propose(device: FakeDevice, tmp_path: Path) -> Callable[..., tuple[int, Path]]:
     """Runs `propose-updates` and returns its exit code and output directory."""
 
-    from coreelec_reconciler import main
+    from riar import main
 
     out = tmp_path / "proposals"
 
@@ -559,7 +559,7 @@ def test_a_github_channel_proposes_the_tag_archive(
     assert f'sha256: "{digest}"' in lock
 
 
-def test_the_proposed_lock_is_one_the_reconciler_reads(
+def test_the_proposed_lock_is_one_riar_reads(
     device: FakeDevice,
     propose: Callable[..., tuple[int, Path]],
     reconcile: Callable[..., int],

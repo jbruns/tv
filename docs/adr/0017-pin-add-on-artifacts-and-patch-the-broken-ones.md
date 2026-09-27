@@ -60,7 +60,7 @@ proposer that cannot tell the two apart proposes the wrong bumps, and
 requirement 3 is the reason the field is worth its keep.
 
 `role` is an intent, not a graph. Which add-on requires which is already
-derivable from `<requires>` in `addon.xml`, which the Reconciler parses. That
+derivable from `<requires>` in `addon.xml`, which Riar parses. That
 a human *wanted* an add-on is derivable from nothing.
 
 ## The Lock's boundary is derived, not listed
@@ -86,7 +86,7 @@ directories by observation rather than by naming them.
 
 What falls outside all three is reported, not failed. An add-on appearing from
 nowhere is interesting and we want to know, but we do not yet know what a Run
-should *do* about one, and guessing would make the Reconciler refuse to work
+should *do* about one, and guessing would make Riar refuse to work
 for a reason nobody chose.
 
 ## The Artifact Lock is its own file
@@ -156,7 +156,7 @@ matches the pin exactly — `0.0.6.6`, `1.16.0+matrix.1`, `21.3.2.1`. So
 observing an add-on is reading one small file. Hashing the installed tree
 cannot work: the installed tree is the *expanded* archive, so its hash is never
 the Artifact's, and three of our add-ons are deliberately patched afterwards. A
-Reconciler-written receipt on the Device was rejected because it can disagree
+Riar-written receipt on the Device was rejected because it can disagree
 with reality, while `addon.xml` is what Kodi itself believes.
 
 ### A patched add-on is not identified by its version
@@ -170,7 +170,7 @@ rather than the exotic one.
 So a patched add-on is observed by its version *and* by the hashes of the
 files its patches touch — the list comes from the diffs' `+++` headers, so
 nothing is declared twice. The Lock records the expected post-patch hash of
-each touched file, and a command on the Reconciler regenerates them by running
+each touched file, and a command on Riar regenerates them by running
 the real pipeline: fetch, prove the digest, expand, patch.
 
 Recording the result rather than recomputing it keeps `plan` offline and

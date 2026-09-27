@@ -1,5 +1,5 @@
 [project]
-name = "coreelec-reconciler"
+name = "riar"
 version = "0.1.0"
 description = "Reconcile CoreELEC Devices with their declared Desired State"
 requires-python = ">=3.14"
@@ -8,14 +8,14 @@ dependencies = [
 ]
 
 [project.scripts]
-coreelec-reconciler = "coreelec_reconciler:main"
+riar = "riar:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "coreelec_reconciler"
+module-name = "riar"
 
 [dependency-groups]
 dev = [

@@ -51,7 +51,7 @@ class Patch:
 
     `diff` opens with a header comment naming the add-on and the version the
     diff was written against. `patch` ignores that leading text; the
-    Reconciler reads it and refuses a version the patch was not written for
+    Riar reads it and refuses a version the patch was not written for
     before anything is fetched (ADR 0017).
     """
 

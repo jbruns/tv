@@ -62,7 +62,7 @@ ZONEINFO = "/usr/share/zoneinfo"
 # nothing catches — the write lands, the document converges, verification
 # passes, and the Device keeps yesterday's zone with nothing to notice.
 #
-# Which document that is, though, is the Profile's. The Reconciler knows the
+# Which document that is, though, is the Profile's. Riar knows the
 # meaning of an address; the Profile holds the address itself (ADR 0018).
 KODI_SERVICE = "kodi.service"
 
@@ -109,9 +109,9 @@ REBUILD_DELAY = 1.0
 
 @dataclass(frozen=True)
 class DocumentChange:
-    """A document the Reconciler renders whole and that differs on the Device.
+    """A document Riar renders whole and that differs on the Device.
 
-    A Smart Playlist and a Shortcut Node are both of this kind: the Reconciler
+    A Smart Playlist and a Shortcut Node are both of this kind: Riar
     owns every byte, so the Observation is compared against the rendering and
     the whole file is replaced.
     """
@@ -249,7 +249,7 @@ def _os_release(document: str) -> dict[str, str]:
     """`/etc/os-release` as the keys it defines, with quotes stripped.
 
     The reading is deliberately forgiving of everything it is not asked
-    about: this document is the operating system's and the Reconciler owns
+    about: this document is the operating system's and Riar owns
     nothing in it, so a line a future CoreELEC adds must not turn the Guard
     into a refusal. Only the keys the Profile names are then asserted on, and
     a key the document does not hold fails naming it.
@@ -471,7 +471,7 @@ def _observe_addon(
 
     Most of the Observation is one small file and one row. Hashing the
     installed tree cannot work — the tree is the *expanded* archive, so its
-    hash is never the Artifact's — and a receipt the Reconciler wrote can
+    hash is never the Artifact's — and a receipt Riar wrote can
     disagree with reality, while `addon.xml` is what Kodi itself believes.
 
     A patched add-on needs one thing more. Correcting a patch leaves the
@@ -647,7 +647,7 @@ def _plan(device: Device, desired: DesiredState) -> list[Change]:
         if change is not None:
             changes.append(change)
 
-    # Nothing the Reconciler knows of reads one of these while it runs, so
+    # Nothing Riar knows of reads one of these while it runs, so
     # none takes an Effect. The gateway is read by `sshd` when Home
     # Assistant's key logs in, and never by Kodi.
     for whole in desired.whole_documents:

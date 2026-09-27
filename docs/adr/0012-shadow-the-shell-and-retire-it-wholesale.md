@@ -4,7 +4,7 @@ status: superseded by ADR-0021
 
 # Shadow the shell, retire it wholesale, and track progress in the ledger
 
-ADR 0010 retired the shell by attrition: the Reconciler took a Resource Type
+ADR 0010 retired the shell by attrition: Riar took a Resource Type
 and the shell shrank as an outcome. Working the first real candidate — the
 `guisettings.xml` cohort — priced that outcome. Removing one State Address
 from `provision-coreelec.sh` means removing it from six places: the write in
@@ -18,7 +18,7 @@ changes what a Device does. Applied honestly to the candidate slice it shrank
 the slice from 41 addresses to 10 while the cost stayed flat.
 
 So the shell stops being edited. It stays intact as the Recovery Baseline and
-as the settings reference. The Reconciler **shadows** it one Resource Type at
+as the settings reference. Riar **shadows** it one Resource Type at
 a time, with both engines writing the same State Addresses and holding the
 same values, and the shell is deleted **wholesale, once**, when a
 factory-fresh Device can be provisioned from a Profile alone. Shadowing is a
@@ -41,7 +41,7 @@ Three consequences hold for all shadowing work:
 
 1. **Inject drift the first time a file or execution capability is
    exercised** — per capability, not per address. While the shell still writes
-   an address, it masks a Reconciler that does nothing, so a slice that only
+   an address, it hides that Riar does nothing, so a slice that only
    observes convergence proves nothing.
 2. **No declared address may plan as `create` on a provisioned Device.**
    `kodi_settings.rewrite` creates a node for an unknown id, so a typo'd
@@ -55,7 +55,7 @@ Three consequences hold for all shadowing work:
 
 ### Rule 3 admits a named Divergent Address
 
-Rule 3 assumes the Reconciler is reproducing the shell's behaviour, which it
+Rule 3 assumes Riar is reproducing the shell's behaviour, which it
 is almost everywhere. But the Profile may deliberately want something better
 than the shell can produce, and then the two disagree on purpose. That is a
 Divergent Address, and [ADR 0010](0010-retire-the-shell-by-attrition.md)
@@ -68,7 +68,7 @@ the rule was written to catch. A divergence somebody wrote down is a decision;
 an undeclared one is still a bug, and still fails.
 
 Recovery is unaffected. The order is shell baseline, then reconcile — so the
-Reconciler lands its value after the shell has laid down the older one. The
+Riar lands its value after the shell has laid down the older one. The
 two never alternate, because the Baseline is run once, not on a schedule.
 
 The exception expires with the shell. A Divergent Address is defined against
@@ -119,12 +119,12 @@ marking progress there would switch the shell off and destroy the Recovery
 Baseline the slice depends on. The ledger therefore gains a `reconciler_status`
 field alongside it, valued `none`, `deferred`, `retired`, or `accepted`, where
 `accepted` means converged on the Device and evidenced in a merged pull request,
-and `retired` means the Reconciler will never own the address because a
+and `retired` means Riar will never own the address because a
 factory-fresh Device does not have the state in the first place. The
 Python-owner guard is left intact and unused. `current_owner_or_executor` does
 not change under shadowing; it changes only when the shell is deleted.
 
-The field is carried by the 138 rows the Reconciler can own — 128 `resource`,
+The field is carried by the 138 rows Riar can own — 128 `resource`,
 5 `effect`, and 5 `guard`. Operator-owned `guided-action` rows,
 repository-owned `run-infrastructure` rows, and `external` or
 `unmanaged-inventory-fact` rows do not get it. The field is additive and no
@@ -147,7 +147,7 @@ a mechanism rather than waiting their turn:
   mode at every startup, so writing it is not ownership.
 
 `CORE-020`–`CORE-027`, the Kodi remote-control service cohort, were the other
-eight. They were deferred on whether the Reconciler depends on the channel
+eight. They were deferred on whether Riar depends on the channel
 they configure.
 [ADR 0018](0018-enable-add-ons-in-kodis-database-while-kodi-is-stopped.md)
 settled that it does not, so they are ordinary `none` rows awaiting their turn.
@@ -168,7 +168,7 @@ box provisioned from a Profile alone — is indifferent to them.
 The shell recreates and re-deletes them on every Recovery Baseline run, so they
 cannot be deleted by hand until the shell is gone; at that point they are
 deleted once, by hand, and never thought about again. This does not close the
-door on Managed Absence as a Reconciler capability. It says only that two
+door on Managed Absence as a Riar capability. It says only that two
 superseded playlists on a single Device do not justify building it, and that
 the first address that genuinely needs absence on a fresh Device is the one
 that should pay for the mechanism.
@@ -182,7 +182,7 @@ treat it as load-bearing.
 Name the failure it would prevent: a Run aimed at a different Amlogic-ng
 CoreELEC Device that also answers to the managed Device's hostname. The
 hostname Guard fires first, `PLAT-001` pins the operating system, its version
-and the SoC family, and nothing the Reconciler declares is Ugoos-specific —
+and the SoC family, and nothing Riar declares is Ugoos-specific —
 `dolby_vision_mode` sits unused in `TRANSFORMS`, and the CEC document is found
 by a glob that refuses unknown hardware loudly. Getting there requires
 deliberately renaming a second Device, and recovery is reprovisioning.
@@ -197,13 +197,13 @@ and all three were reached by taking the lifecycle cohort rather than by
 deferring it further.
 
 `PLAT-004` is a second platform guard, inside the lifecycle deploy rather than
-the provisioner. The Reconciler already guards the platform once per Run from
+the provisioner. Riar already guards the platform once per Run from
 `/etc/os-release`. A Run that has passed that guard has nothing left for a
 second reading of the same file to discover.
 
 `PLAT-005` reads `sshd -V` to choose between a `restrict` key entry and a
 spelled-out fallback for OpenSSH older than 7.2. The Device runs OpenSSH
-9.9p2, `restrict` has been available since 2016, and the Reconciler already
+9.9p2, `restrict` has been available since 2016, and Riar already
 declares the `authorized_keys` line whole — with `restrict` — as a matter of
 Desired State rather than a capability test. The fallback is unreachable on
 any Device this Profile can provision.
@@ -212,7 +212,7 @@ any Device this Profile can provision.
 Kodi does not read `/storage/.config/kodi-lifecycle`; nothing about writing
 that file requires Kodi to be stopped. The shell captures and restores the
 service state because its deploy is one large transaction with backups,
-rollback directories and a pending-transaction pointer. The Reconciler writes
+rollback directories and a pending-transaction pointer. Riar writes
 a document, so the Effect it would be shadowing does not exist.
 
 `ROOM-001` is `retired` because the address does not hold what its name
@@ -233,7 +233,7 @@ bus prefix Kodi controls, and a `CEC_Adapter` name the adapter reports. The
 shell finds it with `*CEC*.xml` and requires exactly one match
 (provision-coreelec.sh:588-597).
 
-The Reconciler declares `cec_*.xml` instead. This is a deliberate departure
+Riar declares `cec_*.xml` instead. This is a deliberate departure
 from the shell, and the reason is that the shell's glob works by coincidence:
 it matches on the *name*, so an adapter calling itself anything else — a
 Pulse-Eight, say — produces zero matches rather than the file it is standing
@@ -246,7 +246,7 @@ visible from the Profile:
 
 Standing rule 2 fires a Run late here. `CPeripheral::PersistSettings` rebuilds
 the document from memory when Kodi exits, so a mistyped setting ID is written
-by the Reconciler, survives Verification, and is erased at the next Kodi exit
+by Riar, survives Verification, and is erased at the next Kodi exit
 — and only the Run after that re-plans it as a `create`. Verification
 immediately after `apply` is therefore not evidence for this cohort, and its
 acceptance requires a full Kodi stop and start before the final re-plan.

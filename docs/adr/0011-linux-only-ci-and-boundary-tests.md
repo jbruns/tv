@@ -9,7 +9,7 @@ covered by a local pre-commit hook running formatting, linting, strict typing,
 and the tests rather than by a hosted runner. This is only safe paired with a
 second rule: no platform-specific code. Where behaviour genuinely differs, the
 option that works everywhere is chosen and the weaker guarantee accepted — the
-Reconciler's local state is disposable, so a portable `fsync` beats a macOS
+Riar's local state is disposable, so a portable `fsync` beats a macOS
 branch. The CI matrix is not pinned by any test, so changing platforms is a
 one-file edit rather than a reopened decision. This amends ADR 0006, which
 named Linux and macOS as supported peers exercised by CI.

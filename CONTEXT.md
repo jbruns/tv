@@ -4,7 +4,7 @@ This context describes the desired configuration of the repository's CoreELEC/Ko
 
 ## Language
 
-A term is the Reconciler's unless a `_Realised by_` line names another engine.
+A term is Riar's unless a `_Realised by_` line names another engine.
 
 **Device**:
 A CoreELEC/Kodi installation managed by this repository.
@@ -80,7 +80,7 @@ The measured state of a Resource on a Device at a point in time.
 _Avoid_: Current state, probe result
 
 **Guard**:
-An observed prerequisite that must hold before the Reconciler may safely mutate a Device.
+An observed prerequisite that must hold before Riar may safely mutate a Device.
 _Avoid_: Resource, warning
 
 **Change**:
@@ -115,9 +115,9 @@ _Avoid_: Rollback, retry
 An operator-assisted operation that cannot be expressed as verifiable Desired State, such as interactive account linking.
 _Avoid_: Resource, manual Resource
 
-**Reconciler**:
+**Riar**:
 The system that observes Resources, plans Changes, applies them, and independently verifies the resulting state.
-_Avoid_: Provisioner, desired configuration management engine
+_Avoid_: Reconciler, provisioner, desired configuration management engine
 
 **Artifact**:
 Versioned content referenced by a Profile and installed or used while reconciling a Resource.
@@ -168,7 +168,7 @@ The screen in a Device's room that the Device's video reaches.
 _Avoid_: TV, Sony, screen
 
 **Kodi Lifecycle**:
-Starting and stopping Kodi on a running Device so that Kodi runs while its Display is on and is stopped once the Display has been off for a while. It is a runtime behaviour, not Desired State, and the Reconciler plays no part in it.
+Starting and stopping Kodi on a running Device so that Kodi runs while its Display is on and is stopped once the Display has been off for a while. It is a runtime behaviour, not Desired State, and Riar plays no part in it.
 _Avoid_: Desired Kodi state, reconciliation, power management
 _Realised by_: Home Assistant.
 

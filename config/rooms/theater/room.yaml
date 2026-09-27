@@ -1,6 +1,6 @@
-# Reconciler-owned Room Overlay for the theater Ugoos.
+# Riar-owned Room Overlay for the theater Ugoos.
 #
-# The Device is identified by its hostname and nothing more. The Reconciler
+# The Device is identified by its hostname and nothing more. Riar
 # dials that name and refuses to plan against a Device whose own hostname
 # disagrees with it.
 

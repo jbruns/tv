@@ -1,6 +1,6 @@
 """Reading and writing settings inside a Settings Document.
 
-A Settings Document is not a document the Reconciler renders. It holds many
+A Settings Document is not a document Riar renders. It holds many
 State Addresses, almost all of them Unmanaged State, so this module changes
 only the State Addresses it is given and leaves every other setting's identity
 and value exactly as it found them.
@@ -11,7 +11,7 @@ has exactly the property the name Settings Document describes — many
 addresses in one file, owned one at a time.
 
 Kodi serialises these documents in more than one shape, and which shape a
-document uses is not something the Reconciler may guess. `guisettings.xml` and
+document uses is not something Riar may guess. `guisettings.xml` and
 an add-on whose settings definition declares a version carry a value as
 element text; an add-on whose definition carries no version attribute, such as
 `weather.ha`, carries it in a `value` attribute instead. An add-on may keep

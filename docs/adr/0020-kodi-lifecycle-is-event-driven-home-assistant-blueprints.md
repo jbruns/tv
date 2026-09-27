@@ -34,7 +34,7 @@ without it ([ADR 0007](0007-trusted-home-appliance-bar.md)).
 - **Keep the poll.** Rejected. The poll is what undoes a hand-stopped Kodi,
   which is why provisioning needed the Keep-Running Hold. It also drives most
   of the reachability and verification machinery. Without it, a Kodi stopped
-  by hand or by the Reconciler stays stopped until the next Display
+  by hand or by Riar stays stopped until the next Display
   transition.
 - **A custom integration in Python.** Rejected as more code to own than
   blueprints, which are Home Assistant's built-in way to reuse logic across

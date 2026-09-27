@@ -42,13 +42,13 @@ of which are sensitive, because the boundary is the file and not a judgement
 about each key.
 
 **The file is read only when something names it.** A Run that names nothing
-never opens `.env`, so the Reconciler still plans and applies on a checkout
+never opens `.env`, so Riar still plans and applies on a checkout
 that holds no secrets at all.
 
-## Why the Reconciler reads `.env` itself
+## Why Riar reads `.env` itself
 
 `.env` is bash: the shell entry points `source` it, and `.env.example`
-documents shell quoting rules. The Reconciler reads it instead with a strict
+documents shell quoting rules. Riar reads it instead with a strict
 `KEY=value` grammar that accepts a bare, single-quoted, or double-quoted
 scalar and rejects everything else naming the file and the line — the posture
 `provision.conf` already takes, where a value is data and never shell syntax.
@@ -60,7 +60,7 @@ written to the Device, and the Verification that follows compares the same
 wrong value against itself and reports Convergence. A rejected line costs an
 operator one edit; a misread one costs a broken add-on that looks converged.
 
-The alternative was for the Reconciler to read its process environment and
+The alternative was for Riar to read its process environment and
 leave the operator to `set -a && . ./.env && set +a`, which is the pattern
 hardware acceptance already documents. It needs no grammar and lets bash stay
 the only reader, but it makes every Run carry a preamble that is silent when

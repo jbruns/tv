@@ -179,7 +179,7 @@ settings_documents:
   # forever.
   #
   # A Cleared Address converges when the Device resolves no value. For the skin
-  # dialect the Reconciler writes an empty typed node when it must change a
+  # dialect Riar writes an empty typed node when it must change a
   # value, and it leaves already-clear addresses alone.
   #
   # `HomeSwitcher.1107.Toggle` and `optionstiles.03.include` are plain
@@ -398,7 +398,7 @@ settings_documents:
   # A Device whose first-boot wizard left the password enabled holds these
   # same two keys with the insecure values, so this plans as two Changes and
   # never as a create. Applying either restarts `sshd.service`, which takes
-  # the connection issuing it with it; the Reconciler knows that, and the
+  # the connection issuing it with it; Riar knows that, and the
   # Profile does not declare it (ADR 0013).
   - document: /storage/.cache/services/sshd.conf
     dialect: shell_vars

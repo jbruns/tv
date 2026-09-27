@@ -1,1 +1,1 @@
-"""Boundary tests for the Reconciler."""
+"""Boundary tests for Riar."""

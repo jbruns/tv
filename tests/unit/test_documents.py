@@ -7,7 +7,7 @@ file beside itself instead, and a Run renders that file whole.
 A missing source is a configuration mistake, named before any Device contact
 rather than halfway through a Run.
 
-These tests drive the Reconciler through its public entry point only
+These tests drive Riar through its public entry point only
 (ADR 0011).
 """
 
@@ -197,7 +197,7 @@ def shipped_gateway() -> dict[str, str]:
 
 
 def test_the_shipped_gateway_is_the_forced_command_of_home_assistants_key() -> None:
-    """The key line is the Reconciler's, and it names this path."""
+    """The key line is Riar's, and it names this path."""
 
     entries = shipped_profile()["authorized_keys"]["entries"]
     forced = [

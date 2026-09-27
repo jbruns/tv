@@ -15,9 +15,7 @@ DESCRIPTION = "Reconcile a CoreELEC Device with its declared Desired State."
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="coreelec-reconciler", description=DESCRIPTION
-    )
+    parser = argparse.ArgumentParser(prog="riar", description=DESCRIPTION)
     parser.add_argument(
         "command",
         choices=(

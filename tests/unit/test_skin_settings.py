@@ -8,7 +8,7 @@ and reads an untyped node as holding no value: that is what Kodi resolves
 from it, and reading it any other way would let Verification pass while the
 skin showed its defaults.
 
-These tests drive the Reconciler through its public entry point only
+These tests drive Riar through its public entry point only
 (ADR 0011).
 """
 

@@ -6,7 +6,7 @@ Artifact on the controller, and a patched add-on is observed by its version
 not move the version, so nothing else would ever ship the correction
 (ADR 0017).
 
-These tests drive the Reconciler only through its public entry point
+These tests drive Riar only through its public entry point
 (ADR 0011). The pinned archive is built here and served by the stub `curl`;
 the diffs are applied by the real `patch`.
 """

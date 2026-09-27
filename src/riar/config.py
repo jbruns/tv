@@ -115,7 +115,7 @@ class Platform:
     """What the Device is claimed to be, checked before anything is planned.
 
     A Profile declares the identity, not how to check it: which file holds
-    which key is the Reconciler's business, and a Profile naming paths and
+    which key is Riar's business, and a Profile naming paths and
     patterns would be the only block declaring mechanism.
     """
 
@@ -137,10 +137,10 @@ class Transport:
 
 @dataclass(frozen=True)
 class Addresses:
-    """The Device addresses the Reconciler knows the meaning of.
+    """The Device addresses Riar knows the meaning of.
 
-    Every other address reaches the Reconciler as the State Address of a
-    Resource. These five do not: the Reconciler knows which unit reads the
+    Every other address reaches Riar as the State Address of a
+    Resource. These five do not: Riar knows which unit reads the
     timezone cache and which reads `sshd.conf`, where add-ons live, which
     database holds their enabled flags, and where Kodi lists the add-ons it
     ships with — but knowing what an address *means* is not the same as
@@ -148,7 +148,7 @@ class Addresses:
 
     So the meaning stays in code and the address is declared here. The Kodi
     schema version is in the database's filename, so a Profile branched for a
-    future Kodi changes one line rather than forking the Reconciler
+    future Kodi changes one line rather than forking Riar
     (ADR 0018). No Device address lives in code.
     """
 
@@ -316,7 +316,7 @@ class Shortcut:
 
 @dataclass(frozen=True)
 class ShortcutNode:
-    """One node file the Reconciler renders whole.
+    """One node file Riar renders whole.
 
     Each file is declared by name. The directory holding them is never
     enumerated: the skin ships node files of its own beside these, carrying
@@ -347,7 +347,7 @@ class ShortcutRebuild:
 
 @dataclass(frozen=True)
 class WholeDocument:
-    """A document the Reconciler owns every byte of, shipped as a file.
+    """A document Riar owns every byte of, shipped as a file.
 
     `content` is the file named by `source`, read from the Profile directory
     when the Profile is read, so a missing source fails before any Device
@@ -393,14 +393,14 @@ class AuthorizedKey:
 class AuthorizedKeys:
     """Who may log in to the Device, declared whole.
 
-    The Reconciler owns every byte of this document, so an entry nobody
+    Riar owns every byte of this document, so an entry nobody
     declared is removed rather than tolerated. Otherwise a revoked key would
     never actually be revoked.
 
     `entries` begins with the administrator entry, which is derived from the
     public half of the identity the Run authenticates with and is never
     declared: a Profile that can name an administrator key can name the wrong
-    one and lock the Reconciler out of its own Device.
+    one and lock Riar out of its own Device.
     """
 
     document: str
@@ -976,10 +976,10 @@ ADDRESS_KEYS = (
 
 
 def _addresses(source: Path, raw: Any) -> Addresses:
-    """The Device addresses the Reconciler knows the meaning of.
+    """The Device addresses Riar knows the meaning of.
 
     Every one is required and every one is absolute. A Profile that could
-    omit one would leave the Reconciler holding a path of its own, which is
+    omit one would leave Riar holding a path of its own, which is
     the thing this block exists to stop.
     """
 

@@ -5,7 +5,7 @@ CoreELEC 21.3 Profile or a Room Overlay. Use the terms from `CONTEXT.md`:
 Device, Profile, Room Overlay, Desired State, Resource, State Address, Change,
 Effect, Plan, Run, Verification, Convergence, Fail Forward and Guided Action.
 
-The Reconciler is a controller-only, on-demand tool. It observes Resources,
+Riar is a controller-only, on-demand tool. It observes Resources,
 plans Changes, applies them, and verifies Convergence. It is built to the
 trusted home-appliance bar in [ADR 0007](../adr/0007-trusted-home-appliance-bar.md):
 prefer simple declarations and real-Device acceptance over machinery for rare
@@ -43,18 +43,18 @@ image and `dovi.ko`.
 The entry point is declared in `pyproject.toml`:
 
 ```console
-uv run coreelec-reconciler --help
+uv run riar --help
 ```
 
 The command is one positional argument plus shared options:
 
 ```console
-uv run coreelec-reconciler bootstrap --room theater
-uv run coreelec-reconciler plan --room theater
-uv run coreelec-reconciler apply --room theater
-uv run coreelec-reconciler survey --room theater
-uv run coreelec-reconciler record-patches --room theater
-uv run coreelec-reconciler propose-updates --out DIR [--declined KEY ...]
+uv run riar bootstrap --room theater
+uv run riar plan --room theater
+uv run riar apply --room theater
+uv run riar survey --room theater
+uv run riar record-patches --room theater
+uv run riar propose-updates --out DIR [--declined KEY ...]
 ```
 
 `--room` is required by every command except `propose-updates`.
@@ -125,7 +125,7 @@ Value.
 
 ### Device addresses
 
-The Profile declares Device addresses whose meaning the Reconciler knows:
+The Profile declares Device addresses whose meaning Riar knows:
 
 ```yaml
 addresses:
@@ -138,7 +138,7 @@ addresses:
 
 The address changes with a platform version; the meaning stays in code. The
 add-on database filename carries Kodi's schema version, so it belongs here
-rather than in the Reconciler.
+rather than in Riar.
 
 ### Transport and authorized keys
 
@@ -165,7 +165,7 @@ authorized_keys:
 
 Each declared entry carries a forced command. The Home Assistant key may run
 only the Kodi Lifecycle gateway document declared in `documents.yaml`. First
-Contact is owned by the Reconciler; see
+Contact is owned by Riar; see
 [ADR 0016](../adr/0016-the-reconciler-owns-first-contact.md).
 
 ### Password window and `sshd` Effect
@@ -185,7 +185,7 @@ window through the CoreELEC service document in `settings.yaml`:
 ```
 
 Applying either address restarts `sshd.service`. The restart drops the SSH
-connection that requested it, so the Reconciler reconnects and verifies the
+connection that requested it, so Riar reconnects and verifies the
 Device answers with key-only access.
 
 ## Smart Playlists
@@ -266,7 +266,7 @@ documents:
 ```
 
 `source` is relative to the Profile directory and must stay inside it. `mode`
-is required because the current document is executable. The Reconciler owns
+is required because the current document is executable. Riar owns
 the whole document and replaces it whole when it changes.
 
 ## Settings Documents
@@ -418,7 +418,7 @@ addons:
 ```
 
 Appearing in the lock means the add-on should be installed at that version and
-enabled. The Reconciler fetches the Artifact, verifies the digest, checks the
+enabled. Riar fetches the Artifact, verifies the digest, checks the
 expanded `addon.xml`, ships the tree, and writes enablement to Kodi's add-on
 database while Kodi is stopped. See
 [ADR 0017](../adr/0017-pin-add-on-artifacts-and-patch-the-broken-ones.md) and
@@ -459,7 +459,7 @@ without changing the add-on version would never plan a Change. Generate those
 hashes with:
 
 ```console
-uv run coreelec-reconciler record-patches --room theater
+uv run riar record-patches --room theater
 ```
 
 `record-patches` contacts no Device.
@@ -539,7 +539,7 @@ A Run takes each Effect once, no matter how many Changes need it.
 `survey` reports how a Device differs from the Profile and mutates nothing:
 
 ```console
-uv run coreelec-reconciler survey --room theater
+uv run riar survey --room theater
 ```
 
 Kodi must be stopped and kept stopped. The report is sorted so two surveys can

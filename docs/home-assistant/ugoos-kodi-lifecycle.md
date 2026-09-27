@@ -37,7 +37,7 @@ Display on or off when it starts or stops. See the
 CoreELEC wizard
 -> DHCP reservation and DNS
 -> Home Assistant controller identity (section 1)
--> Reconciler bootstrap and apply, which installs the gateway (section 2)
+-> Riar bootstrap and apply, which installs the gateway (section 2)
 -> Display and Kodi integrations
 -> blueprint and instance package (section 3)
 ```
@@ -89,7 +89,7 @@ rm -f /config/.ssh/ugoos-theater.candidate
 
 ## 2. Install the restricted lifecycle gateway
 
-The Reconciler installs the gateway. Put the one-line contents of
+Riar installs the gateway. Put the one-line contents of
 `/config/.ssh/ugoos_kodi_lifecycle_ed25519.pub` into the controller's `.env` as
 `COREELEC_LIFECYCLE_PUBLIC_KEY`, then run `apply` as in
 [Provision a Device](../operations/provision-a-device.md).
@@ -163,7 +163,7 @@ The automation acts only on transitions:
   automation is reloaded, while Kodi is idle and Viewing, there is no
   countdown until one of those breaks it and it holds again.
 
-It never polls. A Kodi stopped by hand, or by the Reconciler during a Run,
+It never polls. A Kodi stopped by hand, or by Riar during a Run,
 stays stopped until the next Display transition, so provisioning needs no
 Hold. Lifting the Keep-Running Hold does not stop Kodi by itself. systemd, not
 Home Assistant, restarts a Kodi that crashes. The automation never suspends,
@@ -245,5 +245,5 @@ ssh -i "$HOME/.ssh/coreelec_admin_ed25519" root@ugoos-theater \
 Create a new Home Assistant controller key, update
 `/config/.ssh/ugoos-kodi-lifecycle.conf` if the filename changes, put the new
 public key in `.env` as `COREELEC_LIFECYCLE_PUBLIC_KEY`, and run `apply`. The
-Reconciler replaces the marked entry, so the old key stops working in the same
+Riar replaces the marked entry, so the old key stops working in the same
 Run. Remove the old key from Home Assistant afterwards.

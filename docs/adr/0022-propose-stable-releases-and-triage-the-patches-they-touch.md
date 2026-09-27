@@ -119,7 +119,7 @@ The Action runs weekly and on demand. It processes every Artifact Lock under
 exists. If a channel cannot be reached, the run skips it, still produces the
 other proposals, and fails at the end, so the next week's run is the recovery.
 
-The logic is a Reconciler subcommand rather than a script. The Lock parser and
+The logic is a Riar subcommand rather than a script. The Lock parser and
 the fetch, digest, expand and patch pipeline already live in the package, and
 [ADR 0011](0011-linux-only-ci-and-boundary-tests.md)'s boundary tests then
 cover it.

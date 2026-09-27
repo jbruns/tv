@@ -2,7 +2,7 @@
 
 Nine State Addresses inside `guisettings.xml` describe the room's hardware
 rather than the Profile's class of Devices. The Room Overlay declares them
-with the Profile's schema, the Reconciler concatenates the two lists, and two
+with the Profile's schema, Riar concatenates the two lists, and two
 of them are not written as declared: one is inverted and one is mapped.
 """
 
