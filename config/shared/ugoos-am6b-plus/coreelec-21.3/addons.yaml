@@ -134,9 +134,9 @@ addons:
     patched_files:
       lib/monitor.py: "ab3d01700339e2c3f6690c954ebae76c13b6246d87087b973bb18ed7e7b15dac"
   - id: skin.arctic.fuse.3
-    version: "3.3.2"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.3.2.zip
-    sha256: "e51e061c99d5e46a12c0f3dac05d0e8812e9c8cf56890f1519fe3d65317de915"
+    version: "3.3.3"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.3.3.zip
+    sha256: "064666b16665b881f0156cf4116f49dd47439a0b32cc921e086ee3fa17b75711"
     role: chosen
     channel: jurialmunkey-omega
     notes: >-
