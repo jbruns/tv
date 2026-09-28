@@ -413,9 +413,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.skinvariables
-    version: "2.2.4"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.4.zip
-    sha256: "468c56128b8c559f12907cf97709d19f1639119e132b9ec90f2ff292d0a64fa2"
+    version: "2.2.5"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.5.zip
+    sha256: "d4c638b7a25ab2cee5381120c2a088b8813f13e68df5b23fb8fcf9b390c1af55"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
