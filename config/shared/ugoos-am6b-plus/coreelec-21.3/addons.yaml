@@ -97,9 +97,9 @@ addons:
     channel: emby-v21
     notes: ~
   - id: plugin.video.themoviedb.helper
-    version: "6.17.4"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.17.4.zip
-    sha256: "49b3dfdccff46fa9217c8fdd984bbb9ecacab31da0e49851046abc3ec0d67d8b"
+    version: "6.17.5"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.17.5.zip
+    sha256: "fc43ff83e5f269f5db48d8e68087bb5e43ae864446d7abf83fa55b592a39d784"
     role: chosen
     channel: jurialmunkey-omega
     notes: ~
@@ -134,9 +134,9 @@ addons:
     patched_files:
       lib/monitor.py: "ab3d01700339e2c3f6690c954ebae76c13b6246d87087b973bb18ed7e7b15dac"
   - id: skin.arctic.fuse.3
-    version: "3.3.2"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.3.2.zip
-    sha256: "e51e061c99d5e46a12c0f3dac05d0e8812e9c8cf56890f1519fe3d65317de915"
+    version: "3.3.7"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.3.7.zip
+    sha256: "5b2b987d24d99d959a0e6e5da3655c8a7da082eabd32779cb2bbe6702b8aa377"
     role: chosen
     channel: jurialmunkey-omega
     notes: >-
@@ -413,9 +413,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.skinvariables
-    version: "2.2.4"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.4.zip
-    sha256: "468c56128b8c559f12907cf97709d19f1639119e132b9ec90f2ff292d0a64fa2"
+    version: "2.2.8"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.8.zip
+    sha256: "15af4771869f54b8af1ca242a272f029acd08d580bfd341c26c236be2bba11dd"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
