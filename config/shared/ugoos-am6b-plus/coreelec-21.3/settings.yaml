@@ -75,7 +75,7 @@ settings_documents:
       #
       # hdmi-multichannel: decoded audio, up to eight channels.
       - setting: audiooutput.audiodevice
-        value: ALSA:surround71:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
+        value: ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
       # hdmi: the bitstream, untouched.
       - setting: audiooutput.passthroughdevice
         value: ALSA:hdmi:CARD=AMLAUGESOUND,DEV=0|AML-AUGESOUND
