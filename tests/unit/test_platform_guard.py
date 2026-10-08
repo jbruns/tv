@@ -301,6 +301,6 @@ def test_the_shipped_audio_devices_name_the_card_the_guard_checks() -> None:
         in ("audiooutput.audiodevice", "audiooutput.passthroughdevice")
     }
     assert devices == {
-        "audiooutput.audiodevice": f"ALSA:surround71:CARD={card},DEV=0|AML-AUGESOUND",
+        "audiooutput.audiodevice": f"ALSA:hdmi:CARD={card},DEV=0|AML-AUGESOUND",
         "audiooutput.passthroughdevice": f"ALSA:hdmi:CARD={card},DEV=0|AML-AUGESOUND",
     }
