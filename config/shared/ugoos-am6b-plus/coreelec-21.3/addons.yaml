@@ -172,9 +172,9 @@ addons:
   # than required by it. script.artistslideshow is what brings
   # script.module.defusedxml and script.module.future below.
   - id: script.artistslideshow
-    version: "4.2.0"
-    url: https://mirrors.kodi.tv/addons/omega/script.artistslideshow/script.artistslideshow-4.2.0.zip
-    sha256: "68688a63ac9ac074eb8d9aee4212eda07e7f52627300015eac12a0226cc4db2c"
+    version: "4.2.1"
+    url: https://mirrors.kodi.tv/addons/omega/script.artistslideshow/script.artistslideshow-4.2.1.zip
+    sha256: "acfb05310a44485a06686a188d9d2c8afe7fcac0ebf24e7bfc1beeed0c64a694"
     role: chosen
     channel: kodi-omega
     notes: ~
