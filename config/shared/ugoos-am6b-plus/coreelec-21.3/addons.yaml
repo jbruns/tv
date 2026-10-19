@@ -97,9 +97,9 @@ addons:
     channel: emby-v21
     notes: ~
   - id: plugin.video.themoviedb.helper
-    version: "6.17.5"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.17.5.zip
-    sha256: "fc43ff83e5f269f5db48d8e68087bb5e43ae864446d7abf83fa55b592a39d784"
+    version: "6.18.0"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.18.0.zip
+    sha256: "57c4841c70f73230992b435d258b8dd7b10cee1c0be4d9bb2e407058d74ab295"
     role: chosen
     channel: jurialmunkey-omega
     notes: ~
@@ -134,9 +134,9 @@ addons:
     patched_files:
       lib/monitor.py: "ab3d01700339e2c3f6690c954ebae76c13b6246d87087b973bb18ed7e7b15dac"
   - id: skin.arctic.fuse.3
-    version: "3.3.7"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.3.7.zip
-    sha256: "5b2b987d24d99d959a0e6e5da3655c8a7da082eabd32779cb2bbe6702b8aa377"
+    version: "3.4.0"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.4.0.zip
+    sha256: "06ef6380d4522f30cc9ece470da43e1defad4af14153d4a1efa357b426f871b1"
     role: chosen
     channel: jurialmunkey-omega
     notes: >-
@@ -336,9 +336,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.module.infotagger
-    version: "0.0.9"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.infotagger/script.module.infotagger-0.0.9.zip
-    sha256: "5fb83664bb732bca773d420f9f5b1383be594ed88836f59178032f36bc668336"
+    version: "0.1.0"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.infotagger/script.module.infotagger-0.1.0.zip
+    sha256: "82bf72ad2e8184e4a560135d7fa2ea1f37d95a0a7524100554da527f816ca876"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
@@ -413,9 +413,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.skinvariables
-    version: "2.2.8"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.8.zip
-    sha256: "15af4771869f54b8af1ca242a272f029acd08d580bfd341c26c236be2bba11dd"
+    version: "2.2.9"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.9.zip
+    sha256: "7bbac52948ff0934fd29ccbf0657d4d625da22514a9afe4818bc4070d08d50b2"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
