@@ -97,9 +97,9 @@ addons:
     channel: emby-v21
     notes: ~
   - id: plugin.video.themoviedb.helper
-    version: "6.17.5"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.17.5.zip
-    sha256: "fc43ff83e5f269f5db48d8e68087bb5e43ae864446d7abf83fa55b592a39d784"
+    version: "6.19.0"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.19.0.zip
+    sha256: "3014915c4a764ae6d40b9e7db371678b18f08d29b2d5d02b67270c717cf607a7"
     role: chosen
     channel: jurialmunkey-omega
     notes: ~
@@ -134,9 +134,9 @@ addons:
     patched_files:
       lib/monitor.py: "ab3d01700339e2c3f6690c954ebae76c13b6246d87087b973bb18ed7e7b15dac"
   - id: skin.arctic.fuse.3
-    version: "3.3.7"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.3.7.zip
-    sha256: "5b2b987d24d99d959a0e6e5da3655c8a7da082eabd32779cb2bbe6702b8aa377"
+    version: "3.4.12"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.4.12.zip
+    sha256: "9f330fdb13357e064a7eabdd19ea5dccd56f6c0327b03a5d093a1a3e70fc8a07"
     role: chosen
     channel: jurialmunkey-omega
     notes: >-
@@ -336,9 +336,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.module.infotagger
-    version: "0.0.9"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.infotagger/script.module.infotagger-0.0.9.zip
-    sha256: "5fb83664bb732bca773d420f9f5b1383be594ed88836f59178032f36bc668336"
+    version: "0.1.0"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.infotagger/script.module.infotagger-0.1.0.zip
+    sha256: "82bf72ad2e8184e4a560135d7fa2ea1f37d95a0a7524100554da527f816ca876"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
@@ -413,9 +413,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.skinvariables
-    version: "2.2.8"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.8.zip
-    sha256: "15af4771869f54b8af1ca242a272f029acd08d580bfd341c26c236be2bba11dd"
+    version: "2.2.10"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.10.zip
+    sha256: "f337dd9c06d3119e0bafd13fc4e220ebf468c4f9bde7e15b9b8c22071e393dcb"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
@@ -425,4 +425,18 @@ addons:
     sha256: "051bca651c467901b12fcae56ca430402427149d801fa7a7cfd1254d386a738b"
     role: dependency
     channel: jurialmunkey-omega
+    notes: ~
+  - id: resource.images.arctic.splash
+    version: "1.1.0"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/repo/zips/resource.images.arctic.splash/resource.images.arctic.splash-1.1.0.zip
+    sha256: "3d5f377f4c0c1e0459948b1b1fc635038fa9a5a8fffbc1d60aed505b62d34714"
+    role: dependency
+    channel: jurialmunkey-repo
+    notes: ~
+  - id: resource.images.arctic.weather
+    version: "1.0.4"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/repo/zips/resource.images.arctic.weather/resource.images.arctic.weather-1.0.4.zip
+    sha256: "a7e84af8747611c8517bfb278b7610053653c95107a10307dc48ee15e6cef0c4"
+    role: dependency
+    channel: jurialmunkey-repo
     notes: ~
