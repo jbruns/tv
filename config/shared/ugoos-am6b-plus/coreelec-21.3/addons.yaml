@@ -357,9 +357,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.module.jurialmunkey
-    version: "0.2.35"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.jurialmunkey/script.module.jurialmunkey-0.2.35.zip
-    sha256: "80302314cdbc5a75611b0c2866eb1c7b4e93ccadaf20208ef7eb79b79c1fb749"
+    version: "0.2.36"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.jurialmunkey/script.module.jurialmunkey-0.2.36.zip
+    sha256: "9cac3fbc0da7a230e1a127bac564b8c52bd35f7ce61d8dd80a8cdec35a81cd78"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
