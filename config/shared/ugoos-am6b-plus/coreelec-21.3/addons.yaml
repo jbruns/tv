@@ -97,9 +97,9 @@ addons:
     channel: emby-v21
     notes: ~
   - id: plugin.video.themoviedb.helper
-    version: "6.19.0"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.19.0.zip
-    sha256: "3014915c4a764ae6d40b9e7db371678b18f08d29b2d5d02b67270c717cf607a7"
+    version: "6.22.1"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/plugin.video.themoviedb.helper/plugin.video.themoviedb.helper-6.22.1.zip
+    sha256: "991a820a07af660fd2b172b4370b55f09b0ccf3cd00f96c52f4450300b04a192"
     role: chosen
     channel: jurialmunkey-omega
     notes: ~
@@ -108,7 +108,7 @@ addons:
       - 0002-recheck-the-abort-after-waiting.patch
     patched_files:
       resources/tmdbhelper/lib/monitor/cronjob.py: "c36ecf0f62a9759fbe7b984eb759206a065b4659dba686849f9d1bbdd88dc277"
-      resources/tmdbhelper/lib/monitor/service.py: "18dbe39dc00d8250e52540d0ff0c59972f4908afb6a5b94e750593b932361b8e"
+      resources/tmdbhelper/lib/monitor/service.py: "cf4bc8858b857b80890166aa7e14d7349f7dc8d1f8a8630e894bc8d4f0334cd4"
   - id: pvr.nextpvr
     version: "21.3.2.1"
     url: https://addons.coreelec.org/Amlogic-ng/21.3/arm/pvr.nextpvr/pvr.nextpvr-21.3.2.1.zip
@@ -134,9 +134,9 @@ addons:
     patched_files:
       lib/monitor.py: "ab3d01700339e2c3f6690c954ebae76c13b6246d87087b973bb18ed7e7b15dac"
   - id: skin.arctic.fuse.3
-    version: "3.4.12"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.4.12.zip
-    sha256: "9f330fdb13357e064a7eabdd19ea5dccd56f6c0327b03a5d093a1a3e70fc8a07"
+    version: "3.5.2"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/skin.arctic.fuse.3/skin.arctic.fuse.3-3.5.2.zip
+    sha256: "6c6856c08332dafeab950577d6883f9216e0e734555b35a4992268442b4b0b34"
     role: chosen
     channel: jurialmunkey-omega
     notes: >-
@@ -357,9 +357,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.module.jurialmunkey
-    version: "0.2.35"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.jurialmunkey/script.module.jurialmunkey-0.2.35.zip
-    sha256: "80302314cdbc5a75611b0c2866eb1c7b4e93ccadaf20208ef7eb79b79c1fb749"
+    version: "0.2.39"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.module.jurialmunkey/script.module.jurialmunkey-0.2.39.zip
+    sha256: "d11c9a66ed036334ae1329d42c9937ea4257682313339d207606c6473bafc72f"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
@@ -413,9 +413,9 @@ addons:
     channel: kodi-omega
     notes: ~
   - id: script.skinvariables
-    version: "2.2.10"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.2.10.zip
-    sha256: "f337dd9c06d3119e0bafd13fc4e220ebf468c4f9bde7e15b9b8c22071e393dcb"
+    version: "2.3.2"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/omega/zips/script.skinvariables/script.skinvariables-2.3.2.zip
+    sha256: "832856d7f344d5c2641266aa28f88e8ab094b1c093d3edb29a1086b7bde8d001"
     role: dependency
     channel: jurialmunkey-omega
     notes: ~
@@ -437,6 +437,13 @@ addons:
     version: "1.0.4"
     url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/repo/zips/resource.images.arctic.weather/resource.images.arctic.weather-1.0.4.zip
     sha256: "a7e84af8747611c8517bfb278b7610053653c95107a10307dc48ee15e6cef0c4"
+    role: dependency
+    channel: jurialmunkey-repo
+    notes: ~
+  - id: resource.images.arctic.backgrounds.surrealist
+    version: "1.0.2"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/repo/zips/resource.images.arctic.backgrounds.surrealist/resource.images.arctic.backgrounds.surrealist-1.0.2.zip
+    sha256: "1159c167a23113bf81e47f2eb2ad255330aaebae2dd08341aec732290464e03c"
     role: dependency
     channel: jurialmunkey-repo
     notes: ~
