@@ -79,9 +79,9 @@ addons:
     channel: dontpanic-omega
     notes: ~
   - id: repository.jurialmunkey
-    version: "3.5"
-    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/repo/zips/repository.jurialmunkey/repository.jurialmunkey-3.5.zip
-    sha256: "292ad78a35abe2ba18024d2746c92e85b68a551f77a059c74d4132d35d1090f7"
+    version: "3.6"
+    url: https://raw.githubusercontent.com/jurialmunkey/repository.jurialmunkey/master/repo/zips/repository.jurialmunkey/repository.jurialmunkey-3.6.zip
+    sha256: "298de6380d823e0879541e308fa78a6f0a21b6f399204150dbaf7f942e1b728d"
     role: repository
     channel: jurialmunkey-repo
     notes: ~
