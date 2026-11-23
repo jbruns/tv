@@ -105,9 +105,7 @@ addons:
     notes: ~
     patches:
       - 0001-workers-are-daemon-threads.patch
-      - 0002-recheck-the-abort-after-waiting.patch
     patched_files:
-      resources/tmdbhelper/lib/monitor/cronjob.py: "c36ecf0f62a9759fbe7b984eb759206a065b4659dba686849f9d1bbdd88dc277"
       resources/tmdbhelper/lib/monitor/service.py: "cf4bc8858b857b80890166aa7e14d7349f7dc8d1f8a8630e894bc8d4f0334cd4"
   - id: pvr.nextpvr
     version: "21.3.2.1"
